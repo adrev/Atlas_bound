@@ -294,16 +294,37 @@ export function TokenActionPanel() {
 
       if (currentTargeting.spell) {
         const spell = currentTargeting.spell;
+        const casterName = currentTargeting.casterName;
+        const targetName = targetToken.name;
 
-        // Try to find damage dice from spell data or description
+        // --- Phase 2: Spell Slot Consumption ---
+        if (spell.level > 0 && casterChar) {
+          const slots = typeof casterChar.spellSlots === 'string'
+            ? JSON.parse(casterChar.spellSlots) : (casterChar.spellSlots || {});
+          const slot = slots[spell.level];
+          if (slot) {
+            const available = slot.max - slot.used;
+            if (available <= 0) {
+              emitRoll('1d0+0', `${casterName} has no ${spell.level}${spell.level === 1 ? 'st' : spell.level === 2 ? 'nd' : spell.level === 3 ? 'rd' : 'th'} level slots remaining!`);
+              useMapStore.getState().cancelTargetingMode();
+              return;
+            }
+            // Deduct slot
+            const updatedSlots = { ...slots, [spell.level]: { ...slot, used: slot.used + 1 } };
+            emitCharacterUpdate(currentTargeting.casterTokenId, { spellSlots: updatedSlots });
+            useCharacterStore.getState().applyRemoteUpdate(
+              casterChar.id || currentTargeting.casterTokenId,
+              { spellSlots: updatedSlots }
+            );
+          }
+        }
+
+        // --- Resolve damage dice ---
         let damageDice = spell.damage || '';
-        console.log('[TARGETING] Spell damage field:', spell.damage, 'description length:', spell.description?.length);
         if (!damageDice && spell.description) {
-          // Parse damage from description text (e.g., "take 1d12 poison damage" or "deals 2d6 fire damage")
           const dmgMatch = spell.description.match(/(\d+d\d+(?:\s*\+\s*\d+)?)\s+\w*\s*damage/i);
           if (dmgMatch) damageDice = dmgMatch[1].replace(/\s/g, '');
         }
-        // Also try compendium lookup for damage
         if (!damageDice) {
           try {
             const slug = spell.name.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
@@ -316,43 +337,106 @@ export function TokenActionPanel() {
           } catch {}
         }
 
-        console.log('[TARGETING] Resolved damageDice:', damageDice, 'attackType:', spell.attackType);
+        // Check if spell allows half damage on save
+        const desc = (spell.description || '').toLowerCase();
+        const halfOnSave = desc.includes('half as much damage') || desc.includes('half damage') || desc.includes('save for half');
+        const isHealing = spell.name.toLowerCase().includes('heal') || spell.name.toLowerCase().includes('cure') || desc.includes('regains') || desc.includes('hit points equal to');
 
+        // --- Phase 3A: Spell Attack vs AC ---
         if (spell.attackType) {
-          emitRoll(`1d20+${casterSpellAttack}`, `${currentTargeting.casterName} → ${targetToken.name}: ${spell.name} Attack`);
-        }
+          const attackRoll = Math.floor(Math.random() * 20) + 1;
+          const totalAttack = attackRoll + casterSpellAttack;
+          const targetAC = targetChar?.armorClass ?? 10;
+          const isHit = attackRoll === 20 || (attackRoll !== 1 && totalAttack >= targetAC);
+          const isCrit = attackRoll === 20;
 
-        if (damageDice) {
-          console.log('[TARGETING] Applying damage:', damageDice, 'to charId:', effectiveCharId, 'currentHP:', targetHp);
-          setTimeout(() => emitRoll(damageDice, `${spell.name} → ${targetToken.name} Damage`), 300);
-          if (effectiveCharId) {
-            const cid = effectiveCharId;
-            const dmg = damageDice;
+          emitRoll(`1d20+${casterSpellAttack}`,
+            `${casterName} → ${targetName}: ${spell.name} Attack (${totalAttack} vs AC ${targetAC}) — ${isCrit ? 'CRITICAL HIT!' : isHit ? 'HIT!' : 'MISS!'}`
+          );
+
+          if (isHit && damageDice && effectiveCharId) {
+            const finalDice = isCrit ? damageDice.replace(/(\d+)d/, (_: string, n: string) => `${parseInt(n) * 2}d`) : damageDice;
             setTimeout(() => {
-              const match = dmg.match(/(\d+)d(\d+)/);
+              emitRoll(finalDice, `${spell.name} → ${targetName} Damage${isCrit ? ' (CRIT!)' : ''}`);
+              const match = finalDice.match(/(\d+)d(\d+)/);
               if (match) {
                 const avgDmg = Math.ceil(parseInt(match[1]) * (parseInt(match[2]) + 1) / 2);
-                updateTargetHp(cid, Math.max(0, targetHp - avgDmg));
+                updateTargetHp(effectiveCharId, Math.max(0, targetHp - avgDmg));
               }
-            }, 600);
+            }, 400);
           }
         }
 
-        if (spell.savingThrow) {
-          emitRoll('1d0+0', `${currentTargeting.casterName} casts ${spell.name} on ${targetToken.name} (DC ${casterSpellDC} ${spell.savingThrow.toUpperCase()} save)`);
+        // --- Phase 3B: Saving Throw ---
+        else if (spell.savingThrow) {
+          const saveAbility = spell.savingThrow as string;
+          const targetScores = targetChar?.abilityScores
+            ? (typeof targetChar.abilityScores === 'string' ? JSON.parse(targetChar.abilityScores) : targetChar.abilityScores)
+            : {};
+          const targetSaveMod = abilityModifier(targetScores[saveAbility] || 10);
+          const saveRoll = Math.floor(Math.random() * 20) + 1;
+          const totalSave = saveRoll + targetSaveMod;
+          const saved = totalSave >= casterSpellDC;
+
+          emitRoll(`1d20+${targetSaveMod}`,
+            `${targetName} ${saveAbility.toUpperCase()} Save vs DC ${casterSpellDC}: ${totalSave} — ${saved ? 'SUCCESS!' : 'FAILED!'}`
+          );
+
+          if (damageDice && effectiveCharId) {
+            if (!saved) {
+              // Full damage on failed save
+              setTimeout(() => {
+                emitRoll(damageDice, `${spell.name} → ${targetName} Damage (save failed)`);
+                const match = damageDice.match(/(\d+)d(\d+)/);
+                if (match) {
+                  const avgDmg = Math.ceil(parseInt(match[1]) * (parseInt(match[2]) + 1) / 2);
+                  updateTargetHp(effectiveCharId, Math.max(0, targetHp - avgDmg));
+                }
+              }, 400);
+            } else if (halfOnSave) {
+              // Half damage on successful save
+              setTimeout(() => {
+                emitRoll(damageDice, `${spell.name} → ${targetName} Damage (save — half damage)`);
+                const match = damageDice.match(/(\d+)d(\d+)/);
+                if (match) {
+                  const avgDmg = Math.ceil(parseInt(match[1]) * (parseInt(match[2]) + 1) / 2);
+                  const halfDmg = Math.floor(avgDmg / 2);
+                  updateTargetHp(effectiveCharId, Math.max(0, targetHp - halfDmg));
+                }
+              }, 400);
+            }
+            // No damage on save success if spell doesn't allow half
+          }
         }
 
-        if (spell.name.toLowerCase().includes('heal') || spell.name.toLowerCase().includes('cure')) {
-          const healMatch = spell.damage?.match(/(\d+)d(\d+)/) || ['', '1', '8'];
-          const healAvg = Math.ceil(parseInt(healMatch[1] || '1') * (parseInt(healMatch[2] || '8') + 1) / 2);
+        // --- Healing spells ---
+        else if (isHealing) {
+          const healDice = damageDice || '1d8';
+          emitRoll(healDice, `${spell.name} → ${targetName} Healing`);
           if (effectiveCharId) {
-            updateTargetHp(effectiveCharId, Math.min(targetMaxHp, targetHp + healAvg));
+            const match = healDice.match(/(\d+)d(\d+)/);
+            if (match) {
+              const healAvg = Math.ceil(parseInt(match[1]) * (parseInt(match[2]) + 1) / 2) + (casterSpellAttack > 0 ? Math.floor(casterSpellAttack / 2) : 0);
+              updateTargetHp(effectiveCharId, Math.min(targetMaxHp, targetHp + healAvg));
+            }
           }
-          emitRoll(`${healMatch[1] || '1'}d${healMatch[2] || '8'}`, `${spell.name} → ${targetToken.name} Healing`);
         }
 
-        if (!spell.damage && !spell.name.toLowerCase().includes('heal') && !spell.savingThrow && !spell.attackType) {
-          emitRoll('1d0+0', `${currentTargeting.casterName} casts ${spell.name} on ${targetToken.name}`);
+        // --- Damage only (no attack, no save) ---
+        else if (damageDice) {
+          emitRoll(damageDice, `${spell.name} → ${targetName} Damage`);
+          if (effectiveCharId) {
+            const match = damageDice.match(/(\d+)d(\d+)/);
+            if (match) {
+              const avgDmg = Math.ceil(parseInt(match[1]) * (parseInt(match[2]) + 1) / 2);
+              updateTargetHp(effectiveCharId, Math.max(0, targetHp - avgDmg));
+            }
+          }
+        }
+
+        // --- No effect spell (buff, utility) ---
+        else {
+          emitRoll('1d0+0', `${casterName} casts ${spell.name} on ${targetName}`);
         }
       }
 
@@ -902,31 +986,54 @@ export function TokenActionPanel() {
           </Section>
         )}
 
-        {/* Spells (for characters) */}
-        {spells.length > 0 && (
-          <Section title={`Spells (${spells.length})`}>
+        {/* Cantrips */}
+        {spells.filter((s: any) => s.level === 0).length > 0 && (
+          <Section title={`Cantrips (${spells.filter((s: any) => s.level === 0).length})`}>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 3 }}>
-              {spells.slice(0, 12).map((spell: any, i: number) => (
+              {spells.filter((s: any) => s.level === 0).map((spell: any, i: number) => (
                 <button key={i} onClick={() => {
                   if (!canAct) return;
                   useMapStore.getState().startTargetingMode({ spell, casterTokenId: selectedTokenId!, casterName: token.name });
                 }} onContextMenu={(e) => {
                   e.preventDefault();
                   const slug = spell.name.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
-                  window.dispatchEvent(new CustomEvent('open-compendium-detail', {
-                    detail: { slug, category: 'spells', name: spell.name }
-                  }));
+                  window.dispatchEvent(new CustomEvent('open-compendium-detail', { detail: { slug, category: 'spells', name: spell.name } }));
                 }} title={spell.description || spell.name} style={{
                   padding: '2px 6px', fontSize: 9, borderRadius: 3,
                   background: C.bgHover, border: `1px solid ${C.borderDim}`,
-                  color: spell.level === 0 ? C.textSec : C.text,
-                  cursor: canAct ? 'pointer' : 'default', fontFamily: 'inherit',
+                  color: C.textSec, cursor: canAct ? 'pointer' : 'default', fontFamily: 'inherit',
                 }}>
                   {spell.name}
                   {spell.damage && <span style={{ color: C.red, marginLeft: 2, fontSize: 7 }}>{spell.damage}</span>}
                 </button>
               ))}
-              {spells.length > 12 && <span style={{ fontSize: 8, color: C.textMuted }}>+{spells.length - 12}</span>}
+            </div>
+          </Section>
+        )}
+
+        {/* Leveled Spells */}
+        {spells.filter((s: any) => s.level > 0).length > 0 && (
+          <Section title={`Spells (${spells.filter((s: any) => s.level > 0).length})`}>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 3 }}>
+              {spells.filter((s: any) => s.level > 0).slice(0, 12).map((spell: any, i: number) => (
+                <button key={i} onClick={() => {
+                  if (!canAct) return;
+                  useMapStore.getState().startTargetingMode({ spell, casterTokenId: selectedTokenId!, casterName: token.name });
+                }} onContextMenu={(e) => {
+                  e.preventDefault();
+                  const slug = spell.name.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
+                  window.dispatchEvent(new CustomEvent('open-compendium-detail', { detail: { slug, category: 'spells', name: spell.name } }));
+                }} title={spell.description || spell.name} style={{
+                  padding: '2px 6px', fontSize: 9, borderRadius: 3,
+                  background: C.bgHover, border: `1px solid ${C.borderDim}`,
+                  color: C.text, cursor: canAct ? 'pointer' : 'default', fontFamily: 'inherit',
+                }}>
+                  <span style={{ fontSize: 7, color: C.textMuted, marginRight: 2 }}>L{spell.level}</span>
+                  {spell.name}
+                  {spell.damage && <span style={{ color: C.red, marginLeft: 2, fontSize: 7 }}>{spell.damage}</span>}
+                </button>
+              ))}
+              {spells.filter((s: any) => s.level > 0).length > 12 && <span style={{ fontSize: 8, color: C.textMuted }}>+{spells.filter((s: any) => s.level > 0).length - 12}</span>}
             </div>
           </Section>
         )}

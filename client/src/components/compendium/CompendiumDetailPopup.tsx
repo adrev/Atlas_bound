@@ -707,14 +707,12 @@ function ItemDetail({ item, onClose }: { item: CompendiumItem & { rawJson?: Reco
                 if (!file) return;
                 const formData = new FormData();
                 formData.append('image', file);
-                const resp = await fetch(`/api/uploads/token-image`, { method: 'POST', body: formData });
+                formData.append('itemId', item.slug); // slug = custom item ID
+                const resp = await fetch(`/api/custom/items/${item.slug}/image`, { method: 'POST', body: formData });
                 if (resp.ok) {
                   const data = await resp.json();
                   setItemImgSrc(data.url + '?t=' + Date.now());
-                  await fetch(`/api/custom/items/${item.slug}`, {
-                    method: 'PUT', headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ imageUrl: data.url }),
-                  });
+                  setImgExists(true);
                 }
                 e.target.value = '';
               }} />
