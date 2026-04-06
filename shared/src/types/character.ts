@@ -209,6 +209,7 @@ export interface Character {
   spellcastingAbility: string;
   spellAttackBonus: number;
   spellSaveDC: number;
+  concentratingOn: string | null;
   initiative: number;
   portraitUrl: string | null;
   dndbeyondId: string | null;
