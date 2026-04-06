@@ -1,0 +1,8 @@
+server/uploads/maps/*.png filter=lfs diff=lfs merge=lfs -text
+server/uploads/maps/*.jpg filter=lfs diff=lfs merge=lfs -text
+server/uploads/portraits/*.png filter=lfs diff=lfs merge=lfs -text
+server/uploads/tokens/*.png filter=lfs diff=lfs merge=lfs -text
+server/uploads/tokens/*.svg filter=lfs diff=lfs merge=lfs -text
+server/uploads/items/*.png filter=lfs diff=lfs merge=lfs -text
+server/uploads/items/*.svg filter=lfs diff=lfs merge=lfs -text
+server/uploads/spells/*.png filter=lfs diff=lfs merge=lfs -text

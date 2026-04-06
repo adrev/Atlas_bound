@@ -1,0 +1,22 @@
+# Dependencies
+node_modules/
+.venv/
+
+# Build outputs
+dist/
+
+# Database (regenerated on startup from Open5e API)
+server/data/*.db
+server/data/*.db-shm
+server/data/*.db-wal
+
+# Environment
+.env
+.env.local
+
+# System
+.DS_Store
+*.log
+
+# Claude temp
+.claude/
