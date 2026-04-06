@@ -3,7 +3,8 @@ import { useMapStore } from '../../stores/useMapStore';
 import { useCharacterStore } from '../../stores/useCharacterStore';
 import { useSessionStore } from '../../stores/useSessionStore';
 import { emitRoll, emitCharacterUpdate, emitTokenUpdate } from '../../socket/emitters';
-import { abilityModifier, calculateEquipmentBonuses } from '@dnd-vtt/shared';
+import { abilityModifier, calculateEquipmentBonuses, SPELL_CONDITIONS, getSpellAnimation } from '@dnd-vtt/shared';
+import { useEffectStore } from '../../stores/useEffectStore';
 import { LootBagPanel } from '../loot/LootBagPanel';
 
 // --- Inline Loot Section for DMs ---
@@ -324,6 +325,24 @@ export function TokenActionPanel() {
         const targetName = targetToken.name;
         const casterId = casterChar?.id || currentTargeting.casterTokenId;
 
+        // --- Phase 9: Trigger spell animation ---
+        const spellAnim = getSpellAnimation(spell.name);
+        if (spellAnim) {
+          const casterPos = casterToken ? { x: (casterToken as any).x, y: (casterToken as any).y } : { x: 0, y: 0 };
+          const targetPos = { x: (targetToken as any).x, y: (targetToken as any).y };
+          useEffectStore.getState().addAnimation({
+            id: `spell-${Date.now()}`,
+            casterPosition: casterPos,
+            targetPosition: targetPos,
+            animationType: spellAnim.type,
+            color: spellAnim.color,
+            secondaryColor: spellAnim.secondaryColor || spellAnim.color,
+            duration: spellAnim.duration,
+            particleCount: spellAnim.particleCount || 20,
+            startedAt: Date.now(),
+          });
+        }
+
         // --- Phase 4: Concentration ---
         if (spell.isConcentration && casterChar) {
           const currentConc = casterChar.concentratingOn;
@@ -452,6 +471,22 @@ export function TokenActionPanel() {
               }, 400);
             }
             // No damage on save success if spell doesn't allow half
+          }
+
+          // Auto-apply conditions on failed save
+          if (!saved) {
+            const conditions = SPELL_CONDITIONS[spell.name];
+            if (conditions && conditions.length > 0) {
+              setTimeout(() => {
+                const targetTokenData = useMapStore.getState().tokens[targetToken.id];
+                if (targetTokenData) {
+                  const existingConditions = targetTokenData.conditions || [];
+                  const newConditions = [...new Set([...existingConditions, ...conditions])] as any;
+                  emitTokenUpdate(targetToken.id, { conditions: newConditions });
+                  emitRoll('1d0+0', `${targetName} is now ${conditions.join(', ')}! (${spell.name})`);
+                }
+              }, 600);
+            }
           }
         }
 
@@ -642,6 +677,11 @@ export function TokenActionPanel() {
     return () => { cancelled = true; window.removeEventListener('loot-updated', handler); };
   }, [selectedTokenId]);
 
+  // --- Phase 6: Creature spell state (must be before early return for hooks rules) ---
+  const [creatureSpells, setCreatureSpells] = useState<{ name: string; level: number; slug: string }[]>([]);
+  const [creatureSpellDC, setCreatureSpellDC] = useState(0);
+  const [creatureSpellAtk, setCreatureSpellAtk] = useState(0);
+
   if (!visible || !selectedTokenId) return null;
 
   const token = tokens[selectedTokenId];
@@ -695,10 +735,6 @@ export function TokenActionPanel() {
   const compTraits = compendiumData?.specialAbilities || [];
 
   // --- Phase 6: Parse creature spellcasting trait ---
-  const [creatureSpells, setCreatureSpells] = useState<{ name: string; level: number; slug: string }[]>([]);
-  const [creatureSpellDC, setCreatureSpellDC] = useState(0);
-  const [creatureSpellAtk, setCreatureSpellAtk] = useState(0);
-
   useEffect(() => {
     if (!compendiumData?.specialAbilities) { setCreatureSpells([]); return; }
     const spellTrait = compendiumData.specialAbilities.find((a: any) =>
