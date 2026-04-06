@@ -444,7 +444,8 @@ export function TokenActionPanel() {
         const isSelfTarget = targetTokenId === currentTargeting.casterTokenId;
 
         // Self-range AoE spells: auto-target all tokens within AoE radius around caster
-        if (isSelfRange && isSelfTarget && !isHealing) {
+        // Triggers regardless of what token was clicked — click just confirms the cast
+        if (isSelfRange && !isHealing) {
           // Determine AoE size from spell data or description
           let aoeRadius = spell.aoeSize || 0;
           if (!aoeRadius) {
@@ -479,8 +480,12 @@ export function TokenActionPanel() {
           for (const affToken of affectedTokens) {
             const aToken = affToken as any;
             const aCharId = aToken.characterId;
-            const aChar = aCharId ? useCharacterStore.getState().allCharacters[aCharId] : null;
-            const aHp = aChar?.hitPoints ?? 0;
+            if (!aCharId) continue; // Skip tokens without character data
+            const aChar = useCharacterStore.getState().allCharacters[aCharId];
+            if (!aChar) continue;
+            const aHp = typeof aChar.hitPoints === 'number' ? aChar.hitPoints : parseInt(String(aChar.hitPoints)) || 0;
+            const aMaxHp = typeof aChar.maxHitPoints === 'number' ? aChar.maxHitPoints : parseInt(String(aChar.maxHitPoints)) || 0;
+            if (aHp <= 0) continue; // Skip already dead tokens
 
             if (resolvedSavingThrow && aCharId) {
               const aScores = aChar?.abilityScores
