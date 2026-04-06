@@ -31,6 +31,7 @@ export { calculateEquipmentBonuses } from './utils/equipmentBonuses.js';
 
 // Constants
 export { CONDITIONS, CONDITION_MAP } from './constants/conditions.js';
+export { SPELL_CONDITIONS } from './constants/spell-conditions.js';
 export type { ConditionInfo } from './constants/conditions.js';
 export { SPELL_ANIMATIONS, getSpellAnimation } from './constants/spell-animations.js';
 export type { AnimationType, SpellAnimationConfig } from './constants/spell-animations.js';
