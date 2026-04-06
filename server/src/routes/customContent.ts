@@ -1,6 +1,10 @@
 import { Router, type Request, type Response } from 'express';
+import multer from 'multer';
+import path from 'path';
+import fs from 'fs';
 import { v4 as uuidv4 } from 'uuid';
 import db from '../db/connection.js';
+import { UPLOAD_DIR } from '../config.js';
 
 const router = Router();
 
@@ -272,6 +276,31 @@ router.put('/items/:id', (req: Request, res: Response) => {
     req.params.id,
   );
   res.json({ success: true });
+});
+
+// POST /items/:id/image - Upload custom item icon
+const itemImageUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
+router.post('/items/:id/image', itemImageUpload.single('image'), (req: Request, res: Response) => {
+  if (!req.file) { res.status(400).json({ error: 'No image file' }); return; }
+  const itemId = req.params.id;
+
+  // Verify item exists
+  const item = db.prepare('SELECT id, name FROM custom_items WHERE id = ?').get(itemId) as { id: string; name: string } | undefined;
+  if (!item) { res.status(404).json({ error: 'Item not found' }); return; }
+
+  // Save to /uploads/items/ with the item ID as filename
+  const itemsDir = path.join(UPLOAD_DIR, 'items');
+  if (!fs.existsSync(itemsDir)) fs.mkdirSync(itemsDir, { recursive: true });
+
+  const ext = req.file.mimetype === 'image/jpeg' ? '.jpg' : '.png';
+  const filename = itemId + ext;
+  const filepath = path.join(itemsDir, filename);
+  fs.writeFileSync(filepath, req.file.buffer);
+
+  const url = `/uploads/items/${filename}`;
+  db.prepare('UPDATE custom_items SET image_url = ? WHERE id = ?').run(url, itemId);
+
+  res.json({ url });
 });
 
 router.delete('/items/:id', (req: Request, res: Response) => {

@@ -512,6 +512,8 @@ export function CharacterSheetFull({ character, onClose, initialTab }: { charact
                   spellSaveDC={character.spellSaveDC}
                   abilityScores={abilityScores}
                   profBonus={profBonus}
+                  characterId={character.id}
+                  characterLevel={character.level}
                 />
               )}
               {activeTab === 'inventory' && (
@@ -1074,7 +1076,16 @@ function ActionsTab({ inventory, spells, features, abilityScores, profBonus, get
 /* ═══════════════════════════════════════════════════════════
    TAB: SPELLS
    ═══════════════════════════════════════════════════════════ */
-function SpellsTab({ spells, spellSlots, spellcastingAbility, spellAttackBonus, spellSaveDC, abilityScores, profBonus }: {
+const SCHOOL_COLORS: Record<string, string> = {
+  Evocation: '#c53131', Necromancy: '#2e7d32', Abjuration: '#2980b9',
+  Enchantment: '#9b59b6', Conjuration: '#1abc9c', Transmutation: '#d4a843',
+  Divination: '#a0a0c0', Illusion: '#e67e22',
+  evocation: '#c53131', necromancy: '#2e7d32', abjuration: '#2980b9',
+  enchantment: '#9b59b6', conjuration: '#1abc9c', transmutation: '#d4a843',
+  divination: '#a0a0c0', illusion: '#e67e22',
+};
+
+function SpellsTab({ spells, spellSlots, spellcastingAbility, spellAttackBonus, spellSaveDC, abilityScores, profBonus, characterId, characterLevel }: {
   spells: Spell[];
   spellSlots: Record<number, SpellSlot>;
   spellcastingAbility: string;
@@ -1082,6 +1093,8 @@ function SpellsTab({ spells, spellSlots, spellcastingAbility, spellAttackBonus, 
   spellSaveDC: number;
   abilityScores: AbilityScores;
   profBonus: number;
+  characterId: string;
+  characterLevel: number;
 }) {
   const [search, setSearch] = useState('');
   const [levelFilter, setLevelFilter] = useState<number | null>(null);
@@ -1090,199 +1103,203 @@ function SpellsTab({ spells, spellSlots, spellcastingAbility, spellAttackBonus, 
   const scAbility = (spellcastingAbility || 'int') as AbilityName;
   const scMod = abilityModifier(abilityScores[scAbility] ?? 10);
 
-  /* Group spells by level */
-  const grouped = useMemo(() => {
+  // Split cantrips from leveled spells
+  const cantrips = useMemo(() => spells.filter(s => s.level === 0).filter(s =>
+    !search || s.name.toLowerCase().includes(search.toLowerCase())
+  ), [spells, search]);
+
+  const leveledSpells = useMemo(() => {
     const map: Record<number, Spell[]> = {};
     const filtered = spells.filter(s => {
+      if (s.level === 0) return false;
       if (levelFilter !== null && s.level !== levelFilter) return false;
       if (search && !s.name.toLowerCase().includes(search.toLowerCase())) return false;
       return true;
     });
-    for (const s of filtered) {
-      (map[s.level] ??= []).push(s);
-    }
+    for (const s of filtered) (map[s.level] ??= []).push(s);
     return map;
   }, [spells, levelFilter, search]);
 
-  const levels = Object.keys(grouped).map(Number).sort((a, b) => a - b);
-  const allLevels = useMemo(() => {
-    const set = new Set(spells.map(s => s.level));
-    return Array.from(set).sort((a, b) => a - b);
-  }, [spells]);
+  const levels = Object.keys(leveledSpells).map(Number).sort((a, b) => a - b);
+  const allLevels = useMemo(() => Array.from(new Set(spells.filter(s => s.level > 0).map(s => s.level))).sort((a, b) => a - b), [spells]);
 
-  const toggleExpand = (name: string) => setExpanded(prev => ({ ...prev, [name]: !prev[name] }));
+  const toggleExpand = (key: string) => setExpanded(prev => ({ ...prev, [key]: !prev[key] }));
+
+  // Toggle spell slot (click to expend/restore)
+  const toggleSlot = (level: number, index: number) => {
+    const slot = spellSlots[level];
+    if (!slot) return;
+    const newUsed = index < slot.used ? index : index + 1;
+    const updatedSlots = { ...spellSlots, [level]: { ...slot, used: newUsed } };
+    emitCharacterUpdate(characterId, { spellSlots: updatedSlots });
+    useCharacterStore.getState().applyRemoteUpdate(characterId, { spellSlots: updatedSlots });
+  };
+
+  const getSpellSlug = (name: string) => name.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '').replace(/'/g, '');
 
   if (spells.length === 0) {
     return <div style={{ color: C.textMuted, textAlign: 'center', padding: 40, fontSize: 13 }}>No spells known.</div>;
   }
 
+  const renderSpellRow = (spell: Spell, i: number) => {
+    const key = `${spell.name}-${spell.level}`;
+    const isExp = expanded[key];
+    const slug = getSpellSlug(spell.name);
+    const schoolColor = SCHOOL_COLORS[spell.school] || C.textMuted;
+
+    return (
+      <div key={i} style={{
+        background: C.bgCard, borderRadius: 4,
+        border: `1px solid ${C.borderDim}`, marginBottom: 2,
+        overflow: 'hidden',
+      }}>
+        <div
+          style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '5px 8px', cursor: 'pointer' }}
+          onClick={() => toggleExpand(key)}
+          onMouseEnter={e => (e.currentTarget.style.background = C.bgHover)}
+          onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
+        >
+          {/* Spell image */}
+          <img src={`/uploads/spells/${slug}.png`} alt="" loading="lazy"
+            style={{ width: 28, height: 28, borderRadius: '50%', objectFit: 'cover', flexShrink: 0, border: `1.5px solid ${schoolColor}` }}
+            onError={e => { (e.currentTarget).src = '/uploads/items/default-item.svg'; }}
+          />
+          {/* Name + badges */}
+          <div
+            style={{ flex: 1, minWidth: 0, cursor: 'pointer' }}
+            onClick={(e) => {
+              e.stopPropagation();
+              window.dispatchEvent(new CustomEvent('open-compendium-detail', {
+                detail: { slug, category: 'spells', name: spell.name },
+              }));
+            }}
+          >
+            <div style={{ fontWeight: 600, fontSize: 12, color: schoolColor }}>{spell.name}</div>
+            <div style={{ fontSize: 9, color: C.textMuted }}>
+              {spell.school}
+              {spell.isConcentration && <span style={{ color: C.gold, marginLeft: 4 }}>Concentration</span>}
+              {spell.isRitual && <span style={{ color: C.purple, marginLeft: 4 }}>Ritual</span>}
+              {spell.damage && <span style={{ color: C.red, marginLeft: 4 }}>{spell.damage} {spell.damageType || ''}</span>}
+              {spell.savingThrow && <span style={{ color: C.gold, marginLeft: 4 }}>DC {spellSaveDC} {spell.savingThrow.toUpperCase()}</span>}
+            </div>
+          </div>
+          {/* Quick cast */}
+          <button
+            onClick={e => {
+              e.stopPropagation();
+              if (spell.attackType) {
+                emitRoll(`1d20${fmtMod(spellAttackBonus)}`, `${spell.name} Attack`);
+              } else if (spell.damage) {
+                showRollToast(spell.damage, `${spell.name} Damage`);
+              }
+            }}
+            style={{
+              background: schoolColor + '22', color: schoolColor, border: `1px solid ${schoolColor}44`,
+              borderRadius: 3, padding: '2px 8px', fontSize: 9, cursor: 'pointer', fontWeight: 700,
+              flexShrink: 0, fontFamily: 'inherit', textTransform: 'uppercase',
+            }}
+          >Cast</button>
+          <span style={{ fontSize: 10, color: C.textMuted }}>{isExp ? '\u25B2' : '\u25BC'}</span>
+        </div>
+
+        {/* Expanded details */}
+        {isExp && (
+          <div style={{ padding: '8px 12px', borderTop: `1px solid ${C.borderDim}`, background: C.bgElevated, fontSize: 11, lineHeight: 1.5 }}>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 6 }}>
+              <span style={{ fontSize: 9, padding: '1px 5px', borderRadius: 3, background: schoolColor + '22', color: schoolColor, border: `1px solid ${schoolColor}44` }}>
+                {spell.school}
+              </span>
+              <span><b style={{ color: C.textMuted }}>Cast:</b> {spell.castingTime}</span>
+              <span><b style={{ color: C.textMuted }}>Range:</b> {spell.range}</span>
+              <span><b style={{ color: C.textMuted }}>Components:</b> {spell.components}</span>
+              <span><b style={{ color: C.textMuted }}>Duration:</b> {spell.duration}</span>
+            </div>
+            {spell.damage && (
+              <div style={{ display: 'flex', gap: 6, marginBottom: 6 }}>
+                <RollButton notation={spell.damage} reason={`${spell.name} Damage`} label="Roll Damage" />
+                {spell.attackType && <RollButton notation={`1d20${fmtMod(spellAttackBonus)}`} reason={`${spell.name} Attack`} label="Roll Attack" />}
+              </div>
+            )}
+            <div style={{ color: C.textSecondary, whiteSpace: 'pre-wrap' }}>{stripHtml(spell.description)}</div>
+            {spell.higherLevels && (
+              <div style={{ marginTop: 6, color: C.blue }}><b>At Higher Levels:</b> {spell.higherLevels}</div>
+            )}
+          </div>
+        )}
+      </div>
+    );
+  };
+
   return (
     <div>
       {/* Spellcasting stats */}
-      <div style={{ display: 'flex', gap: 12, marginBottom: 12, flexWrap: 'wrap' }}>
-        <div style={{ background: C.bgCard, border: `1px solid ${C.borderDim}`, borderRadius: 4, padding: '6px 12px', textAlign: 'center' }}>
-          <div style={{ fontSize: 9, color: C.textMuted, textTransform: 'uppercase', fontWeight: 600 }}>Modifier</div>
-          <div style={{ fontSize: 16, fontWeight: 700 }}>{fmtMod(scMod)}</div>
-        </div>
-        <div style={{ background: C.bgCard, border: `1px solid ${C.borderDim}`, borderRadius: 4, padding: '6px 12px', textAlign: 'center' }}>
-          <div style={{ fontSize: 9, color: C.textMuted, textTransform: 'uppercase', fontWeight: 600 }}>Spell Attack</div>
-          <div style={{ fontSize: 16, fontWeight: 700 }}>{fmtMod(spellAttackBonus)}</div>
-        </div>
-        <div style={{ background: C.bgCard, border: `1px solid ${C.borderDim}`, borderRadius: 4, padding: '6px 12px', textAlign: 'center' }}>
-          <div style={{ fontSize: 9, color: C.textMuted, textTransform: 'uppercase', fontWeight: 600 }}>Save DC</div>
-          <div style={{ fontSize: 16, fontWeight: 700 }}>{spellSaveDC}</div>
-        </div>
-      </div>
-
-      {/* Search */}
-      <input
-        type="text"
-        placeholder="Search spells..."
-        value={search}
-        onChange={e => setSearch(e.target.value)}
-        style={{
-          width: '100%', padding: '6px 10px', marginBottom: 8,
-          background: C.bgElevated, border: `1px solid ${C.border}`,
-          borderRadius: 4, color: C.textPrimary, fontSize: 12,
-          outline: 'none', boxSizing: 'border-box',
-        }}
-      />
-
-      {/* Level pills */}
-      <div style={{ display: 'flex', gap: 4, marginBottom: 12, flexWrap: 'wrap' }}>
-        <Pill active={levelFilter === null} onClick={() => setLevelFilter(null)}>ALL</Pill>
-        {allLevels.map(l => (
-          <Pill key={l} active={levelFilter === l} onClick={() => setLevelFilter(l)}>
-            {levelPillLabel(l)}
-          </Pill>
+      <div style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
+        {[
+          { label: 'Modifier', value: fmtMod(scMod) },
+          { label: 'Spell Attack', value: fmtMod(spellAttackBonus) },
+          { label: 'Save DC', value: String(spellSaveDC) },
+        ].map(s => (
+          <div key={s.label} style={{ background: C.bgCard, border: `1px solid ${C.borderDim}`, borderRadius: 6, padding: '6px 14px', textAlign: 'center' }}>
+            <div style={{ fontSize: 8, color: C.textMuted, textTransform: 'uppercase', fontWeight: 700, letterSpacing: '0.04em' }}>{s.label}</div>
+            <div style={{ fontSize: 18, fontWeight: 700 }}>{s.value}</div>
+          </div>
         ))}
       </div>
 
-      {/* Spell groups */}
+      {/* Search */}
+      <input type="text" placeholder="Search spells..." value={search} onChange={e => setSearch(e.target.value)}
+        style={{ width: '100%', padding: '6px 10px', marginBottom: 8, background: C.bgElevated, border: `1px solid ${C.border}`,
+          borderRadius: 6, color: C.textPrimary, fontSize: 12, outline: 'none', boxSizing: 'border-box' }} />
+
+      {/* Cantrips section */}
+      {cantrips.length > 0 && (levelFilter === null || levelFilter === 0) && (
+        <div style={{ marginBottom: 16 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 0', borderBottom: `1px solid ${C.borderDim}`, marginBottom: 4 }}>
+            <span style={{ fontSize: 12, fontWeight: 700, color: C.gold, textTransform: 'uppercase' }}>Cantrips</span>
+            <span style={{ fontSize: 9, color: C.textMuted, marginLeft: 'auto' }}>At Will</span>
+          </div>
+          {cantrips.map((spell, i) => renderSpellRow(spell, i))}
+        </div>
+      )}
+
+      {/* Level filter pills (for leveled spells only) */}
+      {allLevels.length > 0 && (
+        <div style={{ display: 'flex', gap: 4, marginBottom: 8, flexWrap: 'wrap' }}>
+          <Pill active={levelFilter === null} onClick={() => setLevelFilter(null)}>ALL</Pill>
+          {allLevels.map(l => (
+            <Pill key={l} active={levelFilter === l} onClick={() => setLevelFilter(l)}>{levelPillLabel(l)}</Pill>
+          ))}
+        </div>
+      )}
+
+      {/* Leveled spell groups */}
       {levels.map(level => {
         const slot = spellSlots[level];
-        const group = grouped[level];
+        const group = leveledSpells[level];
+        const slotsAvail = slot ? slot.max - slot.used : 0;
         return (
           <div key={level} style={{ marginBottom: 16 }}>
-            {/* Level header */}
-            <div style={{
-              display: 'flex', alignItems: 'center', gap: 8,
-              padding: '6px 0', borderBottom: `1px solid ${C.borderDim}`, marginBottom: 4,
-            }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 0', borderBottom: `1px solid ${C.borderDim}`, marginBottom: 4 }}>
               <span style={{ fontSize: 12, fontWeight: 700, color: C.red, textTransform: 'uppercase' }}>
-                {ordinal(level)} {level > 0 ? 'Level' : ''}
+                {ordinal(level)} Level
               </span>
-              {/* Slot pips */}
-              {slot && level > 0 && (
-                <div style={{ display: 'flex', gap: 4, marginLeft: 'auto', alignItems: 'center' }}>
-                  <span style={{ fontSize: 10, color: C.textMuted, marginRight: 4 }}>
-                    {slot.max - slot.used}/{slot.max}
+              {/* Interactive slot pips */}
+              {slot && (
+                <div style={{ display: 'flex', gap: 3, marginLeft: 'auto', alignItems: 'center' }}>
+                  <span style={{ fontSize: 9, color: slotsAvail > 0 ? C.textSecondary : C.red, marginRight: 4, fontWeight: 600 }}>
+                    {slotsAvail}/{slot.max}
                   </span>
                   {Array.from({ length: slot.max }).map((_, i) => (
-                    <SlotPip key={i} filled={i >= slot.used} onClick={() => {}} />
+                    <SlotPip key={i} filled={i >= slot.used}
+                      onClick={() => toggleSlot(level, i)} />
                   ))}
                 </div>
               )}
             </div>
-
-            {/* Spell rows */}
-            {group.map((spell, i) => {
-              const key = `${spell.name}-${spell.level}`;
-              const isExpanded = expanded[key];
-              return (
-                <div key={i} style={{
-                  background: C.bgCard, borderRadius: 4,
-                  border: `1px solid ${C.borderDim}`, marginBottom: 2,
-                  overflow: 'hidden',
-                }}>
-                  <div
-                    style={{
-                      display: 'flex', alignItems: 'center', gap: 6,
-                      padding: '5px 8px', cursor: 'pointer',
-                    }}
-                    onClick={() => toggleExpand(key)}
-                    onMouseEnter={e => (e.currentTarget.style.background = C.bgHover)}
-                    onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
-                  >
-                    {/* Cast button */}
-                    {level > 0 && (
-                      <button
-                        onClick={e => {
-                          e.stopPropagation();
-                          if (spell.attackType) {
-                            emitRoll(`1d20${fmtMod(spellAttackBonus)}`, `${spell.name} Attack`);
-                          } else if (spell.damage) {
-                            showRollToast(spell.damage, `${spell.name} Damage`);
-                          }
-                        }}
-                        style={{
-                          background: C.red, color: '#fff', border: 'none', borderRadius: 3,
-                          padding: '2px 6px', fontSize: 10, cursor: 'pointer', fontWeight: 700,
-                          flexShrink: 0,
-                        }}
-                      >
-                        CAST
-                      </button>
-                    )}
-                    {level === 0 && spell.damage && (
-                      <RollButton
-                        notation={spell.damage}
-                        reason={`${spell.name}`}
-                        label="CAST"
-                        style={{ padding: '2px 6px', fontSize: 10 }}
-                      />
-                    )}
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <span style={{ fontWeight: 600, fontSize: 12 }}>{spell.name}</span>
-                      {spell.isConcentration && <Badge color={C.gold} style={{ marginLeft: 6, fontSize: 8 }}>C</Badge>}
-                      {spell.isRitual && <Badge color={C.purple} style={{ marginLeft: 4, fontSize: 8 }}>R</Badge>}
-                    </div>
-                    <span style={{ fontSize: 10, color: C.textMuted, minWidth: 40 }}>{spell.castingTime}</span>
-                    <span style={{ fontSize: 10, color: C.textMuted, minWidth: 50, textAlign: 'center' }}>{spell.range}</span>
-                    {spell.attackType && (
-                      <span style={{ fontSize: 11, fontWeight: 600, minWidth: 30, textAlign: 'center' }}>
-                        {fmtMod(spellAttackBonus)}
-                      </span>
-                    )}
-                    {spell.savingThrow && (
-                      <span style={{ fontSize: 10, color: C.gold, minWidth: 50, textAlign: 'center' }}>
-                        DC {spellSaveDC} {ABILITY_LABELS[spell.savingThrow]}
-                      </span>
-                    )}
-                    <span style={{ fontSize: 10, color: C.textSecondary, minWidth: 50, textAlign: 'center' }}>
-                      {spell.damage ? `${spell.damage} ${spell.damageType ?? ''}` : spell.duration}
-                    </span>
-                    <span style={{ fontSize: 12, color: C.textMuted, marginLeft: 4 }}>
-                      {isExpanded ? '\u25B2' : '\u25BC'}
-                    </span>
-                  </div>
-
-                  {/* Expanded details */}
-                  {isExpanded && (
-                    <div style={{
-                      padding: '8px 12px', borderTop: `1px solid ${C.borderDim}`,
-                      background: C.bgElevated, fontSize: 11, lineHeight: 1.5,
-                    }}>
-                      <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 6 }}>
-                        <span><b style={{ color: C.textMuted }}>School:</b> {spell.school}</span>
-                        <span><b style={{ color: C.textMuted }}>Components:</b> {spell.components}</span>
-                        <span><b style={{ color: C.textMuted }}>Duration:</b> {spell.duration}</span>
-                        {spell.isConcentration && <Badge color={C.gold}>Concentration</Badge>}
-                        {spell.isRitual && <Badge color={C.purple}>Ritual</Badge>}
-                      </div>
-                      <div style={{ color: C.textSecondary, whiteSpace: 'pre-wrap' }}>
-                        {stripHtml(spell.description)}
-                      </div>
-                      {spell.higherLevels && (
-                        <div style={{ marginTop: 6, color: C.blue }}>
-                          <b>At Higher Levels:</b> {spell.higherLevels}
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
-              );
-            })}
+            {slotsAvail === 0 && slot && (
+              <div style={{ fontSize: 9, color: C.red, fontStyle: 'italic', marginBottom: 4 }}>No spell slots remaining</div>
+            )}
+            {group.map((spell, i) => renderSpellRow(spell, i))}
           </div>
         );
       })}
