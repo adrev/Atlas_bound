@@ -1312,7 +1312,9 @@ export function TokenActionPanel() {
               {spells.filter((s: any) => s.level === 0).map((spell: any, i: number) => (
                 <button key={i} onClick={() => {
                   if (!canAct) return;
-                  useMapStore.getState().startTargetingMode({ spell, casterTokenId: selectedTokenId!, casterName: token.name });
+                  const isSelf = (spell.range || '').toLowerCase().includes('self');
+                  if (isSelf) { castSelfSpell(spell, selectedTokenId!, token.name); }
+                  else { useMapStore.getState().startTargetingMode({ spell, casterTokenId: selectedTokenId!, casterName: token.name }); }
                 }} onContextMenu={(e) => {
                   e.preventDefault();
                   const slug = spell.name.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
@@ -1337,7 +1339,9 @@ export function TokenActionPanel() {
               {spells.filter((s: any) => s.level > 0).slice(0, 12).map((spell: any, i: number) => (
                 <button key={i} onClick={() => {
                   if (!canAct) return;
-                  useMapStore.getState().startTargetingMode({ spell, casterTokenId: selectedTokenId!, casterName: token.name });
+                  const isSelf = (spell.range || '').toLowerCase().includes('self');
+                  if (isSelf) { castSelfSpell(spell, selectedTokenId!, token.name); }
+                  else { useMapStore.getState().startTargetingMode({ spell, casterTokenId: selectedTokenId!, casterName: token.name }); }
                 }} onContextMenu={(e) => {
                   e.preventDefault();
                   const slug = spell.name.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
@@ -1404,6 +1408,17 @@ export function TokenActionPanel() {
       </div>
     </div>
   );
+}
+
+/** For Self-range AoE spells, simulate clicking the caster token to trigger AoE resolution */
+function castSelfSpell(spell: any, casterTokenId: string, casterName: string) {
+  useMapStore.getState().startTargetingMode({ spell, casterTokenId, casterName });
+  // Immediately trigger the target-selected event with the caster's own token
+  setTimeout(() => {
+    window.dispatchEvent(new CustomEvent('target-token-selected', {
+      detail: { tokenId: casterTokenId }
+    }));
+  }, 50);
 }
 
 function quickBtnStyle(color: string): React.CSSProperties {
