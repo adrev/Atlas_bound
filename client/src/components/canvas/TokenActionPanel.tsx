@@ -378,20 +378,51 @@ export function TokenActionPanel() {
           }
         }
 
-        // --- Resolve damage dice ---
+        // --- Resolve damage dice and spell properties from description ---
+        // Strip HTML for clean parsing
+        const cleanDesc = (spell.description || '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ');
         let damageDice = spell.damage || '';
-        if (!damageDice && spell.description) {
-          const dmgMatch = spell.description.match(/(\d+d\d+(?:\s*\+\s*\d+)?)\s+\w*\s*damage/i);
+        let resolvedAttackType = spell.attackType || '';
+        let resolvedSavingThrow = spell.savingThrow || '';
+
+        // Parse from spell description
+        if (!damageDice) {
+          const dmgMatch = cleanDesc.match(/(\d+d\d+(?:\s*\+\s*\d+)?)\s+\w*\s*damage/i);
           if (dmgMatch) damageDice = dmgMatch[1].replace(/\s/g, '');
         }
+        if (!resolvedAttackType) {
+          if (cleanDesc.match(/ranged spell attack/i)) resolvedAttackType = 'ranged';
+          else if (cleanDesc.match(/melee spell attack/i)) resolvedAttackType = 'melee';
+        }
+        if (!resolvedSavingThrow) {
+          const saveMatch = cleanDesc.match(/(?:must\s+(?:succeed|make)\s+.*?|succeed\s+on\s+.*?)(strength|dexterity|constitution|wisdom|intelligence|charisma)\s+saving\s+throw/i);
+          if (saveMatch) {
+            const abilityMap: Record<string, string> = { strength: 'str', dexterity: 'dex', constitution: 'con', wisdom: 'wis', intelligence: 'int', charisma: 'cha' };
+            resolvedSavingThrow = abilityMap[saveMatch[1].toLowerCase()] || '';
+          }
+        }
+
+        // Fallback: lookup compendium for damage
         if (!damageDice) {
           try {
             const slug = spell.name.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
             const compResp = await fetch(`/api/compendium/spells/${slug}`);
             if (compResp.ok) {
               const compSpell = await compResp.json();
-              const descMatch = compSpell.description?.match(/(\d+d\d+(?:\s*\+\s*\d+)?)\s+\w*\s*damage/i);
+              const compDesc = (compSpell.description || '').replace(/<[^>]*>/g, ' ');
+              const descMatch = compDesc.match(/(\d+d\d+(?:\s*\+\s*\d+)?)\s+\w*\s*damage/i);
               if (descMatch) damageDice = descMatch[1].replace(/\s/g, '');
+              if (!resolvedSavingThrow) {
+                const saveM = compDesc.match(/(strength|dexterity|constitution|wisdom|intelligence|charisma)\s+saving\s+throw/i);
+                if (saveM) {
+                  const am: Record<string, string> = { strength: 'str', dexterity: 'dex', constitution: 'con', wisdom: 'wis', intelligence: 'int', charisma: 'cha' };
+                  resolvedSavingThrow = am[saveM[1].toLowerCase()] || '';
+                }
+              }
+              if (!resolvedAttackType) {
+                if (compDesc.match(/ranged spell attack/i)) resolvedAttackType = 'ranged';
+                else if (compDesc.match(/melee spell attack/i)) resolvedAttackType = 'melee';
+              }
             }
           } catch {}
         }
@@ -409,9 +440,18 @@ export function TokenActionPanel() {
         const desc = (spell.description || '').toLowerCase();
         const halfOnSave = desc.includes('half as much damage') || desc.includes('half damage') || desc.includes('save for half');
         const isHealing = spell.name.toLowerCase().includes('heal') || spell.name.toLowerCase().includes('cure') || desc.includes('regains') || desc.includes('hit points equal to');
+        const isSelfRange = (spell.range || '').toLowerCase().includes('self');
+        const isSelfTarget = targetTokenId === currentTargeting.casterTokenId;
+
+        // Self-range AoE spells: if caster clicks themselves, just announce the cast (don't self-damage)
+        if (isSelfRange && isSelfTarget && !isHealing) {
+          emitRoll('1d0+0', `${casterName} casts ${spell.name}! (AoE — click each affected creature to apply damage)`);
+          useMapStore.getState().cancelTargetingMode();
+          return;
+        }
 
         // --- Phase 3A: Spell Attack vs AC ---
-        if (spell.attackType) {
+        if (resolvedAttackType) {
           const attackRoll = Math.floor(Math.random() * 20) + 1;
           const totalAttack = attackRoll + casterSpellAttack;
           const targetAC = targetChar?.armorClass ?? 10;
@@ -436,8 +476,8 @@ export function TokenActionPanel() {
         }
 
         // --- Phase 3B: Saving Throw ---
-        else if (spell.savingThrow) {
-          const saveAbility = spell.savingThrow as string;
+        else if (resolvedSavingThrow) {
+          const saveAbility = resolvedSavingThrow;
           const targetScores = targetChar?.abilityScores
             ? (typeof targetChar.abilityScores === 'string' ? JSON.parse(targetChar.abilityScores) : targetChar.abilityScores)
             : {};
