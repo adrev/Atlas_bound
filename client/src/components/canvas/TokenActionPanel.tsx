@@ -163,21 +163,24 @@ export function TokenActionPanel() {
           const rangeMatch = rangeStr.match(/(\d+)\s*(feet|ft)/i);
           if (rangeMatch) maxRange = parseInt(rangeMatch[1]);
           else if (rangeStr.toLowerCase().includes('touch')) maxRange = 5;
-          else if (rangeStr.toLowerCase().includes('self')) maxRange = 0;
+          else if (rangeStr.toLowerCase().includes('self')) maxRange = 999; // Self spells — AoE from caster, no range limit on target selection
           else maxRange = 30; // Default spell range if not specified
         } else if (currentTargeting.weapon) {
           const props: string[] = currentTargeting.weapon.properties || [];
           const isThrown = props.some((p: string) => p.toLowerCase().includes('thrown'));
           const isRanged = props.some((p: string) => p.toLowerCase().includes('range'));
+          // Try to parse actual range from weapon data (e.g. "80/320" or "20/60")
+          const weaponRange = currentTargeting.weapon.range;
+          const parsedRange = weaponRange ? parseInt(String(weaponRange).split('/')[0]) : 0;
 
-          if (isRanged) {
-            // Ranged weapons: Shortbow 80/320, Longbow 150/600, etc.
-            maxRange = 80; // Default short range
+          if (parsedRange > 0) {
+            maxRange = parsedRange;
+          } else if (isRanged) {
+            maxRange = 80;
           } else if (isThrown) {
-            // Thrown weapons: Dagger 20/60, Handaxe 20/60, Javelin 30/120
-            maxRange = 20; // Short thrown range
+            maxRange = 20;
           } else {
-            maxRange = 5; // Melee only
+            maxRange = 5;
           }
         } else if (currentTargeting.action) {
           // Parse range from action description
