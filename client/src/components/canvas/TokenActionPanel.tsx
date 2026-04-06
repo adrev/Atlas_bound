@@ -682,6 +682,39 @@ export function TokenActionPanel() {
   const [creatureSpellDC, setCreatureSpellDC] = useState(0);
   const [creatureSpellAtk, setCreatureSpellAtk] = useState(0);
 
+  // Parse creature spellcasting trait (before early return)
+  useEffect(() => {
+    if (!compendiumData?.specialAbilities) { setCreatureSpells([]); setCreatureSpellDC(0); setCreatureSpellAtk(0); return; }
+    const spellTrait = compendiumData.specialAbilities.find((a: any) =>
+      a.name?.toLowerCase().includes('spellcasting') || a.name?.toLowerCase().includes('innate spellcasting')
+    );
+    if (!spellTrait?.desc) { setCreatureSpells([]); return; }
+
+    const desc = spellTrait.desc as string;
+    const dcMatch = desc.match(/spell save DC (\d+)/i);
+    if (dcMatch) setCreatureSpellDC(parseInt(dcMatch[1], 10));
+    const atkMatch = desc.match(/\+(\d+) to hit with spell/i);
+    if (atkMatch) setCreatureSpellAtk(parseInt(atkMatch[1], 10));
+
+    const spellNames: { name: string; level: number }[] = [];
+    const lines = desc.split('\n');
+    for (const line of lines) {
+      const levelMatch = line.match(/(?:cantrips?|(\d+)(?:st|nd|rd|th)\s*level)/i);
+      const level = levelMatch ? (levelMatch[1] ? parseInt(levelMatch[1], 10) : 0) : -1;
+      if (level < 0) continue;
+      const colonIdx = line.indexOf(':');
+      if (colonIdx < 0) continue;
+      const spellPart = line.slice(colonIdx + 1);
+      const names = spellPart.split(/,|;/).map(s => s.replace(/\*|_/g, '').trim()).filter(Boolean);
+      for (const name of names) {
+        if (name.length > 2 && name.length < 40) spellNames.push({ name, level });
+      }
+    }
+    setCreatureSpells(spellNames.map(s => ({
+      ...s, slug: s.name.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '').replace(/'/g, ''),
+    })));
+  }, [compendiumData]);
+
   if (!visible || !selectedTokenId) return null;
 
   const token = tokens[selectedTokenId];
@@ -734,48 +767,7 @@ export function TokenActionPanel() {
   const compActions = compendiumData?.actions || [];
   const compTraits = compendiumData?.specialAbilities || [];
 
-  // --- Phase 6: Parse creature spellcasting trait ---
-  useEffect(() => {
-    if (!compendiumData?.specialAbilities) { setCreatureSpells([]); return; }
-    const spellTrait = compendiumData.specialAbilities.find((a: any) =>
-      a.name?.toLowerCase().includes('spellcasting') || a.name?.toLowerCase().includes('innate spellcasting')
-    );
-    if (!spellTrait?.desc) { setCreatureSpells([]); return; }
-
-    const desc = spellTrait.desc as string;
-
-    // Parse DC and attack bonus
-    const dcMatch = desc.match(/spell save DC (\d+)/i);
-    if (dcMatch) setCreatureSpellDC(parseInt(dcMatch[1], 10));
-    const atkMatch = desc.match(/\+(\d+) to hit with spell/i);
-    if (atkMatch) setCreatureSpellAtk(parseInt(atkMatch[1], 10));
-
-    // Extract spell names from lines like "Cantrips (at will): druidcraft, produce flame"
-    // and "1st level (4 slots): entangle, thunderwave"
-    const spellNames: { name: string; level: number }[] = [];
-    const lines = desc.split('\n');
-    for (const line of lines) {
-      const levelMatch = line.match(/(?:cantrips?|(\d+)(?:st|nd|rd|th)\s*level)/i);
-      const level = levelMatch ? (levelMatch[1] ? parseInt(levelMatch[1], 10) : 0) : -1;
-      if (level < 0) continue;
-
-      // Extract spell names after the colon
-      const colonIdx = line.indexOf(':');
-      if (colonIdx < 0) continue;
-      const spellPart = line.slice(colonIdx + 1);
-      const names = spellPart.split(/,|;/).map(s => s.replace(/\*|_/g, '').trim()).filter(Boolean);
-      for (const name of names) {
-        if (name.length > 2 && name.length < 40) {
-          spellNames.push({ name, level });
-        }
-      }
-    }
-
-    setCreatureSpells(spellNames.map(s => ({
-      ...s,
-      slug: s.name.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '').replace(/'/g, ''),
-    })));
-  }, [compendiumData]);
+  // (creature spell parsing moved before early return)
 
 
   const close = () => { useMapStore.getState().selectToken(null); useMapStore.getState().cancelTargetingMode(); setVisible(false); };
