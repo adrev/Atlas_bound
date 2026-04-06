@@ -443,9 +443,104 @@ export function TokenActionPanel() {
         const isSelfRange = (spell.range || '').toLowerCase().includes('self');
         const isSelfTarget = targetTokenId === currentTargeting.casterTokenId;
 
-        // Self-range AoE spells: if caster clicks themselves, just announce the cast (don't self-damage)
+        // Self-range AoE spells: auto-target all tokens within AoE radius around caster
         if (isSelfRange && isSelfTarget && !isHealing) {
-          emitRoll('1d0+0', `${casterName} casts ${spell.name}! (AoE — click each affected creature to apply damage)`);
+          // Determine AoE size from spell data or description
+          let aoeRadius = spell.aoeSize || 0;
+          if (!aoeRadius) {
+            const radiusMatch = cleanDesc.match(/(\d+)[- ]foot[- ](?:radius|cube|cone|line|emanation|sphere)/i);
+            if (radiusMatch) aoeRadius = parseInt(radiusMatch[1]);
+            else aoeRadius = 15; // Default 15ft if not specified
+          }
+
+          // Parse pushback distance
+          let pushDistance = 0;
+          const pushMatch = cleanDesc.match(/pushed\s+(\d+)\s*(?:feet|ft)/i);
+          if (pushMatch) pushDistance = parseInt(pushMatch[1]);
+
+          const allTokens = useMapStore.getState().tokens;
+          const casterX = casterToken ? (casterToken as any).x : 0;
+          const casterY = casterToken ? (casterToken as any).y : 0;
+          const gridSize = useMapStore.getState().currentMap?.gridSize || 70;
+          const aoePixels = (aoeRadius / 5) * gridSize;
+
+          // Find all tokens within AoE (excluding caster)
+          const affectedTokens = Object.values(allTokens).filter((t: any) => {
+            if (t.id === currentTargeting.casterTokenId) return false;
+            const dx = t.x - casterX;
+            const dy = t.y - casterY;
+            const dist = Math.sqrt(dx * dx + dy * dy);
+            return dist <= aoePixels;
+          });
+
+          emitRoll('1d0+0', `${casterName} casts ${spell.name}! (${aoeRadius}ft AoE — ${affectedTokens.length} creature${affectedTokens.length !== 1 ? 's' : ''} affected)`);
+
+          // Apply save + damage to each affected token
+          for (const affToken of affectedTokens) {
+            const aToken = affToken as any;
+            const aCharId = aToken.characterId;
+            const aChar = aCharId ? useCharacterStore.getState().allCharacters[aCharId] : null;
+            const aHp = aChar?.hitPoints ?? 0;
+
+            if (resolvedSavingThrow && aCharId) {
+              const aScores = aChar?.abilityScores
+                ? (typeof aChar.abilityScores === 'string' ? JSON.parse(aChar.abilityScores) : aChar.abilityScores)
+                : {};
+              const aSaveMod = abilityModifier(aScores[resolvedSavingThrow] || 10);
+              const aSaveRoll = Math.floor(Math.random() * 20) + 1;
+              const aSaveTotal = aSaveRoll + aSaveMod;
+              const aSaved = aSaveTotal >= casterSpellDC;
+
+              setTimeout(() => {
+                emitRoll(`1d20+${aSaveMod}`,
+                  `${aToken.name} ${resolvedSavingThrow.toUpperCase()} Save vs DC ${casterSpellDC}: ${aSaveTotal} — ${aSaved ? 'SUCCESS!' : 'FAILED!'}`
+                );
+              }, 200);
+
+              if (damageDice) {
+                setTimeout(() => {
+                  const dmgMatch = damageDice.match(/(\d+)d(\d+)/);
+                  if (dmgMatch) {
+                    const avgDmg = Math.ceil(parseInt(dmgMatch[1]) * (parseInt(dmgMatch[2]) + 1) / 2);
+                    const finalDmg = aSaved && halfOnSave ? Math.floor(avgDmg / 2) : aSaved ? 0 : avgDmg;
+                    if (finalDmg > 0) {
+                      emitRoll(damageDice, `${spell.name} → ${aToken.name}: ${finalDmg} damage${aSaved ? ' (half)' : ''}`);
+                      updateTargetHp(aCharId, Math.max(0, aHp - finalDmg));
+                    }
+                  }
+                }, 500);
+              }
+
+              // Pushback on failed save
+              if (!aSaved && pushDistance > 0) {
+                setTimeout(() => {
+                  const dx = aToken.x - casterX;
+                  const dy = aToken.y - casterY;
+                  const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+                  const pushPixels = (pushDistance / 5) * gridSize;
+                  const newX = aToken.x + (dx / dist) * pushPixels;
+                  const newY = aToken.y + (dy / dist) * pushPixels;
+                  emitTokenUpdate(aToken.id, { x: Math.round(newX), y: Math.round(newY) });
+                  emitRoll('1d0+0', `${aToken.name} pushed ${pushDistance}ft!`);
+                }, 800);
+              }
+            } else if (damageDice && aCharId) {
+              // No save — direct damage
+              setTimeout(() => {
+                const dmgMatch = damageDice.match(/(\d+)d(\d+)/);
+                if (dmgMatch) {
+                  const avgDmg = Math.ceil(parseInt(dmgMatch[1]) * (parseInt(dmgMatch[2]) + 1) / 2);
+                  emitRoll(damageDice, `${spell.name} → ${aToken.name}: ${avgDmg} damage`);
+                  updateTargetHp(aCharId, Math.max(0, aHp - avgDmg));
+                }
+              }, 400);
+            }
+          }
+
+          if (affectedTokens.length === 0) {
+            emitRoll('1d0+0', `No creatures in ${aoeRadius}ft range`);
+          }
+
           useMapStore.getState().cancelTargetingMode();
           return;
         }
