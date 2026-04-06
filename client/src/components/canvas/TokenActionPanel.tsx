@@ -269,12 +269,38 @@ export function TokenActionPanel() {
 
       // Helper to update HP both on server and locally
       const updateTargetHp = (cid: string, newHp: number) => {
-        emitCharacterUpdate(cid, { hitPoints: newHp });
         const chars = useCharacterStore.getState().allCharacters;
-        if (chars[cid]) {
+        const targetCharData = chars[cid];
+        const oldHp = targetCharData?.hitPoints ?? 0;
+        const damageTaken = Math.max(0, oldHp - newHp);
+
+        emitCharacterUpdate(cid, { hitPoints: newHp });
+        if (targetCharData) {
           useCharacterStore.getState().setAllCharacters({
             ...chars, [cid]: { ...chars[cid], hitPoints: newHp },
           });
+        }
+
+        // Concentration save when taking damage
+        if (damageTaken > 0 && targetCharData?.concentratingOn) {
+          const dc = Math.max(10, Math.floor(damageTaken / 2));
+          const conScore = typeof targetCharData.abilityScores === 'string'
+            ? JSON.parse(targetCharData.abilityScores).con || 10
+            : (targetCharData.abilityScores as any)?.con || 10;
+          const conMod = Math.floor((conScore - 10) / 2);
+          const saveRoll = Math.floor(Math.random() * 20) + 1;
+          const total = saveRoll + conMod;
+          const saved = total >= dc;
+
+          setTimeout(() => {
+            emitRoll(`1d20+${conMod}`,
+              `${targetCharData.name} Concentration Save (DC ${dc}): ${total} — ${saved ? 'MAINTAINED!' : 'LOST!'}`
+            );
+            if (!saved) {
+              emitCharacterUpdate(cid, { concentratingOn: null });
+              useCharacterStore.getState().applyRemoteUpdate(cid, { concentratingOn: null });
+            }
+          }, 800);
         }
       };
 
@@ -296,6 +322,17 @@ export function TokenActionPanel() {
         const spell = currentTargeting.spell;
         const casterName = currentTargeting.casterName;
         const targetName = targetToken.name;
+        const casterId = casterChar?.id || currentTargeting.casterTokenId;
+
+        // --- Phase 4: Concentration ---
+        if (spell.isConcentration && casterChar) {
+          const currentConc = casterChar.concentratingOn;
+          if (currentConc) {
+            emitRoll('1d0+0', `${casterName} drops concentration on ${currentConc}`);
+          }
+          emitCharacterUpdate(casterId, { concentratingOn: spell.name });
+          useCharacterStore.getState().applyRemoteUpdate(casterId, { concentratingOn: spell.name });
+        }
 
         // --- Phase 2: Spell Slot Consumption ---
         if (spell.level > 0 && casterChar) {
@@ -335,6 +372,15 @@ export function TokenActionPanel() {
               if (descMatch) damageDice = descMatch[1].replace(/\s/g, '');
             }
           } catch {}
+        }
+
+        // --- Phase 5: Cantrip scaling ---
+        if (spell.level === 0 && damageDice) {
+          const casterLevel = casterChar?.level ?? 1;
+          const tier = casterLevel >= 17 ? 4 : casterLevel >= 11 ? 3 : casterLevel >= 5 ? 2 : 1;
+          if (tier > 1) {
+            damageDice = damageDice.replace(/(\d+)d(\d+)/, (_: string, n: string, d: string) => `${parseInt(n) * tier}d${d}`);
+          }
         }
 
         // Check if spell allows half damage on save
@@ -647,6 +693,53 @@ export function TokenActionPanel() {
   // Actions from compendium
   const compActions = compendiumData?.actions || [];
   const compTraits = compendiumData?.specialAbilities || [];
+
+  // --- Phase 6: Parse creature spellcasting trait ---
+  const [creatureSpells, setCreatureSpells] = useState<{ name: string; level: number; slug: string }[]>([]);
+  const [creatureSpellDC, setCreatureSpellDC] = useState(0);
+  const [creatureSpellAtk, setCreatureSpellAtk] = useState(0);
+
+  useEffect(() => {
+    if (!compendiumData?.specialAbilities) { setCreatureSpells([]); return; }
+    const spellTrait = compendiumData.specialAbilities.find((a: any) =>
+      a.name?.toLowerCase().includes('spellcasting') || a.name?.toLowerCase().includes('innate spellcasting')
+    );
+    if (!spellTrait?.desc) { setCreatureSpells([]); return; }
+
+    const desc = spellTrait.desc as string;
+
+    // Parse DC and attack bonus
+    const dcMatch = desc.match(/spell save DC (\d+)/i);
+    if (dcMatch) setCreatureSpellDC(parseInt(dcMatch[1], 10));
+    const atkMatch = desc.match(/\+(\d+) to hit with spell/i);
+    if (atkMatch) setCreatureSpellAtk(parseInt(atkMatch[1], 10));
+
+    // Extract spell names from lines like "Cantrips (at will): druidcraft, produce flame"
+    // and "1st level (4 slots): entangle, thunderwave"
+    const spellNames: { name: string; level: number }[] = [];
+    const lines = desc.split('\n');
+    for (const line of lines) {
+      const levelMatch = line.match(/(?:cantrips?|(\d+)(?:st|nd|rd|th)\s*level)/i);
+      const level = levelMatch ? (levelMatch[1] ? parseInt(levelMatch[1], 10) : 0) : -1;
+      if (level < 0) continue;
+
+      // Extract spell names after the colon
+      const colonIdx = line.indexOf(':');
+      if (colonIdx < 0) continue;
+      const spellPart = line.slice(colonIdx + 1);
+      const names = spellPart.split(/,|;/).map(s => s.replace(/\*|_/g, '').trim()).filter(Boolean);
+      for (const name of names) {
+        if (name.length > 2 && name.length < 40) {
+          spellNames.push({ name, level });
+        }
+      }
+    }
+
+    setCreatureSpells(spellNames.map(s => ({
+      ...s,
+      slug: s.name.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '').replace(/'/g, ''),
+    })));
+  }, [compendiumData]);
 
 
   const close = () => { useMapStore.getState().selectToken(null); useMapStore.getState().cancelTargetingMode(); setVisible(false); };
@@ -984,6 +1077,61 @@ export function TokenActionPanel() {
               </div>
             ))}
           </Section>
+        )}
+
+        {/* Creature Spells (from compendium trait) */}
+        {creatureSpells.length > 0 && (
+          <>
+            {creatureSpells.filter(s => s.level === 0).length > 0 && (
+              <Section title={`Cantrips (at will)${creatureSpellDC ? ` · DC ${creatureSpellDC}` : ''}`}>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 3 }}>
+                  {creatureSpells.filter(s => s.level === 0).map((s, i) => (
+                    <button key={i} onClick={() => {
+                      if (!canAct) return;
+                      useMapStore.getState().startTargetingMode({
+                        spell: { name: s.name, level: 0, description: '', isConcentration: false, isRitual: false,
+                          school: '', castingTime: '1 action', range: '30 feet', components: '', duration: 'Instantaneous' },
+                        casterTokenId: selectedTokenId!, casterName: token.name,
+                      });
+                    }} onContextMenu={(e) => {
+                      e.preventDefault();
+                      window.dispatchEvent(new CustomEvent('open-compendium-detail', { detail: { slug: s.slug, category: 'spells', name: s.name } }));
+                    }} style={{
+                      padding: '2px 6px', fontSize: 9, borderRadius: 3,
+                      background: C.bgHover, border: `1px solid ${C.borderDim}`,
+                      color: C.textSec, cursor: canAct ? 'pointer' : 'default', fontFamily: 'inherit',
+                    }}>{s.name}</button>
+                  ))}
+                </div>
+              </Section>
+            )}
+            {creatureSpells.filter(s => s.level > 0).length > 0 && (
+              <Section title={`Spells${creatureSpellAtk ? ` · +${creatureSpellAtk}` : ''}${creatureSpellDC ? ` · DC ${creatureSpellDC}` : ''}`}>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 3 }}>
+                  {creatureSpells.filter(s => s.level > 0).map((s, i) => (
+                    <button key={i} onClick={() => {
+                      if (!canAct) return;
+                      useMapStore.getState().startTargetingMode({
+                        spell: { name: s.name, level: s.level, description: '', isConcentration: false, isRitual: false,
+                          school: '', castingTime: '1 action', range: '60 feet', components: '', duration: 'Instantaneous' },
+                        casterTokenId: selectedTokenId!, casterName: token.name,
+                      });
+                    }} onContextMenu={(e) => {
+                      e.preventDefault();
+                      window.dispatchEvent(new CustomEvent('open-compendium-detail', { detail: { slug: s.slug, category: 'spells', name: s.name } }));
+                    }} style={{
+                      padding: '2px 6px', fontSize: 9, borderRadius: 3,
+                      background: C.bgHover, border: `1px solid ${C.borderDim}`,
+                      color: C.text, cursor: canAct ? 'pointer' : 'default', fontFamily: 'inherit',
+                    }}>
+                      <span style={{ fontSize: 7, color: C.textMuted, marginRight: 2 }}>L{s.level}</span>
+                      {s.name}
+                    </button>
+                  ))}
+                </div>
+              </Section>
+            )}
+          </>
         )}
 
         {/* Cantrips */}
