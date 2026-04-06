@@ -239,6 +239,7 @@ export function initDatabase(): void {
   // Safe migrations — add columns if they don't exist
   try { db.exec(`ALTER TABLE compendium_monsters ADD COLUMN token_image_source TEXT DEFAULT 'generated'`); } catch { /* exists */ }
   try { db.exec(`ALTER TABLE compendium_items ADD COLUMN token_image_source TEXT DEFAULT 'none'`); } catch { /* exists */ }
+  try { db.exec(`ALTER TABLE chat_messages ADD COLUMN hidden INTEGER DEFAULT 0`); } catch { /* exists */ }
 
   // Custom content tables
   db.exec(`

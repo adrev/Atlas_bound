@@ -19,5 +19,6 @@ export interface ChatMessage {
   characterName: string | null;
   whisperTo: string | null;
   rollData: DiceRollData | null;
+  hidden?: boolean;
   createdAt: string;
 }

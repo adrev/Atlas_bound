@@ -116,20 +116,21 @@ export function registerChatEvents(io: Server, socket: Socket): void {
         characterName: null,
         whisperTo: null,
         rollData,
+        hidden: !!hidden,
         createdAt: now,
       };
 
-      // Persist to DB
+      // Persist to DB (including hidden flag)
       db.prepare(`
-        INSERT INTO chat_messages (id, session_id, user_id, display_name, type, content, roll_data, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO chat_messages (id, session_id, user_id, display_name, type, content, roll_data, hidden, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         messageId, ctx.room.sessionId, ctx.player.userId, ctx.player.displayName,
-        'roll', displayContent, JSON.stringify(rollData), now,
+        'roll', displayContent, JSON.stringify(rollData), hidden ? 1 : 0, now,
       );
 
       if (hidden) {
-        // Hidden roll - only send result back to the roller (DM)
+        // Hidden roll - only send to the DM who rolled
         socket.emit('chat:roll-result', message);
       } else {
         io.to(ctx.room.sessionId).emit('chat:roll-result', message);
