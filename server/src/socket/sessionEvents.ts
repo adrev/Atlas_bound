@@ -205,18 +205,25 @@ export function registerSessionEvents(io: Server, socket: Socket): void {
       LIMIT 100
     `).all(session.id) as Array<Record<string, unknown>>;
 
-    socket.emit('chat:history', chatHistory.reverse().map(m => ({
-      id: m.id as string,
-      sessionId: m.session_id as string,
-      userId: m.user_id as string,
-      displayName: m.display_name as string,
-      type: m.type as 'ic' | 'ooc' | 'whisper' | 'roll' | 'system',
-      content: m.content as string,
-      characterName: m.character_name as string | null,
-      whisperTo: m.whisper_to as string | null,
-      rollData: m.roll_data ? JSON.parse(m.roll_data as string) : null,
-      createdAt: m.created_at as string,
-    })));
+    socket.emit('chat:history', chatHistory.reverse()
+      .filter(m => {
+        // Filter hidden rolls — only DM can see them
+        if ((m.hidden as number) === 1 && !isDM) return false;
+        return true;
+      })
+      .map(m => ({
+        id: m.id as string,
+        sessionId: m.session_id as string,
+        userId: m.user_id as string,
+        displayName: m.display_name as string,
+        type: m.type as 'ic' | 'ooc' | 'whisper' | 'roll' | 'system',
+        content: m.content as string,
+        characterName: m.character_name as string | null,
+        whisperTo: m.whisper_to as string | null,
+        rollData: m.roll_data ? JSON.parse(m.roll_data as string) : null,
+        hidden: (m.hidden as number) === 1,
+        createdAt: m.created_at as string,
+      })));
   });
 
   socket.on('session:leave', () => {

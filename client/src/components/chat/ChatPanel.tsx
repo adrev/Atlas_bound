@@ -34,8 +34,11 @@ function MessageBubble({ message }: { message: ChatMessage }) {
     },
   };
 
+  const isHidden = !!(message as any).hidden;
   const nameColor =
-    message.type === 'whisper'
+    isHidden
+      ? '#9b59b6'
+      : message.type === 'whisper'
       ? theme.purple
       : message.type === 'ic'
       ? theme.gold.primary
@@ -44,7 +47,10 @@ function MessageBubble({ message }: { message: ChatMessage }) {
       : theme.text.secondary;
 
   return (
-    <div style={{ ...styles.message, ...typeStyles[message.type] }}>
+    <div style={{
+      ...styles.message, ...typeStyles[message.type],
+      ...(isHidden ? { background: 'rgba(155,89,182,0.08)', borderLeft: '2px solid #9b59b6' } : {}),
+    }}>
       {message.type !== 'system' && (
         <div style={styles.messageHeader}>
           <span style={{ ...styles.messageName, color: nameColor }}>
@@ -57,6 +63,14 @@ function MessageBubble({ message }: { message: ChatMessage }) {
               {message.whisperTo ? `whisper` : 'whisper'}
             </span>
           )}
+          {isHidden && (
+            <span style={{
+              fontSize: 9, fontWeight: 700, color: '#9b59b6',
+              background: 'rgba(155,89,182,0.15)', padding: '1px 6px',
+              borderRadius: 3, border: '1px solid rgba(155,89,182,0.3)',
+              textTransform: 'uppercase', letterSpacing: '0.04em',
+            }}>Hidden</span>
+          )}
           <span style={styles.messageTime}>
             {new Date(message.createdAt).toLocaleTimeString([], {
               hour: '2-digit',
@@ -68,7 +82,7 @@ function MessageBubble({ message }: { message: ChatMessage }) {
 
       {message.type === 'roll' && message.rollData ? (
         <div style={styles.rollContent}>
-          <span style={styles.rollTotal}>{message.rollData.total}</span>
+          <span style={{ ...styles.rollTotal, ...(isHidden ? { color: '#9b59b6' } : {}) }}>{message.rollData.total}</span>
           <span style={styles.rollNotation}>{message.rollData.notation}</span>
           <span style={styles.rollBreakdown}>
             [{message.rollData.dice.map((d) => d.value).join(', ')}]
