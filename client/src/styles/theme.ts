@@ -1,0 +1,56 @@
+export const theme = {
+  bg: {
+    deepest: '#0a0a12',
+    deep: '#12121e',
+    base: '#1a1a2e',
+    card: '#1e1e32',
+    elevated: '#252540',
+    hover: '#2e2e4a',
+  },
+  gold: {
+    primary: '#d4a843',
+    dim: '#c9952a',
+    bright: '#e8c455',
+    bg: 'rgba(212, 168, 67, 0.1)',
+    border: 'rgba(212, 168, 67, 0.3)',
+  },
+  text: {
+    primary: '#e8e6e3',
+    secondary: '#a09b94',
+    muted: '#6b6660',
+    gold: '#d4a843',
+  },
+  border: {
+    default: '#3a3a52',
+    light: '#4a4a62',
+    gold: 'rgba(212, 168, 67, 0.4)',
+  },
+  danger: '#c0392b',
+  dangerDim: '#a0301f',
+  heal: '#27ae60',
+  healDim: '#1e8449',
+  purple: '#9b59b6',
+  blue: '#3498db',
+  whisper: '#8e44ad',
+  hp: {
+    full: '#27ae60',
+    half: '#f39c12',
+    low: '#c0392b',
+  },
+  radius: {
+    sm: 4,
+    md: 8,
+    lg: 12,
+    xl: 16,
+  },
+  shadow: {
+    sm: '0 1px 3px rgba(0, 0, 0, 0.4)',
+    md: '0 4px 12px rgba(0, 0, 0, 0.5)',
+    lg: '0 8px 24px rgba(0, 0, 0, 0.6)',
+    gold: '0 0 12px rgba(212, 168, 67, 0.3)',
+  },
+  font: {
+    body: "'Segoe UI', system-ui, -apple-system, sans-serif",
+    display: "Georgia, 'Times New Roman', serif",
+  },
+} as const;

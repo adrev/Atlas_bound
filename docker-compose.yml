@@ -1,0 +1,19 @@
+version: '3.8'
+
+services:
+  dnd-vtt:
+    build: .
+    ports:
+      - '3001:3001'
+    environment:
+      - NODE_ENV=production
+      - PORT=3001
+    volumes:
+      # Persist the SQLite database and uploads between restarts
+      - vtt-data:/app/server/data
+      - vtt-uploads:/app/server/uploads
+    restart: unless-stopped
+
+volumes:
+  vtt-data:
+  vtt-uploads:

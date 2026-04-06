@@ -1,0 +1,25 @@
+node_modules
+*/node_modules
+.git
+.gitignore
+
+# Build artifacts (we rebuild inside Docker)
+shared/dist
+server/dist
+client/dist
+
+# Development files
+*.log
+.env
+.env.*
+.DS_Store
+
+# Data / uploads (mounted as volumes)
+server/data
+server/uploads
+
+# Editor config
+.vscode
+.idea
+*.swp
+*.swo

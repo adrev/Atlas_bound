@@ -1,0 +1,295 @@
+import { z } from 'zod';
+
+// --- Session event schemas ---
+export const sessionJoinSchema = z.object({
+  roomCode: z.string().min(1).max(20),
+  displayName: z.string().min(1).max(50),
+});
+
+export const sessionKickSchema = z.object({
+  targetUserId: z.string().uuid(),
+});
+
+export const sessionUpdateSettingsSchema = z.object({
+  gridSize: z.number().int().min(20).max(200).optional(),
+  gridOpacity: z.number().min(0).max(1).optional(),
+  gridType: z.enum(['square', 'hex']).optional(),
+  enableFogOfWar: z.boolean().optional(),
+  enableDynamicLighting: z.boolean().optional(),
+});
+
+// --- Map event schemas ---
+export const mapLoadSchema = z.object({
+  mapId: z.string().min(1),
+});
+
+export const tokenMoveSchema = z.object({
+  tokenId: z.string().min(1),
+  x: z.number(),
+  y: z.number(),
+});
+
+export const tokenAddSchema = z.object({
+  mapId: z.string().min(1),
+  characterId: z.string().nullable().optional(),
+  name: z.string().min(1).max(100),
+  x: z.number(),
+  y: z.number(),
+  size: z.number().min(0.25).max(4).default(1),
+  imageUrl: z.string().nullable().optional(),
+  color: z.string().default('#666666'),
+  layer: z.enum(['token', 'object', 'effect']).default('token'),
+  visible: z.boolean().default(true),
+  hasLight: z.boolean().default(false),
+  lightRadius: z.number().min(0).default(0),
+  lightDimRadius: z.number().min(0).default(0),
+  lightColor: z.string().default('#ffcc44'),
+  conditions: z.array(z.string()).default([]),
+  ownerUserId: z.string().nullable().optional(),
+});
+
+export const tokenRemoveSchema = z.object({
+  tokenId: z.string().min(1),
+});
+
+export const tokenUpdateSchema = z.object({
+  tokenId: z.string().min(1),
+  changes: z.object({
+    name: z.string().min(1).max(100).optional(),
+    x: z.number().optional(),
+    y: z.number().optional(),
+    size: z.number().min(0.25).max(4).optional(),
+    imageUrl: z.string().nullable().optional(),
+    color: z.string().optional(),
+    layer: z.enum(['token', 'object', 'effect']).optional(),
+    visible: z.boolean().optional(),
+    hasLight: z.boolean().optional(),
+    lightRadius: z.number().min(0).optional(),
+    lightDimRadius: z.number().min(0).optional(),
+    lightColor: z.string().optional(),
+    conditions: z.array(z.string()).optional(),
+    ownerUserId: z.string().nullable().optional(),
+  }),
+});
+
+export const fogRevealHideSchema = z.object({
+  points: z.array(z.number()),
+});
+
+export const wallAddSchema = z.object({
+  x1: z.number(),
+  y1: z.number(),
+  x2: z.number(),
+  y2: z.number(),
+});
+
+export const wallRemoveSchema = z.object({
+  index: z.number().int().min(0),
+});
+
+export const mapPingSchema = z.object({
+  x: z.number(),
+  y: z.number(),
+});
+
+// --- Combat event schemas ---
+export const combatStartSchema = z.object({
+  tokenIds: z.array(z.string().min(1)).min(1),
+});
+
+export const combatRollInitiativeSchema = z.object({
+  tokenId: z.string().min(1),
+  bonus: z.number(),
+});
+
+export const combatSetInitiativeSchema = z.object({
+  tokenId: z.string().min(1),
+  total: z.number(),
+});
+
+export const combatDamageSchema = z.object({
+  tokenId: z.string().min(1),
+  amount: z.number().int().min(0),
+});
+
+export const combatHealSchema = z.object({
+  tokenId: z.string().min(1),
+  amount: z.number().int().min(0),
+});
+
+export const combatConditionSchema = z.object({
+  tokenId: z.string().min(1),
+  condition: z.enum([
+    'blinded', 'charmed', 'deafened', 'frightened', 'grappled',
+    'incapacitated', 'invisible', 'paralyzed', 'petrified', 'poisoned',
+    'prone', 'restrained', 'stunned', 'unconscious', 'exhaustion',
+  ]),
+});
+
+export const combatDeathSaveSchema = z.object({
+  tokenId: z.string().min(1),
+});
+
+export const combatUseActionSchema = z.object({
+  actionType: z.enum(['action', 'bonusAction', 'reaction']),
+});
+
+export const combatUseMovementSchema = z.object({
+  feet: z.number().min(0),
+});
+
+export const combatCastSpellSchema = z.object({
+  casterId: z.string().min(1),
+  spellName: z.string().min(1),
+  targetIds: z.array(z.string()),
+  targetPosition: z.object({ x: z.number(), y: z.number() }).nullable(),
+  animationType: z.enum(['projectile', 'aoe', 'buff', 'melee']),
+  animationColor: z.string(),
+  aoeType: z.enum(['cone', 'sphere', 'line', 'cube']).optional(),
+  aoeSize: z.number().optional(),
+  aoeDirection: z.number().optional(),
+});
+
+// --- Chat event schemas ---
+export const chatMessageSchema = z.object({
+  type: z.enum(['ic', 'ooc']),
+  content: z.string().min(1).max(2000),
+  characterName: z.string().max(100).optional(),
+});
+
+export const chatWhisperSchema = z.object({
+  targetUserId: z.string().min(1),
+  content: z.string().min(1).max(2000),
+});
+
+export const chatRollSchema = z.object({
+  notation: z.string().min(1).max(200),
+  reason: z.string().max(200).optional(),
+  hidden: z.boolean().optional(),
+});
+
+// --- REST API schemas ---
+export const createSessionSchema = z.object({
+  name: z.string().min(1).max(100),
+  displayName: z.string().min(1).max(50),
+});
+
+export const joinSessionSchema = z.object({
+  roomCode: z.string().min(1).max(20),
+  displayName: z.string().min(1).max(50),
+});
+
+const backgroundSchema = z.object({
+  name: z.string(),
+  description: z.string(),
+  feature: z.string(),
+}).optional();
+
+const characteristicsSchema = z.object({
+  alignment: z.string(),
+  gender: z.string(),
+  eyes: z.string(),
+  hair: z.string(),
+  skin: z.string(),
+  height: z.string(),
+  weight: z.string(),
+  age: z.string(),
+  faith: z.string(),
+  size: z.string(),
+}).optional();
+
+const personalitySchema = z.object({
+  traits: z.string(),
+  ideals: z.string(),
+  bonds: z.string(),
+  flaws: z.string(),
+}).optional();
+
+const notesSchema = z.object({
+  organizations: z.string(),
+  allies: z.string(),
+  enemies: z.string(),
+  backstory: z.string(),
+  other: z.string(),
+}).optional();
+
+const proficienciesSchema = z.object({
+  armor: z.array(z.string()),
+  weapons: z.array(z.string()),
+  tools: z.array(z.string()),
+  languages: z.array(z.string()),
+}).optional();
+
+const sensesSchema = z.object({
+  passivePerception: z.number(),
+  passiveInvestigation: z.number(),
+  passiveInsight: z.number(),
+  darkvision: z.number(),
+}).optional();
+
+const defensesSchema = z.object({
+  resistances: z.array(z.string()),
+  immunities: z.array(z.string()),
+  vulnerabilities: z.array(z.string()),
+}).optional();
+
+const currencySchema = z.object({
+  cp: z.number(),
+  sp: z.number(),
+  ep: z.number(),
+  gp: z.number(),
+  pp: z.number(),
+}).optional();
+
+export const createCharacterSchema = z.object({
+  userId: z.string().min(1),
+  name: z.string().min(1).max(100),
+  race: z.string().max(50).default(''),
+  class: z.string().max(50).default(''),
+  level: z.number().int().min(1).max(20).default(1),
+  hitPoints: z.number().int().min(0).default(10),
+  maxHitPoints: z.number().int().min(1).default(10),
+  tempHitPoints: z.number().int().min(0).optional(),
+  armorClass: z.number().int().min(0).default(10),
+  speed: z.number().int().min(0).default(30),
+  abilityScores: z.object({
+    str: z.number().int().min(1).max(30),
+    dex: z.number().int().min(1).max(30),
+    con: z.number().int().min(1).max(30),
+    int: z.number().int().min(1).max(30),
+    wis: z.number().int().min(1).max(30),
+    cha: z.number().int().min(1).max(30),
+  }).optional(),
+  savingThrows: z.array(z.string()).optional(),
+  skills: z.record(z.string()).optional(),
+  spellSlots: z.record(z.any()).optional(),
+  spells: z.array(z.any()).optional(),
+  features: z.array(z.any()).optional(),
+  inventory: z.array(z.any()).optional(),
+  deathSaves: z.object({ successes: z.number(), failures: z.number() }).optional(),
+  portraitUrl: z.string().nullable().optional(),
+  background: backgroundSchema,
+  characteristics: characteristicsSchema,
+  personality: personalitySchema,
+  notes: notesSchema,
+  proficiencies: proficienciesSchema,
+  senses: sensesSchema,
+  defenses: defensesSchema,
+  conditions: z.array(z.string()).optional(),
+  currency: currencySchema,
+  extras: z.array(z.string()).optional(),
+  spellcastingAbility: z.string().optional(),
+  spellAttackBonus: z.number().int().optional(),
+  spellSaveDC: z.number().int().optional(),
+  initiative: z.number().int().optional(),
+});
+
+export const updateCharacterSchema = createCharacterSchema.partial().omit({ userId: true });
+
+export const createMapSchema = z.object({
+  name: z.string().min(1).max(100),
+  width: z.coerce.number().int().min(100).max(10000).default(1400),
+  height: z.coerce.number().int().min(100).max(10000).default(1050),
+  gridSize: z.coerce.number().int().min(20).max(200).default(70),
+  gridType: z.enum(['square', 'hex']).default('square'),
+});
