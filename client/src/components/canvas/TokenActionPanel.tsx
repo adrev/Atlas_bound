@@ -922,10 +922,13 @@ export function TokenActionPanel() {
             onDamage={(amount) => {
               const newHp = Math.max(0, hp - amount);
               setLocalHp(newHp);
-              // Persist to server
+              // Persist to server AND update the local store, otherwise the
+              // panel reads stale data the next time it's opened (the panel
+              // ignores localHp once it remounts).
               const charId = token.characterId || localCharId;
               if (charId) {
                 emitCharacterUpdate(charId, { hitPoints: newHp });
+                useCharacterStore.getState().applyRemoteUpdate(charId, { hitPoints: newHp });
               } else {
                 // Create character record in background
                 createCharForToken(token, compendiumData, newHp, maxHp, ac, speed).then(id => {
@@ -939,6 +942,7 @@ export function TokenActionPanel() {
               const charId = token.characterId || localCharId;
               if (charId) {
                 emitCharacterUpdate(charId, { hitPoints: newHp });
+                useCharacterStore.getState().applyRemoteUpdate(charId, { hitPoints: newHp });
               } else {
                 createCharForToken(token, compendiumData, newHp, maxHp, ac, speed).then(id => {
                   if (id) setLocalCharId(id);

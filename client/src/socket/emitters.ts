@@ -1,4 +1,5 @@
 import { getSocket } from './client';
+import { useCharacterStore } from '../stores/useCharacterStore';
 import type {
   Token,
   Condition,
@@ -120,8 +121,26 @@ export function emitCastSpell(event: SpellCastEvent) {
 }
 
 // --- Character ---
-export function emitCharacterUpdate(characterId: string, changes: Record<string, unknown>) {
+/**
+ * Emit a character update to the server AND apply it locally so the UI
+ * reflects the change immediately. The server broadcasts to OTHER clients
+ * via socket.to(...).emit('character:updated', ...), which intentionally
+ * excludes the sender — so without applying locally we'd otherwise show
+ * stale data on the next render or panel reopen.
+ *
+ * Pass `{ skipLocal: true }` if you've already updated the store yourself
+ * (e.g. via setAllCharacters with extra fields) and just want the network
+ * broadcast.
+ */
+export function emitCharacterUpdate(
+  characterId: string,
+  changes: Record<string, unknown>,
+  opts: { skipLocal?: boolean } = {},
+) {
   getSocket().emit('character:update', { characterId, changes });
+  if (!opts.skipLocal) {
+    useCharacterStore.getState().applyRemoteUpdate(characterId, changes);
+  }
 }
 
 export function emitCharacterSyncRequest(characterId: string) {
