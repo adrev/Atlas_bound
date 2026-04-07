@@ -11,6 +11,8 @@ import {
   combineAttackModifiers,
   rollAttackWithModifiers,
   rollSaveWithModifiers,
+  effectiveAC,
+  effectiveSpeed,
 } from '../../utils/roll-engine';
 import { abilityModifier, calculateEquipmentBonuses, SPELL_CONDITIONS, SPELL_BUFFS, getSpellAnimation } from '@dnd-vtt/shared';
 import { useEffectStore } from '../../stores/useEffectStore';
@@ -527,15 +529,23 @@ export function TokenActionPanel() {
           const combined = combineAttackModifiers(attackerOwn, targetIncoming);
 
           const atkResult = rollAttackWithModifiers(casterSpellAttack, combined);
-          const targetAC = targetChar?.armorClass ?? 10;
+          // Effective AC accounts for Hasted +2, Shielded +2, Mage Armor floor, etc.
+          const baseAC = targetChar?.armorClass ?? 10;
+          const targetScores2 = targetChar?.abilityScores
+            ? (typeof targetChar.abilityScores === 'string' ? JSON.parse(targetChar.abilityScores) : targetChar.abilityScores)
+            : {};
+          const targetDexMod = abilityModifier((targetScores2 as any).dex || 10);
+          const acResult = effectiveAC(baseAC, targetConditions, targetDexMod);
+          const targetAC = acResult.value;
           // Crit on nat 20 OR forced crit (Paralyzed/Unconscious melee within 5ft)
           const isHit = atkResult.isCritical || (!atkResult.isFumble && atkResult.total >= targetAC);
           const isCrit = atkResult.isCritical || (isHit && atkResult.forceCritOnHit && resolvedAttackType === 'melee');
 
           const hitIcon = isCrit ? '💥' : isHit ? '✓' : '✗';
           // Show breakdown so the user can see condition effects in the math
+          const acNote = acResult.notes.length > 0 ? ` (base ${acResult.base}${acResult.notes.map(n => ' ' + n).join('')})` : '';
           const modNote = combined.notes.length > 0 ? ` [${combined.notes.join(', ')}]` : '';
-          resultParts.push(`${hitIcon} Attack ${atkResult.breakdown} vs AC ${targetAC} → ${isCrit ? 'CRIT' : isHit ? 'HIT' : 'MISS'}${modNote}`);
+          resultParts.push(`${hitIcon} Attack ${atkResult.breakdown} vs AC ${targetAC}${acNote} → ${isCrit ? 'CRIT' : isHit ? 'HIT' : 'MISS'}${modNote}`);
 
           if (isHit && damageDice && effectiveCharId) {
             const finalDice = isCrit ? damageDice.replace(/(\d+)d/, (_: string, n: string) => `${parseInt(n) * 2}d`) : damageDice;
@@ -981,13 +991,29 @@ export function TokenActionPanel() {
           </div>
         </div>
 
-        {/* Stats row */}
-        <div style={{ display: 'flex', gap: 12, marginTop: 6, fontSize: 11 }}>
-          <span title={acTooltip}>AC <strong>{ac}</strong></span>
-          <span>SPD <strong>{speed}ft</strong></span>
-          <span>INIT <strong>{fmtMod(initiative)}</strong></span>
-          {compendiumData?.challengeRating && <span>CR <strong>{compendiumData.challengeRating}</strong></span>}
-        </div>
+        {/* Stats row — shows EFFECTIVE values after condition modifiers */}
+        {(() => {
+          const dexModForAC = abilityModifier(mergedScores.dex || 10);
+          const acEff = effectiveAC(ac, conditions, dexModForAC);
+          const spdEff = effectiveSpeed(speed, conditions);
+          const acTip = acEff.notes.length > 0
+            ? `${acTooltip}\n\nEffective AC ${acEff.value} (base ${acEff.base})\n${acEff.notes.join('\n')}`
+            : acTooltip;
+          const spdTip = spdEff.notes.length > 0
+            ? `Effective Speed ${spdEff.value}ft (base ${spdEff.base})\n${spdEff.notes.join('\n')}`
+            : `Speed ${spdEff.value}ft`;
+          // Highlight modified stats in gold so they're easy to spot
+          const acColor = acEff.notes.length > 0 ? C.gold : undefined;
+          const spdColor = spdEff.notes.length > 0 ? C.gold : undefined;
+          return (
+            <div style={{ display: 'flex', gap: 12, marginTop: 6, fontSize: 11 }}>
+              <span title={acTip} style={{ color: acColor }}>AC <strong>{acEff.value}</strong>{acEff.notes.length > 0 && <span style={{ fontSize: 8, marginLeft: 2 }}>*</span>}</span>
+              <span title={spdTip} style={{ color: spdColor }}>SPD <strong>{spdEff.value}ft</strong>{spdEff.notes.length > 0 && <span style={{ fontSize: 8, marginLeft: 2 }}>*</span>}</span>
+              <span>INIT <strong>{fmtMod(initiative)}</strong></span>
+              {compendiumData?.challengeRating && <span>CR <strong>{compendiumData.challengeRating}</strong></span>}
+            </div>
+          );
+        })()}
 
         {/* HP bar + controls */}
         {maxHp > 0 && (

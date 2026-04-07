@@ -403,6 +403,121 @@ export function rollAttackWithModifiers(
   };
 }
 
+// --- AC + speed modifiers (Phase 2) ---
+
+export interface EffectiveStat {
+  /** Final value after all modifiers */
+  value: number;
+  /** Base value before modifiers */
+  base: number;
+  /** Per-source notes for tooltip ("+2 Hasted", "-2 Slowed") */
+  notes: string[];
+}
+
+/**
+ * Compute the effective AC for a token, applying all condition modifiers.
+ * Pass the base AC from the character record (the value already includes
+ * worn armor, shield, DEX, etc.). This adds Hasted, Slowed, Shield of Faith,
+ * Mage Armor floor, Barkskin floor, etc.
+ */
+export function effectiveAC(baseAC: number, conditions: string[], dexMod: number): EffectiveStat {
+  const out: EffectiveStat = { value: baseAC, base: baseAC, notes: [] };
+  const set = new Set(conditions.map(c => c.toLowerCase()));
+
+  // Modifiers from active spell buffs
+  if (set.has('hasted')) {
+    out.value += 2;
+    out.notes.push('+2 Hasted');
+  }
+  if (set.has('slowed')) {
+    out.value -= 2;
+    out.notes.push('-2 Slowed');
+  }
+  if (set.has('shielded')) {
+    // Shield of Faith
+    out.value += 2;
+    out.notes.push('+2 Shield of Faith');
+  }
+
+  // Floor effects: Mage Armor sets AC = 13 + DEX mod (only if higher
+  // than current). The 5e rule is "you can't wear armor", but we don't
+  // know whether the base AC came from worn armor — we just use the
+  // higher value.
+  if (set.has('mage-armored')) {
+    const mageArmorAC = 13 + dexMod;
+    if (mageArmorAC > out.value) {
+      const diff = mageArmorAC - out.value;
+      out.value = mageArmorAC;
+      out.notes.push(`+${diff} Mage Armor (13+DEX)`);
+    }
+  }
+
+  // Barkskin: AC = max(currentAC, 16)
+  if (set.has('barkskin')) {
+    if (16 > out.value) {
+      const diff = 16 - out.value;
+      out.value = 16;
+      out.notes.push(`+${diff} Barkskin (min 16)`);
+    }
+  }
+
+  return out;
+}
+
+/**
+ * Compute the effective movement speed for a token in feet, applying
+ * speed-changing conditions. Returns 0 for grappled/restrained/paralyzed/
+ * stunned/petrified/unconscious. Hasted doubles, Slowed halves.
+ */
+export function effectiveSpeed(baseSpeed: number, conditions: string[]): EffectiveStat {
+  const out: EffectiveStat = { value: baseSpeed, base: baseSpeed, notes: [] };
+  const set = new Set(conditions.map(c => c.toLowerCase()));
+
+  // Speed = 0 conditions (these all set the speed to 0 outright per RAW)
+  if (set.has('grappled')) {
+    out.value = 0;
+    out.notes.push('Grappled (speed 0)');
+    return out;
+  }
+  if (set.has('restrained')) {
+    out.value = 0;
+    out.notes.push('Restrained (speed 0)');
+    return out;
+  }
+  if (set.has('paralyzed')) {
+    out.value = 0;
+    out.notes.push('Paralyzed (speed 0)');
+    return out;
+  }
+  if (set.has('stunned')) {
+    out.value = 0;
+    out.notes.push('Stunned (speed 0)');
+    return out;
+  }
+  if (set.has('petrified')) {
+    out.value = 0;
+    out.notes.push('Petrified (speed 0)');
+    return out;
+  }
+  if (set.has('unconscious')) {
+    out.value = 0;
+    out.notes.push('Unconscious (speed 0)');
+    return out;
+  }
+
+  // Speed multipliers
+  if (set.has('hasted')) {
+    out.value *= 2;
+    out.notes.push(`×2 Hasted`);
+  }
+  if (set.has('slowed')) {
+    out.value = Math.floor(out.value / 2);
+    out.notes.push(`÷2 Slowed`);
+  }
+
+  return out;
+}
+
 // --- Internal helpers ---
 
 function applyAdvantage(
