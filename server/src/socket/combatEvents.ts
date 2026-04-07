@@ -2,6 +2,7 @@ import type { Server, Socket } from 'socket.io';
 import { getPlayerBySocketId } from '../utils/roomState.js';
 import * as CombatService from '../services/CombatService.js';
 import * as DiceService from '../services/DiceService.js';
+import * as ConditionService from '../services/ConditionService.js';
 import { getSpellAnimation } from '@dnd-vtt/shared';
 import {
   combatStartSchema, combatRollInitiativeSchema, combatSetInitiativeSchema,
@@ -24,6 +25,30 @@ export function registerCombatEvents(io: Server, socket: Socket): void {
       io.to(ctx.room.sessionId).emit('combat:started', {
         combatants: combatState.combatants,
         roundNumber: combatState.roundNumber,
+      });
+
+      // Announce the initiative order in chat as a system message so
+      // players can see the rolls and the resulting order at a glance.
+      const lines: string[] = ['⚔️ Combat begins! Initiative order:'];
+      combatState.combatants.forEach((c, idx) => {
+        const marker = idx === 0 ? '▶' : ' ';
+        const tag = c.isNPC ? '' : ' (PC)';
+        lines.push(`   ${marker} ${idx + 1}. ${c.name}${tag} — ${c.initiative}`);
+      });
+      lines.push(`   Round 1 — ${combatState.combatants[0]?.name ?? '?'}'s turn`);
+
+      const startMsgId = (Math.random() + 1).toString(36).substring(2);
+      io.to(ctx.room.sessionId).emit('chat:new-message', {
+        id: startMsgId,
+        sessionId: ctx.room.sessionId,
+        userId: 'system',
+        displayName: 'System',
+        type: 'system',
+        content: lines.join('\n'),
+        characterName: null,
+        whisperTo: null,
+        rollData: null,
+        createdAt: new Date().toISOString(),
       });
 
       // NPC initiatives are pre-rolled (grouped by name) in startCombat.
@@ -150,6 +175,18 @@ export function registerCombatEvents(io: Server, socket: Socket): void {
     if (!isDM && !isCurrentOwner) return;
 
     try {
+      // BEFORE advancing, tick the conditions on the combatant whose
+      // turn is ENDING — that's the right time to roll save retries
+      // for Hold Person etc. and to expire 1-round buffs.
+      const endingCombatant = state.combatants[state.currentTurnIndex];
+      const tickResult = endingCombatant
+        ? ConditionService.tickConditionsForToken(
+            ctx.room.sessionId,
+            endingCombatant.tokenId,
+            state.roundNumber,
+          )
+        : { removed: [], messages: [] };
+
       const result = CombatService.nextTurn(ctx.room.sessionId);
       io.to(ctx.room.sessionId).emit('combat:turn-advanced', {
         currentTurnIndex: result.currentTurnIndex,
@@ -157,12 +194,29 @@ export function registerCombatEvents(io: Server, socket: Socket): void {
         actionEconomy: result.actionEconomy,
       });
 
+      // If conditions were removed during the tick, broadcast the new
+      // condition list for the ending combatant's token.
+      if (endingCombatant && tickResult.removed.length > 0) {
+        const updatedToken = ctx.room.tokens.get(endingCombatant.tokenId);
+        if (updatedToken) {
+          io.to(ctx.room.sessionId).emit('map:token-updated', {
+            tokenId: endingCombatant.tokenId,
+            changes: { conditions: updatedToken.conditions },
+          });
+        }
+      }
+
       // Announce the new turn in chat as a system message so the round
       // count and current combatant are visible without looking at the
-      // initiative tracker.
-      const announcement = result.skippedTokenIds.length > 0
+      // initiative tracker. Includes any condition tick messages from
+      // the previous combatant's turn end (Hold Person save retries,
+      // expiring buffs, etc.).
+      const lines: string[] = [];
+      for (const m of tickResult.messages) lines.push(m);
+      lines.push(result.skippedTokenIds.length > 0
         ? `⚔️ Round ${result.roundNumber} — ${result.currentCombatant.name}'s turn (skipped ${result.skippedTokenIds.length} downed)`
-        : `⚔️ Round ${result.roundNumber} — ${result.currentCombatant.name}'s turn`;
+        : `⚔️ Round ${result.roundNumber} — ${result.currentCombatant.name}'s turn`);
+      const announcement = lines.join('\n');
 
       // Emit as a system chat message that gets persisted + broadcast.
       // Inline the message construction to avoid pulling in another import.
