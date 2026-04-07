@@ -192,8 +192,22 @@ export function registerMapEvents(io: Server, socket: Socket): void {
     const token = ctx.room.tokens.get(tokenId);
     if (!token) return;
 
-    // Only DM or token owner can update
-    if (ctx.player.role !== 'dm' && token.ownerUserId !== ctx.player.userId) return;
+    // Permission check:
+    //   • DM can do anything
+    //   • Token owner can do anything to their own token
+    //   • Any player can update an UNOWNED (NPC) token if the change is
+    //     limited to game-state fields (position, conditions). This is what
+    //     lets a player's Thunderwave push back a bandit, apply paralyzed
+    //     from Hold Person, etc. Without this NPC effects from player-cast
+    //     spells silently fail.
+    const isDM = ctx.player.role === 'dm';
+    const isOwner = token.ownerUserId === ctx.player.userId;
+    if (!isDM && !isOwner) {
+      const isUnownedNpc = token.ownerUserId === null;
+      const allowedFields = new Set(['x', 'y', 'conditions']);
+      const onlyGameStateChanges = Object.keys(changes).every((k) => allowedFields.has(k));
+      if (!isUnownedNpc || !onlyGameStateChanges) return;
+    }
 
     // Apply changes in memory
     Object.assign(token, changes);

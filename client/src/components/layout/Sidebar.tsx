@@ -9,12 +9,14 @@ import {
 } from 'lucide-react';
 import { useSessionStore } from '../../stores/useSessionStore';
 import { useCombatStore } from '../../stores/useCombatStore';
+import { useMapStore } from '../../stores/useMapStore';
 import { InitiativeTracker } from '../combat/InitiativeTracker';
 import { CharacterSheet } from '../character/CharacterSheet';
 import { ChatPanel } from '../chat/ChatPanel';
 import { PlayerList } from '../session/PlayerList';
 import { DMToolbar } from '../dm/DMToolbar';
 import { CompendiumPanel } from '../compendium/CompendiumPanel';
+import { emitStartCombat, emitEndCombat } from '../../socket/emitters';
 import { theme } from '../../styles/theme';
 
 type TabId = 'combat' | 'character' | 'compendium' | 'chat' | 'players' | 'dm';
@@ -92,25 +94,65 @@ export function Sidebar() {
 function CombatPanel() {
   const combatActive = useCombatStore((s) => s.active);
   const isDM = useSessionStore((s) => s.isDM);
+  const tokens = useMapStore((s) => s.tokens);
+  const tokenCount = Object.keys(tokens).length;
+
+  // DM-only Start/End Combat button. The label flips based on whether
+  // combat is currently active.
+  const combatButton = isDM && (
+    combatActive ? (
+      <button
+        style={styles.combatEndButton}
+        onClick={() => emitEndCombat()}
+      >
+        End Combat
+      </button>
+    ) : (
+      <button
+        style={{
+          ...styles.combatStartButton,
+          ...(tokenCount === 0 ? styles.combatButtonDisabled : {}),
+        }}
+        disabled={tokenCount === 0}
+        onClick={() => {
+          const tokenIds = Object.keys(tokens);
+          if (tokenIds.length > 0) emitStartCombat(tokenIds);
+        }}
+      >
+        Start Combat
+      </button>
+    )
+  );
 
   if (!combatActive) {
     return (
-      <div style={styles.emptyState}>
-        <Swords size={32} color={theme.text.muted} />
-        <p style={{ color: theme.text.secondary, margin: 0 }}>
-          No combat active
-        </p>
-        {isDM && (
-          <p style={{ color: theme.text.muted, fontSize: 12, margin: 0 }}>
-            Select tokens on the map and start combat from DM Tools.
+      <div style={styles.combatPanel}>
+        {combatButton}
+        <div style={styles.emptyState}>
+          <Swords size={32} color={theme.text.muted} />
+          <p style={{ color: theme.text.secondary, margin: 0 }}>
+            No combat active
           </p>
-        )}
+          {isDM && (
+            <p style={{ color: theme.text.muted, fontSize: 12, margin: 0, textAlign: 'center' }}>
+              {tokenCount === 0
+                ? 'Place tokens on the map first.'
+                : `${tokenCount} token${tokenCount !== 1 ? 's' : ''} ready to enter initiative.`}
+            </p>
+          )}
+          {!isDM && (
+            <p style={{ color: theme.text.muted, fontSize: 12, margin: 0, textAlign: 'center' }}>
+              Wait for the DM to start combat.
+            </p>
+          )}
+        </div>
       </div>
     );
   }
 
   return (
-    <div style={{ padding: 16 }}>
+    <div style={styles.combatPanel}>
+      {combatButton}
       <InitiativeTracker />
     </div>
   );
@@ -181,5 +223,44 @@ const styles: Record<string, React.CSSProperties> = {
     gap: 12,
     padding: 40,
     textAlign: 'center' as const,
+  },
+  combatPanel: {
+    display: 'flex',
+    flexDirection: 'column' as const,
+    height: '100%',
+    padding: 12,
+    gap: 12,
+  },
+  combatStartButton: {
+    padding: '10px 16px',
+    background: theme.gold.bg,
+    color: theme.gold.primary,
+    border: `1px solid ${theme.gold.border}`,
+    borderRadius: 6,
+    fontWeight: 700,
+    fontSize: 13,
+    cursor: 'pointer',
+    textTransform: 'uppercase' as const,
+    letterSpacing: '0.05em',
+    fontFamily: 'inherit',
+    transition: 'all 0.15s',
+  },
+  combatEndButton: {
+    padding: '10px 16px',
+    background: 'rgba(197,49,49,0.15)',
+    color: '#e74c3c',
+    border: `1px solid rgba(197,49,49,0.5)`,
+    borderRadius: 6,
+    fontWeight: 700,
+    fontSize: 13,
+    cursor: 'pointer',
+    textTransform: 'uppercase' as const,
+    letterSpacing: '0.05em',
+    fontFamily: 'inherit',
+    transition: 'all 0.15s',
+  },
+  combatButtonDisabled: {
+    opacity: 0.4,
+    cursor: 'not-allowed' as const,
   },
 };

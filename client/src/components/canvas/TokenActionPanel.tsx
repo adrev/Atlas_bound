@@ -1584,17 +1584,27 @@ async function castSelfSpell(spell: any, casterTokenId: string, casterName: stri
       }
     }
 
-    // Pushback (only if alive after damage)
-    if (pushDistance > 0 && (finalDmg === 0 || aHp - finalDmg > 0 || !aSaved)) {
+    // Pushback fires BEFORE the damage tick (delay vs delay+300), so dead
+    // targets still move visually. For Thunderwave the rule is "pushed 10
+    // feet on a failed save"; saved targets aren't pushed.
+    const shouldPush = pushDistance > 0 && (!resolvedSavingThrow || !aSaved);
+    if (shouldPush) {
+      // Compute direction from caster to target. If they're stacked exactly,
+      // pick a default direction so we still see SOME movement.
+      let dx = aToken.x - casterX;
+      let dy = aToken.y - casterY;
+      const rawDist = Math.sqrt(dx * dx + dy * dy);
+      if (rawDist === 0) { dx = gridSize; dy = 0; }
+      const dist = rawDist || gridSize;
+      const pushPixels = (pushDistance / 5) * gridSize;
+      const newX = Math.round(aToken.x + (dx / dist) * pushPixels);
+      const newY = Math.round(aToken.y + (dy / dist) * pushPixels);
       lineParts.push(`pushed ${pushDistance} ft`);
       setTimeout(() => {
-        const dx = aToken.x - casterX;
-        const dy = aToken.y - casterY;
-        const dist = Math.sqrt(dx * dx + dy * dy) || 1;
-        const pushPixels = (pushDistance / 5) * gridSize;
-        const newX = aToken.x + (dx / dist) * pushPixels;
-        const newY = aToken.y + (dy / dist) * pushPixels;
-        emitTokenUpdate(aToken.id, { x: Math.round(newX), y: Math.round(newY) });
+        // Update the local store immediately so the player sees the move
+        // even if the server's broadcast is delayed.
+        useMapStore.getState().updateToken(aToken.id, { x: newX, y: newY } as any);
+        emitTokenUpdate(aToken.id, { x: newX, y: newY });
       }, delay);
     }
 

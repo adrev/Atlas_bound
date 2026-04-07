@@ -1,12 +1,7 @@
 import { useState, useCallback } from 'react';
 import { useMapStore } from '../../stores/useMapStore';
 import { useSessionStore } from '../../stores/useSessionStore';
-import { useCombatStore } from '../../stores/useCombatStore';
-import {
-  emitStartCombat,
-  emitEndCombat,
-  emitUpdateSettings,
-} from '../../socket/emitters';
+import { emitUpdateSettings } from '../../socket/emitters';
 import { CreatureLibrary } from './CreatureLibrary';
 import { theme } from '../../styles/theme';
 
@@ -14,8 +9,6 @@ type DMView = 'main' | 'creatures' | 'settings';
 
 export function DMToolbar() {
   const [view, setView] = useState<DMView>('main');
-  const combatActive = useCombatStore((s) => s.active);
-  const tokens = useMapStore((s) => s.tokens);
   const currentMap = useMapStore((s) => s.currentMap);
   const settings = useSessionStore((s) => s.settings);
 
@@ -77,38 +70,7 @@ export function DMToolbar() {
         </button>
       </Section>
 
-      {/* Combat */}
-      <Section title="Combat">
-        {!combatActive ? (
-          <>
-            <button
-              style={styles.dangerButton}
-              onClick={() => {
-                const tokenIds = Object.keys(tokens);
-                if (tokenIds.length > 0) emitStartCombat(tokenIds);
-              }}
-              disabled={Object.keys(tokens).length === 0}
-            >
-              Start Combat
-            </button>
-            <p style={styles.hint}>
-              {Object.keys(tokens).length === 0
-                ? 'Place tokens on the map first'
-                : `${Object.keys(tokens).length} token(s) will enter initiative`}
-            </p>
-          </>
-        ) : (
-          <>
-            <div style={styles.combatBadge}>
-              <span style={styles.combatDot} />
-              Combat Active
-            </div>
-            <button style={styles.dangerButton} onClick={emitEndCombat}>
-              End Combat
-            </button>
-          </>
-        )}
-      </Section>
+      {/* Combat — Start/End buttons live in the dedicated Combat sidebar tab */}
 
       {/* Settings */}
       <Section title="Settings">
