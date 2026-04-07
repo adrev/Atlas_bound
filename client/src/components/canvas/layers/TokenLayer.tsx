@@ -118,11 +118,26 @@ function TokenSprite({ token, isSelected, isCurrentTurn }: TokenSpriteProps) {
   const isDead = (charHp !== null && charHp <= 0) || (combatant && combatant.hp <= 0);
   const isNPC = !token.ownerUserId;
 
+  // Visibility state — DM sees invisible tokens dimmed so they can still
+  // be moved/managed but it's clear they're hidden from players
+  const tokenConditions = (token.conditions || []) as string[];
+  const isInvisible = tokenConditions.includes('invisible') && !tokenConditions.includes('outlined');
+
+  // Compute opacity:
+  //   • Dead → 40%
+  //   • DM viewing a hidden token → 30%
+  //   • DM viewing an invisible token → 50% (still visible to DM)
+  //   • Otherwise → 100%
+  let groupOpacity = 1;
+  if (isDead) groupOpacity = 0.4;
+  else if (isDM && !token.visible) groupOpacity = 0.3;
+  else if (isDM && isInvisible) groupOpacity = 0.5;
+
   return (
     <Group
       x={token.x}
       y={token.y}
-      opacity={isDead ? 0.4 : (isDM && !token.visible ? 0.3 : 1)}
+      opacity={groupOpacity}
       draggable={draggable && !isDead}
       onDragEnd={onDragEnd}
       onDragMove={onDragMove}
@@ -372,9 +387,24 @@ export function TokenLayer() {
     : null;
 
   // DM sees all tokens (hidden ones rendered at low opacity).
-  // Players only see visible tokens.
+  // Players only see visible tokens AND can't see invisible enemies.
   const allTokens = Object.values(tokens);
-  const visibleTokens = isDM ? allTokens : allTokens.filter((t) => t.visible);
+  const visibleTokens = isDM
+    ? allTokens
+    : allTokens.filter((t) => {
+        if (!t.visible) return false;
+        // Same-side tokens (your own characters) are always visible to you
+        // — Greater Invisibility doesn't hide an ally from yourself.
+        if (t.ownerUserId === userId) return true;
+        // Opposing-side tokens with the Invisible condition are hidden.
+        // Faerie Fire (the "outlined" condition) cancels this in RAW —
+        // we let outlined override invisibility.
+        const conds = (t.conditions || []) as string[];
+        const isInvisible = conds.includes('invisible');
+        const isOutlined = conds.includes('outlined');
+        if (isInvisible && !isOutlined) return false;
+        return true;
+      });
 
   // For non-DM players with fog enabled, filter tokens to only those within vision
   const tokenList = useMemo(() => {
