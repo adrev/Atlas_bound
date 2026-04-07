@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { useMapStore } from '../../stores/useMapStore';
 import { useCharacterStore } from '../../stores/useCharacterStore';
 import { useSessionStore } from '../../stores/useSessionStore';
+import { useCombatStore } from '../../stores/useCombatStore';
 import { emitRoll, emitCharacterUpdate, emitTokenUpdate, emitSystemMessage } from '../../socket/emitters';
 import { enrichSpellFromDescription } from '../../utils/spell-enrich';
 import { effectiveSpellSaveDC, effectiveSpellAttackBonus } from '../../utils/spell-stats';
@@ -15,6 +16,8 @@ import {
   effectiveSpeed,
   applyDamageWithResist,
 } from '../../utils/roll-engine';
+import { getSpellDurationMeta } from '../../utils/spell-durations';
+import { emitApplyConditionWithMeta } from '../../socket/emitters';
 import { abilityModifier, calculateEquipmentBonuses, SPELL_CONDITIONS, SPELL_BUFFS, getSpellAnimation } from '@dnd-vtt/shared';
 import { useEffectStore } from '../../stores/useEffectStore';
 import { LootBagPanel } from '../loot/LootBagPanel';
@@ -626,17 +629,41 @@ export function TokenActionPanel() {
             }
           }
 
-          // Auto-apply conditions on failed save
+          // Auto-apply conditions on failed save WITH duration metadata
+          // so the server tracks Hold Person re-rolls, Sleep ends-on-damage,
+          // Bless's 10-round timer, etc.
           if (!saved) {
             const conditions = SPELL_CONDITIONS[spell.name];
             if (conditions && conditions.length > 0) {
               resultParts.push(`now ${conditions.join(', ')}`);
+              const durMeta = getSpellDurationMeta(spell.name);
+              const currentRound = useCombatStore.getState().roundNumber || 0;
+              const expiresAfterRound = currentRound > 0
+                ? currentRound + durMeta.durationRounds - 1
+                : undefined;
+              const saveRetry = durMeta.saveAbility ? {
+                ability: durMeta.saveAbility,
+                dc: casterSpellDC,
+              } : undefined;
               setTimeout(() => {
                 const targetTokenData = useMapStore.getState().tokens[targetToken.id];
                 if (targetTokenData) {
+                  // Add to local store immediately for visual feedback
                   const existingConditions = targetTokenData.conditions || [];
                   const newConditions = [...new Set([...existingConditions, ...conditions])] as any;
                   emitTokenUpdate(targetToken.id, { conditions: newConditions });
+                  // ALSO register metadata with the server for duration tracking
+                  for (const condName of conditions) {
+                    emitApplyConditionWithMeta({
+                      targetTokenId: targetToken.id,
+                      conditionName: condName,
+                      source: spell.name,
+                      casterTokenId: spell.isConcentration ? currentTargeting.casterTokenId : undefined,
+                      expiresAfterRound,
+                      saveAtEndOfTurn: saveRetry,
+                      endsOnDamage: durMeta.endsOnDamage,
+                    });
+                  }
                 }
               }, 600);
             }
@@ -678,11 +705,9 @@ export function TokenActionPanel() {
 
         // --- No effect spell (buff, utility) ---
         else {
-          // Check if it's a known buff spell. If so, apply the buff badge
-          // to the target — even though the mechanical bonuses (e.g.
-          // Bless's +1d4) aren't enforced, the visual feedback shows that
-          // the buff is active and reminds the player to apply the bonus
-          // manually until the rules engine catches up.
+          // Check if it's a known buff spell. Apply the buff badge AND
+          // register duration metadata so the server expires it
+          // automatically (Bless after 10 rounds, Mage Armor 8 hours, etc.)
           const buffs = SPELL_BUFFS[spell.name];
           if (buffs && buffs.length > 0) {
             resultParts.push(`now ${buffs.join(', ')}`);
@@ -691,6 +716,20 @@ export function TokenActionPanel() {
               const existing = targetTokenData.conditions || [];
               const newConds = [...new Set([...existing, ...buffs])] as any;
               emitTokenUpdate(targetToken.id, { conditions: newConds });
+              const durMeta = getSpellDurationMeta(spell.name);
+              const currentRound = useCombatStore.getState().roundNumber || 0;
+              const expiresAfterRound = currentRound > 0
+                ? currentRound + durMeta.durationRounds - 1
+                : undefined;
+              for (const buffName of buffs) {
+                emitApplyConditionWithMeta({
+                  targetTokenId: targetToken.id,
+                  conditionName: buffName,
+                  source: spell.name,
+                  casterTokenId: spell.isConcentration ? currentTargeting.casterTokenId : undefined,
+                  expiresAfterRound,
+                });
+              }
             }
           } else {
             resultParts.push('cast successfully');
@@ -1963,17 +2002,37 @@ async function resolveAreaSpell(
       lineParts.push(`resists pushback`);
     }
 
-    // Auto-apply conditions on failed save
+    // Auto-apply conditions on failed save WITH duration metadata
     if (resolvedSavingThrow && !aSaved) {
       const conditions = SPELL_CONDITIONS[spell.name];
       if (conditions && conditions.length > 0) {
         lineParts.push(`now ${conditions.join(', ')}`);
+        const durMeta = getSpellDurationMeta(spell.name);
+        const currentRound = useCombatStore.getState().roundNumber || 0;
+        const expiresAfterRound = currentRound > 0
+          ? currentRound + durMeta.durationRounds - 1
+          : undefined;
+        const saveRetry = durMeta.saveAbility ? {
+          ability: durMeta.saveAbility,
+          dc: casterSpellDC,
+        } : undefined;
         setTimeout(() => {
           const targetTokenData = useMapStore.getState().tokens[aToken.id];
           if (targetTokenData) {
             const existingConditions = targetTokenData.conditions || [];
             const newConditions = [...new Set([...existingConditions, ...conditions])] as any;
             emitTokenUpdate(aToken.id, { conditions: newConditions });
+            for (const condName of conditions) {
+              emitApplyConditionWithMeta({
+                targetTokenId: aToken.id,
+                conditionName: condName,
+                source: spell.name,
+                casterTokenId: spell.isConcentration ? casterTokenId : undefined,
+                expiresAfterRound,
+                saveAtEndOfTurn: saveRetry,
+                endsOnDamage: durMeta.endsOnDamage,
+              });
+            }
           }
         }, delay + 500);
       }

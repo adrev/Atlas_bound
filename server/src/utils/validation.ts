@@ -126,6 +126,27 @@ export const combatConditionSchema = z.object({
   ]),
 });
 
+/**
+ * Schema for the metadata-aware condition application event. Unlike
+ * combat:condition-add, this accepts ANY condition string (so buffs
+ * like 'blessed', 'hasted' work) plus optional duration / save retry
+ * metadata. Used by the cast resolver to register Bless's 10-round
+ * timer, Hold Person's WIS save retry, etc.
+ */
+export const conditionWithMetaSchema = z.object({
+  targetTokenId: z.string().min(1),
+  conditionName: z.string().min(1).max(40),
+  source: z.string().min(1).max(80),
+  casterTokenId: z.string().optional(),
+  expiresAfterRound: z.number().int().optional(),
+  saveAtEndOfTurn: z.object({
+    ability: z.enum(['str', 'dex', 'con', 'int', 'wis', 'cha']),
+    dc: z.number().int().min(1).max(40),
+    advantage: z.boolean().optional(),
+  }).optional(),
+  endsOnDamage: z.boolean().optional(),
+});
+
 export const combatDeathSaveSchema = z.object({
   tokenId: z.string().min(1),
 });

@@ -8,7 +8,7 @@ import {
   combatStartSchema, combatRollInitiativeSchema, combatSetInitiativeSchema,
   combatDamageSchema, combatHealSchema, combatConditionSchema,
   combatDeathSaveSchema, combatUseActionSchema, combatUseMovementSchema,
-  combatCastSpellSchema,
+  combatCastSpellSchema, conditionWithMetaSchema,
 } from '../utils/validation.js';
 
 export function registerCombatEvents(io: Server, socket: Socket): void {
@@ -434,5 +434,79 @@ export function registerCombatEvents(io: Server, socket: Socket): void {
       aoeSize: spellEvent.aoeSize,
       aoeDirection: spellEvent.aoeDirection,
     });
+  });
+
+  // ----------------------------------------------------------------------
+  // condition:apply-with-meta — register a duration-tracked condition
+  // ----------------------------------------------------------------------
+  socket.on('condition:apply-with-meta', (data) => {
+    const parsed = conditionWithMetaSchema.safeParse(data);
+    if (!parsed.success) return;
+
+    const ctx = getPlayerBySocketId(socket.id);
+    if (!ctx) return;
+
+    const room = ctx.room;
+    const targetToken = room.tokens.get(parsed.data.targetTokenId);
+    if (!targetToken) return;
+
+    // Apply via the service which handles both the conditions array AND
+    // the metadata map
+    ConditionService.applyConditionWithMeta(ctx.room.sessionId, parsed.data.targetTokenId, {
+      name: parsed.data.conditionName.toLowerCase(),
+      source: parsed.data.source,
+      casterTokenId: parsed.data.casterTokenId,
+      appliedRound: room.combatState?.roundNumber ?? 1,
+      expiresAfterRound: parsed.data.expiresAfterRound,
+      saveAtEndOfTurn: parsed.data.saveAtEndOfTurn,
+      endsOnDamage: parsed.data.endsOnDamage,
+    });
+
+    // Broadcast the updated conditions array so clients see the badge
+    io.to(ctx.room.sessionId).emit('map:token-updated', {
+      tokenId: parsed.data.targetTokenId,
+      changes: { conditions: targetToken.conditions },
+    });
+  });
+
+  // ----------------------------------------------------------------------
+  // concentration:dropped — clear all conditions sourced from a caster's
+  // concentration spell. Called when the caster takes damage and fails
+  // the CON save, OR voluntarily switches concentration.
+  // ----------------------------------------------------------------------
+  socket.on('concentration:dropped', (data: { casterTokenId?: string; spellName?: string }) => {
+    if (!data?.casterTokenId || !data?.spellName) return;
+    const ctx = getPlayerBySocketId(socket.id);
+    if (!ctx) return;
+
+    const cleared = ConditionService.clearConcentrationConditions(
+      ctx.room.sessionId, data.casterTokenId, data.spellName,
+    );
+
+    // Broadcast the updated conditions for each affected token
+    for (const { tokenId } of cleared) {
+      const t = ctx.room.tokens.get(tokenId);
+      if (t) {
+        io.to(ctx.room.sessionId).emit('map:token-updated', {
+          tokenId, changes: { conditions: t.conditions },
+        });
+      }
+    }
+
+    if (cleared.length > 0) {
+      const now = new Date().toISOString();
+      io.to(ctx.room.sessionId).emit('chat:new-message', {
+        id: (Math.random() + 1).toString(36).substring(2),
+        sessionId: ctx.room.sessionId,
+        userId: 'system',
+        displayName: 'System',
+        type: 'system',
+        content: `⚡ Concentration on ${data.spellName} dropped — ${cleared.length} affected creature${cleared.length !== 1 ? 's' : ''} freed`,
+        characterName: null,
+        whisperTo: null,
+        rollData: null,
+        createdAt: now,
+      });
+    }
   });
 }

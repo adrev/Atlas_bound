@@ -137,6 +137,38 @@ export function emitCastSpell(event: SpellCastEvent) {
   getSocket().emit('combat:cast-spell', event);
 }
 
+// --- Conditions with metadata (Phase 5 — duration tracking) ---
+
+export interface ConditionApplyOptions {
+  targetTokenId: string;
+  conditionName: string;
+  source: string;
+  casterTokenId?: string;
+  /** Combat round AFTER which the condition auto-expires */
+  expiresAfterRound?: number;
+  saveAtEndOfTurn?: { ability: 'str' | 'dex' | 'con' | 'int' | 'wis' | 'cha'; dc: number; advantage?: boolean };
+  endsOnDamage?: boolean;
+}
+
+/**
+ * Apply a condition to a token AND register duration / save retry metadata
+ * with the server. The server will automatically expire the condition
+ * after the duration, roll save retries at end of turn for spells like
+ * Hold Person, and clean up on concentration drop.
+ */
+export function emitApplyConditionWithMeta(opts: ConditionApplyOptions) {
+  getSocket().emit('condition:apply-with-meta', opts);
+}
+
+/**
+ * Notify the server that a caster has dropped concentration on a spell.
+ * The server clears every condition anchored to (casterTokenId, spellName)
+ * across the room and broadcasts the updated tokens.
+ */
+export function emitConcentrationDropped(casterTokenId: string, spellName: string) {
+  getSocket().emit('concentration:dropped', { casterTokenId, spellName });
+}
+
 // --- Character ---
 /**
  * Emit a character update to the server AND apply it locally so the UI
