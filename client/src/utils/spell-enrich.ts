@@ -50,15 +50,29 @@ export function parseSpellMetaFromDesc(description: string): Partial<Spell> {
   if (/ranged spell attack/i.test(cleanDesc)) out.attackType = 'ranged';
   else if (/melee spell attack/i.test(cleanDesc)) out.attackType = 'melee';
 
-  // AoE shape + size
-  const aoeMatch = cleanDesc.match(/(\d+)[- ]foot[- ](radius|sphere|cube|cone|line|cylinder|emanation)/i);
-  if (aoeMatch) {
-    out.aoeSize = parseInt(aoeMatch[1]);
-    const shape = aoeMatch[2].toLowerCase();
-    if (shape === 'cube') out.aoeType = 'cube';
-    else if (shape === 'cone') out.aoeType = 'cone';
-    else if (shape === 'line') out.aoeType = 'line';
-    else if (shape === 'cylinder') out.aoeType = 'cylinder';
+  // AoE shape + size. Spell descriptions use TWO common patterns:
+  //   • "20-foot-radius sphere" / "15 foot cube"  → number FIRST
+  //   • "line 100 feet long" / "cone 60 feet"    → shape FIRST (Lightning Bolt!)
+  // Try both. The matched shape word picks the AoE type.
+  let aoeShape: string | null = null;
+  let aoeSizeNum: number | null = null;
+  const m1 = cleanDesc.match(/(\d+)[- ]?(?:foot|feet)[- ]?(?:long\s+|wide\s+)?(radius|sphere|cube|cone|line|cylinder|emanation)/i);
+  if (m1) {
+    aoeSizeNum = parseInt(m1[1]);
+    aoeShape = m1[2].toLowerCase();
+  } else {
+    const m2 = cleanDesc.match(/(line|sphere|cube|cone|cylinder|radius|emanation)\s+(\d+)\s*(?:feet|foot)/i);
+    if (m2) {
+      aoeShape = m2[1].toLowerCase();
+      aoeSizeNum = parseInt(m2[2]);
+    }
+  }
+  if (aoeShape && aoeSizeNum !== null) {
+    out.aoeSize = aoeSizeNum;
+    if (aoeShape === 'cube') out.aoeType = 'cube';
+    else if (aoeShape === 'cone') out.aoeType = 'cone';
+    else if (aoeShape === 'line') out.aoeType = 'line';
+    else if (aoeShape === 'cylinder') out.aoeType = 'cylinder';
     else out.aoeType = 'sphere';
   }
 

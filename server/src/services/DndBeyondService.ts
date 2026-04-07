@@ -601,14 +601,23 @@ function enrichSpellInPlaceFromDescription(spell: Spell): void {
   }
 
   if (!spell.aoeType) {
-    const aoeMatch = cleanDesc.match(/(\d+)[- ]foot[- ](radius|sphere|cube|cone|line|cylinder|emanation)/i);
-    if (aoeMatch) {
-      spell.aoeSize = parseInt(aoeMatch[1]);
-      const shape = aoeMatch[2].toLowerCase();
-      if (shape === 'cube') spell.aoeType = 'cube';
-      else if (shape === 'cone') spell.aoeType = 'cone';
-      else if (shape === 'line') spell.aoeType = 'line';
-      else if (shape === 'cylinder') spell.aoeType = 'cylinder';
+    // Match BOTH patterns:
+    //   • "20-foot-radius sphere" / "15 foot cube"  → number FIRST
+    //   • "line 100 feet long" / "cone 60 feet"    → shape FIRST (Lightning Bolt!)
+    let parsedShape: string | null = null;
+    let parsedSize: number | null = null;
+    const m1 = cleanDesc.match(/(\d+)[- ]?(?:foot|feet)[- ]?(?:long\s+|wide\s+)?(radius|sphere|cube|cone|line|cylinder|emanation)/i);
+    if (m1) { parsedSize = parseInt(m1[1]); parsedShape = m1[2].toLowerCase(); }
+    else {
+      const m2 = cleanDesc.match(/(line|sphere|cube|cone|cylinder|radius|emanation)\s+(\d+)\s*(?:feet|foot)/i);
+      if (m2) { parsedShape = m2[1].toLowerCase(); parsedSize = parseInt(m2[2]); }
+    }
+    if (parsedShape && parsedSize !== null) {
+      spell.aoeSize = parsedSize;
+      if (parsedShape === 'cube') spell.aoeType = 'cube';
+      else if (parsedShape === 'cone') spell.aoeType = 'cone';
+      else if (parsedShape === 'line') spell.aoeType = 'line';
+      else if (parsedShape === 'cylinder') spell.aoeType = 'cylinder';
       else spell.aoeType = 'sphere';
     }
   }

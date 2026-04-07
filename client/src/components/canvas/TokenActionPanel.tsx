@@ -4,7 +4,7 @@ import { useCharacterStore } from '../../stores/useCharacterStore';
 import { useSessionStore } from '../../stores/useSessionStore';
 import { emitRoll, emitCharacterUpdate, emitTokenUpdate, emitSystemMessage } from '../../socket/emitters';
 import { enrichSpellFromDescription } from '../../utils/spell-enrich';
-import { abilityModifier, calculateEquipmentBonuses, SPELL_CONDITIONS, getSpellAnimation } from '@dnd-vtt/shared';
+import { abilityModifier, calculateEquipmentBonuses, SPELL_CONDITIONS, SPELL_BUFFS, getSpellAnimation } from '@dnd-vtt/shared';
 import { useEffectStore } from '../../stores/useEffectStore';
 import { LootBagPanel } from '../loot/LootBagPanel';
 
@@ -604,7 +604,23 @@ export function TokenActionPanel() {
 
         // --- No effect spell (buff, utility) ---
         else {
-          resultParts.push('cast successfully');
+          // Check if it's a known buff spell. If so, apply the buff badge
+          // to the target — even though the mechanical bonuses (e.g.
+          // Bless's +1d4) aren't enforced, the visual feedback shows that
+          // the buff is active and reminds the player to apply the bonus
+          // manually until the rules engine catches up.
+          const buffs = SPELL_BUFFS[spell.name];
+          if (buffs && buffs.length > 0) {
+            resultParts.push(`now ${buffs.join(', ')}`);
+            const targetTokenData = useMapStore.getState().tokens[targetToken.id];
+            if (targetTokenData) {
+              const existing = targetTokenData.conditions || [];
+              const newConds = [...new Set([...existing, ...buffs])] as any;
+              emitTokenUpdate(targetToken.id, { conditions: newConds });
+            }
+          } else {
+            resultParts.push('cast successfully');
+          }
         }
 
         emitSystemMessage([...headerLines, `   • ${targetName}: ${resultParts.join(' • ')}`].join('\n'));
@@ -1473,7 +1489,9 @@ async function parseSpellMeta(spell: any, casterLevel: number): Promise<SpellAoe
     }
   }
 
-  // AoE shape & size
+  // AoE shape & size. Match BOTH patterns:
+  //   • "20-foot-radius sphere" / "15 foot cube"  → number FIRST
+  //   • "line 100 feet long" / "cone 60 feet"    → shape FIRST (Lightning Bolt!)
   let aoeRadius = spell.aoeSize || 0;
   let aoeShape: 'sphere' | 'cube' | 'cone' | 'line' = 'sphere';
   let hasAoe = false;
@@ -1482,13 +1500,19 @@ async function parseSpellMeta(spell: any, casterLevel: number): Promise<SpellAoe
   else if (spell.aoeType === 'line') { aoeShape = 'line'; hasAoe = true; }
   else if (spell.aoeType === 'sphere' || spell.aoeType === 'cylinder') { aoeShape = 'sphere'; hasAoe = true; }
   if (!aoeRadius) {
-    const radiusMatch = cleanDesc.match(/(\d+)[- ]foot[- ](radius|cube|cone|line|emanation|sphere)/i);
-    if (radiusMatch) {
-      aoeRadius = parseInt(radiusMatch[1]);
-      const shape = radiusMatch[2].toLowerCase();
-      if (shape === 'cube') aoeShape = 'cube';
-      else if (shape === 'cone') aoeShape = 'cone';
-      else if (shape === 'line') aoeShape = 'line';
+    let parsedShape: string | null = null;
+    let parsedSize: number | null = null;
+    const m1 = cleanDesc.match(/(\d+)[- ]?(?:foot|feet)[- ]?(?:long\s+|wide\s+)?(radius|sphere|cube|cone|line|cylinder|emanation)/i);
+    if (m1) { parsedSize = parseInt(m1[1]); parsedShape = m1[2].toLowerCase(); }
+    else {
+      const m2 = cleanDesc.match(/(line|sphere|cube|cone|cylinder|radius|emanation)\s+(\d+)\s*(?:feet|foot)/i);
+      if (m2) { parsedShape = m2[1].toLowerCase(); parsedSize = parseInt(m2[2]); }
+    }
+    if (parsedShape && parsedSize !== null) {
+      aoeRadius = parsedSize;
+      if (parsedShape === 'cube') aoeShape = 'cube';
+      else if (parsedShape === 'cone') aoeShape = 'cone';
+      else if (parsedShape === 'line') aoeShape = 'line';
       else aoeShape = 'sphere';
       hasAoe = true;
     }
@@ -1678,6 +1702,36 @@ async function resolveAreaSpell(
   // Clean up the temporary markers so a re-cast doesn't see stale data
   delete (spell as any).__castAtLevel;
   delete (spell as any).__dmOverride;
+
+  // Trigger the spell animation. For AoE shapes the animation plays at
+  // the AoE origin (sphere/cube center, or the cone/line tip) so the
+  // user gets visual feedback for Lightning Bolt, Burning Hands, etc.
+  // The single-target useEffect path triggers animations separately.
+  const spellAnim = getSpellAnimation(spell.name);
+  if (spellAnim) {
+    // For directional shapes (cone/line), the "target" is the far end of
+    // the shape. For sphere/cube, it's the origin itself.
+    let animTarget = aoeOrigin;
+    if (aoeShape === 'cone' || aoeShape === 'line') {
+      const sizePixels = (aoeRadius / 5) * gridSize;
+      const rad = (rotationDeg * Math.PI) / 180;
+      animTarget = {
+        x: aoeOrigin.x + Math.cos(rad) * sizePixels,
+        y: aoeOrigin.y + Math.sin(rad) * sizePixels,
+      };
+    }
+    useEffectStore.getState().addAnimation({
+      id: `spell-${Date.now()}-${Math.random()}`,
+      casterPosition: { x: casterX, y: casterY },
+      targetPosition: animTarget,
+      animationType: spellAnim.type,
+      color: spellAnim.color,
+      secondaryColor: spellAnim.secondaryColor || spellAnim.color,
+      duration: spellAnim.duration,
+      particleCount: spellAnim.particleCount || 20,
+      startedAt: Date.now(),
+    });
+  }
 
   if (affectedTokens.length === 0) {
     const where = excludeId ? `of ${casterName}` : 'of the spell origin';
@@ -2004,11 +2058,22 @@ function ActionBtn({ label, color, onClick }: { label: string; color: string; on
 }
 
 const CONDITION_COLORS: Record<string, string> = {
+  // Standard 5e conditions
   blinded: '#4a4a4a', charmed: '#ff69b4', deafened: '#95a5a6',
   frightened: '#9b59b6', grappled: '#e67e22', incapacitated: '#7f8c8d',
   invisible: '#3498db', paralyzed: '#f1c40f', petrified: '#bdc3c7',
   poisoned: '#27ae60', prone: '#e74c3c', restrained: '#c0392b',
   stunned: '#f39c12', unconscious: '#2c3e50', exhaustion: '#8e44ad',
+  // Buff badges (from SPELL_BUFFS) — use gold/blue for positive, dark red for debuff
+  blessed: '#d4a843', heroic: '#d4a843', aided: '#27ae60',
+  shielded: '#3498db', 'mage-armored': '#3498db', protected: '#3498db',
+  sanctuary: '#ffd700', hasted: '#1abc9c', enlarged: '#e67e22',
+  reduced: '#9b59b6', stoneskin: '#7f8c8d', 'death-warded': '#d4a843',
+  flying: '#87ceeb', 'spider-climbing': '#8b4513', jumping: '#1abc9c',
+  stealthy: '#4a4a4a', barkskin: '#6b8e23', 'temp-hp': '#95a5a6',
+  'true-strike': '#d4a843', marked: '#c0392b', hexed: '#9b59b6',
+  outlined: '#ffd700', baned: '#8b0000', slowed: '#7f8c8d',
+  cursed: '#7e3a96', weakened: '#6b6b6b',
 };
 
 const ALL_CONDITIONS = Object.keys(CONDITION_COLORS);
