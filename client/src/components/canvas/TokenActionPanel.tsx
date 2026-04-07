@@ -13,6 +13,7 @@ import {
   rollSaveWithModifiers,
   effectiveAC,
   effectiveSpeed,
+  applyDamageWithResist,
 } from '../../utils/roll-engine';
 import { abilityModifier, calculateEquipmentBonuses, SPELL_CONDITIONS, SPELL_BUFFS, getSpellAnimation } from '@dnd-vtt/shared';
 import { useEffectStore } from '../../stores/useEffectStore';
@@ -90,6 +91,34 @@ function parse<T>(val: unknown, fallback: T): T {
 }
 
 function fmtMod(n: number): string { return n >= 0 ? `+${n}` : String(n); }
+
+/**
+ * Apply damage to a target after running it through the resistance /
+ * immunity / vulnerability system. Reads the target character's
+ * defenses arrays and any active conditions (Stoneskin, Petrified) to
+ * adjust the final amount. Returns the adjusted amount and a chat
+ * note describing what happened.
+ */
+function applyResistedDamage(
+  baseAmount: number,
+  damageType: string,
+  targetChar: unknown,
+  targetConditions: string[],
+): { final: number; note: string } {
+  let defenses: { resistances: string[]; immunities: string[]; vulnerabilities: string[] } = {
+    resistances: [], immunities: [], vulnerabilities: [],
+  };
+  const tc = targetChar as { defenses?: unknown } | null | undefined;
+  if (tc?.defenses) {
+    if (typeof tc.defenses === 'string') {
+      try { defenses = JSON.parse(tc.defenses); } catch { /* ignore */ }
+    } else {
+      defenses = tc.defenses as typeof defenses;
+    }
+  }
+  const result = applyDamageWithResist(baseAmount, damageType, defenses, targetConditions, true);
+  return { final: result.amount, note: result.source };
+}
 
 /**
  * Roll dice notation like "2d8", "3d6+2", "1d10" and return the actual total.
@@ -549,11 +578,14 @@ export function TokenActionPanel() {
 
           if (isHit && damageDice && effectiveCharId) {
             const finalDice = isCrit ? damageDice.replace(/(\d+)d/, (_: string, n: string) => `${parseInt(n) * 2}d`) : damageDice;
-            const dmg = rollDamageDice(finalDice);
+            const rolledDmg = rollDamageDice(finalDice);
             const freshChar = useCharacterStore.getState().allCharacters[effectiveCharId];
             const freshHp = freshChar ? (typeof freshChar.hitPoints === 'number' ? freshChar.hitPoints : parseInt(String(freshChar.hitPoints)) || 0) : targetHp;
-            const newHp = Math.max(0, freshHp - dmg);
-            resultParts.push(`${dmg} ${dmgWord}dmg (HP ${freshHp}→${newHp})${isCrit ? ' [CRIT]' : ''}`);
+            const resisted = applyResistedDamage(rolledDmg, dmgType, freshChar, targetConditions);
+            const newHp = Math.max(0, freshHp - resisted.final);
+            const resistTag = resisted.note ? ` [${resisted.note}]` : '';
+            const dmgChange = resisted.final !== rolledDmg ? `${rolledDmg}→${resisted.final}` : `${resisted.final}`;
+            resultParts.push(`${dmgChange} ${dmgWord}dmg${resistTag} (HP ${freshHp}→${newHp})${isCrit ? ' [CRIT]' : ''}`);
             if (newHp === 0) resultParts.push('💀 DOWN');
             setTimeout(() => updateTargetHp(effectiveCharId, newHp), 400);
           }
@@ -582,8 +614,11 @@ export function TokenActionPanel() {
             if (dmg > 0) {
               const freshChar = useCharacterStore.getState().allCharacters[effectiveCharId];
               const freshHp = freshChar ? (typeof freshChar.hitPoints === 'number' ? freshChar.hitPoints : parseInt(String(freshChar.hitPoints)) || 0) : targetHp;
-              const newHp = Math.max(0, freshHp - dmg);
-              resultParts.push(`${dmg} ${dmgWord}dmg${saved ? ' (half)' : ''} (HP ${freshHp}→${newHp})`);
+              const resisted = applyResistedDamage(dmg, dmgType, freshChar, targetConditions);
+              const newHp = Math.max(0, freshHp - resisted.final);
+              const resistTag = resisted.note ? ` [${resisted.note}]` : '';
+              const dmgChange = resisted.final !== dmg ? `${dmg}→${resisted.final}` : `${resisted.final}`;
+              resultParts.push(`${dmgChange} ${dmgWord}dmg${saved ? ' (half)' : ''}${resistTag} (HP ${freshHp}→${newHp})`);
               if (newHp === 0) resultParts.push('💀 DOWN');
               setTimeout(() => updateTargetHp(effectiveCharId, newHp), 400);
             } else if (saved && !halfOnSave) {
@@ -629,8 +664,11 @@ export function TokenActionPanel() {
           if (effectiveCharId) {
             const freshChar = useCharacterStore.getState().allCharacters[effectiveCharId];
             const freshHp = freshChar ? (typeof freshChar.hitPoints === 'number' ? freshChar.hitPoints : parseInt(String(freshChar.hitPoints)) || 0) : targetHp;
-            const newHp = Math.max(0, freshHp - dmg);
-            resultParts.push(`${dmg} ${dmgWord}dmg (HP ${freshHp}→${newHp})`);
+            const resisted = applyResistedDamage(dmg, dmgType, freshChar, targetConditions);
+            const newHp = Math.max(0, freshHp - resisted.final);
+            const resistTag = resisted.note ? ` [${resisted.note}]` : '';
+            const dmgChange = resisted.final !== dmg ? `${dmg}→${resisted.final}` : `${resisted.final}`;
+            resultParts.push(`${dmgChange} ${dmgWord}dmg${resistTag} (HP ${freshHp}→${newHp})`);
             if (newHp === 0) resultParts.push('💀 DOWN');
             updateTargetHp(effectiveCharId, newHp);
           } else {
@@ -1869,19 +1907,24 @@ async function resolveAreaSpell(
       lineParts.push(`${saveIcon} ${saveLabel} ${saveResult.breakdown} vs DC ${casterSpellDC} → ${aSaved ? 'SAVED' : 'FAILED'}${modNote}`);
     }
 
-    // Damage
+    // Damage — runs through resistance/immunity/vulnerability per target
     let finalDmg = 0;
     if (damageDice) {
       const total = rollDamageDice(damageDice);
-      finalDmg = aSaved && halfOnSave ? Math.floor(total / 2) : aSaved ? 0 : total;
-      if (finalDmg > 0) {
+      const beforeResist = aSaved && halfOnSave ? Math.floor(total / 2) : aSaved ? 0 : total;
+      if (beforeResist > 0) {
         // Read fresh HP from store right before applying
         const freshChar = useCharacterStore.getState().allCharacters[aCharId];
         const freshHp = freshChar ? (typeof freshChar.hitPoints === 'number' ? freshChar.hitPoints : parseInt(String(freshChar.hitPoints)) || 0) : aHp;
-        const newHp = Math.max(0, freshHp - finalDmg);
         const dmgType = (spell.damageType || '').toLowerCase();
         const dmgWord = dmgType ? `${dmgType} ` : '';
-        lineParts.push(`${finalDmg} ${dmgWord}dmg${aSaved ? ' (half)' : ''} (HP ${freshHp}→${newHp})`);
+        const aTokenConditions2 = (aToken.conditions || []) as string[];
+        const resisted = applyResistedDamage(beforeResist, dmgType, freshChar, aTokenConditions2);
+        finalDmg = resisted.final;
+        const newHp = Math.max(0, freshHp - finalDmg);
+        const resistTag = resisted.note ? ` [${resisted.note}]` : '';
+        const dmgChange = finalDmg !== beforeResist ? `${beforeResist}→${finalDmg}` : `${finalDmg}`;
+        lineParts.push(`${dmgChange} ${dmgWord}dmg${aSaved ? ' (half)' : ''}${resistTag} (HP ${freshHp}→${newHp})`);
         if (newHp === 0) lineParts.push('💀 DOWN');
         // Schedule the actual HP update so the UI animates as the message lands
         setTimeout(() => {

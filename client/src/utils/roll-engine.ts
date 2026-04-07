@@ -518,6 +518,90 @@ export function effectiveSpeed(baseSpeed: number, conditions: string[]): Effecti
   return out;
 }
 
+// --- Damage resistance / immunity / vulnerability (Phase 3) ---
+
+export interface DamageResult {
+  /** Final amount applied to HP */
+  amount: number;
+  /** Multiplier vs the input amount: 0 immune, 0.5 resistant, 1 normal, 2 vulnerable */
+  multiplier: number;
+  /** Human-readable label for chat ("resisted Stoneskin", "vulnerable to fire", etc.) */
+  source: string;
+}
+
+interface DefenseLists {
+  resistances: string[];
+  immunities: string[];
+  vulnerabilities: string[];
+}
+
+/**
+ * Apply resistance / immunity / vulnerability to a damage amount.
+ *
+ * Looks at:
+ *   1. The character's `defenses` arrays (from DDB import or compendium)
+ *   2. Active conditions:
+ *        • Stoneskin → resistance to nonmagical bludgeoning, piercing, slashing
+ *        • Petrified → resistance to all damage
+ *
+ * Returns the adjusted amount + a label for chat output.
+ */
+export function applyDamageWithResist(
+  baseAmount: number,
+  damageType: string,
+  defenses: Partial<DefenseLists> | undefined,
+  conditions: string[],
+  isMagical: boolean = true,
+): DamageResult {
+  const dt = (damageType || '').toLowerCase();
+  const set = new Set(conditions.map(c => c.toLowerCase()));
+  const sourceParts: string[] = [];
+  let multiplier = 1;
+
+  // 1. Character racial / class defenses
+  const lists: DefenseLists = {
+    resistances: (defenses?.resistances || []).map(s => s.toLowerCase()),
+    immunities: (defenses?.immunities || []).map(s => s.toLowerCase()),
+    vulnerabilities: (defenses?.vulnerabilities || []).map(s => s.toLowerCase()),
+  };
+
+  if (dt && lists.immunities.some(d => d.includes(dt))) {
+    return {
+      amount: 0,
+      multiplier: 0,
+      source: `immune to ${dt}`,
+    };
+  }
+  if (dt && lists.resistances.some(d => d.includes(dt))) {
+    multiplier = 0.5;
+    sourceParts.push(`resist ${dt}`);
+  }
+  if (dt && lists.vulnerabilities.some(d => d.includes(dt))) {
+    multiplier = 2;
+    sourceParts.push(`vulnerable to ${dt}`);
+  }
+
+  // 2. Petrified → resistance to ALL damage (overrides current state if more lenient)
+  if (set.has('petrified')) {
+    if (multiplier > 0.5) multiplier = 0.5;
+    sourceParts.push('Petrified (resist all)');
+  }
+
+  // 3. Stoneskin → resistance to nonmagical bludgeoning, piercing, slashing
+  if (set.has('stoneskin') && !isMagical) {
+    if (dt === 'bludgeoning' || dt === 'piercing' || dt === 'slashing') {
+      if (multiplier > 0.5) multiplier = 0.5;
+      sourceParts.push(`Stoneskin (resist ${dt})`);
+    }
+  }
+
+  return {
+    amount: Math.floor(baseAmount * multiplier),
+    multiplier,
+    source: sourceParts.length > 0 ? sourceParts.join(', ') : '',
+  };
+}
+
 // --- Internal helpers ---
 
 function applyAdvantage(
