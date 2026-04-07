@@ -157,19 +157,56 @@ export function BattleMap() {
         onMouseMove={(e) => {
           // IMPORTANT: call the original panning handler first
           stageProps.onMouseMove?.(e);
+          const stage = e.target.getStage();
+          if (!stage) return;
+          const pointer = stage.getPointerPosition();
+          if (!pointer) return;
+          const mapX = (pointer.x - stageProps.x) / stageProps.scaleX;
+          const mapY = (pointer.y - stageProps.y) / stageProps.scaleY;
+
+          // Spell aim mode: track cursor for AoE template preview
+          const aim = useEffectStore.getState().targetingSpell;
+          if (aim) {
+            const tokens = useMapStore.getState().tokens;
+            const casterToken = tokens[aim.casterTokenId] as any;
+            if (aim.aoeType === 'cone' || aim.aoeType === 'line') {
+              // Self-range or aimed cone/line: origin = caster, rotation = direction to mouse
+              if (casterToken) {
+                useEffectStore.getState().setTargetPosition({ x: casterToken.x, y: casterToken.y });
+                const angle = Math.atan2(mapY - casterToken.y, mapX - casterToken.x) * 180 / Math.PI;
+                useEffectStore.getState().setTargetRotation(angle);
+              }
+            } else {
+              // Sphere/cube: origin = cursor (placement)
+              useEffectStore.getState().setTargetPosition({ x: mapX, y: mapY });
+            }
+          }
+
           // Then emit canvas-mousemove for measure/wall tools
           const tool = useMapStore.getState().activeTool;
           if (tool === 'measure' || tool === 'wall') {
-            const stage = e.target.getStage();
-            if (!stage) return;
-            const pointer = stage.getPointerPosition();
-            if (!pointer) return;
-            const mapX = (pointer.x - stageProps.x) / stageProps.scaleX;
-            const mapY = (pointer.y - stageProps.y) / stageProps.scaleY;
             window.dispatchEvent(new CustomEvent('canvas-mousemove', { detail: { mapX, mapY } }));
           }
         }}
         onClick={(e) => {
+          // Spell aim mode: confirm cast at cursor
+          const aim = useEffectStore.getState().targetingSpell;
+          if (aim && (e.target === e.target.getStage() || true)) {
+            const stage = e.target.getStage();
+            if (stage) {
+              const pointer = stage.getPointerPosition();
+              if (pointer) {
+                const mapX = (pointer.x - stageProps.x) / stageProps.scaleX;
+                const mapY = (pointer.y - stageProps.y) / stageProps.scaleY;
+                const rotation = useEffectStore.getState().targetRotation;
+                window.dispatchEvent(new CustomEvent('aoe-spell-confirm', {
+                  detail: { mapX, mapY, rotation },
+                }));
+                return;
+              }
+            }
+          }
+
           // Emit canvas-click for measure/wall tools
           if (e.target === e.target.getStage()) {
             const stage = e.target.getStage();

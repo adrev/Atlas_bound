@@ -1237,9 +1237,7 @@ export function TokenActionPanel() {
                 return (
                   <button key={i} onClick={() => {
                     if (!canAct) return;
-                    const isSelf = (spell.range || '').toLowerCase().includes('self');
-                    if (isSelf) { castSelfSpell(spell, selectedTokenId!, token.name); }
-                    else { useMapStore.getState().startTargetingMode({ spell, casterTokenId: selectedTokenId!, casterName: token.name }); }
+                    castSpellFromButton(spell, selectedTokenId!, token.name);
                   }} onContextMenu={(e) => {
                     e.preventDefault();
                     const slug = spell.name.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
@@ -1273,9 +1271,7 @@ export function TokenActionPanel() {
                 return (
                   <button key={i} disabled={isSpent || !canAct} onClick={() => {
                     if (!canAct || isSpent) return;
-                    const isSelf = (spell.range || '').toLowerCase().includes('self');
-                    if (isSelf) { castSelfSpell(spell, selectedTokenId!, token.name); }
-                    else { useMapStore.getState().startTargetingMode({ spell, casterTokenId: selectedTokenId!, casterName: token.name }); }
+                    castSpellFromButton(spell, selectedTokenId!, token.name);
                   }} onContextMenu={(e) => {
                     e.preventDefault();
                     const slug = spell.name.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
@@ -1351,21 +1347,203 @@ export function TokenActionPanel() {
   );
 }
 
+// --- Spell metadata parsing ---
+
+interface SpellAoeMeta {
+  damageDice: string;
+  savingThrow: string;
+  attackType: string;
+  aoeShape: 'sphere' | 'cube' | 'cone' | 'line';
+  aoeRadius: number;          // in feet
+  pushDistance: number;       // in feet, 0 if none
+  halfOnSave: boolean;
+  hasAoe: boolean;
+}
+
 /**
- * Resolve a Self-range AoE spell directly without going through targeting mode.
- * Finds all tokens within AoE radius around caster, rolls saves, applies damage, pushes back.
+ * Inspect a spell's structured fields + description to figure out what shape
+ * AoE it is, the damage dice, saving throw, etc. Falls back to compendium
+ * lookup if structured fields are missing.
  */
-async function castSelfSpell(spell: any, casterTokenId: string, casterName: string) {
+async function parseSpellMeta(spell: any, casterLevel: number): Promise<SpellAoeMeta> {
+  const cleanDesc = (spell.description || '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ');
+  let damageDice = spell.damage || '';
+  let savingThrow = spell.savingThrow || '';
+  let attackType = spell.attackType || '';
+
+  if (!damageDice) {
+    const dmgMatch = cleanDesc.match(/(\d+d\d+(?:\s*\+\s*\d+)?)\s+\w*\s*damage/i);
+    if (dmgMatch) damageDice = dmgMatch[1].replace(/\s/g, '');
+  }
+  if (!savingThrow) {
+    const saveMatch = cleanDesc.match(/(strength|dexterity|constitution|wisdom|intelligence|charisma)\s+saving\s+throw/i);
+    if (saveMatch) {
+      const m: Record<string, string> = { strength: 'str', dexterity: 'dex', constitution: 'con', wisdom: 'wis', intelligence: 'int', charisma: 'cha' };
+      savingThrow = m[saveMatch[1].toLowerCase()] || '';
+    }
+  }
+  if (!attackType) {
+    if (cleanDesc.match(/ranged spell attack/i)) attackType = 'ranged';
+    else if (cleanDesc.match(/melee spell attack/i)) attackType = 'melee';
+  }
+
+  // Compendium fallback
+  if (!damageDice || !savingThrow) {
+    try {
+      const slug = spell.name.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
+      const resp = await fetch(`/api/compendium/spells/${slug}`);
+      if (resp.ok) {
+        const compSpell = await resp.json();
+        const compDesc = (compSpell.description || '').replace(/<[^>]*>/g, ' ');
+        if (!damageDice) {
+          const m = compDesc.match(/(\d+d\d+(?:\s*\+\s*\d+)?)\s+\w*\s*damage/i);
+          if (m) damageDice = m[1].replace(/\s/g, '');
+        }
+        if (!savingThrow) {
+          const sm = compDesc.match(/(strength|dexterity|constitution|wisdom|intelligence|charisma)\s+saving\s+throw/i);
+          if (sm) {
+            const map: Record<string, string> = { strength: 'str', dexterity: 'dex', constitution: 'con', wisdom: 'wis', intelligence: 'int', charisma: 'cha' };
+            savingThrow = map[sm[1].toLowerCase()] || '';
+          }
+        }
+        if (!attackType) {
+          if (compDesc.match(/ranged spell attack/i)) attackType = 'ranged';
+          else if (compDesc.match(/melee spell attack/i)) attackType = 'melee';
+        }
+      }
+    } catch {}
+  }
+
+  // Cantrip scaling
+  if (spell.level === 0 && damageDice) {
+    const tier = casterLevel >= 17 ? 4 : casterLevel >= 11 ? 3 : casterLevel >= 5 ? 2 : 1;
+    if (tier > 1) {
+      damageDice = damageDice.replace(/(\d+)d(\d+)/, (_: string, n: string, d: string) => `${parseInt(n) * tier}d${d}`);
+    }
+  }
+
+  // AoE shape & size
+  let aoeRadius = spell.aoeSize || 0;
+  let aoeShape: 'sphere' | 'cube' | 'cone' | 'line' = 'sphere';
+  let hasAoe = false;
+  if (spell.aoeType === 'cube') { aoeShape = 'cube'; hasAoe = true; }
+  else if (spell.aoeType === 'cone') { aoeShape = 'cone'; hasAoe = true; }
+  else if (spell.aoeType === 'line') { aoeShape = 'line'; hasAoe = true; }
+  else if (spell.aoeType === 'sphere' || spell.aoeType === 'cylinder') { aoeShape = 'sphere'; hasAoe = true; }
+  if (!aoeRadius) {
+    const radiusMatch = cleanDesc.match(/(\d+)[- ]foot[- ](radius|cube|cone|line|emanation|sphere)/i);
+    if (radiusMatch) {
+      aoeRadius = parseInt(radiusMatch[1]);
+      const shape = radiusMatch[2].toLowerCase();
+      if (shape === 'cube') aoeShape = 'cube';
+      else if (shape === 'cone') aoeShape = 'cone';
+      else if (shape === 'line') aoeShape = 'line';
+      else aoeShape = 'sphere';
+      hasAoe = true;
+    }
+  }
+  if (!aoeRadius && hasAoe) aoeRadius = 15;
+
+  // Pushback
+  let pushDistance = 0;
+  const pushMatch = cleanDesc.match(/pushed\s+(\d+)\s*(?:feet|ft)/i);
+  if (pushMatch) pushDistance = parseInt(pushMatch[1]);
+
+  const halfOnSave = cleanDesc.toLowerCase().includes('half as much damage')
+    || cleanDesc.toLowerCase().includes('half damage')
+    || cleanDesc.toLowerCase().includes('save for half');
+
+  return {
+    damageDice,
+    savingThrow,
+    attackType,
+    aoeShape,
+    aoeRadius,
+    pushDistance,
+    halfOnSave,
+    hasAoe,
+  };
+}
+
+/**
+ * Filter the token map to those affected by an AoE spell at a given origin
+ * and rotation. Caster is always excluded.
+ */
+function findTokensInAoeShape(
+  allTokens: Record<string, any>,
+  origin: { x: number; y: number },
+  shape: 'sphere' | 'cube' | 'cone' | 'line',
+  sizeFt: number,
+  rotationDeg: number,
+  gridSize: number,
+  excludeId: string,
+): any[] {
+  const sizePixels = (sizeFt / 5) * gridSize;
+  const halfCell = gridSize / 2;
+  const rad = (rotationDeg * Math.PI) / 180;
+  const dirX = Math.cos(rad);
+  const dirY = Math.sin(rad);
+
+  return Object.values(allTokens).filter((t: any) => {
+    if (t.id === excludeId) return false;
+    const dx = t.x - origin.x;
+    const dy = t.y - origin.y;
+    switch (shape) {
+      case 'sphere': {
+        return Math.sqrt(dx * dx + dy * dy) <= sizePixels;
+      }
+      case 'cube': {
+        return Math.abs(dx) <= sizePixels && Math.abs(dy) <= sizePixels;
+      }
+      case 'cone': {
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        if (dist > sizePixels) return false;
+        if (dist === 0) return true; // origin caster: include adjacent
+        const angle = Math.atan2(dy, dx) * 180 / Math.PI;
+        let diff = angle - rotationDeg;
+        while (diff > 180) diff -= 360;
+        while (diff < -180) diff += 360;
+        return Math.abs(diff) <= 26.5; // 53° cone
+      }
+      case 'line': {
+        // Project onto line direction
+        const proj = dx * dirX + dy * dirY;
+        if (proj < 0 || proj > sizePixels) return false;
+        const perpDist = Math.abs(dx * dirY - dy * dirX);
+        return perpDist <= halfCell; // 5ft wide line
+      }
+    }
+  });
+}
+
+/**
+ * Resolve an area-of-effect spell. Builds a single consolidated chat message,
+ * staggered HP/condition/pushback updates, and slot consumption. Used by both:
+ *   • castSelfSpell — Self-range sphere/cube (Thunderwave)
+ *   • castAimedSpell — Self cone/line, or non-Self placed AoE (Burning Hands, Fireball)
+ */
+async function resolveAreaSpell(
+  spell: any,
+  casterTokenId: string,
+  casterName: string,
+  origin: { x: number; y: number } | null,
+  rotationDeg: number,
+) {
   const mapState = useMapStore.getState();
   const charStore = useCharacterStore.getState();
   const casterToken = mapState.tokens[casterTokenId];
   if (!casterToken) {
-    console.error('[CAST SELF] Caster token not found');
+    console.error('[RESOLVE AOE] Caster token not found');
     return;
   }
   const casterChar = casterToken.characterId ? charStore.allCharacters[casterToken.characterId] : null;
   const casterId = casterChar?.id || casterTokenId;
   const casterSpellDC = (casterChar as any)?.spellSaveDC ?? 13;
+  const casterX = (casterToken as any).x;
+  const casterY = (casterToken as any).y;
+  const gridSize = mapState.currentMap?.gridSize || 70;
+
+  const meta = await parseSpellMeta(spell, casterChar?.level ?? 1);
 
   // --- Spell slot consumption ---
   if (spell.level > 0 && casterChar) {
@@ -1380,106 +1558,31 @@ async function castSelfSpell(spell: any, casterTokenId: string, casterName: stri
       }
       const updatedSlots = { ...slots, [spell.level]: { ...slot, used: slot.used + 1 } };
       emitCharacterUpdate(casterId, { spellSlots: updatedSlots });
-      charStore.applyRemoteUpdate(casterId, { spellSlots: updatedSlots });
     }
   }
 
-  // --- Resolve damage and properties from description ---
-  const cleanDesc = (spell.description || '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ');
-  let damageDice = spell.damage || '';
-  let resolvedSavingThrow = spell.savingThrow || '';
-
-  if (!damageDice) {
-    const dmgMatch = cleanDesc.match(/(\d+d\d+(?:\s*\+\s*\d+)?)\s+\w*\s*damage/i);
-    if (dmgMatch) damageDice = dmgMatch[1].replace(/\s/g, '');
-  }
-  if (!resolvedSavingThrow) {
-    const saveMatch = cleanDesc.match(/(strength|dexterity|constitution|wisdom|intelligence|charisma)\s+saving\s+throw/i);
-    if (saveMatch) {
-      const m: Record<string, string> = { strength: 'str', dexterity: 'dex', constitution: 'con', wisdom: 'wis', intelligence: 'int', charisma: 'cha' };
-      resolvedSavingThrow = m[saveMatch[1].toLowerCase()] || '';
-    }
-  }
-
-  // Fallback: compendium lookup
-  if (!damageDice || !resolvedSavingThrow) {
-    try {
-      const slug = spell.name.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
-      const resp = await fetch(`/api/compendium/spells/${slug}`);
-      if (resp.ok) {
-        const compSpell = await resp.json();
-        const compDesc = (compSpell.description || '').replace(/<[^>]*>/g, ' ');
-        if (!damageDice) {
-          const m = compDesc.match(/(\d+d\d+(?:\s*\+\s*\d+)?)\s+\w*\s*damage/i);
-          if (m) damageDice = m[1].replace(/\s/g, '');
-        }
-        if (!resolvedSavingThrow) {
-          const sm = compDesc.match(/(strength|dexterity|constitution|wisdom|intelligence|charisma)\s+saving\s+throw/i);
-          if (sm) {
-            const map: Record<string, string> = { strength: 'str', dexterity: 'dex', constitution: 'con', wisdom: 'wis', intelligence: 'int', charisma: 'cha' };
-            resolvedSavingThrow = map[sm[1].toLowerCase()] || '';
-          }
-        }
-      }
-    } catch {}
-  }
-
-  // Cantrip scaling
-  if (spell.level === 0 && damageDice) {
-    const casterLevel = casterChar?.level ?? 1;
-    const tier = casterLevel >= 17 ? 4 : casterLevel >= 11 ? 3 : casterLevel >= 5 ? 2 : 1;
-    if (tier > 1) {
-      damageDice = damageDice.replace(/(\d+)d(\d+)/, (_: string, n: string, d: string) => `${parseInt(n) * tier}d${d}`);
-    }
-  }
-
-  // Determine AoE size and shape
-  let aoeRadius = spell.aoeSize || 0;
-  let aoeShape: 'sphere' | 'cube' | 'cone' | 'line' = 'sphere';
-  if (spell.aoeType === 'cube') aoeShape = 'cube';
-  else if (spell.aoeType === 'cone') aoeShape = 'cone';
-  else if (spell.aoeType === 'line') aoeShape = 'line';
-  if (!aoeRadius) {
-    const radiusMatch = cleanDesc.match(/(\d+)[- ]foot[- ](radius|cube|cone|line|emanation|sphere)/i);
-    if (radiusMatch) {
-      aoeRadius = parseInt(radiusMatch[1]);
-      const shape = radiusMatch[2].toLowerCase();
-      if (shape === 'cube') aoeShape = 'cube';
-      else if (shape === 'cone') aoeShape = 'cone';
-      else if (shape === 'line') aoeShape = 'line';
-    } else {
-      aoeRadius = 15;
-    }
-  }
-
-  // Pushback
-  let pushDistance = 0;
-  const pushMatch = cleanDesc.match(/pushed\s+(\d+)\s*(?:feet|ft)/i);
-  if (pushMatch) pushDistance = parseInt(pushMatch[1]);
-
-  const halfOnSave = cleanDesc.toLowerCase().includes('half as much damage')
-    || cleanDesc.toLowerCase().includes('half damage')
-    || cleanDesc.toLowerCase().includes('save for half');
-
-  // Find affected tokens
+  // Default origin to caster's position
+  const aoeOrigin = origin ?? { x: casterX, y: casterY };
   const allTokens = mapState.tokens;
-  const casterX = (casterToken as any).x;
-  const casterY = (casterToken as any).y;
-  const gridSize = mapState.currentMap?.gridSize || 70;
-  const aoePixels = (aoeRadius / 5) * gridSize;
+  // Caster is excluded only when AoE originates AT the caster (Self-range)
+  const excludeId = (aoeOrigin.x === casterX && aoeOrigin.y === casterY) ? casterTokenId : '';
+  const affectedTokens = findTokensInAoeShape(
+    allTokens,
+    aoeOrigin,
+    meta.aoeShape,
+    meta.aoeRadius || 15,
+    rotationDeg,
+    gridSize,
+    excludeId,
+  );
 
-  const affectedTokens = Object.values(allTokens).filter((t: any) => {
-    if (t.id === casterTokenId) return false;
-    const dx = (t.x as number) - casterX;
-    const dy = (t.y as number) - casterY;
-    if (aoeShape === 'cube') {
-      // Cube originating from you: catch anyone in a square of side aoeRadius
-      // (a bit generous on direction since we don't have a facing yet)
-      return Math.abs(dx) <= aoePixels && Math.abs(dy) <= aoePixels;
-    }
-    // sphere/cone/line/emanation fallback: simple radius check
-    return Math.sqrt(dx * dx + dy * dy) <= aoePixels;
-  });
+  // Stash for unified per-token loop below
+  const damageDice = meta.damageDice;
+  const resolvedSavingThrow = meta.savingThrow;
+  const halfOnSave = meta.halfOnSave;
+  const pushDistance = meta.pushDistance;
+  const aoeShape = meta.aoeShape;
+  const aoeRadius = meta.aoeRadius;
 
   // Build the cast announcement header for the consolidated message.
   const shapeLabel = aoeShape === 'cube' ? 'Cube' : aoeShape === 'cone' ? 'Cone' : aoeShape === 'line' ? 'Line' : 'Radius';
@@ -1490,9 +1593,10 @@ async function castSelfSpell(spell: any, casterTokenId: string, casterName: stri
   if (spell.level > 0) headerLines.push(`   Spent level ${spell.level} slot`);
 
   if (affectedTokens.length === 0) {
+    const where = excludeId ? `of ${casterName}` : 'of the spell origin';
     emitSystemMessage([
       ...headerLines,
-      `   ⚠ No creatures within ${aoeRadius} ft of ${casterName}. Move closer to your targets.`,
+      `   ⚠ No creatures within ${aoeRadius} ft ${where}.`,
     ].join('\n'));
     return;
   }
@@ -1593,13 +1697,13 @@ async function castSelfSpell(spell: any, casterTokenId: string, casterName: stri
 
     // Pushback fires BEFORE the damage tick (delay vs delay+300), so dead
     // targets still move visually. For Thunderwave the rule is "pushed 10
-    // feet on a failed save"; saved targets aren't pushed.
+    // feet on a failed save"; saved targets aren't pushed. The push direction
+    // is FROM the AoE origin (which is the caster for Self-range spells, or
+    // the explosion center for placed AoE spells).
     const shouldPush = pushDistance > 0 && (!resolvedSavingThrow || !aSaved);
     if (shouldPush) {
-      // Compute direction from caster to target. If they're stacked exactly,
-      // pick a default direction so we still see SOME movement.
-      let dx = aToken.x - casterX;
-      let dy = aToken.y - casterY;
+      let dx = aToken.x - aoeOrigin.x;
+      let dy = aToken.y - aoeOrigin.y;
       const rawDist = Math.sqrt(dx * dx + dy * dy);
       if (rawDist === 0) { dx = gridSize; dy = 0; }
       const dist = rawDist || gridSize;
@@ -1614,8 +1718,7 @@ async function castSelfSpell(spell: any, casterTokenId: string, casterName: stri
         emitTokenUpdate(aToken.id, { x: newX, y: newY });
       }, delay);
     } else if (pushDistance > 0 && resolvedSavingThrow && aSaved) {
-      // Make it explicit that the saved target is NOT pushed (so the user
-      // can see at a glance why one creature moved and another didn't).
+      // Make it explicit that the saved target is NOT pushed.
       lineParts.push(`resists pushback`);
     }
 
@@ -1639,6 +1742,151 @@ async function castSelfSpell(spell: any, casterTokenId: string, casterName: stri
   }
 
   emitSystemMessage([...headerLines, ...targetLines].join('\n'));
+}
+
+/**
+ * Cast a Self-range AoE spell whose origin is the caster (sphere/cube).
+ * Direction-less, fires immediately.
+ */
+async function castSelfSpell(spell: any, casterTokenId: string, casterName: string) {
+  await resolveAreaSpell(spell, casterTokenId, casterName, null, 0);
+}
+
+/**
+ * Map a spell name → CSS color hex for AoE template tinting.
+ */
+function colorForSpell(spell: any): string {
+  const school = (spell.school || '').toLowerCase();
+  if (school.includes('evocation')) return '#ff6b3d';
+  if (school.includes('necromancy')) return '#7e3a96';
+  if (school.includes('abjuration')) return '#3a86c8';
+  if (school.includes('enchantment')) return '#a060c0';
+  if (school.includes('conjuration')) return '#1abc9c';
+  if (school.includes('transmutation')) return '#d4a843';
+  if (school.includes('divination')) return '#a0a0c0';
+  if (school.includes('illusion')) return '#e67e22';
+  return '#c53131';
+}
+
+/**
+ * Enter "aim mode" for an AoE spell. Sets up the EffectLayer template at
+ * the cursor (or pinned to caster for Self cone/line) and waits for a canvas
+ * click to confirm. Esc / right-click cancels.
+ *
+ * Used for:
+ *  • Self-range cones (Burning Hands, Cone of Cold)
+ *  • Self-range lines (Lightning Bolt)
+ *  • Non-Self placed AoE (Fireball, Stinking Cloud, Web)
+ */
+async function aimAndCastSpell(spell: any, casterTokenId: string, casterName: string) {
+  const casterChar = useMapStore.getState().tokens[casterTokenId]?.characterId
+    ? useCharacterStore.getState().allCharacters[useMapStore.getState().tokens[casterTokenId]!.characterId!]
+    : null;
+  const meta = await parseSpellMeta(spell, casterChar?.level ?? 1);
+
+  if (!meta.hasAoe) {
+    // Shouldn't happen — caller should only invoke this for AoE spells
+    console.warn('[AIM] Spell has no AoE, falling back to single target');
+    useMapStore.getState().startTargetingMode({ spell, casterTokenId, casterName });
+    return;
+  }
+
+  // Set up the effect store template
+  const effectStore = useEffectStore.getState();
+  effectStore.startTargeting({
+    spellName: spell.name,
+    aoeType: meta.aoeShape,
+    aoeSize: meta.aoeRadius,
+    casterTokenId,
+    color: colorForSpell(spell),
+  });
+
+  // Initialize the template at the caster (or wherever the cursor will land)
+  const casterToken = useMapStore.getState().tokens[casterTokenId] as any;
+  if (casterToken) {
+    effectStore.setTargetPosition({ x: casterToken.x, y: casterToken.y });
+  }
+
+  // Show a hint toast
+  const hintEl = document.createElement('div');
+  const hintText = (meta.aoeShape === 'cone' || meta.aoeShape === 'line')
+    ? `Aim ${spell.name} — click a direction. Esc to cancel.`
+    : `Place ${spell.name} — click on the map. Esc to cancel.`;
+  hintEl.textContent = hintText;
+  Object.assign(hintEl.style, {
+    position: 'fixed', top: '12%', left: '50%', transform: 'translateX(-50%)',
+    padding: '10px 18px', background: 'rgba(0,0,0,0.85)', color: '#fff',
+    borderRadius: '8px', border: `2px solid ${colorForSpell(spell)}`,
+    zIndex: '99999', fontSize: '13px', fontWeight: '600', fontFamily: 'sans-serif',
+    boxShadow: '0 4px 16px rgba(0,0,0,0.6)',
+  });
+  document.body.appendChild(hintEl);
+
+  function cleanup() {
+    effectStore.cancelTargeting();
+    window.removeEventListener('aoe-spell-confirm', onConfirm as EventListener);
+    window.removeEventListener('keydown', onKey);
+    if (hintEl.parentNode) hintEl.remove();
+  }
+
+  function onKey(e: KeyboardEvent) {
+    if (e.key === 'Escape') {
+      cleanup();
+      emitSystemMessage(`✦ ${casterName} cancels ${spell.name}`);
+    }
+  }
+
+  async function onConfirm(e: Event) {
+    const detail = (e as CustomEvent).detail as { mapX: number; mapY: number; rotation: number };
+    cleanup();
+
+    // For Self-range cone/line, the origin stays at the caster — use rotation
+    // direction. For non-Self placed AoE, the origin IS the click point.
+    const isSelfRange = (spell.range || '').toLowerCase().includes('self');
+    const isDirectional = meta.aoeShape === 'cone' || meta.aoeShape === 'line';
+    if (isSelfRange && isDirectional) {
+      const caster = useMapStore.getState().tokens[casterTokenId] as any;
+      if (!caster) return;
+      const angle = Math.atan2(detail.mapY - caster.y, detail.mapX - caster.x) * 180 / Math.PI;
+      await resolveAreaSpell(spell, casterTokenId, casterName, { x: caster.x, y: caster.y }, angle);
+    } else {
+      // Non-Self placement OR Self sphere/cube redirected here (rare)
+      await resolveAreaSpell(spell, casterTokenId, casterName, { x: detail.mapX, y: detail.mapY }, detail.rotation);
+    }
+  }
+
+  window.addEventListener('aoe-spell-confirm', onConfirm as EventListener);
+  window.addEventListener('keydown', onKey);
+}
+
+/**
+ * Top-level "cast a spell" entry point used by the spell button. Picks the
+ * right flow (single-target, instant Self AoE, or aim mode) based on the
+ * spell's range and aoeType.
+ */
+async function castSpellFromButton(spell: any, casterTokenId: string, casterName: string) {
+  const casterChar = useMapStore.getState().tokens[casterTokenId]?.characterId
+    ? useCharacterStore.getState().allCharacters[useMapStore.getState().tokens[casterTokenId]!.characterId!]
+    : null;
+  const meta = await parseSpellMeta(spell, casterChar?.level ?? 1);
+
+  const isSelfRange = (spell.range || '').toLowerCase().includes('self');
+  const isDirectional = meta.aoeShape === 'cone' || meta.aoeShape === 'line';
+
+  if (!meta.hasAoe) {
+    // Single target — use the existing targeting useEffect path
+    useMapStore.getState().startTargetingMode({ spell, casterTokenId, casterName });
+    return;
+  }
+
+  if (isSelfRange && !isDirectional) {
+    // Self sphere/cube — origin = caster, fire immediately
+    await castSelfSpell(spell, casterTokenId, casterName);
+    return;
+  }
+
+  // Self cone/line OR non-Self placed AoE → aim mode
+  await aimAndCastSpell(spell, casterTokenId, casterName);
 }
 
 function quickBtnStyle(color: string): React.CSSProperties {
