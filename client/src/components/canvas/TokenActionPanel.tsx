@@ -484,7 +484,8 @@ export function TokenActionPanel() {
           const isHit = attackRoll === 20 || (attackRoll !== 1 && totalAttack >= targetAC);
           const isCrit = attackRoll === 20;
 
-          resultParts.push(`Attack ${totalAttack} vs AC ${targetAC} → ${isCrit ? 'CRIT' : isHit ? 'HIT' : 'MISS'}`);
+          const hitIcon = isCrit ? '💥' : isHit ? '✓' : '✗';
+          resultParts.push(`${hitIcon} Attack ${totalAttack} vs AC ${targetAC} → ${isCrit ? 'CRIT' : isHit ? 'HIT' : 'MISS'}`);
 
           if (isHit && damageDice && effectiveCharId) {
             const finalDice = isCrit ? damageDice.replace(/(\d+)d/, (_: string, n: string) => `${parseInt(n) * 2}d`) : damageDice;
@@ -508,7 +509,8 @@ export function TokenActionPanel() {
           const saveRoll = Math.floor(Math.random() * 20) + 1;
           const totalSave = saveRoll + targetSaveMod;
           const saved = totalSave >= casterSpellDC;
-          resultParts.push(`${saveAbility.toUpperCase()} ${totalSave} vs DC ${casterSpellDC} → ${saved ? 'SAVED' : 'FAILED'}`);
+          const saveIcon = saved ? '✓' : '✗';
+          resultParts.push(`${saveIcon} ${saveAbility.toUpperCase()} ${totalSave} vs DC ${casterSpellDC} → ${saved ? 'SAVED' : 'FAILED'}`);
 
           if (damageDice && effectiveCharId) {
             const total = rollDamageDice(damageDice);
@@ -1557,7 +1559,8 @@ async function castSelfSpell(spell: any, casterTokenId: string, casterName: stri
       const aSaveTotal = aSaveRoll + aSaveMod;
       aSaved = aSaveTotal >= casterSpellDC;
       const saveLabel = resolvedSavingThrow.toUpperCase();
-      lineParts.push(`${saveLabel} ${aSaveTotal} vs DC ${casterSpellDC} → ${aSaved ? 'SAVED' : 'FAILED'}`);
+      const saveIcon = aSaved ? '✓' : '✗';
+      lineParts.push(`${saveIcon} ${saveLabel} ${aSaveTotal} vs DC ${casterSpellDC} → ${aSaved ? 'SAVED' : 'FAILED'}`);
     }
 
     // Damage
@@ -1572,7 +1575,7 @@ async function castSelfSpell(spell: any, casterTokenId: string, casterName: stri
         const newHp = Math.max(0, freshHp - finalDmg);
         const dmgType = (spell.damageType || '').toLowerCase();
         const dmgWord = dmgType ? `${dmgType} ` : '';
-        lineParts.push(`${finalDmg} ${dmgWord}dmg (HP ${freshHp}→${newHp})`);
+        lineParts.push(`${finalDmg} ${dmgWord}dmg${aSaved ? ' (half)' : ''} (HP ${freshHp}→${newHp})`);
         if (newHp === 0) lineParts.push('💀 DOWN');
         // Schedule the actual HP update so the UI animates as the message lands
         setTimeout(() => {
@@ -1599,13 +1602,17 @@ async function castSelfSpell(spell: any, casterTokenId: string, casterName: stri
       const pushPixels = (pushDistance / 5) * gridSize;
       const newX = Math.round(aToken.x + (dx / dist) * pushPixels);
       const newY = Math.round(aToken.y + (dy / dist) * pushPixels);
-      lineParts.push(`pushed ${pushDistance} ft`);
+      lineParts.push(`💨 pushed ${pushDistance} ft`);
       setTimeout(() => {
         // Update the local store immediately so the player sees the move
         // even if the server's broadcast is delayed.
         useMapStore.getState().updateToken(aToken.id, { x: newX, y: newY } as any);
         emitTokenUpdate(aToken.id, { x: newX, y: newY });
       }, delay);
+    } else if (pushDistance > 0 && resolvedSavingThrow && aSaved) {
+      // Make it explicit that the saved target is NOT pushed (so the user
+      // can see at a glance why one creature moved and another didn't).
+      lineParts.push(`resists pushback`);
     }
 
     // Auto-apply conditions on failed save
