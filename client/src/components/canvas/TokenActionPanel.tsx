@@ -5,6 +5,13 @@ import { useSessionStore } from '../../stores/useSessionStore';
 import { emitRoll, emitCharacterUpdate, emitTokenUpdate, emitSystemMessage } from '../../socket/emitters';
 import { enrichSpellFromDescription } from '../../utils/spell-enrich';
 import { effectiveSpellSaveDC, effectiveSpellAttackBonus } from '../../utils/spell-stats';
+import {
+  getOwnRollModifiers,
+  getTargetRollModifiers,
+  combineAttackModifiers,
+  rollAttackWithModifiers,
+  rollSaveWithModifiers,
+} from '../../utils/roll-engine';
 import { abilityModifier, calculateEquipmentBonuses, SPELL_CONDITIONS, SPELL_BUFFS, getSpellAnimation } from '@dnd-vtt/shared';
 import { useEffectStore } from '../../stores/useEffectStore';
 import { LootBagPanel } from '../loot/LootBagPanel';
@@ -507,16 +514,28 @@ export function TokenActionPanel() {
         const dmgType = (spell.damageType || '').toLowerCase();
         const dmgWord = dmgType ? `${dmgType} ` : '';
 
+        // Read attacker (caster) and target conditions for the rules engine
+        const casterToken_local = useMapStore.getState().tokens[currentTargeting.casterTokenId];
+        const casterConditions = (casterToken_local?.conditions || []) as string[];
+        const targetConditions = (targetToken.conditions || []) as string[];
+
         // --- Phase 3A: Spell Attack vs AC ---
         if (resolvedAttackType) {
-          const attackRoll = Math.floor(Math.random() * 20) + 1;
-          const totalAttack = attackRoll + casterSpellAttack;
+          // Build attacker + target modifiers and combine for the attack
+          const attackerOwn = getOwnRollModifiers(casterConditions);
+          const targetIncoming = getTargetRollModifiers(targetConditions);
+          const combined = combineAttackModifiers(attackerOwn, targetIncoming);
+
+          const atkResult = rollAttackWithModifiers(casterSpellAttack, combined);
           const targetAC = targetChar?.armorClass ?? 10;
-          const isHit = attackRoll === 20 || (attackRoll !== 1 && totalAttack >= targetAC);
-          const isCrit = attackRoll === 20;
+          // Crit on nat 20 OR forced crit (Paralyzed/Unconscious melee within 5ft)
+          const isHit = atkResult.isCritical || (!atkResult.isFumble && atkResult.total >= targetAC);
+          const isCrit = atkResult.isCritical || (isHit && atkResult.forceCritOnHit && resolvedAttackType === 'melee');
 
           const hitIcon = isCrit ? '💥' : isHit ? '✓' : '✗';
-          resultParts.push(`${hitIcon} Attack ${totalAttack} vs AC ${targetAC} → ${isCrit ? 'CRIT' : isHit ? 'HIT' : 'MISS'}`);
+          // Show breakdown so the user can see condition effects in the math
+          const modNote = combined.notes.length > 0 ? ` [${combined.notes.join(', ')}]` : '';
+          resultParts.push(`${hitIcon} Attack ${atkResult.breakdown} vs AC ${targetAC} → ${isCrit ? 'CRIT' : isHit ? 'HIT' : 'MISS'}${modNote}`);
 
           if (isHit && damageDice && effectiveCharId) {
             const finalDice = isCrit ? damageDice.replace(/(\d+)d/, (_: string, n: string) => `${parseInt(n) * 2}d`) : damageDice;
@@ -537,11 +556,15 @@ export function TokenActionPanel() {
             ? (typeof targetChar.abilityScores === 'string' ? JSON.parse(targetChar.abilityScores) : targetChar.abilityScores)
             : {};
           const targetSaveMod = abilityModifier(targetScores[saveAbility] || 10);
-          const saveRoll = Math.floor(Math.random() * 20) + 1;
-          const totalSave = saveRoll + targetSaveMod;
-          const saved = totalSave >= casterSpellDC;
+
+          // Apply save modifiers from target's conditions (Bless +1d4,
+          // Paralyzed auto-fail STR/DEX, Hasted DEX advantage, etc.)
+          const targetMods = getOwnRollModifiers(targetConditions);
+          const saveResult = rollSaveWithModifiers(saveAbility as any, targetSaveMod, targetMods);
+          const saved = saveResult.autoFailed ? false : saveResult.total >= casterSpellDC;
           const saveIcon = saved ? '✓' : '✗';
-          resultParts.push(`${saveIcon} ${saveAbility.toUpperCase()} ${totalSave} vs DC ${casterSpellDC} → ${saved ? 'SAVED' : 'FAILED'}`);
+          const modNote = targetMods.notes.length > 0 ? ` [${targetMods.notes.join(', ')}]` : '';
+          resultParts.push(`${saveIcon} ${saveAbility.toUpperCase()} ${saveResult.breakdown} vs DC ${casterSpellDC} → ${saved ? 'SAVED' : 'FAILED'}${modNote}`);
 
           if (damageDice && effectiveCharId) {
             const total = rollDamageDice(damageDice);
@@ -1801,19 +1824,23 @@ async function resolveAreaSpell(
     const delay = i * 200;
     const lineParts: string[] = [];
 
-    // Save + damage
+    // Save + damage — applies the rules engine modifiers from the
+    // target's conditions (Bless +1d4, Hasted DEX advantage, Paralyzed
+    // auto-fail, etc.)
     let aSaved = false;
     if (resolvedSavingThrow) {
       const aScores = aChar.abilityScores
         ? (typeof aChar.abilityScores === 'string' ? JSON.parse(aChar.abilityScores) : aChar.abilityScores)
         : {};
       const aSaveMod = abilityModifier((aScores as any)[resolvedSavingThrow] || 10);
-      const aSaveRoll = Math.floor(Math.random() * 20) + 1;
-      const aSaveTotal = aSaveRoll + aSaveMod;
-      aSaved = aSaveTotal >= casterSpellDC;
+      const aTokenConditions = (aToken.conditions || []) as string[];
+      const aMods = getOwnRollModifiers(aTokenConditions);
+      const saveResult = rollSaveWithModifiers(resolvedSavingThrow as any, aSaveMod, aMods);
+      aSaved = saveResult.autoFailed ? false : saveResult.total >= casterSpellDC;
       const saveLabel = resolvedSavingThrow.toUpperCase();
       const saveIcon = aSaved ? '✓' : '✗';
-      lineParts.push(`${saveIcon} ${saveLabel} ${aSaveTotal} vs DC ${casterSpellDC} → ${aSaved ? 'SAVED' : 'FAILED'}`);
+      const modNote = aMods.notes.length > 0 ? ` [${aMods.notes.join(', ')}]` : '';
+      lineParts.push(`${saveIcon} ${saveLabel} ${saveResult.breakdown} vs DC ${casterSpellDC} → ${aSaved ? 'SAVED' : 'FAILED'}${modNote}`);
     }
 
     // Damage
