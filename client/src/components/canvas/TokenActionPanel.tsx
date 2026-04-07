@@ -376,26 +376,32 @@ export function TokenActionPanel() {
           useCharacterStore.getState().applyRemoteUpdate(casterId, { concentratingOn: spell.name });
         }
 
-        // --- Phase 2: Spell Slot Consumption ---
+        // --- Phase 2: Spell Slot Consumption (with upcast fallback) ---
+        // A spell of level N can be cast with any slot ≥ N. Pick the lowest
+        // available so we don't waste high-level slots. Block the cast if
+        // no slot at level N or higher is available.
+        let castAtLevel = spell.level;
         if (spell.level > 0 && casterChar) {
           const slots = typeof casterChar.spellSlots === 'string'
             ? JSON.parse(casterChar.spellSlots) : (casterChar.spellSlots || {});
-          const slot = slots[spell.level];
-          if (slot) {
-            const available = slot.max - slot.used;
-            if (available <= 0) {
-              emitSystemMessage(`✦ ${casterName} tried to cast ${spell.name} but has no level ${spell.level} slots remaining!`);
-              useMapStore.getState().cancelTargetingMode();
-              return;
-            }
-            // Deduct slot
-            const updatedSlots = { ...slots, [spell.level]: { ...slot, used: slot.used + 1 } };
-            emitCharacterUpdate(currentTargeting.casterTokenId, { spellSlots: updatedSlots });
-            useCharacterStore.getState().applyRemoteUpdate(
-              casterChar.id || currentTargeting.casterTokenId,
-              { spellSlots: updatedSlots }
-            );
+          let chosenLevel: number | null = null;
+          for (let lvl = spell.level; lvl <= 9; lvl++) {
+            const s = slots[lvl] || slots[String(lvl)];
+            if (s && (s.max - s.used) > 0) { chosenLevel = lvl; break; }
           }
+          if (chosenLevel === null) {
+            emitSystemMessage(`✦ ${casterName} tried to cast ${spell.name} (level ${spell.level}) but has no available slots of level ${spell.level} or higher!`);
+            useMapStore.getState().cancelTargetingMode();
+            return;
+          }
+          castAtLevel = chosenLevel;
+          const slotKey = slots[chosenLevel] ? chosenLevel : String(chosenLevel);
+          const slot = slots[slotKey];
+          const updatedSlots = { ...slots, [slotKey]: { ...slot, used: slot.used + 1 } };
+          emitCharacterUpdate(
+            casterChar.id || currentTargeting.casterTokenId,
+            { spellSlots: updatedSlots },
+          );
         }
 
         // --- Resolve damage dice and spell properties from description ---
@@ -471,7 +477,13 @@ export function TokenActionPanel() {
 
         // Build a single consolidated result message for this cast.
         const headerLines: string[] = [`✦ ${casterName} casts ${spell.name} → ${targetName}`];
-        if (spell.level > 0) headerLines.push(`   Spent level ${spell.level} slot`);
+        if (spell.level > 0) {
+          if (castAtLevel > spell.level) {
+            headerLines.push(`   Spent level ${castAtLevel} slot (upcast from level ${spell.level})`);
+          } else {
+            headerLines.push(`   Spent level ${spell.level} slot`);
+          }
+        }
         const resultParts: string[] = [];
         const dmgType = (spell.damageType || '').toLowerCase();
         const dmgWord = dmgType ? `${dmgType} ` : '';
@@ -1545,19 +1557,34 @@ async function resolveAreaSpell(
 
   const meta = await parseSpellMeta(spell, casterChar?.level ?? 1);
 
-  // --- Spell slot consumption ---
+  // --- Spell slot consumption (with upcast fallback) ---
+  // D&D 5e: a spell of level N can be cast using ANY slot of level N or
+  // higher. The caster picks. We auto-pick the lowest available slot ≥ N
+  // to avoid wasting high-level slots. If NO slot of level N or higher
+  // exists at all, the cast fails.
   if (spell.level > 0 && casterChar) {
     const slots = typeof casterChar.spellSlots === 'string'
       ? JSON.parse(casterChar.spellSlots) : (casterChar.spellSlots || {});
-    const slot = slots[spell.level];
-    if (slot) {
-      const available = slot.max - slot.used;
-      if (available <= 0) {
-        emitSystemMessage(`✦ ${casterName} tried to cast ${spell.name} but has no level ${spell.level} slots remaining!`);
-        return;
+    let chosenLevel: number | null = null;
+    for (let lvl = spell.level; lvl <= 9; lvl++) {
+      const s = slots[lvl] || slots[String(lvl)];
+      if (s && (s.max - s.used) > 0) {
+        chosenLevel = lvl;
+        break;
       }
-      const updatedSlots = { ...slots, [spell.level]: { ...slot, used: slot.used + 1 } };
-      emitCharacterUpdate(casterId, { spellSlots: updatedSlots });
+    }
+    if (chosenLevel === null) {
+      emitSystemMessage(`✦ ${casterName} tried to cast ${spell.name} (level ${spell.level}) but has no available slots of level ${spell.level} or higher!`);
+      return;
+    }
+    const slotKey = slots[chosenLevel] ? chosenLevel : String(chosenLevel);
+    const slot = slots[slotKey];
+    const updatedSlots = { ...slots, [slotKey]: { ...slot, used: slot.used + 1 } };
+    emitCharacterUpdate(casterId, { spellSlots: updatedSlots });
+    // Note for chat header
+    if (chosenLevel > spell.level) {
+      // Mark for the header below — stash on the spell object temporarily
+      (spell as any).__castAtLevel = chosenLevel;
     }
   }
 
@@ -1590,7 +1617,16 @@ async function resolveAreaSpell(
     `✦ ${casterName} casts ${spell.name}`,
     `   ${aoeRadius}-ft ${shapeLabel} • ${affectedTokens.length} creature${affectedTokens.length !== 1 ? 's' : ''} in area`,
   ];
-  if (spell.level > 0) headerLines.push(`   Spent level ${spell.level} slot`);
+  const castAtLevel = (spell as any).__castAtLevel ?? spell.level;
+  if (spell.level > 0) {
+    if (castAtLevel > spell.level) {
+      headerLines.push(`   Spent level ${castAtLevel} slot (upcast from level ${spell.level})`);
+    } else {
+      headerLines.push(`   Spent level ${spell.level} slot`);
+    }
+  }
+  // Clean up the temporary marker so a re-cast doesn't see stale data
+  delete (spell as any).__castAtLevel;
 
   if (affectedTokens.length === 0) {
     const where = excludeId ? `of ${casterName}` : 'of the spell origin';

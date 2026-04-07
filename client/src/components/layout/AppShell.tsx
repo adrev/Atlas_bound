@@ -13,7 +13,6 @@ import { BottomBar } from './BottomBar';
 import { MapBrowser } from '../mapbrowser/MapBrowser';
 import { CharacterSheetFull } from '../character/CharacterSheetFull';
 import { theme } from '../../styles/theme';
-import type { Character } from '@dnd-vtt/shared';
 
 export function AppShell() {
   const { roomCode } = useParams<{ roomCode: string }>();
@@ -23,7 +22,13 @@ export function AppShell() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [copied, setCopied] = useState(false);
   const [showMapBrowser, setShowMapBrowser] = useState(false);
-  const [fullSheetCharacter, setFullSheetCharacter] = useState<Character | null>(null);
+  // Hold only the character ID — the actual character object is read live
+  // from useCharacterStore so updates (e.g. adding a spell, healing) appear
+  // immediately without needing to re-open the sheet.
+  const [fullSheetCharId, setFullSheetCharId] = useState<string | null>(null);
+  const fullSheetCharacter = useCharacterStore(
+    (s) => fullSheetCharId ? (s.allCharacters[fullSheetCharId] ?? null) : null,
+  );
   const [requestedTab, setRequestedTab] = useState<string | null>(null);
   const currentMap = useMapStore((s) => s.currentMap);
   const isDM = useSessionStore((s) => s.isDM);
@@ -116,11 +121,20 @@ export function AppShell() {
 
       const char = currentAllChars[charId];
       if (char) {
-        setFullSheetCharacter(char);
+        setFullSheetCharId(charId);
       } else {
+        // Fetch into the store so the live subscription picks it up
         fetch(`/api/characters/${charId}`)
           .then((r) => r.ok ? r.json() : null)
-          .then((data) => { if (data) setFullSheetCharacter(data); })
+          .then((data) => {
+            if (data) {
+              useCharacterStore.getState().setAllCharacters({
+                ...useCharacterStore.getState().allCharacters,
+                [charId]: data,
+              });
+              setFullSheetCharId(charId);
+            }
+          })
           .catch(() => {});
       }
     };
@@ -291,13 +305,13 @@ export function AppShell() {
           <div style={styles.fullSheetContainer}>
             <button
               style={styles.closeFullSheet}
-              onClick={() => setFullSheetCharacter(null)}
+              onClick={() => setFullSheetCharId(null)}
             >
               <X size={16} />
             </button>
             <CharacterSheetFull
               character={fullSheetCharacter}
-              onClose={() => { setFullSheetCharacter(null); setRequestedTab(null); }}
+              onClose={() => { setFullSheetCharId(null); setRequestedTab(null); }}
               initialTab={requestedTab || undefined}
             />
           </div>

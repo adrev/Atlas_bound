@@ -111,13 +111,27 @@
 - [ ] **Attack vs AC comparison**: Roll d20 + attack mod, compare to target AC, announce hit/miss
 
 ### Priority 3: Spell System Completion
-- [ ] **AoE Spell Templates**: Visual cone/sphere/cube/line templates on map before confirming cast
-- [ ] **AoE Multi-Target**: Click to place AoE origin, auto-select all tokens in shape
-- [ ] **Spell Pushback Effects**: Thunderwave 10ft push, Eldritch Blast push invocation
+- [x] **AoE Spell Templates**: Visual cone/sphere/cube/line templates on map before confirming cast ✅ Apr 7
+- [x] **AoE Multi-Target**: Click to place AoE origin, auto-select all tokens in shape ✅ Apr 7
+- [x] **Spell Pushback Effects**: Thunderwave 10ft push, Eldritch Blast push invocation ✅ Apr 7
+- [x] **Upcast Support**: Auto-pick lowest available slot ≥ spell level ✅ Apr 7
+- [x] **Add/Remove Spell**: DM can grant/revoke spells from any character ✅ Apr 7
 - [ ] **Spell Visual Effects**: Expanding ring for AoE, projectile for ranged, glow for buff
-- [ ] **Upcast Support**: Choose higher spell slot, scale damage dice accordingly
+- [ ] **Upcast damage scaling**: Scale damage dice (e.g. Fireball +1d6 per slot above 3rd)
 - [ ] **Ritual Casting**: Cast without slot if ritual (takes 10 min)
 - [ ] **Prepared Spells**: Distinguish known vs prepared (for Wizards, Clerics, etc.)
+
+### 🔴 NEW Priority: Permission Audit
+- [ ] **DM-only feature audit**: Walk every interactive control we've built and verify players can't do DM-only things. Specific concerns:
+  - Add Spell / Remove Spell — should be DM OR character owner
+  - Custom items / homebrew creation — DM only
+  - Token spawn / creature library — DM only
+  - HP edit on other players' characters — DM only
+  - Map upload / load / fog reveal — DM only
+  - Combat start/end — DM only (already enforced)
+  - Loot editor on dead bodies — DM only
+  - Token position update on NPCs — currently allowed for any player as part of spell pushback (was a needed compromise — see WEBSOCKET_PLAN.md). Verify this can't be abused.
+  - Concentration drop / spell slot edits on other characters — should be owner only
 
 ### Priority 4: Items & Inventory
 - [ ] **Thrown Weapons**: Drop from inventory on throw, create item token at target, damage target

@@ -1657,7 +1657,12 @@ function SpellsTab({ spells, spellSlots, spellcastingAbility, spellAttackBonus, 
     if (exists) return;
     const updated = [...spells, spell];
     emitCharacterUpdate(characterId, { spells: updated });
-    emitRoll('1d0+0', `Granted ${spell.name} to character`);
+  };
+
+  // Helper that removes a spell by name
+  const removeSpell = (spellName: string) => {
+    const updated = spells.filter(s => s.name.toLowerCase() !== spellName.toLowerCase());
+    emitCharacterUpdate(characterId, { spells: updated });
   };
 
   const existingSpellNames = useMemo(
@@ -1792,6 +1797,28 @@ function SpellsTab({ spells, spellSlots, spellcastingAbility, spellAttackBonus, 
             <div style={{ color: C.textSecondary, whiteSpace: 'pre-wrap' }}>{stripHtml(spell.description)}</div>
             {spell.higherLevels && (
               <div style={{ marginTop: 6, color: C.blue }}><b>At Higher Levels:</b> {spell.higherLevels}</div>
+            )}
+            {/* DM/owner: remove this spell */}
+            {canEdit && (
+              <div style={{ marginTop: 8, paddingTop: 8, borderTop: `1px solid ${C.borderDim}`, display: 'flex', justifyContent: 'flex-end' }}>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (window.confirm(`Remove "${spell.name}" from this character? Note: a fresh DDB import will add it back if the character has it on D&D Beyond.`)) {
+                      removeSpell(spell.name);
+                    }
+                  }}
+                  title="Remove spell from character (will be re-added on next DDB import)"
+                  style={{
+                    padding: '4px 10px', fontSize: 10, fontWeight: 600,
+                    background: 'transparent', color: C.red,
+                    border: `1px solid ${C.red}44`, borderRadius: 3,
+                    cursor: 'pointer', fontFamily: 'inherit',
+                  }}
+                >
+                  🗑 Remove Spell
+                </button>
+              </div>
             )}
           </div>
         )}
