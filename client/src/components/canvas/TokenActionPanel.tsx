@@ -380,29 +380,40 @@ export function TokenActionPanel() {
         // A spell of level N can be cast with any slot ≥ N. Pick the lowest
         // available so we don't waste high-level slots. Block the cast if
         // no slot at level N or higher is available.
+        // The DM "ignore slots" override skips both the consumption and
+        // the availability check, but tags the chat header so it's clear
+        // the cast was DM-overridden.
         let castAtLevel = spell.level;
+        let dmOverride = false;
         if (spell.level > 0 && casterChar) {
-          const slots = typeof casterChar.spellSlots === 'string'
-            ? JSON.parse(casterChar.spellSlots) : (casterChar.spellSlots || {});
-          let chosenLevel: number | null = null;
-          for (let lvl = spell.level; lvl <= 9; lvl++) {
-            const s = slots[lvl] || slots[String(lvl)];
-            if (s && (s.max - s.used) > 0) { chosenLevel = lvl; break; }
+          const dmIgnoreSlots = useSessionStore.getState().dmIgnoreSpellSlots;
+          if (dmIgnoreSlots) {
+            dmOverride = true;
+          } else {
+            const slots = typeof casterChar.spellSlots === 'string'
+              ? JSON.parse(casterChar.spellSlots) : (casterChar.spellSlots || {});
+            let chosenLevel: number | null = null;
+            for (let lvl = spell.level; lvl <= 9; lvl++) {
+              const s = slots[lvl] || slots[String(lvl)];
+              if (s && (s.max - s.used) > 0) { chosenLevel = lvl; break; }
+            }
+            if (chosenLevel === null) {
+              emitSystemMessage(`✦ ${casterName} tried to cast ${spell.name} (level ${spell.level}) but has no available slots of level ${spell.level} or higher!`);
+              useMapStore.getState().cancelTargetingMode();
+              return;
+            }
+            castAtLevel = chosenLevel;
+            const slotKey = slots[chosenLevel] ? chosenLevel : String(chosenLevel);
+            const slot = slots[slotKey];
+            const updatedSlots = { ...slots, [slotKey]: { ...slot, used: slot.used + 1 } };
+            emitCharacterUpdate(
+              casterChar.id || currentTargeting.casterTokenId,
+              { spellSlots: updatedSlots },
+            );
           }
-          if (chosenLevel === null) {
-            emitSystemMessage(`✦ ${casterName} tried to cast ${spell.name} (level ${spell.level}) but has no available slots of level ${spell.level} or higher!`);
-            useMapStore.getState().cancelTargetingMode();
-            return;
-          }
-          castAtLevel = chosenLevel;
-          const slotKey = slots[chosenLevel] ? chosenLevel : String(chosenLevel);
-          const slot = slots[slotKey];
-          const updatedSlots = { ...slots, [slotKey]: { ...slot, used: slot.used + 1 } };
-          emitCharacterUpdate(
-            casterChar.id || currentTargeting.casterTokenId,
-            { spellSlots: updatedSlots },
-          );
         }
+        // Stash for the header below
+        (spell as any).__dmOverride = dmOverride;
 
         // --- Resolve damage dice and spell properties from description ---
         // Strip HTML for clean parsing
@@ -478,12 +489,15 @@ export function TokenActionPanel() {
         // Build a single consolidated result message for this cast.
         const headerLines: string[] = [`✦ ${casterName} casts ${spell.name} → ${targetName}`];
         if (spell.level > 0) {
-          if (castAtLevel > spell.level) {
+          if ((spell as any).__dmOverride) {
+            headerLines.push(`   🔓 DM override (no slot consumed)`);
+          } else if (castAtLevel > spell.level) {
             headerLines.push(`   Spent level ${castAtLevel} slot (upcast from level ${spell.level})`);
           } else {
             headerLines.push(`   Spent level ${spell.level} slot`);
           }
         }
+        delete (spell as any).__dmOverride;
         const resultParts: string[] = [];
         const dmgType = (spell.damageType || '').toLowerCase();
         const dmgWord = dmgType ? `${dmgType} ` : '';
@@ -1276,10 +1290,14 @@ export function TokenActionPanel() {
                 const slot = spellSlots[String(spell.level)] || spellSlots[spell.level as any];
                 const slotsLeft = slot ? slot.max - slot.used : 0;
                 const slotsMax = slot ? slot.max : 0;
-                const isSpent = slot ? slotsLeft <= 0 : false;
-                const tooltip = isSpent
-                  ? `${spell.name} — Out of level ${spell.level} slots (0/${slotsMax}). Long Rest to recharge.\n\n${spell.description || ''}`
-                  : `${spell.name} — Level ${spell.level} (${slotsLeft}/${slotsMax} slots left, Long Rest to recharge)\n\n${spell.description || ''}`;
+                // DM "ignore slots" override makes everything castable.
+                const dmIgnoreSlots = useSessionStore.getState().dmIgnoreSpellSlots;
+                const isSpent = !dmIgnoreSlots && (slot ? slotsLeft <= 0 : false);
+                const tooltip = dmIgnoreSlots
+                  ? `${spell.name} — DM override active (slots ignored)\n\n${spell.description || ''}`
+                  : isSpent
+                    ? `${spell.name} — Out of level ${spell.level} slots (0/${slotsMax}). Long Rest to recharge.\n\n${spell.description || ''}`
+                    : `${spell.name} — Level ${spell.level} (${slotsLeft}/${slotsMax} slots left, Long Rest to recharge)\n\n${spell.description || ''}`;
                 return (
                   <button key={i} disabled={isSpent || !canAct} onClick={() => {
                     if (!canAct || isSpent) return;
@@ -1561,30 +1579,37 @@ async function resolveAreaSpell(
   // D&D 5e: a spell of level N can be cast using ANY slot of level N or
   // higher. The caster picks. We auto-pick the lowest available slot ≥ N
   // to avoid wasting high-level slots. If NO slot of level N or higher
-  // exists at all, the cast fails.
+  // exists at all, the cast fails — UNLESS the DM has enabled the
+  // "ignore spell slots" override, in which case we skip both the
+  // consumption and the availability check.
   if (spell.level > 0 && casterChar) {
-    const slots = typeof casterChar.spellSlots === 'string'
-      ? JSON.parse(casterChar.spellSlots) : (casterChar.spellSlots || {});
-    let chosenLevel: number | null = null;
-    for (let lvl = spell.level; lvl <= 9; lvl++) {
-      const s = slots[lvl] || slots[String(lvl)];
-      if (s && (s.max - s.used) > 0) {
-        chosenLevel = lvl;
-        break;
+    const dmIgnoreSlots = useSessionStore.getState().dmIgnoreSpellSlots;
+    if (dmIgnoreSlots) {
+      (spell as any).__dmOverride = true;
+    } else {
+      const slots = typeof casterChar.spellSlots === 'string'
+        ? JSON.parse(casterChar.spellSlots) : (casterChar.spellSlots || {});
+      let chosenLevel: number | null = null;
+      for (let lvl = spell.level; lvl <= 9; lvl++) {
+        const s = slots[lvl] || slots[String(lvl)];
+        if (s && (s.max - s.used) > 0) {
+          chosenLevel = lvl;
+          break;
+        }
       }
-    }
-    if (chosenLevel === null) {
-      emitSystemMessage(`✦ ${casterName} tried to cast ${spell.name} (level ${spell.level}) but has no available slots of level ${spell.level} or higher!`);
-      return;
-    }
-    const slotKey = slots[chosenLevel] ? chosenLevel : String(chosenLevel);
-    const slot = slots[slotKey];
-    const updatedSlots = { ...slots, [slotKey]: { ...slot, used: slot.used + 1 } };
-    emitCharacterUpdate(casterId, { spellSlots: updatedSlots });
-    // Note for chat header
-    if (chosenLevel > spell.level) {
-      // Mark for the header below — stash on the spell object temporarily
-      (spell as any).__castAtLevel = chosenLevel;
+      if (chosenLevel === null) {
+        emitSystemMessage(`✦ ${casterName} tried to cast ${spell.name} (level ${spell.level}) but has no available slots of level ${spell.level} or higher!`);
+        return;
+      }
+      const slotKey = slots[chosenLevel] ? chosenLevel : String(chosenLevel);
+      const slot = slots[slotKey];
+      const updatedSlots = { ...slots, [slotKey]: { ...slot, used: slot.used + 1 } };
+      emitCharacterUpdate(casterId, { spellSlots: updatedSlots });
+      // Note for chat header
+      if (chosenLevel > spell.level) {
+        // Mark for the header below — stash on the spell object temporarily
+        (spell as any).__castAtLevel = chosenLevel;
+      }
     }
   }
 
@@ -1618,15 +1643,19 @@ async function resolveAreaSpell(
     `   ${aoeRadius}-ft ${shapeLabel} • ${affectedTokens.length} creature${affectedTokens.length !== 1 ? 's' : ''} in area`,
   ];
   const castAtLevel = (spell as any).__castAtLevel ?? spell.level;
+  const dmOverride = !!(spell as any).__dmOverride;
   if (spell.level > 0) {
-    if (castAtLevel > spell.level) {
+    if (dmOverride) {
+      headerLines.push(`   🔓 DM override (no slot consumed)`);
+    } else if (castAtLevel > spell.level) {
       headerLines.push(`   Spent level ${castAtLevel} slot (upcast from level ${spell.level})`);
     } else {
       headerLines.push(`   Spent level ${spell.level} slot`);
     }
   }
-  // Clean up the temporary marker so a re-cast doesn't see stale data
+  // Clean up the temporary markers so a re-cast doesn't see stale data
   delete (spell as any).__castAtLevel;
+  delete (spell as any).__dmOverride;
 
   if (affectedTokens.length === 0) {
     const where = excludeId ? `of ${casterName}` : 'of the spell origin';

@@ -11,6 +11,18 @@ interface SessionState {
   gameMode: GameMode;
   settings: SessionSettings;
   currentMapId: string | null;
+  /**
+   * DM-only override that bypasses spell-slot consumption AND requirements.
+   * When true, ANY spell on ANY character can be cast even if no slot is
+   * available; the cast still rolls dice and applies effects normally,
+   * but doesn't consume slots and isn't blocked. Used for testing and
+   * for "story moments" where the DM wants to grant a temporary spell
+   * awakening or similar narrative effect.
+   *
+   * Lives in client state only, not synced to other players. Each DM has
+   * their own setting; players never see the toggle and can't enable it.
+   */
+  dmIgnoreSpellSlots: boolean;
 }
 
 interface SessionActions {
@@ -30,6 +42,7 @@ interface SessionActions {
   updateSettings: (settings: SessionSettings) => void;
   setGameMode: (mode: GameMode) => void;
   setCurrentMapId: (mapId: string | null) => void;
+  setDmIgnoreSpellSlots: (val: boolean) => void;
   reset: () => void;
 }
 
@@ -49,6 +62,7 @@ const initialState: SessionState = {
     enableDynamicLighting: true,
   },
   currentMapId: null,
+  dmIgnoreSpellSlots: false,
 };
 
 export const useSessionStore = create<SessionState & SessionActions>((set) => ({
@@ -87,6 +101,8 @@ export const useSessionStore = create<SessionState & SessionActions>((set) => ({
   setGameMode: (mode) => set({ gameMode: mode }),
 
   setCurrentMapId: (mapId) => set({ currentMapId: mapId }),
+
+  setDmIgnoreSpellSlots: (val) => set({ dmIgnoreSpellSlots: val }),
 
   reset: () => set(initialState),
 }));

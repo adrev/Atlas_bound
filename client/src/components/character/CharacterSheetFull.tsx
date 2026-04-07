@@ -1346,52 +1346,85 @@ const SCHOOL_COLORS: Record<string, string> = {
 };
 
 /**
+ * Parse damage dice, damage type, save ability, attack type, and AoE info
+ * from a spell's description text. Returns only the fields it could find;
+ * fields it couldn't parse are left undefined so callers can fall back to
+ * any structured data they already have.
+ *
+ * Used to "enrich" spells whose structured fields are missing — typically
+ * spells imported from D&D Beyond, where damage often lives in modifier
+ * arrays instead of a top-level field.
+ */
+function parseSpellMetaFromDesc(description: string): Partial<Spell> {
+  const out: Partial<Spell> = {};
+  const cleanDesc = (description || '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ');
+  if (!cleanDesc) return out;
+
+  // Damage dice + type. Match the FIRST "NdM[+K] <type> damage" we find;
+  // this is usually the base damage. Higher-level scaling text appears
+  // separately under "At Higher Levels".
+  const dmgMatch = cleanDesc.match(/(\d+d\d+(?:\s*\+\s*\d+)?)\s+(\w+)\s*damage/i);
+  if (dmgMatch) {
+    out.damage = dmgMatch[1].replace(/\s/g, '');
+    const candidateType = dmgMatch[2].toLowerCase();
+    const validTypes = ['acid', 'bludgeoning', 'cold', 'fire', 'force', 'lightning', 'necrotic', 'piercing', 'poison', 'psychic', 'radiant', 'slashing', 'thunder'];
+    if (validTypes.includes(candidateType)) out.damageType = candidateType;
+  }
+
+  // Saving throw
+  const saveMatch = cleanDesc.match(/(strength|dexterity|constitution|wisdom|intelligence|charisma)\s+saving\s+throw/i);
+  if (saveMatch) {
+    const m: Record<string, AbilityName> = { strength: 'str', dexterity: 'dex', constitution: 'con', wisdom: 'wis', intelligence: 'int', charisma: 'cha' };
+    out.savingThrow = m[saveMatch[1].toLowerCase()];
+  }
+
+  // Attack type
+  if (/ranged spell attack/i.test(cleanDesc)) out.attackType = 'ranged';
+  else if (/melee spell attack/i.test(cleanDesc)) out.attackType = 'melee';
+
+  // AoE shape + size
+  const aoeMatch = cleanDesc.match(/(\d+)[- ]foot[- ](radius|sphere|cube|cone|line|cylinder|emanation)/i);
+  if (aoeMatch) {
+    out.aoeSize = parseInt(aoeMatch[1]);
+    const shape = aoeMatch[2].toLowerCase();
+    if (shape === 'cube') out.aoeType = 'cube';
+    else if (shape === 'cone') out.aoeType = 'cone';
+    else if (shape === 'line') out.aoeType = 'line';
+    else if (shape === 'cylinder') out.aoeType = 'cylinder';
+    else out.aoeType = 'sphere';
+  }
+
+  return out;
+}
+
+/**
+ * Take an existing Spell object and fill in any missing combat fields by
+ * parsing the description. Existing fields take precedence — we only set a
+ * field if it's not already populated. This is what makes a DDB-imported
+ * Vicious Mockery suddenly show "1d4 psychic" in the spell list without
+ * touching the database.
+ */
+function enrichSpellFromDescription(spell: Spell): Spell {
+  const parsed = parseSpellMetaFromDesc(spell.description);
+  return {
+    ...spell,
+    damage: spell.damage || parsed.damage,
+    damageType: spell.damageType || parsed.damageType,
+    savingThrow: spell.savingThrow || parsed.savingThrow,
+    attackType: spell.attackType || parsed.attackType,
+    aoeType: spell.aoeType || parsed.aoeType,
+    aoeSize: spell.aoeSize || parsed.aoeSize,
+  };
+}
+
+/**
  * Convert a CompendiumSpell into a character Spell object, parsing the
  * description for damage dice, damage type, save ability, AoE shape/size,
  * and attack type. Used by the "Add Spell" dialog and any DM tooling that
  * needs to grant spells to a character.
  */
 function compendiumSpellToCharSpell(comp: any): Spell {
-  const cleanDesc = (comp.description || '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ');
-
-  // Damage dice + type
-  let damage: string | undefined;
-  let damageType: string | undefined;
-  const dmgMatch = cleanDesc.match(/(\d+d\d+(?:\s*\+\s*\d+)?)\s+(\w+)\s*damage/i);
-  if (dmgMatch) {
-    damage = dmgMatch[1].replace(/\s/g, '');
-    const candidateType = dmgMatch[2].toLowerCase();
-    const validTypes = ['acid', 'bludgeoning', 'cold', 'fire', 'force', 'lightning', 'necrotic', 'piercing', 'poison', 'psychic', 'radiant', 'slashing', 'thunder'];
-    if (validTypes.includes(candidateType)) damageType = candidateType;
-  }
-
-  // Saving throw
-  let savingThrow: AbilityName | undefined;
-  const saveMatch = cleanDesc.match(/(strength|dexterity|constitution|wisdom|intelligence|charisma)\s+saving\s+throw/i);
-  if (saveMatch) {
-    const m: Record<string, AbilityName> = { strength: 'str', dexterity: 'dex', constitution: 'con', wisdom: 'wis', intelligence: 'int', charisma: 'cha' };
-    savingThrow = m[saveMatch[1].toLowerCase()];
-  }
-
-  // Attack type
-  let attackType: string | undefined;
-  if (/ranged spell attack/i.test(cleanDesc)) attackType = 'ranged';
-  else if (/melee spell attack/i.test(cleanDesc)) attackType = 'melee';
-
-  // AoE shape + size
-  let aoeType: 'cone' | 'sphere' | 'line' | 'cube' | 'cylinder' | undefined;
-  let aoeSize: number | undefined;
-  const aoeMatch = cleanDesc.match(/(\d+)[- ]foot[- ](radius|sphere|cube|cone|line|cylinder|emanation)/i);
-  if (aoeMatch) {
-    aoeSize = parseInt(aoeMatch[1]);
-    const shape = aoeMatch[2].toLowerCase();
-    if (shape === 'cube') aoeType = 'cube';
-    else if (shape === 'cone') aoeType = 'cone';
-    else if (shape === 'line') aoeType = 'line';
-    else if (shape === 'cylinder') aoeType = 'cylinder';
-    else aoeType = 'sphere';
-  }
-
+  const parsed = parseSpellMetaFromDesc(comp.description || '');
   return {
     name: comp.name,
     level: comp.level ?? 0,
@@ -1404,12 +1437,12 @@ function compendiumSpellToCharSpell(comp: any): Spell {
     higherLevels: comp.higherLevels ?? '',
     isConcentration: !!comp.concentration,
     isRitual: !!comp.ritual,
-    damage,
-    damageType,
-    savingThrow,
-    aoeType,
-    aoeSize,
-    attackType,
+    damage: parsed.damage,
+    damageType: parsed.damageType,
+    savingThrow: parsed.savingThrow,
+    aoeType: parsed.aoeType,
+    aoeSize: parsed.aoeSize,
+    attackType: parsed.attackType,
   };
 }
 
@@ -1595,7 +1628,7 @@ function AddSpellDialog({ existingSpellNames, onAdd, onClose }: {
   );
 }
 
-function SpellsTab({ spells, spellSlots, spellcastingAbility, spellAttackBonus, spellSaveDC, abilityScores, profBonus, characterId, characterLevel, isDM, isOwner }: {
+function SpellsTab({ spells: rawSpells, spellSlots, spellcastingAbility, spellAttackBonus, spellSaveDC, abilityScores, profBonus, characterId, characterLevel, isDM, isOwner }: {
   spells: Spell[];
   spellSlots: Record<number, SpellSlot>;
   spellcastingAbility: string;
@@ -1613,6 +1646,22 @@ function SpellsTab({ spells, spellSlots, spellcastingAbility, spellAttackBonus, 
   const [search, setSearch] = useState('');
   const [levelFilter, setLevelFilter] = useState<number | null>(null);
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+
+  // DM override for spell slots — when ON, every leveled spell is castable
+  // regardless of slot count, and casting doesn't consume slots.
+  const dmIgnoreSpellSlots = useSessionStore((s) => s.dmIgnoreSpellSlots);
+  const setDmIgnoreSpellSlots = useSessionStore((s) => s.setDmIgnoreSpellSlots);
+
+  // Enrich every spell from its description so DDB-imported spells (which
+  // often have null damage / save / attack fields) display the same as
+  // freshly added compendium spells. This is non-destructive — the cast
+  // resolver does the same parsing as a fallback, but the SPELL LIST view
+  // only reads the structured field, so without enrichment the user sees
+  // a blank "1d10 fire" line.
+  const spells = useMemo(
+    () => rawSpells.map(enrichSpellFromDescription),
+    [rawSpells],
+  );
 
   const scAbility = (spellcastingAbility || 'int') as AbilityName;
   const scMod = abilityModifier(abilityScores[scAbility] ?? 10);
@@ -1651,17 +1700,18 @@ function SpellsTab({ spells, spellSlots, spellcastingAbility, spellAttackBonus, 
 
   const getSpellSlug = (name: string) => name.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '').replace(/'/g, '');
 
-  // Helper that adds a spell from the dialog (no duplicates)
+  // Helpers that mutate the spells array. We use rawSpells (the unenriched
+  // source) so we don't accidentally write display-only enriched fields
+  // back to the database.
   const addSpell = (spell: Spell) => {
-    const exists = spells.some(s => s.name.toLowerCase() === spell.name.toLowerCase());
+    const exists = rawSpells.some(s => s.name.toLowerCase() === spell.name.toLowerCase());
     if (exists) return;
-    const updated = [...spells, spell];
+    const updated = [...rawSpells, spell];
     emitCharacterUpdate(characterId, { spells: updated });
   };
 
-  // Helper that removes a spell by name
   const removeSpell = (spellName: string) => {
-    const updated = spells.filter(s => s.name.toLowerCase() !== spellName.toLowerCase());
+    const updated = rawSpells.filter(s => s.name.toLowerCase() !== spellName.toLowerCase());
     emitCharacterUpdate(characterId, { spells: updated });
   };
 
@@ -1700,16 +1750,19 @@ function SpellsTab({ spells, spellSlots, spellcastingAbility, spellAttackBonus, 
     const slug = getSpellSlug(spell.name);
     const schoolColor = SCHOOL_COLORS[spell.school] || C.textMuted;
 
-    // Determine spent state for leveled spells (cantrips never go spent)
+    // Determine spent state for leveled spells (cantrips never go spent).
+    // DM "ignore slots" override makes everything castable for testing.
     const slot = spell.level > 0 ? spellSlots[spell.level] : null;
     const slotsLeft = slot ? slot.max - slot.used : 0;
     const slotsMax = slot ? slot.max : 0;
-    const isSpent = spell.level > 0 && slot ? slotsLeft <= 0 : false;
+    const isSpent = !dmIgnoreSpellSlots && spell.level > 0 && slot ? slotsLeft <= 0 : false;
     const tooltip = spell.level === 0
       ? `${spell.name} — Cantrip (at will, never expended)`
-      : isSpent
-        ? `${spell.name} — Out of level ${spell.level} slots (0/${slotsMax}). Long Rest to recharge.`
-        : `${spell.name} — Level ${spell.level} (${slotsLeft}/${slotsMax} slots left, Long Rest to recharge)`;
+      : dmIgnoreSpellSlots
+        ? `${spell.name} — DM override active, slots bypassed`
+        : isSpent
+          ? `${spell.name} — Out of level ${spell.level} slots (0/${slotsMax}). Long Rest to recharge.`
+          : `${spell.name} — Level ${spell.level} (${slotsLeft}/${slotsMax} slots left, Long Rest to recharge)`;
 
     return (
       <div key={i} title={tooltip} style={{
@@ -1840,9 +1893,27 @@ function SpellsTab({ spells, spellSlots, spellcastingAbility, spellAttackBonus, 
             <div style={{ fontSize: 18, fontWeight: 700 }}>{s.value}</div>
           </div>
         ))}
+        {/* DM-only: bypass spell slot requirements */}
+        {isDM && (
+          <button
+            onClick={() => setDmIgnoreSpellSlots(!dmIgnoreSpellSlots)}
+            title="Bypass spell slot consumption and requirements. Useful for testing and story moments where the DM grants a temporary spell. The chat header will mark each cast as a DM override."
+            style={{
+              marginLeft: 'auto',
+              padding: '8px 14px', fontSize: 10, fontWeight: 700,
+              background: dmIgnoreSpellSlots ? 'rgba(155,89,182,0.2)' : 'transparent',
+              color: dmIgnoreSpellSlots ? '#b185db' : C.textMuted,
+              border: `1px solid ${dmIgnoreSpellSlots ? '#9b59b6' : C.borderDim}`,
+              borderRadius: 4, cursor: 'pointer', fontFamily: 'inherit',
+              textTransform: 'uppercase', letterSpacing: '0.04em',
+            }}
+          >
+            🔓 {dmIgnoreSpellSlots ? 'DM Override ON' : 'DM Override Off'}
+          </button>
+        )}
         {canEdit && (
           <button onClick={() => setShowAddSpell(true)} style={{
-            marginLeft: 'auto',
+            marginLeft: isDM ? 0 : 'auto',
             padding: '8px 16px', fontSize: 11, fontWeight: 700,
             background: C.gold, color: '#1a1a1a',
             border: `1px solid ${C.gold}`, borderRadius: 4,
@@ -1851,6 +1922,18 @@ function SpellsTab({ spells, spellSlots, spellcastingAbility, spellAttackBonus, 
           }}>+ Add Spell</button>
         )}
       </div>
+      {/* DM override active banner */}
+      {dmIgnoreSpellSlots && isDM && (
+        <div style={{
+          marginBottom: 8, padding: '6px 10px',
+          background: 'rgba(155,89,182,0.1)',
+          border: '1px solid rgba(155,89,182,0.4)',
+          borderRadius: 4, fontSize: 11, color: '#b185db',
+          textAlign: 'center', fontStyle: 'italic',
+        }}>
+          🔓 DM Override active — all leveled spells are castable, no slots consumed. Click the button above to turn off.
+        </div>
+      )}
 
       {/* Add Spell modal */}
       {showAddSpell && (

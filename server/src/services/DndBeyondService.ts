@@ -549,10 +549,69 @@ function extractSpells(data: Record<string, unknown>): Spell[] {
       }
     }
 
+    // Fallback: parse anything we couldn't extract from structured DDB
+    // fields out of the description text. DDB stores damage in modifier
+    // arrays for many spells (Fire Bolt, Vicious Mockery, Sacred Flame),
+    // so def.damage is null and the spell shows up with no dice in the
+    // spell list. Mining the description fixes that for the import path
+    // — the client also does this at display time as a backstop.
+    enrichSpellInPlaceFromDescription(spell);
+
     spells.push(spell);
   }
 
   return spells;
+}
+
+/**
+ * Mine a spell's description for combat fields the structured import path
+ * couldn't pull out. Mutates the spell in place. Mirrors
+ * parseSpellMetaFromDesc on the client — keep them in sync.
+ */
+function enrichSpellInPlaceFromDescription(spell: Spell): void {
+  const cleanDesc = (spell.description || '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ');
+  if (!cleanDesc) return;
+
+  if (!spell.damage) {
+    const dmgMatch = cleanDesc.match(/(\d+d\d+(?:\s*\+\s*\d+)?)\s+(\w+)\s*damage/i);
+    if (dmgMatch) {
+      spell.damage = dmgMatch[1].replace(/\s/g, '');
+      const candidateType = dmgMatch[2].toLowerCase();
+      const validTypes = ['acid', 'bludgeoning', 'cold', 'fire', 'force', 'lightning', 'necrotic', 'piercing', 'poison', 'psychic', 'radiant', 'slashing', 'thunder'];
+      if (validTypes.includes(candidateType) && !spell.damageType) {
+        spell.damageType = candidateType;
+      }
+    }
+  }
+
+  if (!spell.savingThrow) {
+    const saveMatch = cleanDesc.match(/(strength|dexterity|constitution|wisdom|intelligence|charisma)\s+saving\s+throw/i);
+    if (saveMatch) {
+      const m: Record<string, Spell['savingThrow']> = {
+        strength: 'str', dexterity: 'dex', constitution: 'con',
+        wisdom: 'wis', intelligence: 'int', charisma: 'cha',
+      };
+      spell.savingThrow = m[saveMatch[1].toLowerCase()];
+    }
+  }
+
+  if (!spell.attackType) {
+    if (/ranged spell attack/i.test(cleanDesc)) spell.attackType = 'ranged';
+    else if (/melee spell attack/i.test(cleanDesc)) spell.attackType = 'melee';
+  }
+
+  if (!spell.aoeType) {
+    const aoeMatch = cleanDesc.match(/(\d+)[- ]foot[- ](radius|sphere|cube|cone|line|cylinder|emanation)/i);
+    if (aoeMatch) {
+      spell.aoeSize = parseInt(aoeMatch[1]);
+      const shape = aoeMatch[2].toLowerCase();
+      if (shape === 'cube') spell.aoeType = 'cube';
+      else if (shape === 'cone') spell.aoeType = 'cone';
+      else if (shape === 'line') spell.aoeType = 'line';
+      else if (shape === 'cylinder') spell.aoeType = 'cylinder';
+      else spell.aoeType = 'sphere';
+    }
+  }
 }
 
 function formatCastingTime(def: Record<string, unknown>): string {
