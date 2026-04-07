@@ -440,113 +440,12 @@ export function TokenActionPanel() {
         const desc = (spell.description || '').toLowerCase();
         const halfOnSave = desc.includes('half as much damage') || desc.includes('half damage') || desc.includes('save for half');
         const isHealing = spell.name.toLowerCase().includes('heal') || spell.name.toLowerCase().includes('cure') || desc.includes('regains') || desc.includes('hit points equal to');
+        // Self-range spells are now handled by castSelfSpell() directly from the cast button.
+        // If we somehow got here with a Self spell, just cancel and resolve via the helper.
         const isSelfRange = (spell.range || '').toLowerCase().includes('self');
-        const isSelfTarget = targetTokenId === currentTargeting.casterTokenId;
-
-        // Self-range AoE spells: auto-target all tokens within AoE radius around caster
-        // Triggers regardless of what token was clicked — click just confirms the cast
         if (isSelfRange && !isHealing) {
-          // Determine AoE size from spell data or description
-          let aoeRadius = spell.aoeSize || 0;
-          if (!aoeRadius) {
-            const radiusMatch = cleanDesc.match(/(\d+)[- ]foot[- ](?:radius|cube|cone|line|emanation|sphere)/i);
-            if (radiusMatch) aoeRadius = parseInt(radiusMatch[1]);
-            else aoeRadius = 15; // Default 15ft if not specified
-          }
-
-          // Parse pushback distance
-          let pushDistance = 0;
-          const pushMatch = cleanDesc.match(/pushed\s+(\d+)\s*(?:feet|ft)/i);
-          if (pushMatch) pushDistance = parseInt(pushMatch[1]);
-
-          const allTokens = useMapStore.getState().tokens;
-          const casterX = casterToken ? (casterToken as any).x : 0;
-          const casterY = casterToken ? (casterToken as any).y : 0;
-          const gridSize = useMapStore.getState().currentMap?.gridSize || 70;
-          const aoePixels = (aoeRadius / 5) * gridSize;
-
-          // Find all tokens within AoE (excluding caster)
-          const affectedTokens = Object.values(allTokens).filter((t: any) => {
-            if (t.id === currentTargeting.casterTokenId) return false;
-            const dx = t.x - casterX;
-            const dy = t.y - casterY;
-            const dist = Math.sqrt(dx * dx + dy * dy);
-            return dist <= aoePixels;
-          });
-
-          emitRoll('1d0+0', `${casterName} casts ${spell.name}! (${aoeRadius}ft AoE — ${affectedTokens.length} creature${affectedTokens.length !== 1 ? 's' : ''} affected)`);
-
-          // Apply save + damage to each affected token
-          for (const affToken of affectedTokens) {
-            const aToken = affToken as any;
-            const aCharId = aToken.characterId;
-            if (!aCharId) continue; // Skip tokens without character data
-            const aChar = useCharacterStore.getState().allCharacters[aCharId];
-            if (!aChar) continue;
-            const aHp = typeof aChar.hitPoints === 'number' ? aChar.hitPoints : parseInt(String(aChar.hitPoints)) || 0;
-            const aMaxHp = typeof aChar.maxHitPoints === 'number' ? aChar.maxHitPoints : parseInt(String(aChar.maxHitPoints)) || 0;
-            if (aHp <= 0) continue; // Skip already dead tokens
-
-            if (resolvedSavingThrow && aCharId) {
-              const aScores = aChar?.abilityScores
-                ? (typeof aChar.abilityScores === 'string' ? JSON.parse(aChar.abilityScores) : aChar.abilityScores)
-                : {};
-              const aSaveMod = abilityModifier(aScores[resolvedSavingThrow] || 10);
-              const aSaveRoll = Math.floor(Math.random() * 20) + 1;
-              const aSaveTotal = aSaveRoll + aSaveMod;
-              const aSaved = aSaveTotal >= casterSpellDC;
-
-              setTimeout(() => {
-                emitRoll(`1d20+${aSaveMod}`,
-                  `${aToken.name} ${resolvedSavingThrow.toUpperCase()} Save vs DC ${casterSpellDC}: ${aSaveTotal} — ${aSaved ? 'SUCCESS!' : 'FAILED!'}`
-                );
-              }, 200);
-
-              if (damageDice) {
-                setTimeout(() => {
-                  const dmgMatch = damageDice.match(/(\d+)d(\d+)/);
-                  if (dmgMatch) {
-                    const avgDmg = Math.ceil(parseInt(dmgMatch[1]) * (parseInt(dmgMatch[2]) + 1) / 2);
-                    const finalDmg = aSaved && halfOnSave ? Math.floor(avgDmg / 2) : aSaved ? 0 : avgDmg;
-                    if (finalDmg > 0) {
-                      emitRoll(damageDice, `${spell.name} → ${aToken.name}: ${finalDmg} damage${aSaved ? ' (half)' : ''}`);
-                      updateTargetHp(aCharId, Math.max(0, aHp - finalDmg));
-                    }
-                  }
-                }, 500);
-              }
-
-              // Pushback on failed save
-              if (!aSaved && pushDistance > 0) {
-                setTimeout(() => {
-                  const dx = aToken.x - casterX;
-                  const dy = aToken.y - casterY;
-                  const dist = Math.sqrt(dx * dx + dy * dy) || 1;
-                  const pushPixels = (pushDistance / 5) * gridSize;
-                  const newX = aToken.x + (dx / dist) * pushPixels;
-                  const newY = aToken.y + (dy / dist) * pushPixels;
-                  emitTokenUpdate(aToken.id, { x: Math.round(newX), y: Math.round(newY) });
-                  emitRoll('1d0+0', `${aToken.name} pushed ${pushDistance}ft!`);
-                }, 800);
-              }
-            } else if (damageDice && aCharId) {
-              // No save — direct damage
-              setTimeout(() => {
-                const dmgMatch = damageDice.match(/(\d+)d(\d+)/);
-                if (dmgMatch) {
-                  const avgDmg = Math.ceil(parseInt(dmgMatch[1]) * (parseInt(dmgMatch[2]) + 1) / 2);
-                  emitRoll(damageDice, `${spell.name} → ${aToken.name}: ${avgDmg} damage`);
-                  updateTargetHp(aCharId, Math.max(0, aHp - avgDmg));
-                }
-              }, 400);
-            }
-          }
-
-          if (affectedTokens.length === 0) {
-            emitRoll('1d0+0', `No creatures in ${aoeRadius}ft range`);
-          }
-
           useMapStore.getState().cancelTargetingMode();
+          castSelfSpell(spell, currentTargeting.casterTokenId, casterName);
           return;
         }
 
@@ -1410,15 +1309,194 @@ export function TokenActionPanel() {
   );
 }
 
-/** For Self-range AoE spells, simulate clicking the caster token to trigger AoE resolution */
-function castSelfSpell(spell: any, casterTokenId: string, casterName: string) {
-  useMapStore.getState().startTargetingMode({ spell, casterTokenId, casterName });
-  // Immediately trigger the target-selected event with the caster's own token
-  setTimeout(() => {
-    window.dispatchEvent(new CustomEvent('target-token-selected', {
-      detail: { tokenId: casterTokenId }
-    }));
-  }, 50);
+/**
+ * Resolve a Self-range AoE spell directly without going through targeting mode.
+ * Finds all tokens within AoE radius around caster, rolls saves, applies damage, pushes back.
+ */
+async function castSelfSpell(spell: any, casterTokenId: string, casterName: string) {
+  const mapState = useMapStore.getState();
+  const charStore = useCharacterStore.getState();
+  const casterToken = mapState.tokens[casterTokenId];
+  if (!casterToken) {
+    console.error('[CAST SELF] Caster token not found');
+    return;
+  }
+  const casterChar = casterToken.characterId ? charStore.allCharacters[casterToken.characterId] : null;
+  const casterId = casterChar?.id || casterTokenId;
+  const casterSpellDC = (casterChar as any)?.spellSaveDC ?? 13;
+
+  // --- Spell slot consumption ---
+  if (spell.level > 0 && casterChar) {
+    const slots = typeof casterChar.spellSlots === 'string'
+      ? JSON.parse(casterChar.spellSlots) : (casterChar.spellSlots || {});
+    const slot = slots[spell.level];
+    if (slot) {
+      const available = slot.max - slot.used;
+      if (available <= 0) {
+        emitRoll('1d0+0', `${casterName} has no level ${spell.level} slots remaining!`);
+        return;
+      }
+      const updatedSlots = { ...slots, [spell.level]: { ...slot, used: slot.used + 1 } };
+      emitCharacterUpdate(casterId, { spellSlots: updatedSlots });
+      charStore.applyRemoteUpdate(casterId, { spellSlots: updatedSlots });
+    }
+  }
+
+  // --- Resolve damage and properties from description ---
+  const cleanDesc = (spell.description || '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ');
+  let damageDice = spell.damage || '';
+  let resolvedSavingThrow = spell.savingThrow || '';
+
+  if (!damageDice) {
+    const dmgMatch = cleanDesc.match(/(\d+d\d+(?:\s*\+\s*\d+)?)\s+\w*\s*damage/i);
+    if (dmgMatch) damageDice = dmgMatch[1].replace(/\s/g, '');
+  }
+  if (!resolvedSavingThrow) {
+    const saveMatch = cleanDesc.match(/(strength|dexterity|constitution|wisdom|intelligence|charisma)\s+saving\s+throw/i);
+    if (saveMatch) {
+      const m: Record<string, string> = { strength: 'str', dexterity: 'dex', constitution: 'con', wisdom: 'wis', intelligence: 'int', charisma: 'cha' };
+      resolvedSavingThrow = m[saveMatch[1].toLowerCase()] || '';
+    }
+  }
+
+  // Fallback: compendium lookup
+  if (!damageDice || !resolvedSavingThrow) {
+    try {
+      const slug = spell.name.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
+      const resp = await fetch(`/api/compendium/spells/${slug}`);
+      if (resp.ok) {
+        const compSpell = await resp.json();
+        const compDesc = (compSpell.description || '').replace(/<[^>]*>/g, ' ');
+        if (!damageDice) {
+          const m = compDesc.match(/(\d+d\d+(?:\s*\+\s*\d+)?)\s+\w*\s*damage/i);
+          if (m) damageDice = m[1].replace(/\s/g, '');
+        }
+        if (!resolvedSavingThrow) {
+          const sm = compDesc.match(/(strength|dexterity|constitution|wisdom|intelligence|charisma)\s+saving\s+throw/i);
+          if (sm) {
+            const map: Record<string, string> = { strength: 'str', dexterity: 'dex', constitution: 'con', wisdom: 'wis', intelligence: 'int', charisma: 'cha' };
+            resolvedSavingThrow = map[sm[1].toLowerCase()] || '';
+          }
+        }
+      }
+    } catch {}
+  }
+
+  // Cantrip scaling
+  if (spell.level === 0 && damageDice) {
+    const casterLevel = casterChar?.level ?? 1;
+    const tier = casterLevel >= 17 ? 4 : casterLevel >= 11 ? 3 : casterLevel >= 5 ? 2 : 1;
+    if (tier > 1) {
+      damageDice = damageDice.replace(/(\d+)d(\d+)/, (_: string, n: string, d: string) => `${parseInt(n) * tier}d${d}`);
+    }
+  }
+
+  // Determine AoE size
+  let aoeRadius = spell.aoeSize || 0;
+  if (!aoeRadius) {
+    const radiusMatch = cleanDesc.match(/(\d+)[- ]foot[- ](?:radius|cube|cone|line|emanation|sphere)/i);
+    if (radiusMatch) aoeRadius = parseInt(radiusMatch[1]);
+    else aoeRadius = 15;
+  }
+
+  // Pushback
+  let pushDistance = 0;
+  const pushMatch = cleanDesc.match(/pushed\s+(\d+)\s*(?:feet|ft)/i);
+  if (pushMatch) pushDistance = parseInt(pushMatch[1]);
+
+  const halfOnSave = cleanDesc.toLowerCase().includes('half as much damage')
+    || cleanDesc.toLowerCase().includes('half damage')
+    || cleanDesc.toLowerCase().includes('save for half');
+
+  // Find affected tokens
+  const allTokens = mapState.tokens;
+  const casterX = (casterToken as any).x;
+  const casterY = (casterToken as any).y;
+  const gridSize = mapState.currentMap?.gridSize || 70;
+  const aoePixels = (aoeRadius / 5) * gridSize;
+
+  const affectedTokens = Object.values(allTokens).filter((t: any) => {
+    if (t.id === casterTokenId) return false;
+    const dx = t.x - casterX;
+    const dy = t.y - casterY;
+    return Math.sqrt(dx * dx + dy * dy) <= aoePixels;
+  });
+
+  emitRoll('1d0+0', `${casterName} casts ${spell.name}! (${aoeRadius}ft AoE — ${affectedTokens.length} creature${affectedTokens.length !== 1 ? 's' : ''} affected)`);
+
+  if (affectedTokens.length === 0) {
+    emitRoll('1d0+0', `No creatures within ${aoeRadius}ft`);
+    return;
+  }
+
+  // Process each affected token
+  for (let i = 0; i < affectedTokens.length; i++) {
+    const aToken = affectedTokens[i] as any;
+    const aCharId = aToken.characterId;
+    if (!aCharId) continue;
+    const aChar = charStore.allCharacters[aCharId];
+    if (!aChar) continue;
+
+    const aHp = typeof aChar.hitPoints === 'number' ? aChar.hitPoints : parseInt(String(aChar.hitPoints)) || 0;
+    if (aHp <= 0) continue;
+
+    const delay = i * 200;
+
+    // PUSHBACK FIRST (before damage might kill them)
+    if (pushDistance > 0) {
+      setTimeout(() => {
+        const dx = aToken.x - casterX;
+        const dy = aToken.y - casterY;
+        const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+        const pushPixels = (pushDistance / 5) * gridSize;
+        const newX = aToken.x + (dx / dist) * pushPixels;
+        const newY = aToken.y + (dy / dist) * pushPixels;
+        emitTokenUpdate(aToken.id, { x: Math.round(newX), y: Math.round(newY) });
+      }, delay);
+    }
+
+    // Save + damage
+    if (resolvedSavingThrow) {
+      const aScores = aChar.abilityScores
+        ? (typeof aChar.abilityScores === 'string' ? JSON.parse(aChar.abilityScores) : aChar.abilityScores)
+        : {};
+      const aSaveMod = abilityModifier((aScores as any)[resolvedSavingThrow] || 10);
+      const aSaveRoll = Math.floor(Math.random() * 20) + 1;
+      const aSaveTotal = aSaveRoll + aSaveMod;
+      const aSaved = aSaveTotal >= casterSpellDC;
+
+      setTimeout(() => {
+        emitRoll(`1d20+${aSaveMod}`,
+          `${aToken.name} ${resolvedSavingThrow.toUpperCase()} Save vs DC ${casterSpellDC}: ${aSaveTotal} — ${aSaved ? 'SUCCESS!' : 'FAILED!'}`
+        );
+      }, delay + 100);
+
+      if (damageDice) {
+        setTimeout(() => {
+          const dmgMatch = damageDice.match(/(\d+)d(\d+)/);
+          if (dmgMatch) {
+            // Roll actual dice (not average)
+            let total = 0;
+            const numDice = parseInt(dmgMatch[1]);
+            const dieSize = parseInt(dmgMatch[2]);
+            for (let j = 0; j < numDice; j++) {
+              total += Math.floor(Math.random() * dieSize) + 1;
+            }
+            const finalDmg = aSaved && halfOnSave ? Math.floor(total / 2) : aSaved ? 0 : total;
+            if (finalDmg > 0) {
+              emitRoll(damageDice, `${spell.name} → ${aToken.name}: ${finalDmg} ${aSaved ? '(half) ' : ''}damage`);
+              // Read fresh HP from store right before applying
+              const freshChar = useCharacterStore.getState().allCharacters[aCharId];
+              const freshHp = freshChar ? (typeof freshChar.hitPoints === 'number' ? freshChar.hitPoints : parseInt(String(freshChar.hitPoints)) || 0) : aHp;
+              const newHp = Math.max(0, freshHp - finalDmg);
+              emitCharacterUpdate(aCharId, { hitPoints: newHp });
+              useCharacterStore.getState().applyRemoteUpdate(aCharId, { hitPoints: newHp });
+            }
+          }
+        }, delay + 300);
+      }
+    }
+  }
 }
 
 function quickBtnStyle(color: string): React.CSSProperties {
