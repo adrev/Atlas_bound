@@ -159,20 +159,59 @@ export function nextTurn(sessionId: string): {
   currentTurnIndex: number;
   roundNumber: number;
   actionEconomy: ActionEconomy;
+  skippedTokenIds: string[];
+  currentCombatant: Combatant;
 } {
   const room = getRoom(sessionId);
   if (!room?.combatState) throw new Error('No active combat');
 
   const state = room.combatState;
-  state.currentTurnIndex++;
+  const skippedTokenIds: string[] = [];
+  // Cap iterations at combatants.length so we can't infinite-loop if every
+  // combatant is dead.
+  let safety = state.combatants.length + 1;
 
-  if (state.currentTurnIndex >= state.combatants.length) {
-    state.currentTurnIndex = 0;
-    state.roundNumber++;
+  while (safety-- > 0) {
+    state.currentTurnIndex++;
+
+    if (state.currentTurnIndex >= state.combatants.length) {
+      state.currentTurnIndex = 0;
+      state.roundNumber++;
+    }
+
+    const candidate = state.combatants[state.currentTurnIndex];
+    if (!candidate) break;
+
+    // Skip dead / unconscious / petrified combatants — they can't act.
+    // Death-saving characters (PCs at 0 HP) DO get a turn so they can roll
+    // their death save, so we only skip if they're stably down (no death
+    // save state) or marked unconscious permanently.
+    const isDown = candidate.hp <= 0;
+    const hasDeathSaves = candidate.deathSaves &&
+      (candidate.deathSaves.successes > 0 || candidate.deathSaves.failures > 0);
+    const isPlayerCharacter = !candidate.isNPC;
+
+    // PCs at 0 HP get a turn for their death save UNTIL they stabilize or die.
+    // NPCs at 0 HP just skip — they're either dead or unconscious-defeated.
+    if (isDown && !isPlayerCharacter) {
+      skippedTokenIds.push(candidate.tokenId);
+      continue;
+    }
+    if (isDown && isPlayerCharacter && hasDeathSaves &&
+        (candidate.deathSaves.failures >= 3 || candidate.deathSaves.successes >= 3)) {
+      // Already resolved — dead or stable
+      skippedTokenIds.push(candidate.tokenId);
+      continue;
+    }
+
+    // Petrified / stunned / paralyzed creatures get their turn but can't
+    // take actions. We still grant the turn so the DM can manually advance.
+    break;
   }
 
-  // Reset action economy for the new current combatant
   const currentCombatant = state.combatants[state.currentTurnIndex];
+
+  // Reset action economy for the new current combatant
   const economy: ActionEconomy = {
     action: false,
     bonusAction: false,
@@ -188,6 +227,8 @@ export function nextTurn(sessionId: string): {
     currentTurnIndex: state.currentTurnIndex,
     roundNumber: state.roundNumber,
     actionEconomy: economy,
+    skippedTokenIds,
+    currentCombatant,
   };
 }
 

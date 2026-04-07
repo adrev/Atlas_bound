@@ -1,6 +1,7 @@
 import { SkipForward, X } from 'lucide-react';
 import { useCombatStore } from '../../stores/useCombatStore';
 import { useSessionStore } from '../../stores/useSessionStore';
+import { useMapStore } from '../../stores/useMapStore';
 import { emitNextTurn, emitEndCombat } from '../../socket/emitters';
 import { ActionEconomy } from './ActionEconomy';
 import { theme } from '../../styles/theme';
@@ -12,11 +13,16 @@ export function InitiativeTracker() {
   const active = useCombatStore((s) => s.active);
   const isDM = useSessionStore((s) => s.isDM);
   const userId = useSessionStore((s) => s.userId);
+  const tokens = useMapStore((s) => s.tokens);
 
   if (!active || combatants.length === 0) return null;
 
   const currentCombatant = combatants[currentTurnIndex];
-  const isMyTurn = isDM || currentCombatant?.characterId === userId;
+  // The current turn's token owner can also end their own turn now (the
+  // server-side check matches). Used to be DM-only.
+  const currentToken = currentCombatant ? tokens[currentCombatant.tokenId] : null;
+  const isCurrentOwner = currentToken?.ownerUserId === userId;
+  const isMyTurn = isDM || isCurrentOwner;
 
   return (
     <div style={styles.container}>
@@ -42,13 +48,18 @@ export function InitiativeTracker() {
           const hpRatio = combatant.maxHp > 0 ? combatant.hp / combatant.maxHp : 1;
           const hpColor =
             hpRatio > 0.5 ? theme.hp.full : hpRatio > 0.25 ? theme.hp.half : theme.hp.low;
+          const isDown = combatant.hp <= 0;
 
           return (
             <div
               key={combatant.tokenId}
+              onClick={() => useMapStore.getState().selectToken(combatant.tokenId)}
+              title={`${combatant.name} — Initiative ${combatant.initiative} • HP ${combatant.hp}/${combatant.maxHp} • AC ${combatant.armorClass}\nClick to select on map`}
               style={{
                 ...styles.combatant,
                 ...(isCurrent ? styles.combatantActive : {}),
+                ...(isDown ? styles.combatantDown : {}),
+                cursor: 'pointer',
               }}
             >
               {/* Portrait */}
@@ -155,6 +166,10 @@ const styles: Record<string, React.CSSProperties> = {
   },
   combatantActive: {
     background: theme.gold.bg,
+  },
+  combatantDown: {
+    opacity: 0.4,
+    filter: 'grayscale(0.7)',
   },
   portrait: {
     width: 40,

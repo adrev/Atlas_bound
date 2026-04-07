@@ -135,11 +135,51 @@ export function registerCombatEvents(io: Server, socket: Socket): void {
 
   socket.on('combat:next-turn', () => {
     const ctx = getPlayerBySocketId(socket.id);
-    if (!ctx || ctx.player.role !== 'dm') return;
+    if (!ctx) return;
+
+    // Allow either the DM OR the current turn's owner to advance.
+    // Without this restriction every player has to ask the DM to click
+    // End Turn for them, which is annoying.
+    const room = ctx.room;
+    const state = room.combatState;
+    if (!state) return;
+    const currentCombatant = state.combatants[state.currentTurnIndex];
+    const isCurrentOwner = currentCombatant?.characterId &&
+      room.tokens.get(currentCombatant.tokenId)?.ownerUserId === ctx.player.userId;
+    const isDM = ctx.player.role === 'dm';
+    if (!isDM && !isCurrentOwner) return;
 
     try {
       const result = CombatService.nextTurn(ctx.room.sessionId);
-      io.to(ctx.room.sessionId).emit('combat:turn-advanced', result);
+      io.to(ctx.room.sessionId).emit('combat:turn-advanced', {
+        currentTurnIndex: result.currentTurnIndex,
+        roundNumber: result.roundNumber,
+        actionEconomy: result.actionEconomy,
+      });
+
+      // Announce the new turn in chat as a system message so the round
+      // count and current combatant are visible without looking at the
+      // initiative tracker.
+      const announcement = result.skippedTokenIds.length > 0
+        ? `⚔️ Round ${result.roundNumber} — ${result.currentCombatant.name}'s turn (skipped ${result.skippedTokenIds.length} downed)`
+        : `⚔️ Round ${result.roundNumber} — ${result.currentCombatant.name}'s turn`;
+
+      // Emit as a system chat message that gets persisted + broadcast.
+      // Inline the message construction to avoid pulling in another import.
+      const msgId = (Math.random() + 1).toString(36).substring(2);
+      const now = new Date().toISOString();
+      io.to(ctx.room.sessionId).emit('chat:new-message', {
+        id: msgId,
+        sessionId: ctx.room.sessionId,
+        userId: 'system',
+        displayName: 'System',
+        type: 'system',
+        content: announcement,
+        characterName: null,
+        whisperTo: null,
+        rollData: null,
+        createdAt: now,
+      });
     } catch (err) {
       socket.emit('session:error', {
         message: err instanceof Error ? err.message : 'Failed to advance turn',
