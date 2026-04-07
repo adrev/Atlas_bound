@@ -3,6 +3,7 @@ import { useMapStore } from '../../stores/useMapStore';
 import { useCharacterStore } from '../../stores/useCharacterStore';
 import { useSessionStore } from '../../stores/useSessionStore';
 import { emitRoll, emitCharacterUpdate, emitTokenUpdate, emitSystemMessage } from '../../socket/emitters';
+import { enrichSpellFromDescription } from '../../utils/spell-enrich';
 import { abilityModifier, calculateEquipmentBonuses, SPELL_CONDITIONS, getSpellAnimation } from '@dnd-vtt/shared';
 import { useEffectStore } from '../../stores/useEffectStore';
 import { LootBagPanel } from '../loot/LootBagPanel';
@@ -820,7 +821,12 @@ export function TokenActionPanel() {
   const storedAC = character?.armorClass ?? compendiumData?.armorClass ?? 10;
   const speed = character?.speed ?? (compendiumData?.speed?.walk) ?? 30;
   const profBonus = character?.proficiencyBonus ?? 2;
-  const spells = character ? parse<any[]>(character.spells, []) : [];
+  // Parse the character's spells AND enrich them from descriptions so the
+  // damage / save / attack badges show on every spell button — including
+  // DDB-imported spells where the structured fields are usually null.
+  const spells = character
+    ? parse<any[]>(character.spells, []).map(enrichSpellFromDescription)
+    : [];
   const spellSlots = character ? parse<Record<string, { max: number; used: number }>>(character.spellSlots, {}) : {};
   const inventory = character ? parse<any[]>(character.inventory, []) : [];
   const weapons = inventory.filter((i: any) => i.type === 'weapon' && i.equipped);
