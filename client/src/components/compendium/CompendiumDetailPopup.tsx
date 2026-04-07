@@ -6,6 +6,7 @@ import { useMapStore } from '../../stores/useMapStore';
 import { useSessionStore } from '../../stores/useSessionStore';
 import { useCharacterStore } from '../../stores/useCharacterStore';
 import { emitCharacterUpdate } from '../../socket/emitters';
+import { resolveSpellSlug } from '../../utils/spell-aliases';
 import type {
   CompendiumMonster,
   CompendiumSpell,
@@ -618,7 +619,7 @@ function SpellDetail({ spell }: { spell: CompendiumSpell }) {
         </>
       )}
 
-      {spell.classes.length > 0 && (
+      {Array.isArray(spell.classes) && spell.classes.length > 0 && (
         <div style={detailStyles.classesRow}>
           {spell.classes.map((c) => (
             <span key={c} style={detailStyles.classChip}>{c}</span>
@@ -1023,7 +1024,10 @@ export function CompendiumDetailPopup({ result, onClose }: Props) {
     setError('');
 
     const categoryPath = result.category;
-    const slug = result.slug;
+    // Apply spell name alias as a safety net so direct fetches with DDB
+    // slugs ("tashas-hideous-laughter") still resolve to the SRD entry
+    // ("hideous-laughter") even if the caller forgot to alias.
+    const slug = categoryPath === 'spells' ? resolveSpellSlug(result.slug) : result.slug;
 
     // Try compendium first, then custom content as fallback
     fetch(`/api/compendium/${categoryPath}/${slug}`)

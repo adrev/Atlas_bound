@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { CompendiumDetailPopup } from './CompendiumDetailPopup';
+import { resolveSpellSlug } from '../../utils/spell-aliases';
 import type { CompendiumSearchResult } from '@dnd-vtt/shared';
 
 /**
@@ -15,30 +16,7 @@ export function CompendiumOverlay() {
       if (!d?.slug || !d?.category) return;
 
       // Named spell aliases (DDB names → SRD slug)
-      const SPELL_ALIASES: Record<string, string> = {
-        'tashas-hideous-laughter': 'hideous-laughter',
-        'melfs-acid-arrow': 'acid-arrow',
-        'bigbys-hand': 'arcane-hand',
-        'mordenkainens-sword': 'arcane-sword',
-        'leomunds-tiny-hut': 'tiny-hut',
-        'otilukes-resilient-sphere': 'resilient-sphere',
-        'otilukes-freezing-sphere': 'freezing-sphere',
-        'mordenkainens-magnificent-mansion': 'magnificent-mansion',
-        'drawmijs-instant-summons': 'instant-summons',
-        'evards-black-tentacles': 'black-tentacles',
-        'tashas-caustic-brew': 'caustic-brew',
-        'nystuls-magic-aura': 'arcanists-magic-aura',
-        'rarys-telepathic-bond': 'telepathic-bond',
-        'leomunds-secret-chest': 'secret-chest',
-        'mordenkainens-private-sanctum': 'private-sanctum',
-        'ottos-irresistible-dance': 'irresistible-dance',
-        'tensers-floating-disk': 'floating-disk',
-      };
-
-      let slug = d.slug;
-      if (d.category === 'spells' && SPELL_ALIASES[slug]) {
-        slug = SPELL_ALIASES[slug];
-      }
+      const slug = d.category === 'spells' ? resolveSpellSlug(d.slug) : d.slug;
 
       // Try direct slug lookup in compendium first
       let resp = await fetch(`/api/compendium/${d.category}/${slug}`).catch(() => null);
@@ -65,8 +43,12 @@ export function CompendiumOverlay() {
 
       if (resp?.ok) {
         const data = await resp.json();
+        // Pass the RESOLVED slug (post-alias) so the popup's own re-fetch
+        // hits the correct endpoint. Without this, the popup tries to
+        // fetch the original DDB slug ("tashas-hideous-laughter") which
+        // 404s and shows "Error: Not found".
         setDetail({
-          slug: d.slug,
+          slug,
           name: data.name || d.name || d.slug,
           category: d.category,
           snippet: '',
