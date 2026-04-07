@@ -751,21 +751,64 @@ export function TokenActionPanel() {
         const atk = currentTargeting.weapon || currentTargeting.action;
         const atkBonus = atk.attack_bonus ?? 0;
         const dmgDice = atk.damage_dice || atk.damage || '1d6';
+        // Detect damage type from atk fields or damage_dice (e.g. "1d6 piercing")
+        let weaponDmgType = (atk.damageType || atk.damage_type || '').toLowerCase();
+        if (!weaponDmgType) {
+          const m = String(dmgDice).match(/\b(slashing|piercing|bludgeoning|fire|cold|lightning|thunder|acid|poison|necrotic|radiant|force|psychic)\b/i);
+          if (m) weaponDmgType = m[1].toLowerCase();
+        }
+        const weaponDmgWord = weaponDmgType ? `${weaponDmgType} ` : '';
         console.log('[TARGETING] Weapon/Action:', atk.name, 'atkBonus:', atkBonus, 'dmgDice:', dmgDice, 'charId:', effectiveCharId);
 
-        emitRoll(`1d20+${atkBonus}`, `${currentTargeting.casterName} → ${targetToken.name}: ${atk.name} Attack`);
-        setTimeout(() => emitRoll(dmgDice, `${atk.name} → ${targetToken.name} Damage`), 300);
+        // Run the attack through the roll engine so Bless / advantage /
+        // disadvantage / target conditions actually apply.
+        const wCasterToken = useMapStore.getState().tokens[currentTargeting.casterTokenId];
+        const wCasterConds = (wCasterToken?.conditions || []) as string[];
+        const wTargetConds = (targetToken.conditions || []) as string[];
+        const wAttackerOwn = getOwnRollModifiers(wCasterConds);
+        const wTargetIncoming = getTargetRollModifiers(wTargetConds);
+        const wCombined = combineAttackModifiers(wAttackerOwn, wTargetIncoming);
+        const wAtkResult = rollAttackWithModifiers(atkBonus, wCombined);
 
-        if (effectiveCharId) {
-          const cid = effectiveCharId;
+        // Effective AC accounts for Hasted / Shield / Mage Armor / etc.
+        const wTargetScores = targetChar?.abilityScores
+          ? (typeof targetChar.abilityScores === 'string' ? JSON.parse(targetChar.abilityScores) : targetChar.abilityScores)
+          : {};
+        const wTargetDex = abilityModifier((wTargetScores as any).dex || 10);
+        const wAcResult = effectiveAC(targetChar?.armorClass ?? 10, wTargetConds, wTargetDex);
+        const wTargetAC = wAcResult.value;
+        const wIsHit = wAtkResult.isCritical || (!wAtkResult.isFumble && wAtkResult.total >= wTargetAC);
+        const wIsMelee = (atk.properties as string[] | undefined)?.includes('Melee');
+        const wIsCrit = wAtkResult.isCritical || (wIsHit && wAtkResult.forceCritOnHit && wIsMelee);
+
+        // Build the consolidated chat message (same shape as spell results)
+        const wHeader = `⚔ ${currentTargeting.casterName} → ${targetToken.name}: ${atk.name}`;
+        const wHitIcon = wIsCrit ? '💥' : wIsHit ? '✓' : '✗';
+        const wAcNote = wAcResult.notes.length > 0 ? ` (base ${wAcResult.base}${wAcResult.notes.map(n => ' ' + n).join('')})` : '';
+        const wModNote = wCombined.notes.length > 0 ? ` [${wCombined.notes.join(', ')}]` : '';
+        const wParts: string[] = [];
+        wParts.push(`${wHitIcon} Attack ${wAtkResult.breakdown} vs AC ${wTargetAC}${wAcNote} → ${wIsCrit ? 'CRIT' : wIsHit ? 'HIT' : 'MISS'}${wModNote}`);
+
+        if (wIsHit && effectiveCharId) {
+          const wFinalDice = wIsCrit ? dmgDice.replace(/(\d+)d/, (_: string, n: string) => `${parseInt(n) * 2}d`) : dmgDice;
+          const wRolledDmg = rollDamageDice(wFinalDice);
+          const wFreshChar = useCharacterStore.getState().allCharacters[effectiveCharId];
+          const wFreshHp = wFreshChar ? (typeof wFreshChar.hitPoints === 'number' ? wFreshChar.hitPoints : parseInt(String(wFreshChar.hitPoints)) || 0) : targetHp;
+          // Weapon attacks are NONMAGICAL by default — Stoneskin matters
+          const wDefenses = (wFreshChar as any)?.defenses ? (typeof (wFreshChar as any).defenses === 'string' ? JSON.parse((wFreshChar as any).defenses) : (wFreshChar as any).defenses) : { resistances: [], immunities: [], vulnerabilities: [] };
+          const wResisted = applyDamageWithResist(wRolledDmg, weaponDmgType, wDefenses, wTargetConds, false);
+          const wNewHp = Math.max(0, wFreshHp - wResisted.amount);
+          const wResistTag = wResisted.source ? ` [${wResisted.source}]` : '';
+          const wDmgChange = wResisted.amount !== wRolledDmg ? `${wRolledDmg}→${wResisted.amount}` : `${wResisted.amount}`;
+          wParts.push(`${wDmgChange} ${weaponDmgWord}dmg${wResistTag} (HP ${wFreshHp}→${wNewHp})${wIsCrit ? ' [CRIT]' : ''}`);
+          if (wNewHp === 0) wParts.push('💀 DOWN');
           setTimeout(() => {
-            const match = dmgDice.match(/(\d+)d(\d+)/);
-            if (match) {
-              const avgDmg = Math.ceil(parseInt(match[1]) * (parseInt(match[2]) + 1) / 2);
-              updateTargetHp(cid, Math.max(0, targetHp - avgDmg));
-            }
-          }, 600);
+            updateTargetHp(effectiveCharId, wNewHp);
+            if (wResisted.amount > 0) emitDamageSideEffects(targetToken.id, wResisted.amount);
+          }, 300);
         }
+
+        emitSystemMessage(`${wHeader}\n   • ${wParts.join(' • ')}`);
       }
 
       useMapStore.getState().cancelTargetingMode();
