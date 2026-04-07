@@ -138,6 +138,18 @@ export function registerSessionEvents(io: Server, socket: Socket): void {
           conditions: JSON.parse(t.conditions as string || '[]'),
           ownerUserId: t.owner_user_id as string | null, createdAt: t.created_at as string,
         }));
+
+        // CRITICAL: populate the in-memory token map so server-side
+        // operations (Start Combat, condition application, etc.) can
+        // find the tokens. Without this, room.tokens stays empty after
+        // a fresh session join even though the client has the data,
+        // and Start Combat silently produces zero combatants.
+        if (room.tokens.size === 0) {
+          for (const t of tokens) {
+            room.tokens.set(t.id, t as never);
+          }
+        }
+
         socket.emit('map:loaded', {
           map: {
             id: mapRow.id as string, name: mapRow.name as string,
