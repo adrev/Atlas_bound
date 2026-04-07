@@ -701,11 +701,43 @@ function HeaderBar({ character }: { character: Character }) {
       <button
         onClick={() => {
           const changes: string[] = [];
-          // Short rest: recover hit dice (not implemented yet), reset short-rest features
-          changes.push('Short rest completed');
-          // Show rest summary toast
+          const updates: Record<string, unknown> = {};
+          // Reset short-rest features
+          const features = parse<Array<{ name: string; usesTotal?: number; usesRemaining?: number; resetOn?: string | null }>>(character.features, []);
+          let restoredFeatures = 0;
+          const updatedFeatures = features.map((f) => {
+            if (f.resetOn === 'short' && f.usesTotal && (f.usesRemaining ?? f.usesTotal) < f.usesTotal) {
+              restoredFeatures++;
+              return { ...f, usesRemaining: f.usesTotal };
+            }
+            return f;
+          });
+          if (restoredFeatures > 0) {
+            updates.features = updatedFeatures;
+            changes.push(`${restoredFeatures} short-rest feature${restoredFeatures !== 1 ? 's' : ''} restored`);
+          }
+          // Warlocks recover ALL their spell slots on a short rest. Other classes don't.
+          const isWarlock = (character.class || '').toLowerCase().includes('warlock');
+          if (isWarlock) {
+            const slots = parse<Record<string, { max: number; used: number }>>(character.spellSlots, {});
+            const updatedSlots: Record<string, { max: number; used: number }> = {};
+            let restoredSlots = 0;
+            for (const [lvl, slot] of Object.entries(slots)) {
+              if (slot.used > 0) restoredSlots++;
+              updatedSlots[lvl] = { max: slot.max, used: 0 };
+            }
+            if (restoredSlots > 0) {
+              updates.spellSlots = updatedSlots;
+              changes.push(`Warlock spell slots restored`);
+            }
+          }
+          if (changes.length === 0) changes.push('Nothing to restore');
+          if (Object.keys(updates).length > 0) {
+            emitCharacterUpdate(character.id, updates);
+            useCharacterStore.getState().applyRemoteUpdate(character.id, updates);
+          }
           showRestToast('Short Rest', changes);
-          emitRoll('1d0+0', 'Short Rest');
+          emitRoll('1d0+0', `${character.name} takes a Short Rest`);
         }}
         style={{
           padding: '6px 12px', fontSize: 11, fontWeight: 600,
@@ -720,16 +752,57 @@ function HeaderBar({ character }: { character: Character }) {
       <button
         onClick={() => {
           const changes: string[] = [];
-          changes.push(`HP fully restored (${character.hitPoints} \u2192 ${character.maxHitPoints})`);
-          // List spell slots recovered
-          const slots = parse<Record<string, {max:number;used:number}>>(character.spellSlots, {});
-          for (const [lvl, slot] of Object.entries(slots)) {
-            if (slot.used > 0) changes.push(`Level ${lvl} spell slots restored (${slot.max - slot.used}/${slot.max} \u2192 ${slot.max}/${slot.max})`);
+          const updates: Record<string, unknown> = {};
+
+          // 1) Restore HP to max
+          if (character.hitPoints < character.maxHitPoints) {
+            updates.hitPoints = character.maxHitPoints;
+            changes.push(`HP restored (${character.hitPoints} \u2192 ${character.maxHitPoints})`);
           }
-          if (character.tempHitPoints > 0) changes.push('Temporary HP cleared');
-          changes.push('All features restored');
+          // 2) Clear temp HP
+          if (character.tempHitPoints > 0) {
+            updates.tempHitPoints = 0;
+            changes.push('Temporary HP cleared');
+          }
+          // 3) Restore all spell slots
+          const slots = parse<Record<string, { max: number; used: number }>>(character.spellSlots, {});
+          const updatedSlots: Record<string, { max: number; used: number }> = {};
+          const restoredLevels: string[] = [];
+          for (const [lvl, slot] of Object.entries(slots)) {
+            if (slot.used > 0) restoredLevels.push(lvl);
+            updatedSlots[lvl] = { max: slot.max, used: 0 };
+          }
+          if (restoredLevels.length > 0) {
+            updates.spellSlots = updatedSlots;
+            changes.push(`Spell slots restored (level${restoredLevels.length !== 1 ? 's' : ''} ${restoredLevels.join(', ')})`);
+          }
+          // 4) Restore all feature uses
+          const features = parse<Array<{ name: string; usesTotal?: number; usesRemaining?: number; resetOn?: string | null }>>(character.features, []);
+          let restoredFeatures = 0;
+          const updatedFeatures = features.map((f) => {
+            if (f.usesTotal && (f.usesRemaining ?? f.usesTotal) < f.usesTotal) {
+              restoredFeatures++;
+              return { ...f, usesRemaining: f.usesTotal };
+            }
+            return f;
+          });
+          if (restoredFeatures > 0) {
+            updates.features = updatedFeatures;
+            changes.push(`${restoredFeatures} feature${restoredFeatures !== 1 ? 's' : ''} restored`);
+          }
+          // 5) Death saves cleared
+          updates.deathSaves = { successes: 0, failures: 0 };
+          // 6) Drop concentration
+          if (character.concentratingOn) {
+            updates.concentratingOn = null;
+            changes.push(`Concentration on ${character.concentratingOn} dropped`);
+          }
+
+          if (changes.length === 0) changes.push('Already fully rested');
+          emitCharacterUpdate(character.id, updates);
+          useCharacterStore.getState().applyRemoteUpdate(character.id, updates);
           showRestToast('Long Rest', changes);
-          emitRoll('1d0+0', 'Long Rest');
+          emitRoll('1d0+0', `${character.name} takes a Long Rest`);
         }}
         style={{
           padding: '6px 12px', fontSize: 11, fontWeight: 600,

@@ -1405,12 +1405,23 @@ async function castSelfSpell(spell: any, casterTokenId: string, casterName: stri
     }
   }
 
-  // Determine AoE size
+  // Determine AoE size and shape
   let aoeRadius = spell.aoeSize || 0;
+  let aoeShape: 'sphere' | 'cube' | 'cone' | 'line' = 'sphere';
+  if (spell.aoeType === 'cube') aoeShape = 'cube';
+  else if (spell.aoeType === 'cone') aoeShape = 'cone';
+  else if (spell.aoeType === 'line') aoeShape = 'line';
   if (!aoeRadius) {
-    const radiusMatch = cleanDesc.match(/(\d+)[- ]foot[- ](?:radius|cube|cone|line|emanation|sphere)/i);
-    if (radiusMatch) aoeRadius = parseInt(radiusMatch[1]);
-    else aoeRadius = 15;
+    const radiusMatch = cleanDesc.match(/(\d+)[- ]foot[- ](radius|cube|cone|line|emanation|sphere)/i);
+    if (radiusMatch) {
+      aoeRadius = parseInt(radiusMatch[1]);
+      const shape = radiusMatch[2].toLowerCase();
+      if (shape === 'cube') aoeShape = 'cube';
+      else if (shape === 'cone') aoeShape = 'cone';
+      else if (shape === 'line') aoeShape = 'line';
+    } else {
+      aoeRadius = 15;
+    }
   }
 
   // Pushback
@@ -1431,25 +1442,63 @@ async function castSelfSpell(spell: any, casterTokenId: string, casterName: stri
 
   const affectedTokens = Object.values(allTokens).filter((t: any) => {
     if (t.id === casterTokenId) return false;
-    const dx = t.x - casterX;
-    const dy = t.y - casterY;
+    const dx = (t.x as number) - casterX;
+    const dy = (t.y as number) - casterY;
+    if (aoeShape === 'cube') {
+      // Cube originating from you: catch anyone in a square of side aoeRadius
+      // (a bit generous on direction since we don't have a facing yet)
+      return Math.abs(dx) <= aoePixels && Math.abs(dy) <= aoePixels;
+    }
+    // sphere/cone/line/emanation fallback: simple radius check
     return Math.sqrt(dx * dx + dy * dy) <= aoePixels;
   });
 
   emitRoll('1d0+0', `${casterName} casts ${spell.name}! (${aoeRadius}ft AoE — ${affectedTokens.length} creature${affectedTokens.length !== 1 ? 's' : ''} affected)`);
 
   if (affectedTokens.length === 0) {
-    emitRoll('1d0+0', `No creatures within ${aoeRadius}ft`);
+    emitRoll('1d0+0', `No creatures within ${aoeRadius}ft of ${casterName}. Move closer to your targets.`);
     return;
   }
+
+  // Pre-fetch any character data we don't already have in the store.
+  // Critical: DM-spawned creatures aren't auto-synced to player sessions, so
+  // without this the player would silently skip every creature.
+  const missingCharIds: string[] = [];
+  for (const t of affectedTokens) {
+    const cid = (t as any).characterId;
+    if (cid && !charStore.allCharacters[cid]) missingCharIds.push(cid);
+  }
+  if (missingCharIds.length > 0) {
+    await Promise.all(missingCharIds.map(async (cid) => {
+      try {
+        const r = await fetch(`/api/characters/${cid}`);
+        if (r.ok) {
+          const data = await r.json();
+          useCharacterStore.getState().setAllCharacters({
+            ...useCharacterStore.getState().allCharacters,
+            [cid]: data,
+          });
+        }
+      } catch { /* ignore */ }
+    }));
+  }
+
+  // Re-read store after fetches
+  const refreshedStore = useCharacterStore.getState();
 
   // Process each affected token
   for (let i = 0; i < affectedTokens.length; i++) {
     const aToken = affectedTokens[i] as any;
     const aCharId = aToken.characterId;
-    if (!aCharId) continue;
-    const aChar = charStore.allCharacters[aCharId];
-    if (!aChar) continue;
+    if (!aCharId) {
+      console.warn('[CAST SELF] Token has no characterId, skipping:', aToken.name);
+      continue;
+    }
+    const aChar = refreshedStore.allCharacters[aCharId];
+    if (!aChar) {
+      console.warn('[CAST SELF] Character not in store after fetch, skipping:', aToken.name, aCharId);
+      continue;
+    }
 
     const aHp = typeof aChar.hitPoints === 'number' ? aChar.hitPoints : parseInt(String(aChar.hitPoints)) || 0;
     if (aHp <= 0) continue;
