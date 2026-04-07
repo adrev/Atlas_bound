@@ -1,9 +1,10 @@
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useState, useRef, useMemo } from 'react';
 import { X } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import { theme } from '../../styles/theme';
 import { useMapStore } from '../../stores/useMapStore';
 import { useSessionStore } from '../../stores/useSessionStore';
+import { useCharacterStore } from '../../stores/useCharacterStore';
 import { emitCharacterUpdate } from '../../socket/emitters';
 import type {
   CompendiumMonster,
@@ -431,6 +432,94 @@ function SpellDetail({ spell }: { spell: CompendiumSpell }) {
   const [spellImgSrc, setSpellImgSrc] = useState(spellImg.png);
   const [imgExists, setImgExists] = useState(true);
 
+  // Add-to-character DM control
+  const isDM = useSessionStore((s) => s.isDM);
+  const userId = useSessionStore((s) => s.userId);
+  const allCharacters = useCharacterStore((s) => s.allCharacters);
+  const tokens = useMapStore((s) => s.tokens);
+  const [showCharPicker, setShowCharPicker] = useState(false);
+  const [adding, setAdding] = useState<string | null>(null);
+
+  // Build the list of characters this user can grant spells to.
+  // - DM can target any character with a token on the map
+  // - Players can only target their own character(s)
+  const grantTargets = useMemo(() => {
+    const seen = new Set<string>();
+    const out: { id: string; name: string }[] = [];
+    for (const t of Object.values(tokens)) {
+      const cid = (t as any).characterId as string | null;
+      if (!cid || seen.has(cid)) continue;
+      const ch = allCharacters[cid];
+      if (!ch) continue;
+      if (!isDM && ch.userId !== userId) continue;
+      out.push({ id: cid, name: ch.name || (t as any).name || 'Unnamed' });
+      seen.add(cid);
+    }
+    return out;
+  }, [tokens, allCharacters, isDM, userId]);
+
+  async function grantToCharacter(characterId: string) {
+    setAdding(characterId);
+    try {
+      const ch = allCharacters[characterId];
+      if (!ch) return;
+      const existingSpells = (typeof ch.spells === 'string' ? JSON.parse(ch.spells) : ch.spells) || [];
+      // Skip if they already know it
+      if (existingSpells.some((s: any) => s.name?.toLowerCase() === spell.name.toLowerCase())) {
+        setShowCharPicker(false);
+        setAdding(null);
+        return;
+      }
+
+      // Inline conversion (mirrors compendiumSpellToCharSpell in CharacterSheetFull)
+      const cleanDesc = (spell.description || '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ');
+      const newSpell: any = {
+        name: spell.name,
+        level: spell.level,
+        school: spell.school,
+        castingTime: spell.castingTime,
+        range: spell.range,
+        components: spell.components,
+        duration: spell.duration,
+        description: spell.description,
+        higherLevels: spell.higherLevels,
+        isConcentration: !!spell.concentration,
+        isRitual: !!spell.ritual,
+      };
+      const dmgMatch = cleanDesc.match(/(\d+d\d+(?:\s*\+\s*\d+)?)\s+(\w+)\s*damage/i);
+      if (dmgMatch) {
+        newSpell.damage = dmgMatch[1].replace(/\s/g, '');
+        const validTypes = ['acid','bludgeoning','cold','fire','force','lightning','necrotic','piercing','poison','psychic','radiant','slashing','thunder'];
+        const t = dmgMatch[2].toLowerCase();
+        if (validTypes.includes(t)) newSpell.damageType = t;
+      }
+      const saveMatch = cleanDesc.match(/(strength|dexterity|constitution|wisdom|intelligence|charisma)\s+saving\s+throw/i);
+      if (saveMatch) {
+        const m: Record<string, string> = { strength:'str', dexterity:'dex', constitution:'con', wisdom:'wis', intelligence:'int', charisma:'cha' };
+        newSpell.savingThrow = m[saveMatch[1].toLowerCase()];
+      }
+      if (/ranged spell attack/i.test(cleanDesc)) newSpell.attackType = 'ranged';
+      else if (/melee spell attack/i.test(cleanDesc)) newSpell.attackType = 'melee';
+      const aoeMatch = cleanDesc.match(/(\d+)[- ]foot[- ](radius|sphere|cube|cone|line|cylinder|emanation)/i);
+      if (aoeMatch) {
+        newSpell.aoeSize = parseInt(aoeMatch[1]);
+        const shape = aoeMatch[2].toLowerCase();
+        if (shape === 'cube') newSpell.aoeType = 'cube';
+        else if (shape === 'cone') newSpell.aoeType = 'cone';
+        else if (shape === 'line') newSpell.aoeType = 'line';
+        else if (shape === 'cylinder') newSpell.aoeType = 'cylinder';
+        else newSpell.aoeType = 'sphere';
+      }
+
+      const updated = [...existingSpells, newSpell];
+      emitCharacterUpdate(characterId, { spells: updated });
+    } catch (err) {
+      console.error('Failed to grant spell:', err);
+    }
+    setAdding(null);
+    setShowCharPicker(false);
+  }
+
   return (
     <div style={detailStyles.spellBlock}>
       {/* Header with image */}
@@ -449,10 +538,53 @@ function SpellDetail({ spell }: { spell: CompendiumSpell }) {
             style={{ width: 56, height: 56, borderRadius: '50%', objectFit: 'cover', border: `3px solid ${theme.gold.primary}`, flexShrink: 0 }}
           />
         )}
-        <div>
+        <div style={{ flex: 1 }}>
           <h2 style={{ ...detailStyles.spellName, margin: 0 }}>{spell.name}</h2>
           <p style={{ ...detailStyles.spellSubtitle, margin: '2px 0 0' }}>{levelSchool}</p>
         </div>
+
+        {/* Add to character */}
+        {grantTargets.length > 0 && (
+          <div style={{ position: 'relative' }}>
+            <button onClick={() => setShowCharPicker(v => !v)} style={{
+              padding: '6px 12px', fontSize: 11, fontWeight: 700,
+              background: theme.gold.bg, color: theme.gold.primary,
+              border: `1px solid ${theme.gold.border}`, borderRadius: 4,
+              cursor: 'pointer', fontFamily: 'inherit',
+              textTransform: 'uppercase', letterSpacing: '0.04em',
+              whiteSpace: 'nowrap',
+            }}>
+              + Add to character
+            </button>
+            {showCharPicker && (
+              <div style={{
+                position: 'absolute', top: '100%', right: 0, marginTop: 4,
+                background: theme.bg.card, border: `1px solid ${theme.gold.border}`,
+                borderRadius: 6, padding: 4, zIndex: 100,
+                boxShadow: '0 4px 16px rgba(0,0,0,0.6)',
+                minWidth: 160, maxHeight: 240, overflowY: 'auto',
+              }}>
+                <div style={{ fontSize: 9, color: theme.text.muted, padding: '4px 8px', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                  Grant to:
+                </div>
+                {grantTargets.map(t => (
+                  <button key={t.id} onClick={() => grantToCharacter(t.id)} disabled={adding === t.id} style={{
+                    display: 'block', width: '100%', textAlign: 'left',
+                    padding: '6px 10px', fontSize: 11, fontWeight: 600,
+                    background: 'transparent', color: theme.text.primary,
+                    border: 'none', cursor: 'pointer', fontFamily: 'inherit',
+                    borderRadius: 3,
+                  }}
+                    onMouseEnter={e => { e.currentTarget.style.background = theme.gold.bg; }}
+                    onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}
+                  >
+                    {adding === t.id ? '...' : t.name}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       <div style={detailStyles.badgeRow}>

@@ -343,6 +343,11 @@ export function CharacterSheetFull({ character, onClose, initialTab }: { charact
 
   const profBonus = character.proficiencyBonus ?? 2;
 
+  // Permission flags so child tabs (Spells, Inventory) can hide DM-only controls
+  const isDM = useSessionStore((s) => s.isDM);
+  const userId = useSessionStore((s) => s.userId);
+  const isOwner = character.userId === userId;
+
   /* Mod helper */
   const getMod = useCallback((ability: AbilityName) => abilityModifier(abilityScores[ability]), [abilityScores]);
 
@@ -514,6 +519,8 @@ export function CharacterSheetFull({ character, onClose, initialTab }: { charact
                   profBonus={profBonus}
                   characterId={character.id}
                   characterLevel={character.level}
+                  isDM={isDM}
+                  isOwner={isOwner}
                 />
               )}
               {activeTab === 'inventory' && (
@@ -1338,7 +1345,257 @@ const SCHOOL_COLORS: Record<string, string> = {
   divination: '#a0a0c0', illusion: '#e67e22',
 };
 
-function SpellsTab({ spells, spellSlots, spellcastingAbility, spellAttackBonus, spellSaveDC, abilityScores, profBonus, characterId, characterLevel }: {
+/**
+ * Convert a CompendiumSpell into a character Spell object, parsing the
+ * description for damage dice, damage type, save ability, AoE shape/size,
+ * and attack type. Used by the "Add Spell" dialog and any DM tooling that
+ * needs to grant spells to a character.
+ */
+function compendiumSpellToCharSpell(comp: any): Spell {
+  const cleanDesc = (comp.description || '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ');
+
+  // Damage dice + type
+  let damage: string | undefined;
+  let damageType: string | undefined;
+  const dmgMatch = cleanDesc.match(/(\d+d\d+(?:\s*\+\s*\d+)?)\s+(\w+)\s*damage/i);
+  if (dmgMatch) {
+    damage = dmgMatch[1].replace(/\s/g, '');
+    const candidateType = dmgMatch[2].toLowerCase();
+    const validTypes = ['acid', 'bludgeoning', 'cold', 'fire', 'force', 'lightning', 'necrotic', 'piercing', 'poison', 'psychic', 'radiant', 'slashing', 'thunder'];
+    if (validTypes.includes(candidateType)) damageType = candidateType;
+  }
+
+  // Saving throw
+  let savingThrow: AbilityName | undefined;
+  const saveMatch = cleanDesc.match(/(strength|dexterity|constitution|wisdom|intelligence|charisma)\s+saving\s+throw/i);
+  if (saveMatch) {
+    const m: Record<string, AbilityName> = { strength: 'str', dexterity: 'dex', constitution: 'con', wisdom: 'wis', intelligence: 'int', charisma: 'cha' };
+    savingThrow = m[saveMatch[1].toLowerCase()];
+  }
+
+  // Attack type
+  let attackType: string | undefined;
+  if (/ranged spell attack/i.test(cleanDesc)) attackType = 'ranged';
+  else if (/melee spell attack/i.test(cleanDesc)) attackType = 'melee';
+
+  // AoE shape + size
+  let aoeType: 'cone' | 'sphere' | 'line' | 'cube' | 'cylinder' | undefined;
+  let aoeSize: number | undefined;
+  const aoeMatch = cleanDesc.match(/(\d+)[- ]foot[- ](radius|sphere|cube|cone|line|cylinder|emanation)/i);
+  if (aoeMatch) {
+    aoeSize = parseInt(aoeMatch[1]);
+    const shape = aoeMatch[2].toLowerCase();
+    if (shape === 'cube') aoeType = 'cube';
+    else if (shape === 'cone') aoeType = 'cone';
+    else if (shape === 'line') aoeType = 'line';
+    else if (shape === 'cylinder') aoeType = 'cylinder';
+    else aoeType = 'sphere';
+  }
+
+  return {
+    name: comp.name,
+    level: comp.level ?? 0,
+    school: comp.school ?? '',
+    castingTime: comp.castingTime ?? '1 action',
+    range: comp.range ?? '',
+    components: comp.components ?? '',
+    duration: comp.duration ?? 'Instantaneous',
+    description: comp.description ?? '',
+    higherLevels: comp.higherLevels ?? '',
+    isConcentration: !!comp.concentration,
+    isRitual: !!comp.ritual,
+    damage,
+    damageType,
+    savingThrow,
+    aoeType,
+    aoeSize,
+    attackType,
+  };
+}
+
+/**
+ * Modal dialog for the DM (or character owner) to search the compendium and
+ * add a spell to a character. Calls onAdd(spell) for each click and closes
+ * via onClose. Filtering is server-side via /api/compendium/search and
+ * /api/compendium/spells.
+ */
+function AddSpellDialog({ existingSpellNames, onAdd, onClose }: {
+  existingSpellNames: Set<string>;
+  onAdd: (spell: Spell) => void;
+  onClose: () => void;
+}) {
+  const [search, setSearch] = useState('');
+  const [levelFilter, setLevelFilter] = useState<number | null>(null);
+  const [results, setResults] = useState<Array<{ slug: string; name: string; level: number; school: string }>>([]);
+  const [loading, setLoading] = useState(false);
+  const [adding, setAdding] = useState<string | null>(null);
+
+  // Fetch on filter change (with a debounce on search text)
+  useEffect(() => {
+    let cancelled = false;
+    const fetchResults = async () => {
+      setLoading(true);
+      try {
+        let data: any[];
+        if (search.trim().length >= 2) {
+          // Full-text search via the /search endpoint
+          const r = await fetch(`/api/compendium/search?q=${encodeURIComponent(search.trim())}&category=spells&limit=40`);
+          const j = await r.json();
+          data = (j.results || []).map((row: any) => ({
+            slug: row.slug,
+            name: row.name,
+            level: row.level ?? 0,
+            school: row.snippet?.split(' ')[0] || '',
+          }));
+        } else {
+          // Browse mode: list spells (filtered by level if set)
+          const params = new URLSearchParams();
+          params.set('limit', '60');
+          if (levelFilter !== null) params.set('level', String(levelFilter));
+          const r = await fetch(`/api/compendium/spells?${params.toString()}`);
+          data = await r.json();
+        }
+        if (!cancelled) setResults(data);
+      } catch (err) {
+        if (!cancelled) setResults([]);
+      }
+      if (!cancelled) setLoading(false);
+    };
+    const timeout = setTimeout(fetchResults, search.trim().length >= 2 ? 250 : 0);
+    return () => { cancelled = true; clearTimeout(timeout); };
+  }, [search, levelFilter]);
+
+  async function handleAdd(slug: string) {
+    setAdding(slug);
+    try {
+      const r = await fetch(`/api/compendium/spells/${slug}`);
+      if (r.ok) {
+        const comp = await r.json();
+        const spell = compendiumSpellToCharSpell(comp);
+        onAdd(spell);
+      }
+    } catch { /* ignore */ }
+    setAdding(null);
+  }
+
+  return (
+    <div onClick={onClose} style={{
+      position: 'fixed', inset: 0, zIndex: 9999,
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      background: 'rgba(0,0,0,0.65)',
+    }}>
+      <div onClick={e => e.stopPropagation()} style={{
+        background: C.bgCard, border: `2px solid ${C.gold}`, borderRadius: 8,
+        padding: 16, width: 540, maxWidth: '90vw', maxHeight: '80vh',
+        display: 'flex', flexDirection: 'column',
+      }}>
+        {/* Header */}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+          <div style={{ fontSize: 16, fontWeight: 700, color: C.gold, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+            Add Spell
+          </div>
+          <button onClick={onClose} style={{
+            background: 'transparent', border: 'none', color: C.textMuted,
+            fontSize: 20, cursor: 'pointer', padding: '0 6px',
+          }}>×</button>
+        </div>
+
+        {/* Search */}
+        <input
+          autoFocus
+          type="text"
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+          placeholder="Search 1400+ spells (e.g. fireball)..."
+          style={{
+            width: '100%', padding: '8px 12px', marginBottom: 8,
+            background: C.bgElevated, border: `1px solid ${C.border}`,
+            borderRadius: 6, color: C.textPrimary, fontSize: 13,
+            outline: 'none', boxSizing: 'border-box',
+          }}
+        />
+
+        {/* Level filter pills (only when not searching) */}
+        {search.trim().length < 2 && (
+          <div style={{ display: 'flex', gap: 4, marginBottom: 8, flexWrap: 'wrap' }}>
+            <Pill active={levelFilter === null} onClick={() => setLevelFilter(null)}>ALL</Pill>
+            {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9].map(l => (
+              <Pill key={l} active={levelFilter === l} onClick={() => setLevelFilter(l)}>
+                {l === 0 ? 'CANTRIP' : `L${l}`}
+              </Pill>
+            ))}
+          </div>
+        )}
+
+        {/* Results list */}
+        <div style={{
+          flex: 1, overflowY: 'auto', minHeight: 0,
+          border: `1px solid ${C.borderDim}`, borderRadius: 6,
+          background: C.bgElevated,
+        }}>
+          {loading && results.length === 0 && (
+            <div style={{ padding: 20, textAlign: 'center', color: C.textMuted, fontSize: 12 }}>Loading...</div>
+          )}
+          {!loading && results.length === 0 && (
+            <div style={{ padding: 20, textAlign: 'center', color: C.textMuted, fontSize: 12 }}>
+              {search.trim().length >= 2 ? `No spells found for "${search}"` : 'No spells'}
+            </div>
+          )}
+          {results.map(r => {
+            const slug = r.slug;
+            const alreadyKnown = existingSpellNames.has(r.name.toLowerCase());
+            const isAdding = adding === slug;
+            const schoolColor = SCHOOL_COLORS[r.school] || C.textMuted;
+            return (
+              <div key={slug} style={{
+                display: 'flex', alignItems: 'center', gap: 10,
+                padding: '8px 12px',
+                borderBottom: `1px solid ${C.borderDim}`,
+                background: alreadyKnown ? 'rgba(212,168,67,0.06)' : 'transparent',
+              }}>
+                <img src={`/uploads/spells/${slug}.png`} alt="" loading="lazy"
+                  style={{ width: 32, height: 32, borderRadius: '50%', objectFit: 'cover', border: `1.5px solid ${schoolColor}`, flexShrink: 0 }}
+                  onError={e => { (e.currentTarget).src = '/uploads/items/default-item.svg'; }}
+                />
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: alreadyKnown ? C.textMuted : C.textPrimary }}>
+                    {r.name}
+                    {alreadyKnown && <span style={{ marginLeft: 6, fontSize: 9, color: C.gold, fontWeight: 700 }}>KNOWN</span>}
+                  </div>
+                  <div style={{ fontSize: 10, color: C.textMuted }}>
+                    {r.level === 0 ? 'Cantrip' : `Level ${r.level}`}{r.school ? ` · ${r.school}` : ''}
+                  </div>
+                </div>
+                <button
+                  disabled={alreadyKnown || isAdding}
+                  onClick={() => handleAdd(slug)}
+                  style={{
+                    padding: '6px 12px', fontSize: 11, fontWeight: 700,
+                    background: alreadyKnown ? 'transparent' : C.gold,
+                    color: alreadyKnown ? C.textMuted : '#1a1a1a',
+                    border: `1px solid ${alreadyKnown ? C.borderDim : C.gold}`,
+                    borderRadius: 4,
+                    cursor: alreadyKnown ? 'not-allowed' : 'pointer',
+                    fontFamily: 'inherit', textTransform: 'uppercase',
+                    letterSpacing: '0.04em',
+                  }}
+                >
+                  {isAdding ? '...' : alreadyKnown ? 'Added' : 'Add'}
+                </button>
+              </div>
+            );
+          })}
+        </div>
+
+        <div style={{ marginTop: 8, fontSize: 10, color: C.textMuted, textAlign: 'center' }}>
+          Click <b>Add</b> to grant the spell. Spells with damage / saves are auto-parsed from the description.
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SpellsTab({ spells, spellSlots, spellcastingAbility, spellAttackBonus, spellSaveDC, abilityScores, profBonus, characterId, characterLevel, isDM, isOwner }: {
   spells: Spell[];
   spellSlots: Record<number, SpellSlot>;
   spellcastingAbility: string;
@@ -1348,7 +1605,11 @@ function SpellsTab({ spells, spellSlots, spellcastingAbility, spellAttackBonus, 
   profBonus: number;
   characterId: string;
   characterLevel: number;
+  isDM: boolean;
+  isOwner: boolean;
 }) {
+  const [showAddSpell, setShowAddSpell] = useState(false);
+  const canEdit = isDM || isOwner;
   const [search, setSearch] = useState('');
   const [levelFilter, setLevelFilter] = useState<number | null>(null);
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
@@ -1390,8 +1651,42 @@ function SpellsTab({ spells, spellSlots, spellcastingAbility, spellAttackBonus, 
 
   const getSpellSlug = (name: string) => name.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '').replace(/'/g, '');
 
+  // Helper that adds a spell from the dialog (no duplicates)
+  const addSpell = (spell: Spell) => {
+    const exists = spells.some(s => s.name.toLowerCase() === spell.name.toLowerCase());
+    if (exists) return;
+    const updated = [...spells, spell];
+    emitCharacterUpdate(characterId, { spells: updated });
+    emitRoll('1d0+0', `Granted ${spell.name} to character`);
+  };
+
+  const existingSpellNames = useMemo(
+    () => new Set(spells.map(s => s.name.toLowerCase())),
+    [spells],
+  );
+
   if (spells.length === 0) {
-    return <div style={{ color: C.textMuted, textAlign: 'center', padding: 40, fontSize: 13 }}>No spells known.</div>;
+    return (
+      <div style={{ color: C.textMuted, textAlign: 'center', padding: 40, fontSize: 13 }}>
+        <div style={{ marginBottom: 12 }}>No spells known.</div>
+        {canEdit && (
+          <button onClick={() => setShowAddSpell(true)} style={{
+            padding: '8px 18px', fontSize: 12, fontWeight: 700,
+            background: C.gold, color: '#1a1a1a',
+            border: `1px solid ${C.gold}`, borderRadius: 4,
+            cursor: 'pointer', fontFamily: 'inherit',
+            textTransform: 'uppercase', letterSpacing: '0.04em',
+          }}>+ Add Spell</button>
+        )}
+        {showAddSpell && (
+          <AddSpellDialog
+            existingSpellNames={existingSpellNames}
+            onAdd={addSpell}
+            onClose={() => setShowAddSpell(false)}
+          />
+        )}
+      </div>
+    );
   }
 
   const renderSpellRow = (spell: Spell, i: number) => {
@@ -1507,7 +1802,7 @@ function SpellsTab({ spells, spellSlots, spellcastingAbility, spellAttackBonus, 
   return (
     <div>
       {/* Spellcasting stats */}
-      <div style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
+      <div style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap', alignItems: 'center' }}>
         {[
           { label: 'Modifier', value: fmtMod(scMod) },
           { label: 'Spell Attack', value: fmtMod(spellAttackBonus) },
@@ -1518,7 +1813,26 @@ function SpellsTab({ spells, spellSlots, spellcastingAbility, spellAttackBonus, 
             <div style={{ fontSize: 18, fontWeight: 700 }}>{s.value}</div>
           </div>
         ))}
+        {canEdit && (
+          <button onClick={() => setShowAddSpell(true)} style={{
+            marginLeft: 'auto',
+            padding: '8px 16px', fontSize: 11, fontWeight: 700,
+            background: C.gold, color: '#1a1a1a',
+            border: `1px solid ${C.gold}`, borderRadius: 4,
+            cursor: 'pointer', fontFamily: 'inherit',
+            textTransform: 'uppercase', letterSpacing: '0.04em',
+          }}>+ Add Spell</button>
+        )}
       </div>
+
+      {/* Add Spell modal */}
+      {showAddSpell && (
+        <AddSpellDialog
+          existingSpellNames={existingSpellNames}
+          onAdd={addSpell}
+          onClose={() => setShowAddSpell(false)}
+        />
+      )}
 
       {/* Search */}
       <input type="text" placeholder="Search spells..." value={search} onChange={e => setSearch(e.target.value)}
