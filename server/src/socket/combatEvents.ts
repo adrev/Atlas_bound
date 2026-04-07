@@ -484,6 +484,64 @@ export function registerCombatEvents(io: Server, socket: Socket): void {
   });
 
   // ----------------------------------------------------------------------
+  // damage:side-effects — server processes the side effects of a token
+  // taking damage:
+  //   1. CON save to maintain concentration on a spell
+  //   2. Clear conditions with endsOnDamage = true (Sleep)
+  //   3. Re-roll save with advantage for saveOnDamage spells (Hideous Laughter)
+  // The caller (cast resolver) provides tokenId + final damage amount.
+  // ----------------------------------------------------------------------
+  socket.on('damage:side-effects', (data: { tokenId?: string; damageAmount?: number }) => {
+    if (!data?.tokenId || typeof data.damageAmount !== 'number') return;
+    const ctx = getPlayerBySocketId(socket.id);
+    if (!ctx) return;
+
+    const result = ConditionService.processDamageSideEffects(
+      ctx.room.sessionId, data.tokenId, data.damageAmount,
+    );
+
+    // Broadcast updated tokens for any whose conditions changed
+    for (const tokenId of result.affectedTokens) {
+      const t = ctx.room.tokens.get(tokenId);
+      if (t) {
+        io.to(ctx.room.sessionId).emit('map:token-updated', {
+          tokenId, changes: { conditions: t.conditions },
+        });
+      }
+    }
+
+    // If the target dropped concentration, also broadcast the cleared
+    // concentratingOn field on their character
+    if (result.droppedConcentration && data.tokenId) {
+      const t = ctx.room.tokens.get(data.tokenId);
+      if (t?.characterId) {
+        io.to(ctx.room.sessionId).emit('character:updated', {
+          characterId: t.characterId,
+          changes: { concentratingOn: null },
+        });
+      }
+    }
+
+    // Broadcast all the chat messages from the side effects (CON save
+    // result, Sleep ending, Laughter save retry, etc.)
+    const now = new Date().toISOString();
+    for (const msg of result.messages) {
+      io.to(ctx.room.sessionId).emit('chat:new-message', {
+        id: (Math.random() + 1).toString(36).substring(2),
+        sessionId: ctx.room.sessionId,
+        userId: 'system',
+        displayName: 'System',
+        type: 'system',
+        content: msg,
+        characterName: null,
+        whisperTo: null,
+        rollData: null,
+        createdAt: now,
+      });
+    }
+  });
+
+  // ----------------------------------------------------------------------
   // concentration:dropped — clear all conditions sourced from a caster's
   // concentration spell. Called when the caster takes damage and fails
   // the CON save, OR voluntarily switches concentration.

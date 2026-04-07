@@ -17,7 +17,7 @@ import {
   applyDamageWithResist,
 } from '../../utils/roll-engine';
 import { getSpellDurationMeta } from '../../utils/spell-durations';
-import { emitApplyConditionWithMeta } from '../../socket/emitters';
+import { emitApplyConditionWithMeta, emitDamageSideEffects } from '../../socket/emitters';
 import { abilityModifier, calculateEquipmentBonuses, SPELL_CONDITIONS, SPELL_BUFFS, getSpellAnimation } from '@dnd-vtt/shared';
 import { useEffectStore } from '../../stores/useEffectStore';
 import { LootBagPanel } from '../loot/LootBagPanel';
@@ -590,7 +590,11 @@ export function TokenActionPanel() {
             const dmgChange = resisted.final !== rolledDmg ? `${rolledDmg}→${resisted.final}` : `${resisted.final}`;
             resultParts.push(`${dmgChange} ${dmgWord}dmg${resistTag} (HP ${freshHp}→${newHp})${isCrit ? ' [CRIT]' : ''}`);
             if (newHp === 0) resultParts.push('💀 DOWN');
-            setTimeout(() => updateTargetHp(effectiveCharId, newHp), 400);
+            setTimeout(() => {
+              updateTargetHp(effectiveCharId, newHp);
+              // Trigger CON save for concentration + clear endsOnDamage conditions
+              if (resisted.final > 0) emitDamageSideEffects(targetToken.id, resisted.final);
+            }, 400);
           }
         }
 
@@ -623,7 +627,10 @@ export function TokenActionPanel() {
               const dmgChange = resisted.final !== dmg ? `${dmg}→${resisted.final}` : `${resisted.final}`;
               resultParts.push(`${dmgChange} ${dmgWord}dmg${saved ? ' (half)' : ''}${resistTag} (HP ${freshHp}→${newHp})`);
               if (newHp === 0) resultParts.push('💀 DOWN');
-              setTimeout(() => updateTargetHp(effectiveCharId, newHp), 400);
+              setTimeout(() => {
+                updateTargetHp(effectiveCharId, newHp);
+                if (resisted.final > 0) emitDamageSideEffects(targetToken.id, resisted.final);
+              }, 400);
             } else if (saved && !halfOnSave) {
               resultParts.push('no damage');
             }
@@ -698,6 +705,7 @@ export function TokenActionPanel() {
             resultParts.push(`${dmgChange} ${dmgWord}dmg${resistTag} (HP ${freshHp}→${newHp})`);
             if (newHp === 0) resultParts.push('💀 DOWN');
             updateTargetHp(effectiveCharId, newHp);
+            if (resisted.final > 0) emitDamageSideEffects(targetToken.id, resisted.final);
           } else {
             resultParts.push(`${dmg} ${dmgWord}dmg`);
           }
@@ -1965,10 +1973,12 @@ async function resolveAreaSpell(
         const dmgChange = finalDmg !== beforeResist ? `${beforeResist}→${finalDmg}` : `${finalDmg}`;
         lineParts.push(`${dmgChange} ${dmgWord}dmg${aSaved ? ' (half)' : ''}${resistTag} (HP ${freshHp}→${newHp})`);
         if (newHp === 0) lineParts.push('💀 DOWN');
-        // Schedule the actual HP update so the UI animates as the message lands
+        // Schedule the actual HP update + damage side effects (CON save,
+        // Sleep ends-on-damage, Hideous Laughter save retry)
         setTimeout(() => {
           emitCharacterUpdate(aCharId, { hitPoints: newHp });
           useCharacterStore.getState().applyRemoteUpdate(aCharId, { hitPoints: newHp });
+          if (finalDmg > 0) emitDamageSideEffects(aToken.id, finalDmg);
         }, delay + 300);
       } else if (resolvedSavingThrow && aSaved && !halfOnSave) {
         lineParts.push('no damage');

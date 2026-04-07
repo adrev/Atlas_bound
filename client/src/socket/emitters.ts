@@ -169,6 +169,20 @@ export function emitConcentrationDropped(casterTokenId: string, spellName: strin
   getSocket().emit('concentration:dropped', { casterTokenId, spellName });
 }
 
+/**
+ * Notify the server that a token has just taken damage so it can:
+ *   1. Roll a CON save to maintain concentration (DC max(10, dmg/2))
+ *   2. Clear conditions with endsOnDamage (Sleep)
+ *   3. Re-roll saves for saveOnDamage spells (Hideous Laughter)
+ *
+ * The cast resolver should call this AFTER applying damage to a token.
+ * The server broadcasts the resulting condition + character updates.
+ */
+export function emitDamageSideEffects(tokenId: string, damageAmount: number) {
+  if (damageAmount <= 0) return;
+  getSocket().emit('damage:side-effects', { tokenId, damageAmount });
+}
+
 // --- Character ---
 /**
  * Emit a character update to the server AND apply it locally so the UI
