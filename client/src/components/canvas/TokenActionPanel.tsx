@@ -80,6 +80,26 @@ function parse<T>(val: unknown, fallback: T): T {
 
 function fmtMod(n: number): string { return n >= 0 ? `+${n}` : String(n); }
 
+/**
+ * Roll dice notation like "2d8", "3d6+2", "1d10" and return the actual total.
+ * Used to apply real rolled damage to HP instead of averages.
+ * Returns 0 if the notation can't be parsed.
+ */
+function rollDamageDice(notation: string): number {
+  if (!notation) return 0;
+  const match = notation.match(/(\d+)d(\d+)(?:\s*([+-])\s*(\d+))?/);
+  if (!match) return 0;
+  const numDice = parseInt(match[1]) || 0;
+  const dieSize = parseInt(match[2]) || 0;
+  const sign = match[3] === '-' ? -1 : 1;
+  const mod = match[4] ? parseInt(match[4]) * sign : 0;
+  let total = 0;
+  for (let i = 0; i < numDice; i++) {
+    total += Math.floor(Math.random() * dieSize) + 1;
+  }
+  return Math.max(0, total + mod);
+}
+
 export function TokenActionPanel() {
   const selectedTokenId = useMapStore((s) => s.selectedTokenId);
   const tokens = useMapStore((s) => s.tokens);
@@ -463,13 +483,12 @@ export function TokenActionPanel() {
 
           if (isHit && damageDice && effectiveCharId) {
             const finalDice = isCrit ? damageDice.replace(/(\d+)d/, (_: string, n: string) => `${parseInt(n) * 2}d`) : damageDice;
+            const dmg = rollDamageDice(finalDice);
             setTimeout(() => {
-              emitRoll(finalDice, `${spell.name} → ${targetName} Damage${isCrit ? ' (CRIT!)' : ''}`);
-              const match = finalDice.match(/(\d+)d(\d+)/);
-              if (match) {
-                const avgDmg = Math.ceil(parseInt(match[1]) * (parseInt(match[2]) + 1) / 2);
-                updateTargetHp(effectiveCharId, Math.max(0, targetHp - avgDmg));
-              }
+              emitRoll(finalDice, `${spell.name} → ${targetName}: ${dmg} damage${isCrit ? ' (CRIT!)' : ''}`);
+              const freshChar = useCharacterStore.getState().allCharacters[effectiveCharId];
+              const freshHp = freshChar ? (typeof freshChar.hitPoints === 'number' ? freshChar.hitPoints : parseInt(String(freshChar.hitPoints)) || 0) : targetHp;
+              updateTargetHp(effectiveCharId, Math.max(0, freshHp - dmg));
             }, 400);
           }
         }
@@ -492,24 +511,21 @@ export function TokenActionPanel() {
           if (damageDice && effectiveCharId) {
             if (!saved) {
               // Full damage on failed save
+              const dmg = rollDamageDice(damageDice);
               setTimeout(() => {
-                emitRoll(damageDice, `${spell.name} → ${targetName} Damage (save failed)`);
-                const match = damageDice.match(/(\d+)d(\d+)/);
-                if (match) {
-                  const avgDmg = Math.ceil(parseInt(match[1]) * (parseInt(match[2]) + 1) / 2);
-                  updateTargetHp(effectiveCharId, Math.max(0, targetHp - avgDmg));
-                }
+                emitRoll(damageDice, `${spell.name} → ${targetName}: ${dmg} damage (save failed)`);
+                const freshChar = useCharacterStore.getState().allCharacters[effectiveCharId];
+                const freshHp = freshChar ? (typeof freshChar.hitPoints === 'number' ? freshChar.hitPoints : parseInt(String(freshChar.hitPoints)) || 0) : targetHp;
+                updateTargetHp(effectiveCharId, Math.max(0, freshHp - dmg));
               }, 400);
             } else if (halfOnSave) {
               // Half damage on successful save
+              const halfDmg = Math.floor(rollDamageDice(damageDice) / 2);
               setTimeout(() => {
-                emitRoll(damageDice, `${spell.name} → ${targetName} Damage (save — half damage)`);
-                const match = damageDice.match(/(\d+)d(\d+)/);
-                if (match) {
-                  const avgDmg = Math.ceil(parseInt(match[1]) * (parseInt(match[2]) + 1) / 2);
-                  const halfDmg = Math.floor(avgDmg / 2);
-                  updateTargetHp(effectiveCharId, Math.max(0, targetHp - halfDmg));
-                }
+                emitRoll(damageDice, `${spell.name} → ${targetName}: ${halfDmg} damage (save — half)`);
+                const freshChar = useCharacterStore.getState().allCharacters[effectiveCharId];
+                const freshHp = freshChar ? (typeof freshChar.hitPoints === 'number' ? freshChar.hitPoints : parseInt(String(freshChar.hitPoints)) || 0) : targetHp;
+                updateTargetHp(effectiveCharId, Math.max(0, freshHp - halfDmg));
               }, 400);
             }
             // No damage on save success if spell doesn't allow half
@@ -535,25 +551,23 @@ export function TokenActionPanel() {
         // --- Healing spells ---
         else if (isHealing) {
           const healDice = damageDice || '1d8';
-          emitRoll(healDice, `${spell.name} → ${targetName} Healing`);
+          const heal = rollDamageDice(healDice) + (casterSpellAttack > 0 ? Math.floor(casterSpellAttack / 2) : 0);
+          emitRoll(healDice, `${spell.name} → ${targetName}: ${heal} healing`);
           if (effectiveCharId) {
-            const match = healDice.match(/(\d+)d(\d+)/);
-            if (match) {
-              const healAvg = Math.ceil(parseInt(match[1]) * (parseInt(match[2]) + 1) / 2) + (casterSpellAttack > 0 ? Math.floor(casterSpellAttack / 2) : 0);
-              updateTargetHp(effectiveCharId, Math.min(targetMaxHp, targetHp + healAvg));
-            }
+            const freshChar = useCharacterStore.getState().allCharacters[effectiveCharId];
+            const freshHp = freshChar ? (typeof freshChar.hitPoints === 'number' ? freshChar.hitPoints : parseInt(String(freshChar.hitPoints)) || 0) : targetHp;
+            updateTargetHp(effectiveCharId, Math.min(targetMaxHp, freshHp + heal));
           }
         }
 
         // --- Damage only (no attack, no save) ---
         else if (damageDice) {
-          emitRoll(damageDice, `${spell.name} → ${targetName} Damage`);
+          const dmg = rollDamageDice(damageDice);
+          emitRoll(damageDice, `${spell.name} → ${targetName}: ${dmg} damage`);
           if (effectiveCharId) {
-            const match = damageDice.match(/(\d+)d(\d+)/);
-            if (match) {
-              const avgDmg = Math.ceil(parseInt(match[1]) * (parseInt(match[2]) + 1) / 2);
-              updateTargetHp(effectiveCharId, Math.max(0, targetHp - avgDmg));
-            }
+            const freshChar = useCharacterStore.getState().allCharacters[effectiveCharId];
+            const freshHp = freshChar ? (typeof freshChar.hitPoints === 'number' ? freshChar.hitPoints : parseInt(String(freshChar.hitPoints)) || 0) : targetHp;
+            updateTargetHp(effectiveCharId, Math.max(0, freshHp - dmg));
           }
         }
 
@@ -1473,27 +1487,34 @@ async function castSelfSpell(spell: any, casterTokenId: string, casterName: stri
 
       if (damageDice) {
         setTimeout(() => {
-          const dmgMatch = damageDice.match(/(\d+)d(\d+)/);
-          if (dmgMatch) {
-            // Roll actual dice (not average)
-            let total = 0;
-            const numDice = parseInt(dmgMatch[1]);
-            const dieSize = parseInt(dmgMatch[2]);
-            for (let j = 0; j < numDice; j++) {
-              total += Math.floor(Math.random() * dieSize) + 1;
-            }
-            const finalDmg = aSaved && halfOnSave ? Math.floor(total / 2) : aSaved ? 0 : total;
-            if (finalDmg > 0) {
-              emitRoll(damageDice, `${spell.name} → ${aToken.name}: ${finalDmg} ${aSaved ? '(half) ' : ''}damage`);
-              // Read fresh HP from store right before applying
-              const freshChar = useCharacterStore.getState().allCharacters[aCharId];
-              const freshHp = freshChar ? (typeof freshChar.hitPoints === 'number' ? freshChar.hitPoints : parseInt(String(freshChar.hitPoints)) || 0) : aHp;
-              const newHp = Math.max(0, freshHp - finalDmg);
-              emitCharacterUpdate(aCharId, { hitPoints: newHp });
-              useCharacterStore.getState().applyRemoteUpdate(aCharId, { hitPoints: newHp });
-            }
+          const total = rollDamageDice(damageDice);
+          const finalDmg = aSaved && halfOnSave ? Math.floor(total / 2) : aSaved ? 0 : total;
+          if (finalDmg > 0) {
+            emitRoll(damageDice, `${spell.name} → ${aToken.name}: ${finalDmg} ${aSaved ? '(half) ' : ''}damage`);
+            // Read fresh HP from store right before applying
+            const freshChar = useCharacterStore.getState().allCharacters[aCharId];
+            const freshHp = freshChar ? (typeof freshChar.hitPoints === 'number' ? freshChar.hitPoints : parseInt(String(freshChar.hitPoints)) || 0) : aHp;
+            const newHp = Math.max(0, freshHp - finalDmg);
+            emitCharacterUpdate(aCharId, { hitPoints: newHp });
+            useCharacterStore.getState().applyRemoteUpdate(aCharId, { hitPoints: newHp });
           }
         }, delay + 300);
+      }
+
+      // Auto-apply conditions on failed save
+      if (!aSaved) {
+        const conditions = SPELL_CONDITIONS[spell.name];
+        if (conditions && conditions.length > 0) {
+          setTimeout(() => {
+            const targetTokenData = useMapStore.getState().tokens[aToken.id];
+            if (targetTokenData) {
+              const existingConditions = targetTokenData.conditions || [];
+              const newConditions = [...new Set([...existingConditions, ...conditions])] as any;
+              emitTokenUpdate(aToken.id, { conditions: newConditions });
+              emitRoll('1d0+0', `${aToken.name} is now ${conditions.join(', ')}! (${spell.name})`);
+            }
+          }, delay + 500);
+        }
       }
     }
   }
