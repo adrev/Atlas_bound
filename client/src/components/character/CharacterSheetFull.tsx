@@ -1082,37 +1082,52 @@ function ActionsTab({ inventory, spells, features, abilityScores, profBonus, get
       {showLimited && limitedFeatures.length > 0 && (
         <>
           <SectionHeader style={{ marginTop: 12 }}>Limited Use</SectionHeader>
-          {limitedFeatures.map((f, i) => (
-            <div key={i} style={{
-              padding: '6px 8px', background: C.bgCard,
-              borderRadius: 4, border: `1px solid ${C.borderDim}`, marginBottom: 2,
-            }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <div style={{ flex: 1 }}>
-                  <span style={{ fontWeight: 600, fontSize: 13 }}>{f.name}</span>
-                  <span style={{ fontSize: 10, color: C.textMuted, marginLeft: 6 }}>{f.source}</span>
-                </div>
-                <div style={{ display: 'flex', gap: 3, alignItems: 'center' }}>
-                  {Array.from({ length: f.usesTotal! }).map((_, j) => (
-                    <span key={j} style={{
-                      width: 12, height: 12, borderRadius: '50%',
-                      border: `2px solid ${C.red}`,
-                      background: j < (f.usesRemaining ?? 0) ? C.red : 'transparent',
-                      display: 'inline-block',
-                    }} />
-                  ))}
-                </div>
-                {f.resetOn && (
-                  <span style={{ fontSize: 9, color: C.textMuted, textTransform: 'uppercase' }}>
-                    {f.resetOn === 'short' ? 'Short Rest' : f.resetOn === 'long' ? 'Long Rest' : f.resetOn}
+          {limitedFeatures.map((f, i) => {
+            const usesLeft = f.usesRemaining ?? f.usesTotal ?? 0;
+            const isSpent = (f.usesTotal ?? 0) > 0 && usesLeft <= 0;
+            const rechargeLabel = f.resetOn === 'short' ? 'Short Rest' : f.resetOn === 'long' ? 'Long Rest' : f.resetOn === 'dawn' ? 'Dawn' : 'Long Rest';
+            const tooltip = isSpent
+              ? `${f.name} — All uses spent (0/${f.usesTotal}). Recharges on ${rechargeLabel}.`
+              : `${f.name} — ${usesLeft}/${f.usesTotal} uses remaining. Recharges on ${rechargeLabel}.`;
+            return (
+              <div key={i} title={tooltip} style={{
+                padding: '6px 8px', background: C.bgCard,
+                borderRadius: 4, border: `1px solid ${C.borderDim}`, marginBottom: 2,
+                opacity: isSpent ? 0.5 : 1,
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <div style={{ flex: 1 }}>
+                    <span style={{ fontWeight: 600, fontSize: 13, textDecoration: isSpent ? 'line-through' : 'none', color: isSpent ? C.textMuted : C.textPrimary }}>
+                      {f.name}
+                    </span>
+                    <span style={{ fontSize: 10, color: C.textMuted, marginLeft: 6 }}>{f.source}</span>
+                    {isSpent && <span style={{ color: C.red, marginLeft: 6, fontSize: 9, fontWeight: 700 }}>SPENT</span>}
+                  </div>
+                  <span style={{ fontSize: 10, color: isSpent ? C.red : C.textSecondary, fontWeight: 600 }}>
+                    {usesLeft}/{f.usesTotal}
                   </span>
-                )}
+                  <div style={{ display: 'flex', gap: 3, alignItems: 'center' }}>
+                    {Array.from({ length: f.usesTotal! }).map((_, j) => (
+                      <span key={j} style={{
+                        width: 12, height: 12, borderRadius: '50%',
+                        border: `2px solid ${C.red}`,
+                        background: j < usesLeft ? C.red : 'transparent',
+                        display: 'inline-block',
+                      }} />
+                    ))}
+                  </div>
+                  {f.resetOn && (
+                    <span style={{ fontSize: 9, color: C.textMuted, textTransform: 'uppercase' }}>
+                      {f.resetOn === 'short' ? 'Short Rest' : f.resetOn === 'long' ? 'Long Rest' : f.resetOn}
+                    </span>
+                  )}
+                </div>
+                <div style={{ fontSize: 11, color: C.textSecondary, marginTop: 4, lineHeight: 1.4 }}>
+                  {stripHtml(f.description)}
+                </div>
               </div>
-              <div style={{ fontSize: 11, color: C.textSecondary, marginTop: 4, lineHeight: 1.4 }}>
-                {stripHtml(f.description)}
-              </div>
-            </div>
-          ))}
+            );
+          })}
         </>
       )}
 
@@ -1220,11 +1235,23 @@ function SpellsTab({ spells, spellSlots, spellcastingAbility, spellAttackBonus, 
     const slug = getSpellSlug(spell.name);
     const schoolColor = SCHOOL_COLORS[spell.school] || C.textMuted;
 
+    // Determine spent state for leveled spells (cantrips never go spent)
+    const slot = spell.level > 0 ? spellSlots[spell.level] : null;
+    const slotsLeft = slot ? slot.max - slot.used : 0;
+    const slotsMax = slot ? slot.max : 0;
+    const isSpent = spell.level > 0 && slot ? slotsLeft <= 0 : false;
+    const tooltip = spell.level === 0
+      ? `${spell.name} — Cantrip (at will, never expended)`
+      : isSpent
+        ? `${spell.name} — Out of level ${spell.level} slots (0/${slotsMax}). Long Rest to recharge.`
+        : `${spell.name} — Level ${spell.level} (${slotsLeft}/${slotsMax} slots left, Long Rest to recharge)`;
+
     return (
-      <div key={i} style={{
+      <div key={i} title={tooltip} style={{
         background: C.bgCard, borderRadius: 4,
-        border: `1px solid ${C.borderDim}`, marginBottom: 2,
+        border: `1px solid ${isSpent ? C.borderDim : C.borderDim}`, marginBottom: 2,
         overflow: 'hidden',
+        opacity: isSpent ? 0.5 : 1,
       }}>
         <div
           style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '5px 8px', cursor: 'pointer' }}
@@ -1234,7 +1261,7 @@ function SpellsTab({ spells, spellSlots, spellcastingAbility, spellAttackBonus, 
         >
           {/* Spell image */}
           <img src={`/uploads/spells/${slug}.png`} alt="" loading="lazy"
-            style={{ width: 28, height: 28, borderRadius: '50%', objectFit: 'cover', flexShrink: 0, border: `1.5px solid ${schoolColor}` }}
+            style={{ width: 28, height: 28, borderRadius: '50%', objectFit: 'cover', flexShrink: 0, border: `1.5px solid ${schoolColor}`, filter: isSpent ? 'grayscale(60%)' : 'none' }}
             onError={e => { (e.currentTarget).src = '/uploads/items/default-item.svg'; }}
           />
           {/* Name + badges */}
@@ -1247,19 +1274,25 @@ function SpellsTab({ spells, spellSlots, spellcastingAbility, spellAttackBonus, 
               }));
             }}
           >
-            <div style={{ fontWeight: 600, fontSize: 12, color: schoolColor }}>{spell.name}</div>
+            <div style={{ fontWeight: 600, fontSize: 12, color: isSpent ? C.textMuted : schoolColor, textDecoration: isSpent ? 'line-through' : 'none' }}>
+              {spell.name}
+              {isSpent && <span style={{ color: C.red, marginLeft: 6, fontSize: 9, fontWeight: 700 }}>SPENT</span>}
+            </div>
             <div style={{ fontSize: 9, color: C.textMuted }}>
               {spell.school}
               {spell.isConcentration && <span style={{ color: C.gold, marginLeft: 4 }}>Concentration</span>}
               {spell.isRitual && <span style={{ color: C.purple, marginLeft: 4 }}>Ritual</span>}
               {spell.damage && <span style={{ color: C.red, marginLeft: 4 }}>{spell.damage} {spell.damageType || ''}</span>}
               {spell.savingThrow && <span style={{ color: C.gold, marginLeft: 4 }}>DC {spellSaveDC} {spell.savingThrow.toUpperCase()}</span>}
+              {slot && <span style={{ color: isSpent ? C.red : C.gold, marginLeft: 4 }}>{slotsLeft}/{slotsMax} slots</span>}
             </div>
           </div>
           {/* Quick cast */}
           <button
+            disabled={isSpent}
             onClick={e => {
               e.stopPropagation();
+              if (isSpent) return;
               if (spell.attackType) {
                 emitRoll(`1d20${fmtMod(spellAttackBonus)}`, `${spell.name} Attack`);
               } else if (spell.damage) {
@@ -1267,11 +1300,14 @@ function SpellsTab({ spells, spellSlots, spellcastingAbility, spellAttackBonus, 
               }
             }}
             style={{
-              background: schoolColor + '22', color: schoolColor, border: `1px solid ${schoolColor}44`,
-              borderRadius: 3, padding: '2px 8px', fontSize: 9, cursor: 'pointer', fontWeight: 700,
+              background: isSpent ? 'transparent' : schoolColor + '22',
+              color: isSpent ? C.textMuted : schoolColor,
+              border: `1px solid ${isSpent ? C.borderDim : schoolColor + '44'}`,
+              borderRadius: 3, padding: '2px 8px', fontSize: 9,
+              cursor: isSpent ? 'not-allowed' : 'pointer', fontWeight: 700,
               flexShrink: 0, fontFamily: 'inherit', textTransform: 'uppercase',
             }}
-          >Cast</button>
+          >{isSpent ? 'Spent' : 'Cast'}</button>
           <span style={{ fontSize: 10, color: C.textMuted }}>{isExp ? '\u25B2' : '\u25BC'}</span>
         </div>
 
@@ -1610,11 +1646,21 @@ function FeaturesTab({ features }: { features: Feature[] }) {
 
       {filtered.map((feat, i) => {
         const isExpanded = expanded[i];
+        const hasUses = feat.usesTotal != null && feat.usesTotal > 0;
+        const usesLeft = feat.usesRemaining ?? feat.usesTotal ?? 0;
+        const isSpent = hasUses && usesLeft <= 0;
+        const rechargeLabel = feat.resetOn === 'short' ? 'Short Rest' : feat.resetOn === 'long' ? 'Long Rest' : feat.resetOn === 'dawn' ? 'Dawn' : 'Long Rest';
+        const tooltip = !hasUses
+          ? `${feat.name} — Always available (${feat.source})`
+          : isSpent
+            ? `${feat.name} — All uses spent (0/${feat.usesTotal}). Recharges on ${rechargeLabel}.`
+            : `${feat.name} — ${usesLeft}/${feat.usesTotal} uses remaining. Recharges on ${rechargeLabel}.`;
         return (
-          <div key={i} style={{
+          <div key={i} title={tooltip} style={{
             background: C.bgCard, borderRadius: 4,
             border: `1px solid ${C.borderDim}`, marginBottom: 4,
             overflow: 'hidden',
+            opacity: isSpent ? 0.5 : 1,
           }}>
             <div
               style={{
@@ -1626,21 +1672,29 @@ function FeaturesTab({ features }: { features: Feature[] }) {
               onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
             >
               <div style={{ flex: 1 }}>
-                <span style={{ fontWeight: 600, fontSize: 13 }}>{feat.name}</span>
+                <span style={{ fontWeight: 600, fontSize: 13, textDecoration: isSpent ? 'line-through' : 'none', color: isSpent ? C.textMuted : C.textPrimary }}>
+                  {feat.name}
+                </span>
                 <span style={{ fontSize: 10, color: C.textMuted, marginLeft: 8 }}>{feat.source}</span>
+                {isSpent && <span style={{ color: C.red, marginLeft: 6, fontSize: 9, fontWeight: 700 }}>SPENT</span>}
               </div>
-              {/* Usage pips */}
-              {feat.usesTotal != null && feat.usesTotal > 0 && (
-                <div style={{ display: 'flex', gap: 3, alignItems: 'center' }}>
-                  {Array.from({ length: feat.usesTotal }).map((_, j) => (
-                    <span key={j} style={{
-                      width: 12, height: 12, borderRadius: '50%',
-                      border: `2px solid ${C.red}`,
-                      background: j < (feat.usesRemaining ?? 0) ? C.red : 'transparent',
-                      display: 'inline-block',
-                    }} />
-                  ))}
-                </div>
+              {/* Usage pips + count */}
+              {hasUses && (
+                <>
+                  <span style={{ fontSize: 10, color: isSpent ? C.red : C.textSecondary, fontWeight: 600 }}>
+                    {usesLeft}/{feat.usesTotal}
+                  </span>
+                  <div style={{ display: 'flex', gap: 3, alignItems: 'center' }}>
+                    {Array.from({ length: feat.usesTotal! }).map((_, j) => (
+                      <span key={j} style={{
+                        width: 12, height: 12, borderRadius: '50%',
+                        border: `2px solid ${C.red}`,
+                        background: j < usesLeft ? C.red : 'transparent',
+                        display: 'inline-block',
+                      }} />
+                    ))}
+                  </div>
+                </>
               )}
               {feat.resetOn && (
                 <span style={{ fontSize: 9, color: C.textMuted, textTransform: 'uppercase' }}>

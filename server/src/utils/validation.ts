@@ -152,7 +152,7 @@ export const combatCastSpellSchema = z.object({
 
 // --- Chat event schemas ---
 export const chatMessageSchema = z.object({
-  type: z.enum(['ic', 'ooc']),
+  type: z.enum(['ic', 'ooc', 'system']),
   content: z.string().min(1).max(2000),
   characterName: z.string().max(100).optional(),
 });

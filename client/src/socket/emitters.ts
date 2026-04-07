@@ -144,3 +144,12 @@ export function emitWhisper(targetUserId: string, content: string) {
 export function emitRoll(notation: string, reason?: string, hidden?: boolean) {
   getSocket().emit('chat:roll', { notation, reason, hidden });
 }
+
+/**
+ * Emit a system message to the session chat. Used for spell results,
+ * cast announcements, and any other rich consolidated game-event message.
+ * Multi-line content is supported.
+ */
+export function emitSystemMessage(content: string) {
+  getSocket().emit('chat:message', { type: 'system', content });
+}

@@ -119,7 +119,7 @@ export interface ServerCharacterEvents {
 
 // --- Chat Events ---
 export interface ClientChatEvents {
-  'chat:message': { type: 'ic' | 'ooc'; content: string; characterName?: string };
+  'chat:message': { type: 'ic' | 'ooc' | 'system'; content: string; characterName?: string };
   'chat:whisper': { targetUserId: string; content: string };
   'chat:roll': { notation: string; reason?: string; hidden?: boolean };
 }

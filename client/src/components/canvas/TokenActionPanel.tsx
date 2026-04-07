@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { useMapStore } from '../../stores/useMapStore';
 import { useCharacterStore } from '../../stores/useCharacterStore';
 import { useSessionStore } from '../../stores/useSessionStore';
-import { emitRoll, emitCharacterUpdate, emitTokenUpdate } from '../../socket/emitters';
+import { emitRoll, emitCharacterUpdate, emitTokenUpdate, emitSystemMessage } from '../../socket/emitters';
 import { abilityModifier, calculateEquipmentBonuses, SPELL_CONDITIONS, getSpellAnimation } from '@dnd-vtt/shared';
 import { useEffectStore } from '../../stores/useEffectStore';
 import { LootBagPanel } from '../loot/LootBagPanel';
@@ -370,7 +370,7 @@ export function TokenActionPanel() {
         if (spell.isConcentration && casterChar) {
           const currentConc = casterChar.concentratingOn;
           if (currentConc) {
-            emitRoll('1d0+0', `${casterName} drops concentration on ${currentConc}`);
+            emitSystemMessage(`✦ ${casterName} drops concentration on ${currentConc}`);
           }
           emitCharacterUpdate(casterId, { concentratingOn: spell.name });
           useCharacterStore.getState().applyRemoteUpdate(casterId, { concentratingOn: spell.name });
@@ -384,7 +384,7 @@ export function TokenActionPanel() {
           if (slot) {
             const available = slot.max - slot.used;
             if (available <= 0) {
-              emitRoll('1d0+0', `${casterName} has no ${spell.level}${spell.level === 1 ? 'st' : spell.level === 2 ? 'nd' : spell.level === 3 ? 'rd' : 'th'} level slots remaining!`);
+              emitSystemMessage(`✦ ${casterName} tried to cast ${spell.name} but has no level ${spell.level} slots remaining!`);
               useMapStore.getState().cancelTargetingMode();
               return;
             }
@@ -469,6 +469,13 @@ export function TokenActionPanel() {
           return;
         }
 
+        // Build a single consolidated result message for this cast.
+        const headerLines: string[] = [`✦ ${casterName} casts ${spell.name} → ${targetName}`];
+        if (spell.level > 0) headerLines.push(`   Spent level ${spell.level} slot`);
+        const resultParts: string[] = [];
+        const dmgType = (spell.damageType || '').toLowerCase();
+        const dmgWord = dmgType ? `${dmgType} ` : '';
+
         // --- Phase 3A: Spell Attack vs AC ---
         if (resolvedAttackType) {
           const attackRoll = Math.floor(Math.random() * 20) + 1;
@@ -477,19 +484,17 @@ export function TokenActionPanel() {
           const isHit = attackRoll === 20 || (attackRoll !== 1 && totalAttack >= targetAC);
           const isCrit = attackRoll === 20;
 
-          emitRoll(`1d20+${casterSpellAttack}`,
-            `${casterName} → ${targetName}: ${spell.name} Attack (${totalAttack} vs AC ${targetAC}) — ${isCrit ? 'CRITICAL HIT!' : isHit ? 'HIT!' : 'MISS!'}`
-          );
+          resultParts.push(`Attack ${totalAttack} vs AC ${targetAC} → ${isCrit ? 'CRIT' : isHit ? 'HIT' : 'MISS'}`);
 
           if (isHit && damageDice && effectiveCharId) {
             const finalDice = isCrit ? damageDice.replace(/(\d+)d/, (_: string, n: string) => `${parseInt(n) * 2}d`) : damageDice;
             const dmg = rollDamageDice(finalDice);
-            setTimeout(() => {
-              emitRoll(finalDice, `${spell.name} → ${targetName}: ${dmg} damage${isCrit ? ' (CRIT!)' : ''}`);
-              const freshChar = useCharacterStore.getState().allCharacters[effectiveCharId];
-              const freshHp = freshChar ? (typeof freshChar.hitPoints === 'number' ? freshChar.hitPoints : parseInt(String(freshChar.hitPoints)) || 0) : targetHp;
-              updateTargetHp(effectiveCharId, Math.max(0, freshHp - dmg));
-            }, 400);
+            const freshChar = useCharacterStore.getState().allCharacters[effectiveCharId];
+            const freshHp = freshChar ? (typeof freshChar.hitPoints === 'number' ? freshChar.hitPoints : parseInt(String(freshChar.hitPoints)) || 0) : targetHp;
+            const newHp = Math.max(0, freshHp - dmg);
+            resultParts.push(`${dmg} ${dmgWord}dmg (HP ${freshHp}→${newHp})${isCrit ? ' [CRIT]' : ''}`);
+            if (newHp === 0) resultParts.push('💀 DOWN');
+            setTimeout(() => updateTargetHp(effectiveCharId, newHp), 400);
           }
         }
 
@@ -503,45 +508,34 @@ export function TokenActionPanel() {
           const saveRoll = Math.floor(Math.random() * 20) + 1;
           const totalSave = saveRoll + targetSaveMod;
           const saved = totalSave >= casterSpellDC;
-
-          emitRoll(`1d20+${targetSaveMod}`,
-            `${targetName} ${saveAbility.toUpperCase()} Save vs DC ${casterSpellDC}: ${totalSave} — ${saved ? 'SUCCESS!' : 'FAILED!'}`
-          );
+          resultParts.push(`${saveAbility.toUpperCase()} ${totalSave} vs DC ${casterSpellDC} → ${saved ? 'SAVED' : 'FAILED'}`);
 
           if (damageDice && effectiveCharId) {
-            if (!saved) {
-              // Full damage on failed save
-              const dmg = rollDamageDice(damageDice);
-              setTimeout(() => {
-                emitRoll(damageDice, `${spell.name} → ${targetName}: ${dmg} damage (save failed)`);
-                const freshChar = useCharacterStore.getState().allCharacters[effectiveCharId];
-                const freshHp = freshChar ? (typeof freshChar.hitPoints === 'number' ? freshChar.hitPoints : parseInt(String(freshChar.hitPoints)) || 0) : targetHp;
-                updateTargetHp(effectiveCharId, Math.max(0, freshHp - dmg));
-              }, 400);
-            } else if (halfOnSave) {
-              // Half damage on successful save
-              const halfDmg = Math.floor(rollDamageDice(damageDice) / 2);
-              setTimeout(() => {
-                emitRoll(damageDice, `${spell.name} → ${targetName}: ${halfDmg} damage (save — half)`);
-                const freshChar = useCharacterStore.getState().allCharacters[effectiveCharId];
-                const freshHp = freshChar ? (typeof freshChar.hitPoints === 'number' ? freshChar.hitPoints : parseInt(String(freshChar.hitPoints)) || 0) : targetHp;
-                updateTargetHp(effectiveCharId, Math.max(0, freshHp - halfDmg));
-              }, 400);
+            const total = rollDamageDice(damageDice);
+            const dmg = saved && halfOnSave ? Math.floor(total / 2) : saved ? 0 : total;
+            if (dmg > 0) {
+              const freshChar = useCharacterStore.getState().allCharacters[effectiveCharId];
+              const freshHp = freshChar ? (typeof freshChar.hitPoints === 'number' ? freshChar.hitPoints : parseInt(String(freshChar.hitPoints)) || 0) : targetHp;
+              const newHp = Math.max(0, freshHp - dmg);
+              resultParts.push(`${dmg} ${dmgWord}dmg${saved ? ' (half)' : ''} (HP ${freshHp}→${newHp})`);
+              if (newHp === 0) resultParts.push('💀 DOWN');
+              setTimeout(() => updateTargetHp(effectiveCharId, newHp), 400);
+            } else if (saved && !halfOnSave) {
+              resultParts.push('no damage');
             }
-            // No damage on save success if spell doesn't allow half
           }
 
           // Auto-apply conditions on failed save
           if (!saved) {
             const conditions = SPELL_CONDITIONS[spell.name];
             if (conditions && conditions.length > 0) {
+              resultParts.push(`now ${conditions.join(', ')}`);
               setTimeout(() => {
                 const targetTokenData = useMapStore.getState().tokens[targetToken.id];
                 if (targetTokenData) {
                   const existingConditions = targetTokenData.conditions || [];
                   const newConditions = [...new Set([...existingConditions, ...conditions])] as any;
                   emitTokenUpdate(targetToken.id, { conditions: newConditions });
-                  emitRoll('1d0+0', `${targetName} is now ${conditions.join(', ')}! (${spell.name})`);
                 }
               }, 600);
             }
@@ -552,29 +546,38 @@ export function TokenActionPanel() {
         else if (isHealing) {
           const healDice = damageDice || '1d8';
           const heal = rollDamageDice(healDice) + (casterSpellAttack > 0 ? Math.floor(casterSpellAttack / 2) : 0);
-          emitRoll(healDice, `${spell.name} → ${targetName}: ${heal} healing`);
           if (effectiveCharId) {
             const freshChar = useCharacterStore.getState().allCharacters[effectiveCharId];
             const freshHp = freshChar ? (typeof freshChar.hitPoints === 'number' ? freshChar.hitPoints : parseInt(String(freshChar.hitPoints)) || 0) : targetHp;
-            updateTargetHp(effectiveCharId, Math.min(targetMaxHp, freshHp + heal));
+            const newHp = Math.min(targetMaxHp, freshHp + heal);
+            resultParts.push(`+${heal} HP (${freshHp}→${newHp})`);
+            updateTargetHp(effectiveCharId, newHp);
+          } else {
+            resultParts.push(`+${heal} HP healed`);
           }
         }
 
         // --- Damage only (no attack, no save) ---
         else if (damageDice) {
           const dmg = rollDamageDice(damageDice);
-          emitRoll(damageDice, `${spell.name} → ${targetName}: ${dmg} damage`);
           if (effectiveCharId) {
             const freshChar = useCharacterStore.getState().allCharacters[effectiveCharId];
             const freshHp = freshChar ? (typeof freshChar.hitPoints === 'number' ? freshChar.hitPoints : parseInt(String(freshChar.hitPoints)) || 0) : targetHp;
-            updateTargetHp(effectiveCharId, Math.max(0, freshHp - dmg));
+            const newHp = Math.max(0, freshHp - dmg);
+            resultParts.push(`${dmg} ${dmgWord}dmg (HP ${freshHp}→${newHp})`);
+            if (newHp === 0) resultParts.push('💀 DOWN');
+            updateTargetHp(effectiveCharId, newHp);
+          } else {
+            resultParts.push(`${dmg} ${dmgWord}dmg`);
           }
         }
 
         // --- No effect spell (buff, utility) ---
         else {
-          emitRoll('1d0+0', `${casterName} casts ${spell.name} on ${targetName}`);
+          resultParts.push('cast successfully');
         }
+
+        emitSystemMessage([...headerLines, `   • ${targetName}: ${resultParts.join(' • ')}`].join('\n'));
       }
 
       if (currentTargeting.weapon || currentTargeting.action) {
@@ -789,6 +792,7 @@ export function TokenActionPanel() {
   const speed = character?.speed ?? (compendiumData?.speed?.walk) ?? 30;
   const profBonus = character?.proficiencyBonus ?? 2;
   const spells = character ? parse<any[]>(character.spells, []) : [];
+  const spellSlots = character ? parse<Record<string, { max: number; used: number }>>(character.spellSlots, {}) : {};
   const inventory = character ? parse<any[]>(character.inventory, []) : [];
   const weapons = inventory.filter((i: any) => i.type === 'weapon' && i.equipped);
   const conditions = token.conditions || [];
@@ -1222,25 +1226,28 @@ export function TokenActionPanel() {
         {spells.filter((s: any) => s.level === 0).length > 0 && (
           <Section title={`Cantrips (${spells.filter((s: any) => s.level === 0).length})`}>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 3 }}>
-              {spells.filter((s: any) => s.level === 0).map((spell: any, i: number) => (
-                <button key={i} onClick={() => {
-                  if (!canAct) return;
-                  const isSelf = (spell.range || '').toLowerCase().includes('self');
-                  if (isSelf) { castSelfSpell(spell, selectedTokenId!, token.name); }
-                  else { useMapStore.getState().startTargetingMode({ spell, casterTokenId: selectedTokenId!, casterName: token.name }); }
-                }} onContextMenu={(e) => {
-                  e.preventDefault();
-                  const slug = spell.name.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
-                  window.dispatchEvent(new CustomEvent('open-compendium-detail', { detail: { slug, category: 'spells', name: spell.name } }));
-                }} title={spell.description || spell.name} style={{
-                  padding: '2px 6px', fontSize: 9, borderRadius: 3,
-                  background: C.bgHover, border: `1px solid ${C.borderDim}`,
-                  color: C.textSec, cursor: canAct ? 'pointer' : 'default', fontFamily: 'inherit',
-                }}>
-                  {spell.name}
-                  {spell.damage && <span style={{ color: C.red, marginLeft: 2, fontSize: 7 }}>{spell.damage}</span>}
-                </button>
-              ))}
+              {spells.filter((s: any) => s.level === 0).map((spell: any, i: number) => {
+                const tooltip = `${spell.name} — Cantrip (at will, never expended)\n\n${spell.description || ''}`;
+                return (
+                  <button key={i} onClick={() => {
+                    if (!canAct) return;
+                    const isSelf = (spell.range || '').toLowerCase().includes('self');
+                    if (isSelf) { castSelfSpell(spell, selectedTokenId!, token.name); }
+                    else { useMapStore.getState().startTargetingMode({ spell, casterTokenId: selectedTokenId!, casterName: token.name }); }
+                  }} onContextMenu={(e) => {
+                    e.preventDefault();
+                    const slug = spell.name.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
+                    window.dispatchEvent(new CustomEvent('open-compendium-detail', { detail: { slug, category: 'spells', name: spell.name } }));
+                  }} title={tooltip} style={{
+                    padding: '2px 6px', fontSize: 9, borderRadius: 3,
+                    background: C.bgHover, border: `1px solid ${C.borderDim}`,
+                    color: C.textSec, cursor: canAct ? 'pointer' : 'default', fontFamily: 'inherit',
+                  }}>
+                    {spell.name}
+                    {spell.damage && <span style={{ color: C.red, marginLeft: 2, fontSize: 7 }}>{spell.damage}</span>}
+                  </button>
+                );
+              })}
             </div>
           </Section>
         )}
@@ -1249,26 +1256,41 @@ export function TokenActionPanel() {
         {spells.filter((s: any) => s.level > 0).length > 0 && (
           <Section title={`Spells (${spells.filter((s: any) => s.level > 0).length})`}>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 3 }}>
-              {spells.filter((s: any) => s.level > 0).slice(0, 12).map((spell: any, i: number) => (
-                <button key={i} onClick={() => {
-                  if (!canAct) return;
-                  const isSelf = (spell.range || '').toLowerCase().includes('self');
-                  if (isSelf) { castSelfSpell(spell, selectedTokenId!, token.name); }
-                  else { useMapStore.getState().startTargetingMode({ spell, casterTokenId: selectedTokenId!, casterName: token.name }); }
-                }} onContextMenu={(e) => {
-                  e.preventDefault();
-                  const slug = spell.name.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
-                  window.dispatchEvent(new CustomEvent('open-compendium-detail', { detail: { slug, category: 'spells', name: spell.name } }));
-                }} title={spell.description || spell.name} style={{
-                  padding: '2px 6px', fontSize: 9, borderRadius: 3,
-                  background: C.bgHover, border: `1px solid ${C.borderDim}`,
-                  color: C.text, cursor: canAct ? 'pointer' : 'default', fontFamily: 'inherit',
-                }}>
-                  <span style={{ fontSize: 7, color: C.textMuted, marginRight: 2 }}>L{spell.level}</span>
-                  {spell.name}
-                  {spell.damage && <span style={{ color: C.red, marginLeft: 2, fontSize: 7 }}>{spell.damage}</span>}
-                </button>
-              ))}
+              {spells.filter((s: any) => s.level > 0).slice(0, 12).map((spell: any, i: number) => {
+                const slot = spellSlots[String(spell.level)] || spellSlots[spell.level as any];
+                const slotsLeft = slot ? slot.max - slot.used : 0;
+                const slotsMax = slot ? slot.max : 0;
+                const isSpent = slot ? slotsLeft <= 0 : false;
+                const tooltip = isSpent
+                  ? `${spell.name} — Out of level ${spell.level} slots (0/${slotsMax}). Long Rest to recharge.\n\n${spell.description || ''}`
+                  : `${spell.name} — Level ${spell.level} (${slotsLeft}/${slotsMax} slots left, Long Rest to recharge)\n\n${spell.description || ''}`;
+                return (
+                  <button key={i} disabled={isSpent || !canAct} onClick={() => {
+                    if (!canAct || isSpent) return;
+                    const isSelf = (spell.range || '').toLowerCase().includes('self');
+                    if (isSelf) { castSelfSpell(spell, selectedTokenId!, token.name); }
+                    else { useMapStore.getState().startTargetingMode({ spell, casterTokenId: selectedTokenId!, casterName: token.name }); }
+                  }} onContextMenu={(e) => {
+                    e.preventDefault();
+                    const slug = spell.name.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
+                    window.dispatchEvent(new CustomEvent('open-compendium-detail', { detail: { slug, category: 'spells', name: spell.name } }));
+                  }} title={tooltip} style={{
+                    padding: '2px 6px', fontSize: 9, borderRadius: 3,
+                    background: isSpent ? 'transparent' : C.bgHover,
+                    border: `1px solid ${isSpent ? C.borderDim : C.borderDim}`,
+                    color: isSpent ? C.textMuted : C.text,
+                    cursor: (canAct && !isSpent) ? 'pointer' : 'not-allowed',
+                    fontFamily: 'inherit',
+                    opacity: isSpent ? 0.45 : 1,
+                    textDecoration: isSpent ? 'line-through' : 'none',
+                  }}>
+                    <span style={{ fontSize: 7, color: C.textMuted, marginRight: 2 }}>L{spell.level}</span>
+                    {spell.name}
+                    {slot && <span style={{ fontSize: 7, color: isSpent ? C.red : C.gold, marginLeft: 3 }}>{slotsLeft}/{slotsMax}</span>}
+                    {spell.damage && <span style={{ color: C.red, marginLeft: 2, fontSize: 7 }}>{spell.damage}</span>}
+                  </button>
+                );
+              })}
               {spells.filter((s: any) => s.level > 0).length > 12 && <span style={{ fontSize: 8, color: C.textMuted }}>+{spells.filter((s: any) => s.level > 0).length - 12}</span>}
             </div>
           </Section>
@@ -1347,7 +1369,7 @@ async function castSelfSpell(spell: any, casterTokenId: string, casterName: stri
     if (slot) {
       const available = slot.max - slot.used;
       if (available <= 0) {
-        emitRoll('1d0+0', `${casterName} has no level ${spell.level} slots remaining!`);
+        emitSystemMessage(`✦ ${casterName} tried to cast ${spell.name} but has no level ${spell.level} slots remaining!`);
         return;
       }
       const updatedSlots = { ...slots, [spell.level]: { ...slot, used: slot.used + 1 } };
@@ -1453,10 +1475,19 @@ async function castSelfSpell(spell: any, casterTokenId: string, casterName: stri
     return Math.sqrt(dx * dx + dy * dy) <= aoePixels;
   });
 
-  emitRoll('1d0+0', `${casterName} casts ${spell.name}! (${aoeRadius}ft AoE — ${affectedTokens.length} creature${affectedTokens.length !== 1 ? 's' : ''} affected)`);
+  // Build the cast announcement header for the consolidated message.
+  const shapeLabel = aoeShape === 'cube' ? 'Cube' : aoeShape === 'cone' ? 'Cone' : aoeShape === 'line' ? 'Line' : 'Radius';
+  const headerLines: string[] = [
+    `✦ ${casterName} casts ${spell.name}`,
+    `   ${aoeRadius}-ft ${shapeLabel} • ${affectedTokens.length} creature${affectedTokens.length !== 1 ? 's' : ''} in area`,
+  ];
+  if (spell.level > 0) headerLines.push(`   Spent level ${spell.level} slot`);
 
   if (affectedTokens.length === 0) {
-    emitRoll('1d0+0', `No creatures within ${aoeRadius}ft of ${casterName}. Move closer to your targets.`);
+    emitSystemMessage([
+      ...headerLines,
+      `   ⚠ No creatures within ${aoeRadius} ft of ${casterName}. Move closer to your targets.`,
+    ].join('\n'));
     return;
   }
 
@@ -1486,27 +1517,76 @@ async function castSelfSpell(spell: any, casterTokenId: string, casterName: stri
   // Re-read store after fetches
   const refreshedStore = useCharacterStore.getState();
 
-  // Process each affected token
+  // Build the per-target result lines synchronously, then emit one
+  // consolidated chat message at the end. We schedule the actual HP / token
+  // updates with small staggered delays so the UI animates smoothly.
+  const targetLines: string[] = [];
+
   for (let i = 0; i < affectedTokens.length; i++) {
     const aToken = affectedTokens[i] as any;
     const aCharId = aToken.characterId;
     if (!aCharId) {
       console.warn('[CAST SELF] Token has no characterId, skipping:', aToken.name);
+      targetLines.push(`   • ${aToken.name}: skipped (no character link)`);
       continue;
     }
     const aChar = refreshedStore.allCharacters[aCharId];
     if (!aChar) {
       console.warn('[CAST SELF] Character not in store after fetch, skipping:', aToken.name, aCharId);
+      targetLines.push(`   • ${aToken.name}: skipped (character not loaded)`);
       continue;
     }
 
     const aHp = typeof aChar.hitPoints === 'number' ? aChar.hitPoints : parseInt(String(aChar.hitPoints)) || 0;
-    if (aHp <= 0) continue;
+    if (aHp <= 0) {
+      targetLines.push(`   • ${aToken.name}: already down`);
+      continue;
+    }
 
     const delay = i * 200;
+    const lineParts: string[] = [];
 
-    // PUSHBACK FIRST (before damage might kill them)
-    if (pushDistance > 0) {
+    // Save + damage
+    let aSaved = false;
+    if (resolvedSavingThrow) {
+      const aScores = aChar.abilityScores
+        ? (typeof aChar.abilityScores === 'string' ? JSON.parse(aChar.abilityScores) : aChar.abilityScores)
+        : {};
+      const aSaveMod = abilityModifier((aScores as any)[resolvedSavingThrow] || 10);
+      const aSaveRoll = Math.floor(Math.random() * 20) + 1;
+      const aSaveTotal = aSaveRoll + aSaveMod;
+      aSaved = aSaveTotal >= casterSpellDC;
+      const saveLabel = resolvedSavingThrow.toUpperCase();
+      lineParts.push(`${saveLabel} ${aSaveTotal} vs DC ${casterSpellDC} → ${aSaved ? 'SAVED' : 'FAILED'}`);
+    }
+
+    // Damage
+    let finalDmg = 0;
+    if (damageDice) {
+      const total = rollDamageDice(damageDice);
+      finalDmg = aSaved && halfOnSave ? Math.floor(total / 2) : aSaved ? 0 : total;
+      if (finalDmg > 0) {
+        // Read fresh HP from store right before applying
+        const freshChar = useCharacterStore.getState().allCharacters[aCharId];
+        const freshHp = freshChar ? (typeof freshChar.hitPoints === 'number' ? freshChar.hitPoints : parseInt(String(freshChar.hitPoints)) || 0) : aHp;
+        const newHp = Math.max(0, freshHp - finalDmg);
+        const dmgType = (spell.damageType || '').toLowerCase();
+        const dmgWord = dmgType ? `${dmgType} ` : '';
+        lineParts.push(`${finalDmg} ${dmgWord}dmg (HP ${freshHp}→${newHp})`);
+        if (newHp === 0) lineParts.push('💀 DOWN');
+        // Schedule the actual HP update so the UI animates as the message lands
+        setTimeout(() => {
+          emitCharacterUpdate(aCharId, { hitPoints: newHp });
+          useCharacterStore.getState().applyRemoteUpdate(aCharId, { hitPoints: newHp });
+        }, delay + 300);
+      } else if (resolvedSavingThrow && aSaved && !halfOnSave) {
+        lineParts.push('no damage');
+      }
+    }
+
+    // Pushback (only if alive after damage)
+    if (pushDistance > 0 && (finalDmg === 0 || aHp - finalDmg > 0 || !aSaved)) {
+      lineParts.push(`pushed ${pushDistance} ft`);
       setTimeout(() => {
         const dx = aToken.x - casterX;
         const dy = aToken.y - casterY;
@@ -1518,55 +1598,26 @@ async function castSelfSpell(spell: any, casterTokenId: string, casterName: stri
       }, delay);
     }
 
-    // Save + damage
-    if (resolvedSavingThrow) {
-      const aScores = aChar.abilityScores
-        ? (typeof aChar.abilityScores === 'string' ? JSON.parse(aChar.abilityScores) : aChar.abilityScores)
-        : {};
-      const aSaveMod = abilityModifier((aScores as any)[resolvedSavingThrow] || 10);
-      const aSaveRoll = Math.floor(Math.random() * 20) + 1;
-      const aSaveTotal = aSaveRoll + aSaveMod;
-      const aSaved = aSaveTotal >= casterSpellDC;
-
-      setTimeout(() => {
-        emitRoll(`1d20+${aSaveMod}`,
-          `${aToken.name} ${resolvedSavingThrow.toUpperCase()} Save vs DC ${casterSpellDC}: ${aSaveTotal} — ${aSaved ? 'SUCCESS!' : 'FAILED!'}`
-        );
-      }, delay + 100);
-
-      if (damageDice) {
+    // Auto-apply conditions on failed save
+    if (resolvedSavingThrow && !aSaved) {
+      const conditions = SPELL_CONDITIONS[spell.name];
+      if (conditions && conditions.length > 0) {
+        lineParts.push(`now ${conditions.join(', ')}`);
         setTimeout(() => {
-          const total = rollDamageDice(damageDice);
-          const finalDmg = aSaved && halfOnSave ? Math.floor(total / 2) : aSaved ? 0 : total;
-          if (finalDmg > 0) {
-            emitRoll(damageDice, `${spell.name} → ${aToken.name}: ${finalDmg} ${aSaved ? '(half) ' : ''}damage`);
-            // Read fresh HP from store right before applying
-            const freshChar = useCharacterStore.getState().allCharacters[aCharId];
-            const freshHp = freshChar ? (typeof freshChar.hitPoints === 'number' ? freshChar.hitPoints : parseInt(String(freshChar.hitPoints)) || 0) : aHp;
-            const newHp = Math.max(0, freshHp - finalDmg);
-            emitCharacterUpdate(aCharId, { hitPoints: newHp });
-            useCharacterStore.getState().applyRemoteUpdate(aCharId, { hitPoints: newHp });
+          const targetTokenData = useMapStore.getState().tokens[aToken.id];
+          if (targetTokenData) {
+            const existingConditions = targetTokenData.conditions || [];
+            const newConditions = [...new Set([...existingConditions, ...conditions])] as any;
+            emitTokenUpdate(aToken.id, { conditions: newConditions });
           }
-        }, delay + 300);
-      }
-
-      // Auto-apply conditions on failed save
-      if (!aSaved) {
-        const conditions = SPELL_CONDITIONS[spell.name];
-        if (conditions && conditions.length > 0) {
-          setTimeout(() => {
-            const targetTokenData = useMapStore.getState().tokens[aToken.id];
-            if (targetTokenData) {
-              const existingConditions = targetTokenData.conditions || [];
-              const newConditions = [...new Set([...existingConditions, ...conditions])] as any;
-              emitTokenUpdate(aToken.id, { conditions: newConditions });
-              emitRoll('1d0+0', `${aToken.name} is now ${conditions.join(', ')}! (${spell.name})`);
-            }
-          }, delay + 500);
-        }
+        }, delay + 500);
       }
     }
+
+    targetLines.push(`   • ${aToken.name}: ${lineParts.join(' • ')}`);
   }
+
+  emitSystemMessage([...headerLines, ...targetLines].join('\n'));
 }
 
 function quickBtnStyle(color: string): React.CSSProperties {

@@ -27,10 +27,17 @@ function MessageBubble({ message }: { message: ChatMessage }) {
       background: theme.gold.bg,
     },
     system: {
-      textAlign: 'center' as const,
-      fontStyle: 'italic',
-      color: theme.text.muted,
+      borderLeft: `3px solid ${theme.purple}`,
+      paddingLeft: 10,
+      paddingRight: 8,
+      paddingTop: 6,
+      paddingBottom: 6,
+      background: 'rgba(155,89,182,0.06)',
+      borderRadius: 4,
+      color: theme.text.secondary,
       fontSize: 12,
+      whiteSpace: 'pre-wrap' as const,
+      lineHeight: 1.5,
     },
   };
 
@@ -93,6 +100,9 @@ function MessageBubble({ message }: { message: ChatMessage }) {
             <span style={styles.rollReason}>{message.rollData.reason}</span>
           )}
         </div>
+      ) : message.type === 'system' ? (
+        // System messages support multi-line content with explicit \n
+        <div style={{ whiteSpace: 'pre-wrap', lineHeight: 1.5 }}>{message.content}</div>
       ) : (
         <p style={styles.messageContent}>{message.content}</p>
       )}
