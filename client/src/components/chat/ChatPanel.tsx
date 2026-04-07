@@ -27,14 +27,17 @@ function MessageBubble({ message }: { message: ChatMessage }) {
       background: theme.gold.bg,
     },
     system: {
-      borderLeft: `3px solid ${theme.purple}`,
+      // Gold-bordered card for spell results / system events. Distinct
+      // from the purple "hidden DM roll" styling so users don't confuse
+      // public spell math with secret rolls.
+      borderLeft: `3px solid ${theme.gold.primary}`,
       paddingLeft: 10,
       paddingRight: 8,
       paddingTop: 6,
       paddingBottom: 6,
-      background: 'rgba(155,89,182,0.06)',
+      background: theme.gold.bg,
       borderRadius: 4,
-      color: theme.text.secondary,
+      color: theme.text.primary,
       fontSize: 12,
       whiteSpace: 'pre-wrap' as const,
       lineHeight: 1.5,

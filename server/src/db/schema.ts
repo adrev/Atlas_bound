@@ -242,6 +242,32 @@ export function initDatabase(): void {
   try { db.exec(`ALTER TABLE chat_messages ADD COLUMN hidden INTEGER DEFAULT 0`); } catch { /* exists */ }
   try { db.exec(`ALTER TABLE characters ADD COLUMN hit_dice TEXT DEFAULT '[]'`); } catch { /* exists */ }
   try { db.exec(`ALTER TABLE characters ADD COLUMN concentrating_on TEXT`); } catch { /* exists */ }
+  // Spell-related fields. These exist in the CREATE TABLE definition but
+  // weren't there originally, so existing databases need them backfilled
+  // via ALTER TABLE. Without these the spell save DC defaults to 10 and
+  // every save against a player's spell looks artificially easy.
+  try { db.exec(`ALTER TABLE characters ADD COLUMN spellcasting_ability TEXT DEFAULT ''`); } catch { /* exists */ }
+  try { db.exec(`ALTER TABLE characters ADD COLUMN spell_attack_bonus INTEGER DEFAULT 0`); } catch { /* exists */ }
+  try { db.exec(`ALTER TABLE characters ADD COLUMN spell_save_dc INTEGER DEFAULT 10`); } catch { /* exists */ }
+  try { db.exec(`ALTER TABLE characters ADD COLUMN initiative INTEGER DEFAULT 0`); } catch { /* exists */ }
+  try { db.exec(`ALTER TABLE characters ADD COLUMN background TEXT DEFAULT '{"name":"","description":"","feature":""}'`); } catch { /* exists */ }
+  try { db.exec(`ALTER TABLE characters ADD COLUMN characteristics TEXT DEFAULT '{}'`); } catch { /* exists */ }
+  try { db.exec(`ALTER TABLE characters ADD COLUMN personality TEXT DEFAULT '{}'`); } catch { /* exists */ }
+  try { db.exec(`ALTER TABLE characters ADD COLUMN notes_data TEXT DEFAULT '{}'`); } catch { /* exists */ }
+  try { db.exec(`ALTER TABLE characters ADD COLUMN proficiencies_data TEXT DEFAULT '{"armor":[],"weapons":[],"tools":[],"languages":[]}'`); } catch { /* exists */ }
+  try { db.exec(`ALTER TABLE characters ADD COLUMN senses TEXT DEFAULT '{}'`); } catch { /* exists */ }
+  try { db.exec(`ALTER TABLE characters ADD COLUMN defenses TEXT DEFAULT '{}'`); } catch { /* exists */ }
+  try { db.exec(`ALTER TABLE characters ADD COLUMN conditions TEXT DEFAULT '[]'`); } catch { /* exists */ }
+  try { db.exec(`ALTER TABLE characters ADD COLUMN currency TEXT DEFAULT '{"cp":0,"sp":0,"ep":0,"gp":0,"pp":0}'`); } catch { /* exists */ }
+  try { db.exec(`ALTER TABLE characters ADD COLUMN extras TEXT DEFAULT '[]'`); } catch { /* exists */ }
+
+  // Backfill spellcasting fields for existing DDB-imported characters that
+  // were created before these columns existed. Computes spell_save_dc and
+  // spell_attack_bonus from the character's class, level, and primary
+  // ability score whenever those fields are still 0/empty.
+  try { backfillSpellcastingFromExistingChars(db); } catch (err) {
+    console.warn('[migration] Failed to backfill spellcasting fields:', err);
+  }
 
   // Custom content tables
   db.exec(`
@@ -296,4 +322,65 @@ export function initDatabase(): void {
     CREATE INDEX IF NOT EXISTS idx_custom_monsters_session ON custom_monsters(session_id);
     CREATE INDEX IF NOT EXISTS idx_custom_spells_session ON custom_spells(session_id);
   `);
+}
+
+/**
+ * One-time backfill for characters that were created before the
+ * spell_save_dc / spell_attack_bonus / spellcasting_ability columns
+ * existed. Computes the values from the character's class, level, and
+ * ability scores. Only touches rows where the values are still default
+ * (0 / empty), so re-running is idempotent.
+ */
+function backfillSpellcastingFromExistingChars(db: import('better-sqlite3').Database): void {
+  // Class → primary spellcasting ability. Half-casters and unusual cases
+  // fall back to a sensible default; this is a backfill for testing, not
+  // perfect canonical data.
+  const CLASS_ABILITY: Record<string, string> = {
+    bard: 'cha', cleric: 'wis', druid: 'wis', paladin: 'cha',
+    ranger: 'wis', sorcerer: 'cha', warlock: 'cha', wizard: 'int',
+    artificer: 'int',
+  };
+
+  const rows = db.prepare(`
+    SELECT id, class, level, ability_scores, proficiency_bonus,
+           spell_save_dc, spell_attack_bonus, spellcasting_ability
+    FROM characters
+    WHERE (spell_save_dc IS NULL OR spell_save_dc = 0 OR spell_save_dc = 10)
+      AND class != ''
+  `).all() as Array<Record<string, unknown>>;
+
+  if (rows.length === 0) return;
+
+  const update = db.prepare(`
+    UPDATE characters
+    SET spellcasting_ability = ?, spell_attack_bonus = ?, spell_save_dc = ?
+    WHERE id = ?
+  `);
+
+  let updated = 0;
+  for (const row of rows) {
+    const classStr = (row.class as string) || '';
+    const lowerClass = classStr.toLowerCase();
+    // Pick the first matching class word
+    let ability: string | null = null;
+    for (const [key, val] of Object.entries(CLASS_ABILITY)) {
+      if (lowerClass.includes(key)) { ability = val; break; }
+    }
+    if (!ability) continue;
+
+    let scores: Record<string, number> = {};
+    try { scores = JSON.parse((row.ability_scores as string) || '{}'); } catch { /* ignore */ }
+    const score = scores[ability] ?? 10;
+    const mod = Math.floor((score - 10) / 2);
+    const profBonus = (row.proficiency_bonus as number) || 2;
+    const dc = 8 + profBonus + mod;
+    const atkBonus = profBonus + mod;
+
+    update.run(ability, atkBonus, dc, row.id);
+    updated++;
+  }
+
+  if (updated > 0) {
+    console.log(`[migration] Backfilled spellcasting fields on ${updated} character${updated !== 1 ? 's' : ''}`);
+  }
 }
