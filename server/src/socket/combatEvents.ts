@@ -14,14 +14,27 @@ import {
 export function registerCombatEvents(io: Server, socket: Socket): void {
 
   socket.on('combat:start', (data) => {
+    console.log('[COMBAT START] received from socket', socket.id, 'data:', data);
     const parsed = combatStartSchema.safeParse(data);
-    if (!parsed.success) return;
+    if (!parsed.success) {
+      console.warn('[COMBAT START] schema parse failed:', parsed.error.issues);
+      return;
+    }
 
     const ctx = getPlayerBySocketId(socket.id);
-    if (!ctx || ctx.player.role !== 'dm') return;
+    if (!ctx) {
+      console.warn('[COMBAT START] no player context for socket', socket.id);
+      return;
+    }
+    if (ctx.player.role !== 'dm') {
+      console.warn('[COMBAT START] non-DM tried to start combat:', ctx.player.userId, ctx.player.role);
+      return;
+    }
+    console.log('[COMBAT START] DM', ctx.player.userId, 'starting with', parsed.data.tokenIds.length, 'tokens');
 
     try {
       const combatState = CombatService.startCombat(ctx.room.sessionId, parsed.data.tokenIds);
+      console.log('[COMBAT START] combat state created with', combatState.combatants.length, 'combatants');
       io.to(ctx.room.sessionId).emit('combat:started', {
         combatants: combatState.combatants,
         roundNumber: combatState.roundNumber,
@@ -85,6 +98,7 @@ export function registerCombatEvents(io: Server, socket: Socket): void {
         io.to(ctx.room.sessionId).emit('combat:all-initiatives-ready', { combatants: sorted });
       }
     } catch (err) {
+      console.error('[COMBAT START] error:', err);
       socket.emit('session:error', {
         message: err instanceof Error ? err.message : 'Failed to start combat',
       });

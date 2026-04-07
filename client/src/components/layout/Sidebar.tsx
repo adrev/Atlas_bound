@@ -116,7 +116,13 @@ function CombatPanel() {
         disabled={tokenCount === 0}
         onClick={() => {
           const tokenIds = Object.keys(tokens);
-          if (tokenIds.length > 0) emitStartCombat(tokenIds);
+          console.log('[START COMBAT] Click. tokens:', tokenIds.length, 'isDM:', isDM);
+          if (tokenIds.length === 0) {
+            console.warn('[START COMBAT] No tokens on map — button should be disabled');
+            return;
+          }
+          console.log('[START COMBAT] Emitting combat:start with', tokenIds);
+          emitStartCombat(tokenIds);
         }}
       >
         Start Combat
