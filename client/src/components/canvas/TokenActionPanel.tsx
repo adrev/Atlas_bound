@@ -4,6 +4,7 @@ import { useCharacterStore } from '../../stores/useCharacterStore';
 import { useSessionStore } from '../../stores/useSessionStore';
 import { emitRoll, emitCharacterUpdate, emitTokenUpdate, emitSystemMessage } from '../../socket/emitters';
 import { enrichSpellFromDescription } from '../../utils/spell-enrich';
+import { effectiveSpellSaveDC, effectiveSpellAttackBonus } from '../../utils/spell-stats';
 import { abilityModifier, calculateEquipmentBonuses, SPELL_CONDITIONS, SPELL_BUFFS, getSpellAnimation } from '@dnd-vtt/shared';
 import { useEffectStore } from '../../stores/useEffectStore';
 import { LootBagPanel } from '../loot/LootBagPanel';
@@ -331,8 +332,10 @@ export function TokenActionPanel() {
 
       const casterToken = useMapStore.getState().tokens[currentTargeting.casterTokenId];
       const casterChar = casterToken?.characterId ? useCharacterStore.getState().allCharacters[casterToken.characterId] : null;
-      const casterSpellDC = casterChar?.spellSaveDC ?? 13;
-      const casterSpellAttack = casterChar?.spellAttackBonus ?? 0;
+      // Use the effective DC helpers — they recompute from class+ability if
+      // the stored field looks like a stale placeholder default.
+      const casterSpellDC = effectiveSpellSaveDC(casterChar);
+      const casterSpellAttack = effectiveSpellAttackBonus(casterChar);
 
       console.log('[TARGETING] Processing action:', {
         spell: currentTargeting.spell?.name,
@@ -1613,7 +1616,8 @@ async function resolveAreaSpell(
   }
   const casterChar = casterToken.characterId ? charStore.allCharacters[casterToken.characterId] : null;
   const casterId = casterChar?.id || casterTokenId;
-  const casterSpellDC = (casterChar as any)?.spellSaveDC ?? 13;
+  // Recompute DC defensively if the stored value looks like a stale default
+  const casterSpellDC = effectiveSpellSaveDC(casterChar);
   const casterX = (casterToken as any).x;
   const casterY = (casterToken as any).y;
   const gridSize = mapState.currentMap?.gridSize || 70;
