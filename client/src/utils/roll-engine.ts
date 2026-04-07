@@ -77,6 +77,50 @@ const EMPTY_MODS: RollModifiers = {
 };
 
 /**
+ * Detect Magic Resistance from a character's special abilities or
+ * traits text. Creatures like Drow, Tieflings (Infernal Constitution),
+ * Yuan-ti, and many higher CR monsters have advantage on saving throws
+ * against spells and magical effects. This is a feature, not a
+ * condition, so it lives outside the conditions array.
+ */
+export function hasMagicResistance(character: unknown): boolean {
+  if (!character) return false;
+  const c = character as { features?: unknown; specialAbilities?: unknown };
+
+  // Check the features array (PCs)
+  let features: any[] = [];
+  if (typeof c.features === 'string') {
+    try { features = JSON.parse(c.features); } catch { /* ignore */ }
+  } else if (Array.isArray(c.features)) {
+    features = c.features;
+  }
+  for (const f of features) {
+    const name = (f.name || '').toLowerCase();
+    const desc = (f.description || '').toLowerCase();
+    if (name.includes('magic resistance') || desc.includes('advantage on saving throws against spells')) {
+      return true;
+    }
+  }
+
+  // Check special abilities (creatures from compendium)
+  let specials: any[] = [];
+  if (typeof c.specialAbilities === 'string') {
+    try { specials = JSON.parse(c.specialAbilities); } catch { /* ignore */ }
+  } else if (Array.isArray(c.specialAbilities)) {
+    specials = c.specialAbilities;
+  }
+  for (const s of specials) {
+    const name = (s.name || '').toLowerCase();
+    const desc = (s.desc || s.description || '').toLowerCase();
+    if (name.includes('magic resistance') || desc.includes('advantage on saving throws against spells')) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+/**
  * Compute the modifier set for a token's OWN rolls (when this token is
  * the one rolling). For example, when this token is the attacker, the
  * `attackAdvantage` reflects whether THIS token's attacks are made with

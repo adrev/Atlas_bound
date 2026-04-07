@@ -15,6 +15,7 @@ import {
   effectiveAC,
   effectiveSpeed,
   applyDamageWithResist,
+  hasMagicResistance,
 } from '../../utils/roll-engine';
 import { getSpellDurationMeta } from '../../utils/spell-durations';
 import { emitApplyConditionWithMeta, emitDamageSideEffects } from '../../socket/emitters';
@@ -609,6 +610,12 @@ export function TokenActionPanel() {
           // Apply save modifiers from target's conditions (Bless +1d4,
           // Paralyzed auto-fail STR/DEX, Hasted DEX advantage, etc.)
           const targetMods = getOwnRollModifiers(targetConditions);
+          // Magic Resistance: target gets advantage on ALL saves vs spells.
+          // Stacks with the existing per-condition advantage flags.
+          if (hasMagicResistance(targetChar)) {
+            (targetMods.saveAdvantage as any)[saveAbility] = 'advantage';
+            targetMods.notes.push('Magic Resistance (adv. vs spells)');
+          }
           const saveResult = rollSaveWithModifiers(saveAbility as any, targetSaveMod, targetMods);
           const saved = saveResult.autoFailed ? false : saveResult.total >= casterSpellDC;
           const saveIcon = saved ? '✓' : '✗';
@@ -1989,6 +1996,11 @@ async function resolveAreaSpell(
       const aSaveMod = abilityModifier((aScores as any)[resolvedSavingThrow] || 10);
       const aTokenConditions = (aToken.conditions || []) as string[];
       const aMods = getOwnRollModifiers(aTokenConditions);
+      // Magic Resistance applies to the AoE save too
+      if (hasMagicResistance(aChar)) {
+        (aMods.saveAdvantage as any)[resolvedSavingThrow] = 'advantage';
+        aMods.notes.push('Magic Resistance (adv. vs spells)');
+      }
       const saveResult = rollSaveWithModifiers(resolvedSavingThrow as any, aSaveMod, aMods);
       aSaved = saveResult.autoFailed ? false : saveResult.total >= casterSpellDC;
       const saveLabel = resolvedSavingThrow.toUpperCase();
