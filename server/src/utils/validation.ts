@@ -282,6 +282,12 @@ export const createCharacterSchema = z.object({
   spellAttackBonus: z.number().int().optional(),
   spellSaveDC: z.number().int().optional(),
   initiative: z.number().int().optional(),
+  hitDice: z.array(z.object({
+    dieSize: z.number().int(),
+    total: z.number().int(),
+    used: z.number().int(),
+  })).optional(),
+  concentratingOn: z.string().nullable().optional(),
 });
 
 export const updateCharacterSchema = createCharacterSchema.partial().omit({ userId: true });

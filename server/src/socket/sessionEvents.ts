@@ -176,6 +176,8 @@ export function registerSessionEvents(io: Server, socket: Socket): void {
           features: safeJson(charRow.features, []),
           inventory: safeJson(charRow.inventory, []),
           deathSaves: safeJson(charRow.death_saves, { successes: 0, failures: 0 }),
+          hitDice: safeJson(charRow.hit_dice, []),
+          concentratingOn: charRow.concentrating_on ?? null,
           background: safeJson(charRow.background, { name: '', description: '', feature: '' }),
           characteristics: safeJson(charRow.characteristics, {}),
           personality: safeJson(charRow.personality, {}),

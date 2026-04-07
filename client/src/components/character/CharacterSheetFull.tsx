@@ -20,7 +20,7 @@ import {
   type AbilityScores,
   type DeathSaves,
 } from '@dnd-vtt/shared';
-import { emitRoll, emitCharacterUpdate, emitTokenAdd } from '../../socket/emitters';
+import { emitRoll, emitCharacterUpdate, emitTokenAdd, emitSystemMessage } from '../../socket/emitters';
 import { useMapStore } from '../../stores/useMapStore';
 import { useSessionStore } from '../../stores/useSessionStore';
 import { useCharacterStore } from '../../stores/useCharacterStore';
@@ -666,11 +666,14 @@ function LeftColumn({ abilityScores, skills, savingThrows, profBonus, senses, pr
    HEADER BAR
    ═══════════════════════════════════════════════════════════ */
 function HeaderBar({ character }: { character: Character }) {
+  const [showShortRest, setShowShortRest] = useState(false);
+
   return (
     <div style={{
       display: 'flex', alignItems: 'center', gap: 12,
       padding: '12px 48px 12px 16px', borderBottom: `1px solid ${C.borderDim}`,
       background: C.bgCard, flexShrink: 0,
+      position: 'relative',
     }}>
       {/* Portrait */}
       <div style={{
@@ -697,48 +700,14 @@ function HeaderBar({ character }: { character: Character }) {
         </div>
       </div>
 
+      {/* Short Rest dialog */}
+      {showShortRest && (
+        <ShortRestDialog character={character} onClose={() => setShowShortRest(false)} />
+      )}
+
       {/* Rest buttons */}
       <button
-        onClick={() => {
-          const changes: string[] = [];
-          const updates: Record<string, unknown> = {};
-          // Reset short-rest features
-          const features = parse<Array<{ name: string; usesTotal?: number; usesRemaining?: number; resetOn?: string | null }>>(character.features, []);
-          let restoredFeatures = 0;
-          const updatedFeatures = features.map((f) => {
-            if (f.resetOn === 'short' && f.usesTotal && (f.usesRemaining ?? f.usesTotal) < f.usesTotal) {
-              restoredFeatures++;
-              return { ...f, usesRemaining: f.usesTotal };
-            }
-            return f;
-          });
-          if (restoredFeatures > 0) {
-            updates.features = updatedFeatures;
-            changes.push(`${restoredFeatures} short-rest feature${restoredFeatures !== 1 ? 's' : ''} restored`);
-          }
-          // Warlocks recover ALL their spell slots on a short rest. Other classes don't.
-          const isWarlock = (character.class || '').toLowerCase().includes('warlock');
-          if (isWarlock) {
-            const slots = parse<Record<string, { max: number; used: number }>>(character.spellSlots, {});
-            const updatedSlots: Record<string, { max: number; used: number }> = {};
-            let restoredSlots = 0;
-            for (const [lvl, slot] of Object.entries(slots)) {
-              if (slot.used > 0) restoredSlots++;
-              updatedSlots[lvl] = { max: slot.max, used: 0 };
-            }
-            if (restoredSlots > 0) {
-              updates.spellSlots = updatedSlots;
-              changes.push(`Warlock spell slots restored`);
-            }
-          }
-          if (changes.length === 0) changes.push('Nothing to restore');
-          if (Object.keys(updates).length > 0) {
-            emitCharacterUpdate(character.id, updates);
-            useCharacterStore.getState().applyRemoteUpdate(character.id, updates);
-          }
-          showRestToast('Short Rest', changes);
-          emitRoll('1d0+0', `${character.name} takes a Short Rest`);
-        }}
+        onClick={() => setShowShortRest(true)}
         style={{
           padding: '6px 12px', fontSize: 11, fontWeight: 600,
           background: C.bgElevated, color: C.textSecondary,
@@ -790,9 +759,25 @@ function HeaderBar({ character }: { character: Character }) {
             updates.features = updatedFeatures;
             changes.push(`${restoredFeatures} feature${restoredFeatures !== 1 ? 's' : ''} restored`);
           }
-          // 5) Death saves cleared
+          // 5) Restore half (rounded up) of spent Hit Dice (D&D 5e rule)
+          const hitDicePools = parse<Array<{ dieSize: number; total: number; used: number }>>(character.hitDice as unknown, []);
+          if (hitDicePools.length > 0) {
+            let restoredHd = 0;
+            const updatedPools = hitDicePools.map(p => {
+              if (p.used <= 0) return p;
+              const recovery = Math.max(1, Math.ceil(p.total / 2));
+              const newUsed = Math.max(0, p.used - recovery);
+              restoredHd += (p.used - newUsed);
+              return { ...p, used: newUsed };
+            });
+            if (restoredHd > 0) {
+              updates.hitDice = updatedPools;
+              changes.push(`Recovered ${restoredHd} Hit Dice`);
+            }
+          }
+          // 6) Death saves cleared
           updates.deathSaves = { successes: 0, failures: 0 };
-          // 6) Drop concentration
+          // 7) Drop concentration
           if (character.concentratingOn) {
             updates.concentratingOn = null;
             changes.push(`Concentration on ${character.concentratingOn} dropped`);
@@ -802,7 +787,7 @@ function HeaderBar({ character }: { character: Character }) {
           emitCharacterUpdate(character.id, updates);
           useCharacterStore.getState().applyRemoteUpdate(character.id, updates);
           showRestToast('Long Rest', changes);
-          emitRoll('1d0+0', `${character.name} takes a Long Rest`);
+          emitSystemMessage(`💤 ${character.name} takes a Long Rest\n   ${changes.join(' • ')}`);
         }}
         style={{
           padding: '6px 12px', fontSize: 11, fontWeight: 600,
@@ -814,6 +799,186 @@ function HeaderBar({ character }: { character: Character }) {
       >
         Long Rest
       </button>
+    </div>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════════
+   SHORT REST DIALOG (Hit Dice spending)
+   ═══════════════════════════════════════════════════════════ */
+function ShortRestDialog({ character, onClose }: { character: Character; onClose: () => void }) {
+  // Pull live hit dice / hp from the store so the dialog updates in real time
+  // as the user spends dice.
+  const liveChar = useCharacterStore(s => s.allCharacters[character.id] ?? character);
+  const hitDicePools = parse<Array<{ dieSize: number; total: number; used: number }>>(liveChar.hitDice as unknown, []);
+  const hp = liveChar.hitPoints;
+  const maxHp = liveChar.maxHitPoints;
+  const conMod = abilityModifier(parse<Record<string, number>>(liveChar.abilityScores, {}).con ?? 10);
+
+  function spendDie(dieSize: number) {
+    const poolIdx = hitDicePools.findIndex(p => p.dieSize === dieSize);
+    if (poolIdx < 0) return;
+    const pool = hitDicePools[poolIdx];
+    if (pool.used >= pool.total) return;
+    if (hp >= maxHp) return;
+
+    // Roll 1d(dieSize) + CON mod, heal that much (min 1)
+    const roll = Math.floor(Math.random() * dieSize) + 1;
+    const heal = Math.max(1, roll + conMod);
+    const newHp = Math.min(maxHp, hp + heal);
+
+    const updatedPools = hitDicePools.map((p, i) => i === poolIdx ? { ...p, used: p.used + 1 } : p);
+    const updates = { hitPoints: newHp, hitDice: updatedPools };
+    emitCharacterUpdate(character.id, updates);
+    useCharacterStore.getState().applyRemoteUpdate(character.id, updates);
+
+    emitSystemMessage(
+      `💤 ${character.name} spends 1d${dieSize} Hit Die\n   Rolled ${roll}${conMod >= 0 ? '+' : ''}${conMod} = ${heal} HP (HP ${hp}→${newHp})`
+    );
+  }
+
+  function finishRest() {
+    // Reset short-rest features + Warlock slots; HP healing is already done
+    // via Hit Dice spending above.
+    const changes: string[] = [];
+    const updates: Record<string, unknown> = {};
+    const features = parse<Array<{ name: string; usesTotal?: number; usesRemaining?: number; resetOn?: string | null }>>(liveChar.features, []);
+    let restoredFeatures = 0;
+    const updatedFeatures = features.map((f) => {
+      if (f.resetOn === 'short' && f.usesTotal && (f.usesRemaining ?? f.usesTotal) < f.usesTotal) {
+        restoredFeatures++;
+        return { ...f, usesRemaining: f.usesTotal };
+      }
+      return f;
+    });
+    if (restoredFeatures > 0) {
+      updates.features = updatedFeatures;
+      changes.push(`${restoredFeatures} short-rest feature${restoredFeatures !== 1 ? 's' : ''} restored`);
+    }
+
+    const isWarlock = (liveChar.class || '').toLowerCase().includes('warlock');
+    if (isWarlock) {
+      const slots = parse<Record<string, { max: number; used: number }>>(liveChar.spellSlots, {});
+      const updatedSlots: Record<string, { max: number; used: number }> = {};
+      let restoredSlots = 0;
+      for (const [lvl, slot] of Object.entries(slots)) {
+        if (slot.used > 0) restoredSlots++;
+        updatedSlots[lvl] = { max: slot.max, used: 0 };
+      }
+      if (restoredSlots > 0) {
+        updates.spellSlots = updatedSlots;
+        changes.push('Warlock spell slots restored');
+      }
+    }
+
+    if (Object.keys(updates).length > 0) {
+      emitCharacterUpdate(character.id, updates);
+      useCharacterStore.getState().applyRemoteUpdate(character.id, updates);
+    }
+
+    const summary = changes.length > 0
+      ? `💤 ${character.name} finishes a Short Rest\n   ${changes.join(' • ')}`
+      : `💤 ${character.name} finishes a Short Rest`;
+    emitSystemMessage(summary);
+    onClose();
+  }
+
+  return (
+    <div onClick={onClose} style={{
+      position: 'fixed', inset: 0, zIndex: 9999,
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      background: 'rgba(0,0,0,0.65)',
+    }}>
+      <div onClick={e => e.stopPropagation()} style={{
+        background: C.bgCard, border: `2px solid ${C.red}`, borderRadius: 8,
+        padding: 20, minWidth: 360, maxWidth: 480, boxShadow: C.redGlow,
+      }}>
+        <div style={{ fontSize: 18, fontWeight: 700, color: C.red, marginBottom: 4, textAlign: 'center', letterSpacing: '0.04em', textTransform: 'uppercase' }}>
+          Short Rest
+        </div>
+        <div style={{ fontSize: 11, color: C.textMuted, textAlign: 'center', marginBottom: 14 }}>
+          Spend Hit Dice to heal. Each die heals 1d(size) {conMod >= 0 ? '+' : ''}{conMod} HP.
+        </div>
+
+        {/* HP gauge */}
+        <div style={{ marginBottom: 16 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: C.textSecondary, marginBottom: 4 }}>
+            <span>Hit Points</span>
+            <span><b style={{ color: C.textPrimary }}>{hp}</b> / {maxHp}</span>
+          </div>
+          <div style={{ height: 8, background: C.bgElevated, borderRadius: 4, overflow: 'hidden' }}>
+            <div style={{ width: `${maxHp > 0 ? (hp / maxHp) * 100 : 0}%`, height: '100%', background: hp / maxHp < 0.3 ? C.red : C.gold, transition: 'width 0.3s ease' }} />
+          </div>
+        </div>
+
+        {/* Hit Dice pools */}
+        {hitDicePools.length === 0 && (
+          <div style={{ padding: 12, textAlign: 'center', color: C.textMuted, fontSize: 12, fontStyle: 'italic' }}>
+            No Hit Dice tracked for this character.
+            <div style={{ marginTop: 6, fontSize: 11 }}>
+              Re-import from D&D Beyond to populate them.
+            </div>
+          </div>
+        )}
+        {hitDicePools.map((pool) => {
+          const left = pool.total - pool.used;
+          const noHeal = hp >= maxHp;
+          const noDice = left <= 0;
+          const disabled = noHeal || noDice;
+          return (
+            <div key={pool.dieSize} style={{
+              display: 'flex', alignItems: 'center', gap: 12,
+              padding: '10px 14px', marginBottom: 6,
+              background: C.bgElevated, borderRadius: 6,
+              border: `1px solid ${C.borderDim}`,
+              opacity: disabled ? 0.5 : 1,
+            }}>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: 14, fontWeight: 700, color: C.textPrimary }}>1d{pool.dieSize}</div>
+                <div style={{ fontSize: 10, color: C.textMuted }}>{left} / {pool.total} remaining</div>
+              </div>
+              <button
+                disabled={disabled}
+                onClick={() => spendDie(pool.dieSize)}
+                title={noHeal ? 'Already at max HP' : noDice ? 'No Hit Dice remaining' : `Roll 1d${pool.dieSize} + ${conMod} CON`}
+                style={{
+                  padding: '6px 14px', fontSize: 11, fontWeight: 700,
+                  background: disabled ? C.bgCard : C.red,
+                  color: disabled ? C.textMuted : '#fff',
+                  border: `1px solid ${disabled ? C.borderDim : C.red}`,
+                  borderRadius: 4,
+                  cursor: disabled ? 'not-allowed' : 'pointer',
+                  fontFamily: 'inherit',
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.04em',
+                }}
+              >
+                Spend
+              </button>
+            </div>
+          );
+        })}
+
+        {/* Action buttons */}
+        <div style={{ display: 'flex', gap: 8, marginTop: 16 }}>
+          <button onClick={onClose} style={{
+            flex: 1, padding: '8px 12px', fontSize: 12, fontWeight: 600,
+            background: 'transparent', color: C.textSecondary,
+            border: `1px solid ${C.border}`, borderRadius: 4, cursor: 'pointer',
+            fontFamily: 'inherit',
+          }}>
+            Cancel
+          </button>
+          <button onClick={finishRest} style={{
+            flex: 2, padding: '8px 12px', fontSize: 12, fontWeight: 700,
+            background: C.gold, color: '#1a1a1a',
+            border: `1px solid ${C.gold}`, borderRadius: 4, cursor: 'pointer',
+            fontFamily: 'inherit', textTransform: 'uppercase', letterSpacing: '0.04em',
+          }}>
+            Finish Short Rest
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

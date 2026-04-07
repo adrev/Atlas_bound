@@ -240,6 +240,8 @@ export function initDatabase(): void {
   try { db.exec(`ALTER TABLE compendium_monsters ADD COLUMN token_image_source TEXT DEFAULT 'generated'`); } catch { /* exists */ }
   try { db.exec(`ALTER TABLE compendium_items ADD COLUMN token_image_source TEXT DEFAULT 'none'`); } catch { /* exists */ }
   try { db.exec(`ALTER TABLE chat_messages ADD COLUMN hidden INTEGER DEFAULT 0`); } catch { /* exists */ }
+  try { db.exec(`ALTER TABLE characters ADD COLUMN hit_dice TEXT DEFAULT '[]'`); } catch { /* exists */ }
+  try { db.exec(`ALTER TABLE characters ADD COLUMN concentrating_on TEXT`); } catch { /* exists */ }
 
   // Custom content tables
   db.exec(`

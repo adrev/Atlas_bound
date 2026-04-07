@@ -20,6 +20,7 @@ export function parseCharacterJSON(json: Record<string, unknown>): Omit<Characte
   const classes = extractClasses(data);
   const level = extractTotalLevel(data);
   const profBonus = proficiencyBonusForLevel(level);
+  const hitDice = extractHitDice(data);
 
   // Ability scores
   const abilityScores = extractAbilityScores(data);
@@ -106,11 +107,37 @@ export function parseCharacterJSON(json: Record<string, unknown>): Omit<Characte
     spellAttackBonus,
     spellSaveDC,
     concentratingOn: null,
+    hitDice,
     initiative,
     portraitUrl,
     dndbeyondId,
     source: 'dndbeyond_import',
   };
+}
+
+/**
+ * Build hit dice pools from the DDB classes array. Multi-class characters
+ * get one HitDicePool per die size (the pools may be merged if two classes
+ * happen to share the same die — e.g. Bard d8 + Cleric d8 → 1 pool).
+ */
+function extractHitDice(data: Record<string, unknown>): Array<{ dieSize: number; total: number; used: number }> {
+  const classes = data.classes as Array<Record<string, unknown>> | undefined;
+  if (!classes || !Array.isArray(classes)) return [];
+  const pools = new Map<number, { total: number; used: number }>();
+  for (const c of classes) {
+    const def = (c.definition as Record<string, unknown>) || {};
+    const dieSize = (def.hitDice as number) || 8;
+    const lvl = (c.level as number) || 0;
+    if (lvl <= 0) continue;
+    const existing = pools.get(dieSize) || { total: 0, used: 0 };
+    existing.total += lvl;
+    pools.set(dieSize, existing);
+  }
+  return Array.from(pools.entries()).map(([dieSize, p]) => ({
+    dieSize,
+    total: p.total,
+    used: p.used,
+  }));
 }
 
 function extractRace(data: Record<string, unknown>): string {

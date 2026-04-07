@@ -46,6 +46,8 @@ const FIELD_TO_COLUMN: Record<string, { col: string; json: boolean }> = {
   senses: { col: 'senses', json: true },
   defenses: { col: 'defenses', json: true },
   extras: { col: 'extras', json: true },
+  hitDice: { col: 'hit_dice', json: true },
+  concentratingOn: { col: 'concentrating_on', json: false },
 };
 
 function safeJsonParse(value: unknown, fallback: unknown = null): unknown {
@@ -76,6 +78,8 @@ function dbRowToCharacter(row: Record<string, unknown>): Record<string, unknown>
     features: safeJsonParse(row.features, []),
     inventory: safeJsonParse(row.inventory, []),
     deathSaves: safeJsonParse(row.death_saves, { successes: 0, failures: 0 }),
+    hitDice: safeJsonParse(row.hit_dice, []),
+    concentratingOn: row.concentrating_on ?? null,
     background: safeJsonParse(row.background, { name: '', description: '', feature: '' }),
     characteristics: safeJsonParse(row.characteristics, {}),
     personality: safeJsonParse(row.personality, {}),

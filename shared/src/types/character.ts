@@ -175,6 +175,17 @@ export interface DeathSaves {
   failures: number;
 }
 
+/**
+ * Hit Dice for short-rest healing. Stored as a list grouped by die size
+ * to support multiclass characters (e.g. a Bard 3 / Fighter 2 has 3d8 + 2d10).
+ * For most single-class characters this will have a single entry.
+ */
+export interface HitDicePool {
+  dieSize: number;       // 6, 8, 10, 12
+  total: number;         // total dice from levels in this die-size class
+  used: number;          // dice spent since last long rest
+}
+
 export interface Character {
   id: string;
   userId: string;
@@ -185,6 +196,7 @@ export interface Character {
   hitPoints: number;
   maxHitPoints: number;
   tempHitPoints: number;
+  hitDice: HitDicePool[];
   armorClass: number;
   speed: number;
   proficiencyBonus: number;

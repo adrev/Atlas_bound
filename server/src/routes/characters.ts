@@ -35,6 +35,8 @@ function dbRowToCharacter(row: Record<string, unknown>) {
     features: safeJsonParse(row.features, []),
     inventory: safeJsonParse(row.inventory, []),
     deathSaves: safeJsonParse(row.death_saves, { successes: 0, failures: 0 }),
+    hitDice: safeJsonParse(row.hit_dice, []),
+    concentratingOn: row.concentrating_on ?? null,
     background: safeJsonParse(row.background, { name: '', description: '', feature: '' }),
     characteristics: safeJsonParse(row.characteristics, { alignment: '', gender: '', eyes: '', hair: '', skin: '', height: '', weight: '', age: '', faith: '', size: 'Medium' }),
     personality: safeJsonParse(row.personality, { traits: '', ideals: '', bonds: '', flaws: '' }),
@@ -159,6 +161,8 @@ router.put('/:id', (req: Request, res: Response) => {
   if (updates.inventory !== undefined) { setClauses.push('inventory = ?'); params.push(JSON.stringify(updates.inventory)); }
   if (updates.deathSaves !== undefined) { setClauses.push('death_saves = ?'); params.push(JSON.stringify(updates.deathSaves)); }
   if (updates.tempHitPoints !== undefined) { setClauses.push('temp_hit_points = ?'); params.push(updates.tempHitPoints); }
+  if (updates.hitDice !== undefined) { setClauses.push('hit_dice = ?'); params.push(JSON.stringify(updates.hitDice)); }
+  if (updates.concentratingOn !== undefined) { setClauses.push('concentrating_on = ?'); params.push(updates.concentratingOn); }
 
   if (setClauses.length === 0) {
     const row = db.prepare('SELECT * FROM characters WHERE id = ?').get(req.params.id) as Record<string, unknown>;
@@ -208,8 +212,9 @@ router.post('/import-json', (req: Request, res: Response) => {
         dndbeyond_id, dndbeyond_json, source,
         background, characteristics, personality, notes_data,
         proficiencies_data, senses, defenses, conditions, currency, extras,
-        spellcasting_ability, spell_attack_bonus, spell_save_dc, initiative
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        spellcasting_ability, spell_attack_bonus, spell_save_dc, initiative,
+        hit_dice
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       id, userId, character.name, character.race, character.class,
       character.level, character.hitPoints, character.maxHitPoints,
@@ -241,6 +246,7 @@ router.post('/import-json', (req: Request, res: Response) => {
       character.spellAttackBonus,
       character.spellSaveDC,
       character.initiative,
+      JSON.stringify(character.hitDice ?? []),
     );
 
     const row = db.prepare('SELECT * FROM characters WHERE id = ?').get(id) as Record<string, unknown>;

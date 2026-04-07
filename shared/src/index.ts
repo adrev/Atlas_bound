@@ -3,7 +3,7 @@ export type { Session, SessionSettings, Player, GameMode } from './types/session
 export { DEFAULT_SESSION_SETTINGS } from './types/session.js';
 export type {
   AbilityScores, AbilityName, SkillProficiency, Skills, SpellSlot,
-  Spell, InventoryItem, DeathSaves, Character, Feature,
+  Spell, InventoryItem, DeathSaves, Character, Feature, HitDicePool,
   CharacterBackground, CharacterCharacteristics, CharacterPersonality,
   CharacterNotes, CharacterProficiencies, CharacterSenses,
   CharacterDefenses, CharacterCurrency,
