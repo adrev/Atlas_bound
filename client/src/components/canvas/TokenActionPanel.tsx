@@ -3,7 +3,7 @@ import { useMapStore } from '../../stores/useMapStore';
 import { useCharacterStore } from '../../stores/useCharacterStore';
 import { useSessionStore } from '../../stores/useSessionStore';
 import { useCombatStore } from '../../stores/useCombatStore';
-import { emitRoll, emitCharacterUpdate, emitTokenUpdate, emitSystemMessage } from '../../socket/emitters';
+import { emitRoll, emitCharacterUpdate, emitTokenUpdate, emitSystemMessage, emitTokenAdd } from '../../socket/emitters';
 import { enrichSpellFromDescription } from '../../utils/spell-enrich';
 import { effectiveSpellSaveDC, effectiveSpellAttackBonus } from '../../utils/spell-stats';
 import {
@@ -758,6 +758,10 @@ export function TokenActionPanel() {
         const atk = currentTargeting.weapon || currentTargeting.action;
         const atkBonus = atk.attack_bonus ?? 0;
         const dmgDice = atk.damage_dice || atk.damage || '1d6';
+        // Detect Thrown property — we'll drop the weapon from inventory + spawn
+        // an item token at the target's location after the attack resolves.
+        const wIsThrown = ((atk.properties as string[] | undefined) || []).some(p => p.toLowerCase() === 'thrown');
+        const wThrownInventoryIdx = (atk as any).inventoryIndex as number | undefined;
         // Detect damage type from atk fields or damage_dice (e.g. "1d6 piercing")
         let weaponDmgType = (atk.damageType || atk.damage_type || '').toLowerCase();
         if (!weaponDmgType) {
@@ -816,6 +820,37 @@ export function TokenActionPanel() {
         }
 
         emitSystemMessage(`${wHeader}\n   • ${wParts.join(' • ')}`);
+
+        // Thrown weapons drop from inventory and spawn an item token at
+        // the target's location. Only fires if we have a valid inventory
+        // index AND the caster has a character record.
+        if (wIsThrown && wThrownInventoryIdx != null && wThrownInventoryIdx >= 0) {
+          const casterCharIdForDrop = wCasterToken?.characterId;
+          const mapId = useMapStore.getState().currentMap?.id;
+          if (casterCharIdForDrop && mapId) {
+            // Place the weapon a small offset toward the caster (in front
+            // of the target) — looks like the weapon stuck in the ground
+            // near the victim.
+            const dropX = (targetToken as any).x;
+            const dropY = (targetToken as any).y;
+            fetch(`/api/characters/${casterCharIdForDrop}/loot/drop`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ itemIndex: wThrownInventoryIdx, mapId, x: dropX, y: dropY }),
+            })
+              .then(r => r.ok ? r.json() : null)
+              .then(data => {
+                if (!data?.success) return;
+                // Update the caster's inventory locally
+                useCharacterStore.getState().applyRemoteUpdate(casterCharIdForDrop, { inventory: data.inventory });
+                emitCharacterUpdate(casterCharIdForDrop, { inventory: data.inventory }, { skipLocal: true });
+                // Spawn the item token via socket so all clients see it
+                if (data.token) emitTokenAdd(data.token);
+                emitSystemMessage(`🗡 ${currentTargeting.casterName} dropped ${atk.name.replace(' (Thrown)', '')} at ${targetToken.name}'s feet`);
+              })
+              .catch(err => console.error('[THROW] failed to drop weapon:', err));
+          }
+        }
       }
 
       useMapStore.getState().cancelTargetingMode();
@@ -1420,7 +1455,18 @@ export function TokenActionPanel() {
                     {isThrown && canAct && (
                       <ActionBtn label={`Throw +${rangedAtkMod} (20ft)`} color={C.gold} onClick={() => {
                         useMapStore.getState().startTargetingMode({
-                          weapon: { ...w, name: `${w.name} (Thrown)`, attack_bonus: rangedAtkMod, damage_dice: `${dmgDice}+${rangedDmgMod}`, properties: ['Thrown'] },
+                          weapon: {
+                            ...w,
+                            // Track the original weapon name + inventory index so the
+                            // resolver can drop it from inventory and spawn an item
+                            // token at the target's location after the throw lands.
+                            originalName: w.name,
+                            inventoryIndex: inventory.findIndex((it: any) => it.name === w.name),
+                            name: `${w.name} (Thrown)`,
+                            attack_bonus: rangedAtkMod,
+                            damage_dice: `${dmgDice}+${rangedDmgMod}`,
+                            properties: ['Thrown'],
+                          },
                           casterTokenId: selectedTokenId!, casterName: token.name,
                         });
                       }} />
