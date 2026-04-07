@@ -1,6 +1,6 @@
 # Atlas Bound — Development Status & Todo List
 
-## Last Updated: April 6, 2026
+## Last Updated: April 7, 2026
 
 ---
 
@@ -72,37 +72,33 @@
 
 ## Known Issues (Fix First Tomorrow)
 
-### 🔴 Critical: Self-Range AoE Spells (Thunderwave)
-**Problem**: Thunderwave sometimes doesn't resolve properly. The `castSelfSpell` helper enters targeting mode and auto-triggers the caster's token via setTimeout(50ms), but the timing can race with React re-renders.
+### ✅ FIXED — Self-Range AoE Spells (Thunderwave)
+**Status**: Fixed Apr 7. Replaced the setTimeout-based `castSelfSpell` helper with a full standalone async function that resolves directly from the cast button onClick without entering targeting mode at all. Filters out the caster up front, reads fresh HP from `useCharacterStore.getState()` right before each damage tick, schedules pushback BEFORE damage so dead tokens still move, rolls actual dice (not the average), skips already-dead tokens, falls back to compendium lookup for missing damage/save data, applies cantrip scaling at levels 5/11/17, and auto-applies SPELL_CONDITIONS on failed saves. Commits `bcf1153`, `6f9fdf8`.
 
-**What we tried**:
-1. Self-target only → damaged the caster
-2. Skip self, announce "click each creature" → clunky UX
-3. Auto-target all tokens in radius → worked but sometimes 1-shots (HP reading issue)
-4. `castSelfSpell` auto-dispatch → timing race
+### ✅ FIXED — AoE Damage Amounts (1-shot bug)
+**Status**: Fixed Apr 7. Each affected token now reads fresh HP from `useCharacterStore.getState().allCharacters[charId]` right before applying damage so simultaneous applications never use a stale closure value.
 
-**Fix approach**: Instead of the setTimeout race, resolve Self-range AoE spells directly in the cast button onClick without entering targeting mode at all. Extract the AoE resolution logic into a reusable function that takes the caster position and applies to all nearby tokens.
+### ✅ FIXED — Pushback Not Visible (dead tokens)
+**Status**: Fixed Apr 7. Pushback is now scheduled at `delay = i * 200` and damage at `delay + 300` so the creature moves before the damage tick that might kill it.
 
-**Files**: `client/src/components/canvas/TokenActionPanel.tsx`
-- Lines ~447-540: AoE resolution block
-- Lines ~1315, 1340: spell cast button onClick handlers
-- The `castSelfSpell` function at ~line 1409
-
-### 🟡 AoE Damage Amounts
-**Problem**: Some creatures getting 1-shot by AoE spells (342 HP creature killed by 2d8 damage). Need to verify HP is read correctly from character store for each affected token.
-
-### 🟡 Pushback Not Visible
-**Problem**: Token pushback works in code but may not be visible if the creature is dead after damage. Need to apply pushback BEFORE or simultaneously with damage.
+### ✅ FIXED — Average damage on single-target spells
+**Status**: Fixed Apr 7. The targeting useEffect was emitting dice notation to chat but applying the AVERAGE of the dice to HP. Added a `rollDamageDice` helper and replaced all four single-target damage application sites (spell attack vs AC, save failed full damage, save half-on-save, no-save direct damage, healing). Each branch also now reads fresh HP from the store before applying.
 
 ---
 
 ## Comprehensive Todo List
 
 ### Priority 1: Fix & Polish (Do First)
-- [ ] Fix Self-range AoE spell resolution (Thunderwave, Burning Hands) — extract into direct resolution function
-- [ ] Fix AoE damage amounts (verify HP reading for each target)
-- [ ] Fix pushback timing (apply before damage or simultaneously)
-- [ ] Verify all spells with saves work (Poison Spray CON, Hold Person WIS, Fireball DEX)
+- [x] Fix Self-range AoE spell resolution (Thunderwave, Burning Hands) — extract into direct resolution function ✅ Apr 7
+- [x] Fix AoE damage amounts (read fresh HP from store before each application) ✅ Apr 7
+- [x] Fix pushback timing (apply before damage so dead tokens still move) ✅ Apr 7
+- [x] Roll real dice for single-target spell damage (was using averages) ✅ Apr 7
+- [x] Wire condition auto-application into Self-range AoE path ✅ Apr 7
+- [ ] User test: Thunderwave on multiple creatures (no self-damage, real damage, pushback before death)
+- [ ] User test: Poison Spray (CON save, 1d12 poison, no half on save)
+- [ ] User test: Fireball (DEX save, 8d6 fire, half on save, AoE template)
+- [ ] User test: Hold Person (WIS save, paralyzed condition on fail)
+- [ ] User test: Cure Wounds (heals real rolled amount, deducts 1st-level slot)
 
 ### Priority 2: Combat Engine
 - [ ] **Initiative & Turn Flow**: Automated rolling for all participants on "Start Combat"
