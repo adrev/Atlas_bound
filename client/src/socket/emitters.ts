@@ -1,5 +1,6 @@
 import { getSocket } from './client';
 import { useCharacterStore } from '../stores/useCharacterStore';
+import { useMapStore } from '../stores/useMapStore';
 import type {
   Token,
   Condition,
@@ -43,8 +44,24 @@ export function emitTokenRemove(tokenId: string) {
   getSocket().emit('map:token-remove', { tokenId });
 }
 
-export function emitTokenUpdate(tokenId: string, changes: Partial<Token>) {
+/**
+ * Emit a token update to the server AND apply it locally so the UI
+ * reflects the change immediately. The server broadcasts to OTHER clients
+ * via socket.to(...).emit('map:token-updated', ...) which intentionally
+ * excludes the sender — without applying locally, condition / position /
+ * conditions changes wouldn't appear until a refresh.
+ *
+ * Pass `{ skipLocal: true }` if you've already updated the store yourself.
+ */
+export function emitTokenUpdate(
+  tokenId: string,
+  changes: Partial<Token>,
+  opts: { skipLocal?: boolean } = {},
+) {
   getSocket().emit('map:token-update', { tokenId, changes });
+  if (!opts.skipLocal) {
+    useMapStore.getState().updateToken(tokenId, changes);
+  }
 }
 
 export function emitFogReveal(points: number[]) {

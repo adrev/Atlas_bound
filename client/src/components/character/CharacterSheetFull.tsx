@@ -1715,6 +1715,18 @@ function SpellsTab({ spells: rawSpells, spellSlots, spellcastingAbility, spellAt
     emitCharacterUpdate(characterId, { spells: updated });
   };
 
+  // Toggle the per-spell DM override flag. When ON, this specific spell
+  // can be cast without consuming a slot, even if no slot is available.
+  // Useful for granting individual story-moment spells without enabling
+  // the global override.
+  const toggleSpellOverride = (spellName: string) => {
+    const updated = rawSpells.map(s => s.name.toLowerCase() === spellName.toLowerCase()
+      ? { ...s, dmOverride: !s.dmOverride }
+      : s,
+    );
+    emitCharacterUpdate(characterId, { spells: updated });
+  };
+
   const existingSpellNames = useMemo(
     () => new Set(spells.map(s => s.name.toLowerCase())),
     [spells],
@@ -1751,18 +1763,23 @@ function SpellsTab({ spells: rawSpells, spellSlots, spellcastingAbility, spellAt
     const schoolColor = SCHOOL_COLORS[spell.school] || C.textMuted;
 
     // Determine spent state for leveled spells (cantrips never go spent).
-    // DM "ignore slots" override makes everything castable for testing.
+    // Two DM overrides bypass it: the GLOBAL toggle (dmIgnoreSpellSlots),
+    // and a PER-SPELL flag (spell.dmOverride) for granting individual
+    // story-moment spells without unlocking everything.
     const slot = spell.level > 0 ? spellSlots[spell.level] : null;
     const slotsLeft = slot ? slot.max - slot.used : 0;
     const slotsMax = slot ? slot.max : 0;
-    const isSpent = !dmIgnoreSpellSlots && spell.level > 0 && slot ? slotsLeft <= 0 : false;
+    const overridden = dmIgnoreSpellSlots || !!spell.dmOverride;
+    const isSpent = !overridden && spell.level > 0 && slot ? slotsLeft <= 0 : false;
     const tooltip = spell.level === 0
       ? `${spell.name} — Cantrip (at will, never expended)`
-      : dmIgnoreSpellSlots
-        ? `${spell.name} — DM override active, slots bypassed`
-        : isSpent
-          ? `${spell.name} — Out of level ${spell.level} slots (0/${slotsMax}). Long Rest to recharge.`
-          : `${spell.name} — Level ${spell.level} (${slotsLeft}/${slotsMax} slots left, Long Rest to recharge)`;
+      : spell.dmOverride
+        ? `${spell.name} — DM override on this spell (slots bypassed)`
+        : dmIgnoreSpellSlots
+          ? `${spell.name} — DM override active, slots bypassed`
+          : isSpent
+            ? `${spell.name} — Out of level ${spell.level} slots (0/${slotsMax}). Long Rest to recharge.`
+            : `${spell.name} — Level ${spell.level} (${slotsLeft}/${slotsMax} slots left, Long Rest to recharge)`;
 
     return (
       <div key={i} title={tooltip} style={{
@@ -1795,6 +1812,7 @@ function SpellsTab({ spells: rawSpells, spellSlots, spellcastingAbility, spellAt
             <div style={{ fontWeight: 600, fontSize: 12, color: isSpent ? C.textMuted : schoolColor, textDecoration: isSpent ? 'line-through' : 'none' }}>
               {spell.name}
               {isSpent && <span style={{ color: C.red, marginLeft: 6, fontSize: 9, fontWeight: 700 }}>SPENT</span>}
+              {spell.dmOverride && <span style={{ color: '#b185db', marginLeft: 6, fontSize: 9, fontWeight: 700 }} title="DM override active on this spell — slots ignored">🔓 OVERRIDE</span>}
             </div>
             <div style={{ fontSize: 9, color: C.textMuted }}>
               {spell.school}
@@ -1851,9 +1869,27 @@ function SpellsTab({ spells: rawSpells, spellSlots, spellcastingAbility, spellAt
             {spell.higherLevels && (
               <div style={{ marginTop: 6, color: C.blue }}><b>At Higher Levels:</b> {spell.higherLevels}</div>
             )}
-            {/* DM/owner: remove this spell */}
+            {/* DM/owner: per-spell DM override + remove */}
             {canEdit && (
-              <div style={{ marginTop: 8, paddingTop: 8, borderTop: `1px solid ${C.borderDim}`, display: 'flex', justifyContent: 'flex-end' }}>
+              <div style={{ marginTop: 8, paddingTop: 8, borderTop: `1px solid ${C.borderDim}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                {isDM && spell.level > 0 ? (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      toggleSpellOverride(spell.name);
+                    }}
+                    title="Bypass slot consumption and requirements for this specific spell. Useful for story moments where the DM grants a temporary spell awakening."
+                    style={{
+                      padding: '4px 10px', fontSize: 10, fontWeight: 600,
+                      background: spell.dmOverride ? 'rgba(155,89,182,0.2)' : 'transparent',
+                      color: spell.dmOverride ? '#b185db' : C.textMuted,
+                      border: `1px solid ${spell.dmOverride ? '#9b59b6' : C.borderDim}`,
+                      borderRadius: 3, cursor: 'pointer', fontFamily: 'inherit',
+                    }}
+                  >
+                    🔓 {spell.dmOverride ? 'Override ON' : 'DM: Ignore slots'}
+                  </button>
+                ) : <span />}
                 <button
                   onClick={(e) => {
                     e.stopPropagation();

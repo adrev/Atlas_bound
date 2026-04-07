@@ -380,14 +380,15 @@ export function TokenActionPanel() {
         // A spell of level N can be cast with any slot ≥ N. Pick the lowest
         // available so we don't waste high-level slots. Block the cast if
         // no slot at level N or higher is available.
-        // The DM "ignore slots" override skips both the consumption and
-        // the availability check, but tags the chat header so it's clear
-        // the cast was DM-overridden.
+        // Two DM overrides bypass both the consumption and the availability
+        // check: the GLOBAL toggle (dmIgnoreSpellSlots), and a PER-SPELL
+        // flag (spell.dmOverride) for granting individual story-moment
+        // spells without unlocking everything.
         let castAtLevel = spell.level;
         let dmOverride = false;
         if (spell.level > 0 && casterChar) {
           const dmIgnoreSlots = useSessionStore.getState().dmIgnoreSpellSlots;
-          if (dmIgnoreSlots) {
+          if (dmIgnoreSlots || spell.dmOverride) {
             dmOverride = true;
           } else {
             const slots = typeof casterChar.spellSlots === 'string'
@@ -1011,6 +1012,54 @@ export function TokenActionPanel() {
             })}
           </div>
         )}
+
+        {/* Quick action buttons — pinned to the header so they don't get
+            pushed off-screen by long spell lists. Opening the full sheet
+            also closes this panel so they don't overlap. */}
+        {character && !isNPC && (
+          <div style={{ display: 'flex', gap: 4, marginTop: 8 }}>
+            <button
+              onClick={() => {
+                window.dispatchEvent(new CustomEvent('open-character-sheet', { detail: { characterId: character.id, tab: 'actions' } }));
+                close();
+              }}
+              style={quickBtnStyle(C.red)}
+            >📋 View Stats</button>
+            <button
+              onClick={() => {
+                window.dispatchEvent(new CustomEvent('open-character-sheet', { detail: { characterId: character.id, tab: 'inventory' } }));
+                close();
+              }}
+              style={quickBtnStyle(C.gold)}
+            >🎒 Inventory</button>
+          </div>
+        )}
+        {isNPC && token.characterId && (
+          <div style={{ display: 'flex', gap: 4, marginTop: 8 }}>
+            {compendiumData && (
+              <button
+                onClick={() => {
+                  window.dispatchEvent(new CustomEvent('open-compendium-detail', {
+                    detail: { slug: compendiumData.slug || token.name.toLowerCase().replace(/\s+/g, '-'), category: 'monsters', name: token.name },
+                  }));
+                  close();
+                }}
+                style={quickBtnStyle(C.red)}
+              >📋 Full Stats</button>
+            )}
+            {isDM && (
+              <button
+                onClick={() => {
+                  window.dispatchEvent(new CustomEvent('open-loot-editor', {
+                    detail: { characterId: token.characterId, tokenName: token.name },
+                  }));
+                  close();
+                }}
+                style={quickBtnStyle(C.gold)}
+              >🎒 Inventory</button>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Scrollable content */}
@@ -1290,11 +1339,13 @@ export function TokenActionPanel() {
                 const slot = spellSlots[String(spell.level)] || spellSlots[spell.level as any];
                 const slotsLeft = slot ? slot.max - slot.used : 0;
                 const slotsMax = slot ? slot.max : 0;
-                // DM "ignore slots" override makes everything castable.
+                // Either the global DM "ignore slots" toggle or the per-spell
+                // dmOverride flag makes this spell castable regardless of slots.
                 const dmIgnoreSlots = useSessionStore.getState().dmIgnoreSpellSlots;
-                const isSpent = !dmIgnoreSlots && (slot ? slotsLeft <= 0 : false);
-                const tooltip = dmIgnoreSlots
-                  ? `${spell.name} — DM override active (slots ignored)\n\n${spell.description || ''}`
+                const overridden = dmIgnoreSlots || spell.dmOverride;
+                const isSpent = !overridden && (slot ? slotsLeft <= 0 : false);
+                const tooltip = overridden
+                  ? `${spell.name} — ${spell.dmOverride ? 'DM override on this spell' : 'DM override active (all slots ignored)'}\n\n${spell.description || ''}`
                   : isSpent
                     ? `${spell.name} — Out of level ${spell.level} slots (0/${slotsMax}). Long Rest to recharge.\n\n${spell.description || ''}`
                     : `${spell.name} — Level ${spell.level} (${slotsLeft}/${slotsMax} slots left, Long Rest to recharge)\n\n${spell.description || ''}`;
@@ -1333,42 +1384,6 @@ export function TokenActionPanel() {
           <div style={{ fontSize: 9, color: C.textMuted, marginTop: 4, lineHeight: 1.4 }}>
             {compendiumData.senses && <div><strong style={{ color: C.textSec }}>Senses:</strong> {compendiumData.senses}</div>}
             {compendiumData.languages && <div><strong style={{ color: C.textSec }}>Languages:</strong> {compendiumData.languages}</div>}
-          </div>
-        )}
-
-        {/* Quick action buttons — different for players vs NPCs */}
-        {character && !isNPC && (
-          <div style={{ display: 'flex', gap: 4, marginTop: 6 }}>
-            <button
-              onClick={() => window.dispatchEvent(new CustomEvent('open-character-sheet', { detail: { characterId: character.id, tab: 'actions' } }))}
-              style={quickBtnStyle(C.red)}
-            >📋 View Stats</button>
-            <button
-              onClick={() => window.dispatchEvent(new CustomEvent('open-character-sheet', { detail: { characterId: character.id, tab: 'inventory' } }))}
-              style={quickBtnStyle(C.gold)}
-            >🎒 Inventory</button>
-          </div>
-        )}
-
-        {/* NPC buttons — wiki stats + loot editor */}
-        {isNPC && token.characterId && (
-          <div style={{ display: 'flex', gap: 4, marginTop: 6 }}>
-            {compendiumData && (
-              <button
-                onClick={() => window.dispatchEvent(new CustomEvent('open-compendium-detail', {
-                  detail: { slug: compendiumData.slug || token.name.toLowerCase().replace(/\s+/g, '-'), category: 'monsters', name: token.name },
-                }))}
-                style={quickBtnStyle(C.red)}
-              >📋 Full Stats</button>
-            )}
-            {isDM && (
-              <button
-                onClick={() => window.dispatchEvent(new CustomEvent('open-loot-editor', {
-                  detail: { characterId: token.characterId, tokenName: token.name },
-                }))}
-                style={quickBtnStyle(C.gold)}
-              >🎒 Inventory</button>
-            )}
           </div>
         )}
         </>}
@@ -1580,11 +1595,12 @@ async function resolveAreaSpell(
   // higher. The caster picks. We auto-pick the lowest available slot ≥ N
   // to avoid wasting high-level slots. If NO slot of level N or higher
   // exists at all, the cast fails — UNLESS the DM has enabled the
-  // "ignore spell slots" override, in which case we skip both the
+  // global "ignore spell slots" override OR this specific spell has its
+  // per-spell dmOverride flag set, in which case we skip both the
   // consumption and the availability check.
   if (spell.level > 0 && casterChar) {
     const dmIgnoreSlots = useSessionStore.getState().dmIgnoreSpellSlots;
-    if (dmIgnoreSlots) {
+    if (dmIgnoreSlots || spell.dmOverride) {
       (spell as any).__dmOverride = true;
     } else {
       const slots = typeof casterChar.spellSlots === 'string'

@@ -148,6 +148,14 @@ export interface Spell {
   isRitual: boolean;
   higherLevels?: string;
   attackType?: string;
+  /**
+   * DM-only flag that lets this specific spell ignore slot requirements.
+   * Useful for "story moments" — e.g. the DM grants a temporary spell
+   * awakening of Fireball to a low-level character. When true, this spell
+   * is castable without consuming a slot, even if no slot of the right
+   * level is available. Per-spell toggle in the SpellsTab UI.
+   */
+  dmOverride?: boolean;
 }
 
 export interface InventoryItem {
