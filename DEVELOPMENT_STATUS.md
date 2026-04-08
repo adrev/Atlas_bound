@@ -155,6 +155,7 @@
 - [ ] **Spell Slot Sync**: Match DDB spell slots to local state
 
 ### Priority 7: UI/UX Polish
+- [ ] **Rebuild Hero tab to match TokenActionPanel**: The current Hero sidebar tab is a stripped-down view. Rebuild it so it has full parity with the left-click token/creature popup — stats, attacks, spell buttons, conditions, loot, action economy, DDB-style creature details. One canonical character panel shared between the popup and the sidebar tab.
 - [ ] **UI Consistency Pass**: Unified color theme, replace emoji icons with Lucide icons, standardize button/card/panel styling
 - [ ] **Chat System**: IC (character name) vs OOC (player name) with distinct styling
 - [ ] **Turn Indicator**: Clear visual for whose turn it is and which token is active
