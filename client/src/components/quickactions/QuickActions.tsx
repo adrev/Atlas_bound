@@ -192,24 +192,16 @@ export function QuickActions() {
     isDM,
   };
 
-  const renderGroup = (actions: QuickAction[], groupTitle: string) => (
-    <div style={styles.group}>
-      <div style={styles.groupTitle}>{groupTitle}</div>
-      <div style={styles.groupRow}>
-        {actions.map((a) => (
-          <QuickActionTile key={a.id} action={a} ctx={ctx} />
-        ))}
-      </div>
-    </div>
-  );
+  const renderTiles = (actions: QuickAction[]) =>
+    actions.map((a) => <QuickActionTile key={a.id} action={a} ctx={ctx} />);
 
   return (
     <div style={styles.container}>
-      {renderGroup(COMBAT_ACTIONS, 'Combat')}
+      {renderTiles(COMBAT_ACTIONS)}
       <div aria-hidden style={styles.separator} />
-      {renderGroup(UTILITY_ACTIONS, 'Utility')}
+      {renderTiles(UTILITY_ACTIONS)}
       <div aria-hidden style={styles.separator} />
-      {renderGroup(REST_ACTIONS, 'Rest')}
+      {renderTiles(REST_ACTIONS)}
     </div>
   );
 }
@@ -241,57 +233,33 @@ function QuickActionTile({ action, ctx }: { action: QuickAction; ctx: QuickActio
 }
 
 // ── Styles ───────────────────────────────────────────────────
+const TILE_HEIGHT = 40;
+
 const styles: Record<string, CSSProperties> = {
   container: {
     display: 'flex',
     alignItems: 'center',
-    gap: theme.space.md,
-    height: '100%',
-    padding: `${theme.space.xs}px ${theme.space.md}px`,
-    // When the viewport is narrow, scroll horizontally so users can
-    // still reach all action groups rather than silently clipping.
-    overflowX: 'auto' as const,
-    overflowY: 'hidden' as const,
-  },
-  group: {
-    display: 'flex',
-    flexDirection: 'column',
-    alignItems: 'flex-start',
-    gap: 2,
-  },
-  groupTitle: {
-    ...theme.type.micro,
-    color: theme.gold.dim,
-    textTransform: 'uppercase',
-    letterSpacing: '0.08em',
-    paddingLeft: 2,
-  },
-  groupRow: {
-    display: 'flex',
     gap: 4,
+    height: '100%',
+    padding: `0 ${theme.space.md}px`,
   },
   separator: {
-    width: 2,
-    height: 44,
-    background: `
-      linear-gradient(90deg,
-        rgba(0,0,0,0.35) 0%,
-        rgba(0,0,0,0.35) 50%,
-        rgba(232, 196, 85, 0.4) 50%,
-        rgba(232, 196, 85, 0.4) 100%
-      )
-    `,
+    width: 1,
+    height: 28,
+    background: 'rgba(232, 196, 85, 0.35)',
     flexShrink: 0,
+    margin: `0 ${theme.space.xs}px`,
   },
   tile: {
-    width: 50,
-    height: 42,
+    minWidth: 54,
+    height: TILE_HEIGHT,
     display: 'flex',
-    flexDirection: 'column',
+    flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 2,
-    padding: `${theme.space.xxs}px ${theme.space.xs}px`,
+    gap: 5,
+    padding: `0 ${theme.space.sm}px`,
+    flexShrink: 0,
     background: `linear-gradient(180deg, ${theme.parchmentEdge} 0%, ${theme.bg.deep} 100%)`,
     border: `1px solid ${theme.gold.border}`,
     borderRadius: theme.radius.sm,
@@ -303,7 +271,7 @@ const styles: Record<string, CSSProperties> = {
     outline: 'none',
   },
   tileEmoji: {
-    fontSize: 14,
+    fontSize: 13,
     lineHeight: 1,
   },
   tileLabel: {

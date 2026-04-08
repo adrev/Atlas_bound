@@ -477,7 +477,7 @@ const styles: Record<string, React.CSSProperties> = {
     animation: 'fadeIn 0.2s ease',
   },
   bottomBar: {
-    height: 80,
+    height: 64,
     flexShrink: 0,
     borderTop: `1px solid ${theme.border.default}`,
     background: theme.bg.deep,

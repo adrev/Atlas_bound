@@ -4,7 +4,6 @@ import { emitRoll } from '../../socket/emitters';
 import { useDiceStore } from '../../stores/useDiceStore';
 import { useSessionStore } from '../../stores/useSessionStore';
 import { theme } from '../../styles/theme';
-import { EMOJI } from '../../styles/emoji';
 
 /**
  * Dice Tray — rune-slab redesign.
@@ -52,61 +51,53 @@ export function DiceTray() {
   return (
     <div style={styles.container}>
       {/* ── Dice buttons ────────────────────── */}
-      <div style={styles.group}>
-        <div style={styles.groupTitle}>
-          <span>{EMOJI.dice.d20}</span> Dice
-        </div>
-        <div style={styles.diceRow}>
-          {DICE_TYPES.map((die) => (
-            <DieTile
-              key={die.sides}
-              label={die.label}
-              onClick={() => handleDiceClick(die.sides)}
-            />
-          ))}
-        </div>
+      <div style={styles.row}>
+        {DICE_TYPES.map((die) => (
+          <DieTile
+            key={die.sides}
+            label={die.label}
+            onClick={() => handleDiceClick(die.sides)}
+          />
+        ))}
       </div>
 
       <div aria-hidden style={styles.separator} />
 
-      {/* ── Advantage toggles + DM Hidden ───── */}
-      <div style={styles.group}>
-        <div style={styles.groupTitle}>Mode</div>
-        <div style={styles.advRow}>
-          <AdvButton
-            active={advantage === 'advantage'}
-            variant="advantage"
-            onClick={() =>
-              setAdvantage(advantage === 'advantage' ? 'normal' : 'advantage')
-            }
-            title="Advantage (roll 2d20 keep higher)"
-          >
-            <ChevronUp size={12} />
-            <span>ADV</span>
-          </AdvButton>
-          <AdvButton
-            active={advantage === 'normal'}
-            variant="normal"
-            onClick={() => setAdvantage('normal')}
-            title="Normal roll"
-          >
-            <Minus size={12} />
-            <span>NORM</span>
-          </AdvButton>
-          <AdvButton
-            active={advantage === 'disadvantage'}
-            variant="disadvantage"
-            onClick={() =>
-              setAdvantage(
-                advantage === 'disadvantage' ? 'normal' : 'disadvantage'
-              )
-            }
-            title="Disadvantage (roll 2d20 keep lower)"
-          >
-            <ChevronDown size={12} />
-            <span>DIS</span>
-          </AdvButton>
-        </div>
+      {/* ── Advantage toggles ──────────────── */}
+      <div style={styles.row}>
+        <AdvButton
+          active={advantage === 'advantage'}
+          variant="advantage"
+          onClick={() =>
+            setAdvantage(advantage === 'advantage' ? 'normal' : 'advantage')
+          }
+          title="Advantage (roll 2d20 keep higher)"
+        >
+          <ChevronUp size={12} />
+          <span>ADV</span>
+        </AdvButton>
+        <AdvButton
+          active={advantage === 'normal'}
+          variant="normal"
+          onClick={() => setAdvantage('normal')}
+          title="Normal roll"
+        >
+          <Minus size={12} />
+          <span>NORM</span>
+        </AdvButton>
+        <AdvButton
+          active={advantage === 'disadvantage'}
+          variant="disadvantage"
+          onClick={() =>
+            setAdvantage(
+              advantage === 'disadvantage' ? 'normal' : 'disadvantage'
+            )
+          }
+          title="Disadvantage (roll 2d20 keep lower)"
+        >
+          <ChevronDown size={12} />
+          <span>DIS</span>
+        </AdvButton>
         {isDM && (
           <button
             onClick={() => setHiddenRoll(!hiddenRoll)}
@@ -121,7 +112,7 @@ export function DiceTray() {
             }}
           >
             {hiddenRoll ? <EyeOff size={11} /> : <Eye size={11} />}
-            <span>{hiddenRoll ? 'Hidden' : 'Public'}</span>
+            <span>{hiddenRoll ? 'HIDDEN' : 'PUBLIC'}</span>
           </button>
         )}
       </div>
@@ -129,20 +120,17 @@ export function DiceTray() {
       <div aria-hidden style={styles.separator} />
 
       {/* ── Custom notation + Roll button ──── */}
-      <div style={styles.group}>
-        <div style={styles.groupTitle}>Custom</div>
-        <div style={styles.customRow}>
-          <input
-            style={styles.customInput}
-            placeholder="2d6+3"
-            value={customNotation}
-            onChange={(e) => setCustomNotation(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && handleCustomRoll()}
-          />
-          <button style={styles.rollBtn} onClick={handleCustomRoll}>
-            Roll
-          </button>
-        </div>
+      <div style={styles.row}>
+        <input
+          style={styles.customInput}
+          placeholder="2d6+3"
+          value={customNotation}
+          onChange={(e) => setCustomNotation(e.target.value)}
+          onKeyDown={(e) => e.key === 'Enter' && handleCustomRoll()}
+        />
+        <button style={styles.rollBtn} onClick={handleCustomRoll}>
+          Roll
+        </button>
       </div>
 
       {/* ── Last result panel ───────────────── */}
@@ -158,17 +146,6 @@ export function DiceTray() {
             </span>
           </div>
         </>
-      )}
-
-      {/* ── Recent history (last 2) ─────────── */}
-      {rollHistory.length > 1 && (
-        <div style={styles.history}>
-          {rollHistory.slice(1, 3).map((roll, i) => (
-            <span key={i} style={styles.historyItem}>
-              {roll.notation}: <strong style={{ color: theme.gold.dim }}>{roll.total}</strong>
-            </span>
-          ))}
-        </div>
       )}
     </div>
   );
@@ -242,50 +219,31 @@ function AdvButton({
 }
 
 // ── Styles ─────────────────────────────────────────────────
+const TILE_HEIGHT = 40;
+
 const styles: Record<string, React.CSSProperties> = {
   container: {
     display: 'flex',
     alignItems: 'center',
-    gap: theme.space.md,
+    gap: theme.space.sm,
     height: '100%',
+    padding: `0 ${theme.space.md}px`,
   },
-  group: {
-    display: 'flex',
-    flexDirection: 'column' as const,
-    alignItems: 'flex-start',
-    gap: 2,
-  },
-  groupTitle: {
-    ...theme.type.micro,
-    color: theme.gold.dim,
-    textTransform: 'uppercase',
-    letterSpacing: '0.08em',
+  row: {
     display: 'flex',
     alignItems: 'center',
-    gap: 4,
-    paddingLeft: 2,
+    gap: 3,
   },
   separator: {
-    width: 2,
-    height: 52,
-    background: `
-      linear-gradient(90deg,
-        rgba(0,0,0,0.35) 0%,
-        rgba(0,0,0,0.35) 50%,
-        rgba(232, 196, 85, 0.5) 50%,
-        rgba(232, 196, 85, 0.5) 100%
-      )
-    `,
+    width: 1,
+    height: 28,
+    background: 'rgba(232, 196, 85, 0.35)',
     flexShrink: 0,
-    alignSelf: 'center',
-  },
-  diceRow: {
-    display: 'flex',
-    gap: 3,
+    margin: `0 ${theme.space.xs}px`,
   },
   dieTile: {
     width: 38,
-    height: 42,
+    height: TILE_HEIGHT,
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
@@ -301,18 +259,15 @@ const styles: Record<string, React.CSSProperties> = {
     fontFamily: theme.font.display,
     letterSpacing: '0.02em',
     outline: 'none',
-  },
-  advRow: {
-    display: 'flex',
-    gap: 2,
+    flexShrink: 0,
   },
   advTile: {
     display: 'inline-flex',
     alignItems: 'center',
     justifyContent: 'center',
     gap: 2,
-    width: 40,
-    height: 22,
+    width: 46,
+    height: TILE_HEIGHT,
     background: `linear-gradient(180deg, ${theme.parchmentEdge} 0%, ${theme.bg.deep} 100%)`,
     border: `1px solid ${theme.border.default}`,
     borderRadius: theme.radius.sm,
@@ -324,23 +279,28 @@ const styles: Record<string, React.CSSProperties> = {
     transition: `all ${theme.motion.fast}`,
     outline: 'none',
     fontFamily: theme.font.body,
+    flexShrink: 0,
   },
   hiddenToggle: {
     display: 'inline-flex',
     alignItems: 'center',
+    justifyContent: 'center',
     gap: 4,
-    padding: '2px 8px',
+    height: TILE_HEIGHT,
+    padding: `0 ${theme.space.sm}px`,
+    marginLeft: 4,
     background: `linear-gradient(180deg, ${theme.parchmentEdge} 0%, ${theme.bg.deep} 100%)`,
     border: `1px solid ${theme.border.default}`,
     borderRadius: theme.radius.sm,
     color: theme.text.muted,
     fontSize: 9,
     fontWeight: 700,
+    letterSpacing: '0.05em',
     cursor: 'pointer',
-    marginTop: 2,
     transition: `all ${theme.motion.fast}`,
     outline: 'none',
     fontFamily: theme.font.body,
+    flexShrink: 0,
   },
   hiddenToggleActive: {
     background: 'rgba(155, 89, 182, 0.2)',
@@ -348,15 +308,11 @@ const styles: Record<string, React.CSSProperties> = {
     color: theme.purple,
     boxShadow: `inset 0 -2px 0 ${theme.purple}`,
   },
-  customRow: {
-    display: 'flex',
-    gap: 3,
-  },
   customInput: {
-    width: 90,
-    height: 42,
-    padding: `0 ${theme.space.md}px`,
-    fontSize: 13,
+    width: 80,
+    height: TILE_HEIGHT,
+    padding: `0 ${theme.space.sm}px`,
+    fontSize: 12,
     background: theme.bg.deepest,
     border: `1px solid ${theme.gold.border}`,
     borderRadius: theme.radius.sm,
@@ -364,11 +320,12 @@ const styles: Record<string, React.CSSProperties> = {
     fontFamily: 'monospace',
     outline: 'none',
     boxShadow: `inset 0 1px 3px rgba(0,0,0,0.4)`,
+    flexShrink: 0,
   },
   rollBtn: {
-    padding: `0 ${theme.space.lg}px`,
-    height: 42,
-    fontSize: 12,
+    padding: `0 ${theme.space.md}px`,
+    height: TILE_HEIGHT,
+    fontSize: 11,
     fontWeight: 700,
     color: '#0a0a12',
     background: `linear-gradient(135deg, ${theme.gold.dim}, ${theme.gold.primary})`,
@@ -381,21 +338,23 @@ const styles: Record<string, React.CSSProperties> = {
     boxShadow: theme.goldGlow.soft,
     transition: `all ${theme.motion.normal}`,
     outline: 'none',
+    flexShrink: 0,
   },
   resultPanel: {
     display: 'flex',
-    alignItems: 'baseline',
+    alignItems: 'center',
     gap: theme.space.sm,
-    padding: `${theme.space.xs}px ${theme.space.md}px`,
+    padding: `0 ${theme.space.md}px`,
     background: `linear-gradient(180deg, ${theme.parchment} 0%, ${theme.bg.deepest} 100%)`,
     border: `1px solid ${theme.gold.border}`,
     borderRadius: theme.radius.sm,
     boxShadow: `inset 0 1px 0 rgba(232, 196, 85, 0.2), ${theme.goldGlow.soft}`,
-    minWidth: 80,
-    height: 46,
+    minWidth: 70,
+    height: TILE_HEIGHT,
+    flexShrink: 0,
   },
   resultTotal: {
-    fontSize: 24,
+    fontSize: 20,
     fontWeight: 700,
     color: theme.gold.bright,
     fontFamily: theme.font.display,
@@ -406,17 +365,5 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 10,
     color: theme.text.muted,
     fontFamily: 'monospace',
-  },
-  history: {
-    display: 'flex',
-    flexDirection: 'column' as const,
-    gap: 2,
-    marginLeft: theme.space.xs,
-  },
-  historyItem: {
-    fontSize: 10,
-    color: theme.text.muted,
-    fontFamily: 'monospace',
-    whiteSpace: 'nowrap' as const,
   },
 };

@@ -7,7 +7,6 @@ import { useSessionStore } from '../../../stores/useSessionStore';
 import { useCharacterStore } from '../../../stores/useCharacterStore';
 import { useDrawStore } from '../../../stores/useDrawStore';
 import { useDragToken } from '../../../hooks/useDragToken';
-import { emitCharacterUpdate, emitDamage, emitHeal } from '../../../socket/emitters';
 import { theme } from '../../../styles/theme';
 
 function TokenImage({ url, size }: { url: string; size: number }) {
@@ -203,28 +202,6 @@ function TokenSprite({ token, isSelected, isCurrentTurn }: TokenSpriteProps) {
               y: pointer.y + container.top,
             });
           }
-        }
-      }}
-      onWheel={(e) => {
-        // Scroll on token to adjust HP (DM or owner only)
-        const isDM = useSessionStore.getState().isDM;
-        const isOwner = token.ownerUserId === useSessionStore.getState().userId;
-        if (!isDM && !isOwner) return;
-        e.evt.preventDefault();
-        e.evt.stopPropagation();
-        const delta = e.evt.deltaY < 0 ? 1 : -1; // scroll up = heal, down = damage
-        if (token.characterId) {
-          const char = useCharacterStore.getState().allCharacters[token.characterId];
-          if (char) {
-            const newHp = Math.max(0, Math.min(char.maxHitPoints, char.hitPoints + delta));
-            if (newHp !== char.hitPoints) {
-              emitCharacterUpdate(token.characterId, { hitPoints: newHp });
-            }
-          }
-        } else if (combatant) {
-          // In combat, use combat damage/heal
-          if (delta > 0) emitHeal(token.id, 1);
-          else emitDamage(token.id, 1);
         }
       }}
       onMouseEnter={(e) => {

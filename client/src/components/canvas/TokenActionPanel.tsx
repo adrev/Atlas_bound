@@ -1373,8 +1373,20 @@ export function TokenActionPanel() {
   // Merge ability scores from character or compendium
   const abilityScores = Object.keys(scores).length > 0 ? scores : (compendiumData?.abilityScores || {});
 
-  // Actions from compendium
-  const compActions = compendiumData?.actions || [];
+  // Actions from compendium. Many third-party creatures (Tome of Beasts etc.)
+  // ship with only `name` + `desc` — no structured attack_bonus / damage_dice.
+  // Parse those out of the desc so the attack + damage buttons render.
+  const compActions = (compendiumData?.actions || []).map((a: any) => {
+    if (a.attack_bonus != null && a.damage_dice) return a;
+    const desc: string = a.desc || '';
+    const hitMatch = desc.match(/([+-]?\d+)\s+to\s+hit/i);
+    const dmgMatch = desc.match(/(\d+d\d+(?:\s*[+-]\s*\d+)?)/);
+    return {
+      ...a,
+      attack_bonus: a.attack_bonus ?? (hitMatch ? parseInt(hitMatch[1], 10) : null),
+      damage_dice: a.damage_dice ?? (dmgMatch ? dmgMatch[1].replace(/\s+/g, '') : null),
+    };
+  });
   const compTraits = compendiumData?.specialAbilities || [];
 
   // (creature spell parsing moved before early return)

@@ -32,6 +32,8 @@ const styles: Record<string, React.CSSProperties> = {
     height: '100%',
     padding: `0 ${theme.space.lg}px`,
     gap: theme.space.lg,
+    overflowX: 'auto',
+    overflowY: 'hidden',
     // Layered background matching the tab bar's rune-slab look so the
     // bottom bar reads as a companion piece to the sidebar tabs.
     background: `linear-gradient(180deg, ${theme.bg.base} 0%, ${theme.parchmentEdge} 100%)`,
@@ -39,9 +41,7 @@ const styles: Record<string, React.CSSProperties> = {
     boxShadow: `inset 0 1px 0 ${theme.border.default}`,
   },
   quickActionsSection: {
-    flex: 1,
-    minWidth: 0,
-    overflow: 'hidden',
+    flexShrink: 0,
     display: 'flex',
     alignItems: 'center',
   },
@@ -64,5 +64,6 @@ const styles: Record<string, React.CSSProperties> = {
     flexShrink: 0,
     display: 'flex',
     alignItems: 'center',
+    marginLeft: 'auto',
   },
 };
