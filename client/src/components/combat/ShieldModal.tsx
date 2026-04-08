@@ -4,6 +4,7 @@ import { useSessionStore } from '../../stores/useSessionStore';
 import { useMapStore } from '../../stores/useMapStore';
 import { useCombatStore } from '../../stores/useCombatStore';
 import { emitShieldCast, emitCharacterUpdate, emitUseAction, emitSystemMessage } from '../../socket/emitters';
+import { theme } from '../../styles/theme';
 
 /**
  * Shield spell prompt.
@@ -154,13 +155,13 @@ export function ShieldModal() {
       <div
         style={{
           pointerEvents: 'auto',
-          background: '#1a1a1a',
-          border: '2px solid #3498db',
-          borderRadius: 12,
+          background: theme.bg.deep,
+          border: `2px solid ${theme.blue}`,
+          borderRadius: theme.radius.lg,
           padding: '18px 22px',
           minWidth: 360,
           maxWidth: 440,
-          boxShadow: '0 0 40px rgba(52,152,219,0.5), 0 16px 48px rgba(0,0,0,0.7)',
+          boxShadow: `0 0 40px rgba(52,152,219,0.5), ${theme.shadow.lg}`,
           animation: 'sh-slide 0.2s ease-out',
         }}
       >
@@ -168,30 +169,32 @@ export function ShieldModal() {
           <span style={{ fontSize: 22 }}>🛡</span>
           <div style={{ flex: 1 }}>
             <div style={{
-              fontSize: 11, fontWeight: 700, color: '#3498db',
+              fontSize: 11, fontWeight: 700, color: theme.blue,
               textTransform: 'uppercase', letterSpacing: '1px',
             }}>
               Shield Reaction
             </div>
-            <div style={{ fontSize: 14, fontWeight: 600, color: '#eee', marginTop: 2 }}>
+            <div style={{ fontSize: 14, fontWeight: 600, color: theme.text.primary, marginTop: 2 }}>
               {head.attackerName} hits you ({head.attackTotal} vs AC {head.currentAC})
             </div>
           </div>
         </div>
 
         <div style={{
-          fontSize: 12, color: '#bbb', lineHeight: 1.5,
-          padding: '8px 0', borderTop: '1px solid #333',
-          borderBottom: '1px solid #333', marginBottom: 12,
+          fontSize: 12, color: theme.text.secondary, lineHeight: 1.5,
+          padding: '8px 0',
+          borderTop: `1px solid ${theme.border.default}`,
+          borderBottom: `1px solid ${theme.border.default}`,
+          marginBottom: 12,
         }}>
-          Cast <strong style={{ color: '#3498db' }}>Shield</strong> as a reaction (1st-level slot)
+          Cast <strong style={{ color: theme.blue }}>Shield</strong> as a reaction (1st-level slot)
           for <strong>+5 AC</strong> until your next turn.{' '}
           {stillHits ? (
-            <span style={{ color: '#c53131' }}>
+            <span style={{ color: theme.state.danger }}>
               New AC {newAC} still won't block this attack.
             </span>
           ) : (
-            <span style={{ color: '#2ecc71' }}>
+            <span style={{ color: theme.state.success }}>
               New AC {newAC} would turn this hit into a miss!
             </span>
           )}
@@ -203,16 +206,16 @@ export function ShieldModal() {
             style={{
               flex: 1,
               padding: '10px 14px',
-              background: '#3498db',
-              border: 'none',
-              borderRadius: 6,
+              background: theme.blue,
+              border: `1px solid ${theme.blue}`,
+              borderRadius: theme.radius.sm,
               color: '#fff',
               fontSize: 13,
               fontWeight: 700,
               cursor: 'pointer',
               textTransform: 'uppercase',
               letterSpacing: '0.5px',
-              fontFamily: 'inherit',
+              fontFamily: theme.font.body,
               boxShadow: '0 0 12px rgba(52,152,219,0.4)',
             }}
           >
@@ -224,13 +227,13 @@ export function ShieldModal() {
               flex: 1,
               padding: '10px 14px',
               background: 'transparent',
-              border: '1px solid #444',
-              borderRadius: 6,
-              color: '#aaa',
+              border: `1px solid ${theme.border.default}`,
+              borderRadius: theme.radius.sm,
+              color: theme.text.secondary,
               fontSize: 13,
               fontWeight: 600,
               cursor: 'pointer',
-              fontFamily: 'inherit',
+              fontFamily: theme.font.body,
             }}
           >
             Take the hit

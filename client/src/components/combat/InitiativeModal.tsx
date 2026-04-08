@@ -7,8 +7,8 @@ import { emitRollInitiative, emitSetInitiative } from '../../socket/emitters';
 import { theme } from '../../styles/theme';
 import type { Combatant } from '@dnd-vtt/shared';
 
-const ACCENT = '#c53131';
-const MODAL_BG = '#1a1a1a';
+const ACCENT = theme.state.danger;
+const MODAL_BG = theme.bg.deep;
 
 interface InitiativeModalProps {
   onClose: () => void;

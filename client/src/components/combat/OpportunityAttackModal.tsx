@@ -1,5 +1,6 @@
 import { useEffect, useState, useCallback } from 'react';
 import { emitOAExecute, emitOADecline } from '../../socket/emitters';
+import { theme } from '../../styles/theme';
 
 /**
  * Opportunity Attack prompt.
@@ -111,13 +112,13 @@ export function OpportunityAttackModal() {
       <div
         style={{
           pointerEvents: 'auto',
-          background: '#1a1a1a',
-          border: '2px solid #c53131',
-          borderRadius: 12,
+          background: theme.bg.deep,
+          border: `2px solid ${theme.state.danger}`,
+          borderRadius: theme.radius.lg,
           padding: '18px 22px',
           minWidth: 360,
           maxWidth: 440,
-          boxShadow: '0 0 40px rgba(197,49,49,0.5), 0 16px 48px rgba(0,0,0,0.7)',
+          boxShadow: `0 0 40px rgba(192,57,43,0.5), ${theme.shadow.lg}`,
           animation: 'oa-slide 0.3s ease-out',
         }}
       >
@@ -126,18 +127,18 @@ export function OpportunityAttackModal() {
           <span style={{ fontSize: 22 }}>⚡</span>
           <div style={{ flex: 1 }}>
             <div style={{
-              fontSize: 11, fontWeight: 700, color: '#c53131',
+              fontSize: 11, fontWeight: 700, color: theme.state.danger,
               textTransform: 'uppercase', letterSpacing: '1px',
             }}>
               Opportunity Attack
             </div>
-            <div style={{ fontSize: 14, fontWeight: 600, color: '#eee', marginTop: 2 }}>
+            <div style={{ fontSize: 14, fontWeight: 600, color: theme.text.primary, marginTop: 2 }}>
               {head.moverName} is leaving {head.attackerName}'s reach!
             </div>
           </div>
           <div style={{
-            fontSize: 10, fontWeight: 700, color: '#888',
-            padding: '2px 8px', background: 'rgba(255,255,255,0.05)',
+            fontSize: 10, fontWeight: 700, color: theme.text.muted,
+            padding: '2px 8px', background: theme.bg.elevated,
             borderRadius: 10,
           }}>
             {secondsLeft}s
@@ -146,13 +147,15 @@ export function OpportunityAttackModal() {
 
         {/* Body */}
         <div style={{
-          fontSize: 12, color: '#bbb', lineHeight: 1.5,
-          padding: '8px 0', borderTop: '1px solid #333',
-          borderBottom: '1px solid #333', marginBottom: 12,
+          fontSize: 12, color: theme.text.secondary, lineHeight: 1.5,
+          padding: '8px 0',
+          borderTop: `1px solid ${theme.border.default}`,
+          borderBottom: `1px solid ${theme.border.default}`,
+          marginBottom: 12,
         }}>
-          <strong style={{ color: '#d4a843' }}>{head.attackerName}</strong> may spend their{' '}
-          <strong style={{ color: '#9b59b6' }}>Reaction</strong> to make one melee weapon attack
-          against <strong style={{ color: '#eee' }}>{head.moverName}</strong> before they move out
+          <strong style={{ color: theme.gold.primary }}>{head.attackerName}</strong> may spend their{' '}
+          <strong style={{ color: theme.purple }}>Reaction</strong> to make one melee weapon attack
+          against <strong style={{ color: theme.text.primary }}>{head.moverName}</strong> before they move out
           of reach.
         </div>
 
@@ -163,18 +166,18 @@ export function OpportunityAttackModal() {
             style={{
               flex: 1,
               padding: '10px 14px',
-              background: '#c53131',
-              border: 'none',
-              borderRadius: 6,
+              background: `linear-gradient(135deg, ${theme.dangerDim}, ${theme.state.danger})`,
+              border: `1px solid ${theme.state.danger}`,
+              borderRadius: theme.radius.sm,
               color: '#fff',
               fontSize: 13,
               fontWeight: 700,
               cursor: 'pointer',
               textTransform: 'uppercase',
               letterSpacing: '0.5px',
-              fontFamily: 'inherit',
-              boxShadow: '0 0 12px rgba(197,49,49,0.4)',
-              transition: 'all 0.15s',
+              fontFamily: theme.font.body,
+              boxShadow: theme.dangerGlow,
+              transition: `all ${theme.motion.fast}`,
             }}
           >
             ⚔ Attack
@@ -185,16 +188,16 @@ export function OpportunityAttackModal() {
               flex: 1,
               padding: '10px 14px',
               background: 'transparent',
-              border: '1px solid #444',
-              borderRadius: 6,
-              color: '#aaa',
+              border: `1px solid ${theme.border.default}`,
+              borderRadius: theme.radius.sm,
+              color: theme.text.secondary,
               fontSize: 13,
               fontWeight: 600,
               cursor: 'pointer',
               textTransform: 'uppercase',
               letterSpacing: '0.5px',
-              fontFamily: 'inherit',
-              transition: 'all 0.15s',
+              fontFamily: theme.font.body,
+              transition: `all ${theme.motion.fast}`,
             }}
           >
             Let them go
@@ -205,7 +208,7 @@ export function OpportunityAttackModal() {
         {oaQueue.length > 1 && (
           <div style={{
             marginTop: 10, textAlign: 'center',
-            fontSize: 10, color: '#666',
+            fontSize: 10, color: theme.text.muted,
           }}>
             +{oaQueue.length - 1} more opportunity attack{oaQueue.length - 1 > 1 ? 's' : ''} waiting
           </div>

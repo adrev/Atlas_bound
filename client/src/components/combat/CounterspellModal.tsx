@@ -4,6 +4,7 @@ import { useSessionStore } from '../../stores/useSessionStore';
 import { useMapStore } from '../../stores/useMapStore';
 import { useCombatStore } from '../../stores/useCombatStore';
 import { emitSystemMessage, emitCharacterUpdate, emitUseAction } from '../../socket/emitters';
+import { theme } from '../../styles/theme';
 
 /**
  * Counterspell prompt.
@@ -166,13 +167,13 @@ export function CounterspellModal() {
       <div
         style={{
           pointerEvents: 'auto',
-          background: '#1a1a1a',
-          border: '2px solid #9b59b6',
-          borderRadius: 12,
+          background: theme.bg.deep,
+          border: `2px solid ${theme.purple}`,
+          borderRadius: theme.radius.lg,
           padding: '18px 22px',
           minWidth: 380,
           maxWidth: 460,
-          boxShadow: '0 0 40px rgba(155,89,182,0.5), 0 16px 48px rgba(0,0,0,0.7)',
+          boxShadow: `0 0 40px rgba(155,89,182,0.5), ${theme.shadow.lg}`,
           animation: 'cs-slide 0.3s ease-out',
         }}
       >
@@ -180,18 +181,18 @@ export function CounterspellModal() {
           <span style={{ fontSize: 22 }}>🛑</span>
           <div style={{ flex: 1 }}>
             <div style={{
-              fontSize: 11, fontWeight: 700, color: '#9b59b6',
+              fontSize: 11, fontWeight: 700, color: theme.purple,
               textTransform: 'uppercase', letterSpacing: '1px',
             }}>
               Counterspell Opportunity
             </div>
-            <div style={{ fontSize: 14, fontWeight: 600, color: '#eee', marginTop: 2 }}>
+            <div style={{ fontSize: 14, fontWeight: 600, color: theme.text.primary, marginTop: 2 }}>
               {head.casterName} is casting {head.spellName}!
             </div>
           </div>
           <div style={{
-            fontSize: 10, fontWeight: 700, color: '#888',
-            padding: '2px 8px', background: 'rgba(255,255,255,0.05)',
+            fontSize: 10, fontWeight: 700, color: theme.text.muted,
+            padding: '2px 8px', background: theme.bg.elevated,
             borderRadius: 10,
           }}>
             {secondsLeft}s
@@ -199,12 +200,14 @@ export function CounterspellModal() {
         </div>
 
         <div style={{
-          fontSize: 12, color: '#bbb', lineHeight: 1.5,
-          padding: '8px 0', borderTop: '1px solid #333',
-          borderBottom: '1px solid #333', marginBottom: 12,
+          fontSize: 12, color: theme.text.secondary, lineHeight: 1.5,
+          padding: '8px 0',
+          borderTop: `1px solid ${theme.border.default}`,
+          borderBottom: `1px solid ${theme.border.default}`,
+          marginBottom: 12,
         }}>
-          <strong style={{ color: '#eee' }}>{head.spellName}</strong> is a level{' '}
-          <strong style={{ color: '#9b59b6' }}>{head.spellLevel}</strong> spell.
+          <strong style={{ color: theme.text.primary }}>{head.spellName}</strong> is a level{' '}
+          <strong style={{ color: theme.purple }}>{head.spellLevel}</strong> spell.
           You can cast Counterspell at level {head.spellLevel} or higher to{' '}
           <strong>auto-cancel</strong>, or at a lower level to make a DC{' '}
           {10 + head.spellLevel} ability check.
@@ -218,14 +221,14 @@ export function CounterspellModal() {
               onClick={() => handleCounter(s)}
               style={{
                 padding: '8px 12px',
-                background: s >= head.spellLevel ? 'rgba(155,89,182,0.2)' : 'rgba(212,168,67,0.15)',
-                border: `1px solid ${s >= head.spellLevel ? '#9b59b6' : '#d4a843'}`,
-                borderRadius: 6,
-                color: s >= head.spellLevel ? '#9b59b6' : '#d4a843',
+                background: s >= head.spellLevel ? 'rgba(155,89,182,0.2)' : theme.gold.bg,
+                border: `1px solid ${s >= head.spellLevel ? theme.purple : theme.gold.primary}`,
+                borderRadius: theme.radius.sm,
+                color: s >= head.spellLevel ? theme.purple : theme.gold.primary,
                 fontSize: 12,
                 fontWeight: 700,
                 cursor: 'pointer',
-                fontFamily: 'inherit',
+                fontFamily: theme.font.body,
               }}
             >
               Slot L{s}{s >= head.spellLevel ? ' (auto)' : ' (check)'}
@@ -240,13 +243,13 @@ export function CounterspellModal() {
               flex: 1,
               padding: '8px 12px',
               background: 'transparent',
-              border: '1px solid #444',
-              borderRadius: 6,
-              color: '#aaa',
+              border: `1px solid ${theme.border.default}`,
+              borderRadius: theme.radius.sm,
+              color: theme.text.secondary,
               fontSize: 12,
               fontWeight: 600,
               cursor: 'pointer',
-              fontFamily: 'inherit',
+              fontFamily: theme.font.body,
             }}
           >
             Let it through
