@@ -8,6 +8,8 @@ import type {
   SpellCastEvent,
   WallSegment,
   SessionSettings,
+  Drawing,
+  DrawingStreamPayload,
 } from '@dnd-vtt/shared';
 
 // --- Session ---
@@ -30,6 +32,44 @@ export function emitUpdateSettings(settings: Partial<SessionSettings>) {
 // --- Map ---
 export function emitLoadMap(mapId: string) {
   getSocket().emit('map:load', { mapId });
+}
+
+// --- Scene Manager (Player Ribbon / DM preview) ---
+
+/**
+ * Ask the server for the full list of maps in this session, along
+ * with the current ribbon position. Used by the Scene Manager sidebar
+ * when the DM tools tab opens.
+ */
+export function emitListMaps() {
+  getSocket().emit('map:list', {});
+}
+
+/**
+ * DM-only: Load a map into the DM's private preview. Players do NOT
+ * receive this — the ribbon stays put. The server responds with
+ * `map:loaded` + `isPreview: true` to ONLY this socket.
+ */
+export function emitPreviewLoadMap(mapId: string) {
+  getSocket().emit('map:preview-load', { mapId });
+}
+
+/**
+ * DM-only: Move the player ribbon to a new map. Every player gets a
+ * full `map:loaded` broadcast and switches their canvas. Every client
+ * also gets a lightweight `map:player-map-changed` so scene manager
+ * sidebars update the ribbon indicator.
+ */
+export function emitActivateMapForPlayers(mapId: string) {
+  getSocket().emit('map:activate-for-players', { mapId });
+}
+
+/**
+ * DM-only: Remove a map from the session library. Refused server-side
+ * if this is the current ribbon (DM must move the ribbon first).
+ */
+export function emitDeleteMap(mapId: string) {
+  getSocket().emit('map:delete', { mapId });
 }
 
 export function emitTokenMove(tokenId: string, x: number, y: number) {
@@ -127,6 +167,75 @@ export function emitDeathSave(tokenId: string) {
 
 export function emitUseAction(actionType: ActionType) {
   getSocket().emit('combat:use-action', { actionType });
+}
+
+/**
+ * Take the Dash action for the current combatant — consumes the Action
+ * slot AND doubles movement for the turn. The server computes the new
+ * economy and broadcasts combat:action-used so every client updates.
+ */
+export function emitDash() {
+  getSocket().emit('combat:dash', {});
+}
+
+/**
+ * Execute an Opportunity Attack against a mover who just left the
+ * attacker's melee reach. The server rolls the attack, applies
+ * damage, and burns the attacker's reaction slot.
+ */
+export function emitOAExecute(attackerTokenId: string, moverTokenId: string) {
+  getSocket().emit('combat:oa-execute', { attackerTokenId, moverTokenId });
+}
+
+/** Decline an OA prompt (reserved for future audit). */
+export function emitOADecline(attackerTokenId: string, moverTokenId: string) {
+  getSocket().emit('combat:oa-decline', { attackerTokenId, moverTokenId });
+}
+
+/**
+ * Broadcast a leveled spell cast intent so other clients can show
+ * a Counterspell prompt. The cast resolver waits ~2s for a
+ * `combat:spell-counterspelled` response before committing the
+ * spell's effects.
+ */
+export function emitSpellCastAttempt(args: {
+  castId: string;
+  casterTokenId: string;
+  casterName: string;
+  spellName: string;
+  spellLevel: number;
+}) {
+  getSocket().emit('combat:spell-cast-attempt', args);
+}
+
+/** Confirm a counterspell — broadcasts to all clients so the original
+ * caster can abort their cast. */
+export function emitSpellCounterspelled(args: {
+  castId: string;
+  counterCasterName: string;
+  counterSlotLevel: number;
+}) {
+  getSocket().emit('combat:spell-counterspelled', args);
+}
+
+/**
+ * Broadcast that an attack would hit so the target's owner can pop
+ * a Shield spell prompt. The attacker's resolver pauses ~1.4 s for
+ * a response before applying damage.
+ */
+export function emitAttackHitAttempt(args: {
+  attackId: string;
+  targetTokenId: string;
+  attackerName: string;
+  attackTotal: number;
+  currentAC: number;
+}) {
+  getSocket().emit('combat:attack-hit-attempt', args);
+}
+
+/** Confirm Shield — broadcasts so the attacker's resolver can recompute. */
+export function emitShieldCast(args: { attackId: string; defenderName: string }) {
+  getSocket().emit('combat:shield-cast', args);
 }
 
 export function emitUseMovement(feet: number) {
@@ -234,4 +343,52 @@ export function emitRoll(notation: string, reason?: string, hidden?: boolean) {
  */
 export function emitSystemMessage(content: string) {
   getSocket().emit('chat:message', { type: 'system', content });
+}
+
+// --- Drawings (DM / player map annotations) ---
+
+/**
+ * Commit a finished drawing to the room. Server persists it (unless
+ * ephemeral) and broadcasts `drawing:created` to every client whose
+ * visibility scope covers this drawing.
+ *
+ * The local store is updated OPTIMISTICALLY at the call site (see
+ * useDrawStore.commitStroke), so we don't touch it here.
+ */
+export function emitDrawingCreate(drawing: Drawing) {
+  getSocket().emit('drawing:create', { drawing });
+}
+
+/** Delete a drawing by id. Server checks auth (DM or creator). */
+export function emitDrawingDelete(drawingId: string) {
+  getSocket().emit('drawing:delete', { drawingId });
+}
+
+/**
+ * Clear many drawings in one shot.
+ *   `all`  → DM wipe of every drawing on the current map (DM-only)
+ *   `mine` → wipe of every drawing this user created on the map
+ */
+export function emitDrawingClearAll(scope: 'all' | 'mine') {
+  getSocket().emit('drawing:clear-all', { scope });
+}
+
+/**
+ * Broadcast an in-progress stroke preview so other clients can see
+ * the drawing being drawn live. The server does NOT persist this —
+ * it's just forwarded to the applicable audience. Call rAF-throttled
+ * from the mouse move handler, not on every raw move event.
+ */
+export function emitDrawingStream(payload: DrawingStreamPayload) {
+  getSocket().emit('drawing:stream', payload);
+}
+
+/**
+ * Tell the server (and thus other clients) that the streamed preview
+ * for `tempId` is done. Watchers drop the preview object from their
+ * store; when the final `drawing:created` arrives shortly after it
+ * replaces the preview with a real committed drawing.
+ */
+export function emitDrawingStreamEnd(tempId: string) {
+  getSocket().emit('drawing:stream-end', { tempId });
 }

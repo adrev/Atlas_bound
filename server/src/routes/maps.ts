@@ -33,7 +33,39 @@ router.post(
       return;
     }
 
-    const { name, width, height, gridSize, gridType } = parsed.data;
+    const { name, width, height, gridSize, gridType, prebuiltKey } = parsed.data;
+
+    // ── Prebuilt dedup ────────────────────────────────────────────
+    // When the client passes a prebuiltKey it's saying "this is a
+    // reload of the same template, reuse if it exists". Dedup by
+    // exact name match within the same session. This lets the DM
+    // click "Load Goblin Camp" twice without losing any walls / fog /
+    // tokens they already set up on the first instance.
+    if (prebuiltKey) {
+      const existing = db.prepare(
+        'SELECT * FROM maps WHERE session_id = ? AND name = ? LIMIT 1',
+      ).get(sessionId, name) as Record<string, unknown> | undefined;
+      if (existing) {
+        res.status(200).json({
+          id: existing.id,
+          sessionId: existing.session_id,
+          name: existing.name,
+          imageUrl: existing.image_url,
+          width: existing.width,
+          height: existing.height,
+          gridSize: existing.grid_size,
+          gridType: existing.grid_type,
+          gridOffsetX: existing.grid_offset_x,
+          gridOffsetY: existing.grid_offset_y,
+          walls: JSON.parse(existing.walls as string),
+          fogState: JSON.parse(existing.fog_state as string),
+          createdAt: existing.created_at,
+          reused: true,
+        });
+        return;
+      }
+    }
+
     const mapId = uuidv4();
     const imageUrl = req.file ? `/uploads/maps/${req.file.filename}` : null;
 
@@ -58,6 +90,7 @@ router.post(
       walls: JSON.parse(map.walls as string),
       fogState: JSON.parse(map.fog_state as string),
       createdAt: map.created_at,
+      reused: false,
     });
   },
 );

@@ -12,7 +12,10 @@ interface FogLayerProps {
  * Vision-based Fog of War (BG3 style):
  * - GM never sees fog — always has full map visibility
  * - Players see fog everywhere EXCEPT around hero tokens they own
+ *   AND around any visible lit tokens (torches, Light spell, etc.)
  * - Fog auto-reveals in a radius around each player's token
+ * - Lit objects also reveal the fog around them so players can see
+ *   what a torch or Light spell illuminates
  * - No manual fog painting needed
  */
 export function FogLayer({ mapWidth, mapHeight }: FogLayerProps) {
@@ -22,15 +25,24 @@ export function FogLayer({ mapWidth, mapHeight }: FogLayerProps) {
   const userId = useSessionStore((s) => s.userId);
   const gridSize = useMapStore((s) => s.currentMap?.gridSize ?? 70);
 
-  // GM never sees fog
-  if (isDM || !enableFog) return null;
-
   // Find all tokens owned by this player (heroes)
   const heroTokens = useMemo(() => {
     return Object.values(tokens).filter(
       (t) => t.ownerUserId === userId && t.visible
     );
   }, [tokens, userId]);
+
+  // Find all lit tokens (anyone carrying a torch / has Light spell on them).
+  // These reveal fog around themselves regardless of ownership.
+  const litTokens = useMemo(() => {
+    return Object.values(tokens).filter(
+      (t) => t.visible && t.hasLight && (t.lightDimRadius > 0 || t.lightRadius > 0),
+    );
+  }, [tokens]);
+
+  // GM never sees fog. (Hook calls above must still run to keep hook order
+  // stable between DM and player renders.)
+  if (isDM || !enableFog) return null;
 
   // Vision radius in pixels (8 grid cells = 40ft vision by default)
   const visionRadius = gridSize * 8;
@@ -56,8 +68,21 @@ export function FogLayer({ mapWidth, mapHeight }: FogLayerProps) {
         />
       ))}
 
+      {/* Cut out light-source circles around lit tokens. A Light spell
+          cast on an object or ally reveals the fog in that area for the
+          whole party. Radius uses the token's dim light radius (the
+          outer edge of what the light actually illuminates). */}
+      {litTokens.map((token) => (
+        <VisionCutout
+          key={`light-${token.id}`}
+          x={token.x + (gridSize * token.size) / 2}
+          y={token.y + (gridSize * token.size) / 2}
+          radius={Math.max(token.lightDimRadius, token.lightRadius, gridSize * 2)}
+        />
+      ))}
+
       {/* If player has no tokens placed yet, show a message-like dim overlay */}
-      {heroTokens.length === 0 && (
+      {heroTokens.length === 0 && litTokens.length === 0 && (
         <Rect
           x={0}
           y={0}

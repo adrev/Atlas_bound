@@ -3,6 +3,7 @@ import { getPlayerBySocketId } from '../utils/roomState.js';
 import * as CombatService from '../services/CombatService.js';
 import * as DiceService from '../services/DiceService.js';
 import * as ConditionService from '../services/ConditionService.js';
+import * as OpportunityAttackService from '../services/OpportunityAttackService.js';
 import { getSpellAnimation } from '@dnd-vtt/shared';
 import {
   combatStartSchema, combatRollInitiativeSchema, combatSetInitiativeSchema,
@@ -64,35 +65,26 @@ export function registerCombatEvents(io: Server, socket: Socket): void {
         createdAt: new Date().toISOString(),
       });
 
-      // NPC initiatives are pre-rolled (grouped by name) in startCombat.
-      // Broadcast NPC initiative results immediately so all clients see them.
+      // ALL initiatives are pre-rolled by CombatService.startCombat (NPCs
+      // grouped by name, players individually). Broadcast each result so
+      // every client sees the rolls and not just the DM's initial snapshot.
+      // This covers both creatures AND player-owned combatants — the
+      // previous flow left players stuck at their server-rolled value with
+      // no confirmation event on the wire, and the orphaned "initiative
+      // prompt" path never rendered a UI.
       for (const combatant of combatState.combatants) {
-        if (combatant.isNPC && combatant.initiative !== 0) {
-          io.to(ctx.room.sessionId).emit('combat:initiative-set', {
-            tokenId: combatant.tokenId,
-            roll: combatant.initiative - combatant.initiativeBonus,
-            bonus: combatant.initiativeBonus,
-            total: combatant.initiative,
-          });
-        }
+        if (combatant.initiative === 0) continue;
+        io.to(ctx.room.sessionId).emit('combat:initiative-set', {
+          tokenId: combatant.tokenId,
+          roll: combatant.initiative - combatant.initiativeBonus,
+          bonus: combatant.initiativeBonus,
+          total: combatant.initiative,
+        });
       }
 
-      // Prompt player-owned combatants to roll initiative
-      for (const combatant of combatState.combatants) {
-        if (combatant.isNPC) continue;
-        const token = ctx.room.tokens.get(combatant.tokenId);
-        if (token?.ownerUserId) {
-          const ownerPlayer = ctx.room.players.get(token.ownerUserId);
-          if (ownerPlayer) {
-            io.to(ownerPlayer.socketId).emit('combat:initiative-prompt', {
-              tokenId: combatant.tokenId,
-              bonus: combatant.initiativeBonus,
-            });
-          }
-        }
-      }
-
-      // Check if all initiatives are already rolled (e.g., only NPCs in combat)
+      // All initiatives should be rolled at this point. Emit the sorted
+      // combatants so every client's combatStore.combatants array is
+      // guaranteed to be in the correct order with the final values.
       if (CombatService.allInitiativesRolled(ctx.room.sessionId)) {
         const sorted = CombatService.sortInitiative(ctx.room.sessionId);
         io.to(ctx.room.sessionId).emit('combat:all-initiatives-ready', { combatants: sorted });
@@ -189,18 +181,19 @@ export function registerCombatEvents(io: Server, socket: Socket): void {
     if (!isDM && !isCurrentOwner) return;
 
     try {
-      // BEFORE advancing, tick the conditions on the combatant whose
-      // turn is ENDING — that's the right time to roll save retries
-      // for Hold Person etc. and to expire 1-round buffs.
+      // ── Phase 1: END-of-turn tick on the combatant whose turn is
+      // ENDING. This is when save-retries (Hold Person, Hideous
+      // Laughter, Dominate Person, etc.) get rolled per RAW ("at the
+      // end of each of its turns").
       const endingCombatant = state.combatants[state.currentTurnIndex];
-      const tickResult = endingCombatant
-        ? ConditionService.tickConditionsForToken(
+      const endTickResult = endingCombatant
+        ? ConditionService.tickEndOfTurnConditions(
             ctx.room.sessionId,
             endingCombatant.tokenId,
-            state.roundNumber,
           )
         : { removed: [], messages: [] };
 
+      // ── Phase 2: advance the turn order
       const result = CombatService.nextTurn(ctx.room.sessionId);
       io.to(ctx.room.sessionId).emit('combat:turn-advanced', {
         currentTurnIndex: result.currentTurnIndex,
@@ -208,9 +201,24 @@ export function registerCombatEvents(io: Server, socket: Socket): void {
         actionEconomy: result.actionEconomy,
       });
 
-      // If conditions were removed during the tick, broadcast the new
-      // condition list for the ending combatant's token.
-      if (endingCombatant && tickResult.removed.length > 0) {
+      // ── Phase 3: START-of-turn tick on the NEW combatant. Expires
+      // any of their conditions whose duration has run out (Bless
+      // after 10 rounds, etc.). Doing this AFTER nextTurn means
+      // `result.roundNumber` is the new round, so a 10-round spell
+      // cast in round 1 expires at the start of the FIRST turn of
+      // round 11 — exactly 10 rounds of effect, matching D&D 5e.
+      const startingCombatant = result.currentCombatant;
+      const startTickResult = startingCombatant
+        ? ConditionService.tickStartOfTurnConditions(
+            ctx.room.sessionId,
+            startingCombatant.tokenId,
+            result.roundNumber,
+          )
+        : { removed: [], messages: [] };
+
+      // Broadcast updated conditions if anything changed for the
+      // ending combatant (save retries removed something).
+      if (endingCombatant && endTickResult.removed.length > 0) {
         const updatedToken = ctx.room.tokens.get(endingCombatant.tokenId);
         if (updatedToken) {
           io.to(ctx.room.sessionId).emit('map:token-updated', {
@@ -220,13 +228,40 @@ export function registerCombatEvents(io: Server, socket: Socket): void {
         }
       }
 
+      // Clear "until your next turn" flags on the combatant whose
+      // turn is now STARTING. Dodge, Disengage, and the Shield
+      // spell are 5e effects that expire at the start of your own
+      // next turn. ALSO broadcast the start-of-turn expiration
+      // removals from Phase 3 above.
+      if (startingCombatant) {
+        const startingToken = ctx.room.tokens.get(startingCombatant.tokenId);
+        if (startingToken) {
+          const before = startingToken.conditions;
+          const after = before.filter(
+            (c) => c !== 'dodging' && c !== 'disengaged' && c !== 'shield-spell',
+          );
+          const cleanupChanged = after.length !== before.length;
+          if (cleanupChanged) startingToken.conditions = after;
+
+          // If either the cleanup OR the start-of-turn expiry tick
+          // changed the conditions array, broadcast once.
+          if (cleanupChanged || startTickResult.removed.length > 0) {
+            io.to(ctx.room.sessionId).emit('map:token-updated', {
+              tokenId: startingCombatant.tokenId,
+              changes: { conditions: startingToken.conditions },
+            });
+          }
+        }
+      }
+
       // Announce the new turn in chat as a system message so the round
       // count and current combatant are visible without looking at the
       // initiative tracker. Includes any condition tick messages from
-      // the previous combatant's turn end (Hold Person save retries,
-      // expiring buffs, etc.).
+      // BOTH the previous combatant's end-of-turn saves AND the new
+      // combatant's start-of-turn expirations.
       const lines: string[] = [];
-      for (const m of tickResult.messages) lines.push(m);
+      for (const m of endTickResult.messages) lines.push(m);
+      for (const m of startTickResult.messages) lines.push(m);
       lines.push(result.skippedTokenIds.length > 0
         ? `⚔️ Round ${result.roundNumber} — ${result.currentCombatant.name}'s turn (skipped ${result.skippedTokenIds.length} downed)`
         : `⚔️ Round ${result.roundNumber} — ${result.currentCombatant.name}'s turn`);
@@ -422,6 +457,185 @@ export function registerCombatEvents(io: Server, socket: Socket): void {
       tokenId: combatant.tokenId,
       remaining,
     });
+  });
+
+  // ----------------------------------------------------------------------
+  // combat:dash — take the Dash action: consume Action slot AND double
+  // the current combatant's movement pool for the turn. We broadcast
+  // combat:action-used with the updated economy (the client picks up
+  // the new movementMax + movementRemaining from the same payload).
+  // ----------------------------------------------------------------------
+  socket.on('combat:dash', () => {
+    const ctx = getPlayerBySocketId(socket.id);
+    if (!ctx) return;
+
+    const economy = CombatService.useDash(ctx.room.sessionId);
+    if (!economy) return;
+
+    const combatant = ctx.room.combatState?.combatants[ctx.room.combatState.currentTurnIndex];
+    if (!combatant) return;
+
+    io.to(ctx.room.sessionId).emit('combat:action-used', {
+      tokenId: combatant.tokenId,
+      actionType: 'action',
+      economy,
+    });
+
+    io.to(ctx.room.sessionId).emit('chat:new-message', {
+      id: (Math.random() + 1).toString(36).substring(2),
+      sessionId: ctx.room.sessionId,
+      userId: 'system',
+      displayName: 'System',
+      type: 'system',
+      content: `🏃 ${combatant.name} takes the Dash action (+${combatant.speed} ft movement)`,
+      characterName: null,
+      whisperTo: null,
+      rollData: null,
+      createdAt: new Date().toISOString(),
+    });
+  });
+
+  // ----------------------------------------------------------------------
+  // combat:oa-execute — the player/DM clicked "Attack" on an
+  // Opportunity Attack prompt. Server rolls the attack, applies
+  // damage, consumes the attacker's reaction, and broadcasts the
+  // result to everyone.
+  //
+  // combat:oa-decline — player dismissed the prompt; we just swallow
+  // it silently. (Present for symmetry — the client can emit it so
+  // the server can audit-log in the future.)
+  // ----------------------------------------------------------------------
+  socket.on('combat:oa-execute', (data: { attackerTokenId?: string; moverTokenId?: string }) => {
+    if (!data?.attackerTokenId || !data?.moverTokenId) return;
+    const ctx = getPlayerBySocketId(socket.id);
+    if (!ctx) return;
+
+    // Permission: must be the attacker's owner OR the DM.
+    const attacker = ctx.room.tokens.get(data.attackerTokenId);
+    if (!attacker) return;
+    const isDM = ctx.player.role === 'dm';
+    const isOwner = attacker.ownerUserId === ctx.player.userId;
+    if (!isDM && !isOwner) return;
+
+    const result = OpportunityAttackService.executeOpportunityAttack(
+      ctx.room.sessionId,
+      data.attackerTokenId,
+      data.moverTokenId,
+    );
+
+    // Broadcast every result line as a single system chat message
+    // so the combat log shows the attack on one contiguous card.
+    if (result.messages.length > 0) {
+      io.to(ctx.room.sessionId).emit('chat:new-message', {
+        id: (Math.random() + 1).toString(36).substring(2),
+        sessionId: ctx.room.sessionId,
+        userId: 'system',
+        displayName: 'System',
+        type: 'system',
+        content: result.messages.join('\n'),
+        characterName: null,
+        whisperTo: null,
+        rollData: null,
+        createdAt: new Date().toISOString(),
+      });
+    }
+
+    // If HP changed, broadcast both the combat HP change AND the
+    // character row update so the HP bar re-renders everywhere.
+    if (result.hpChange) {
+      io.to(ctx.room.sessionId).emit('combat:hp-changed', {
+        tokenId: result.hpChange.tokenId,
+        hp: result.hpChange.hp,
+        tempHp: result.hpChange.tempHp,
+        change: 0, // absolute value already reflected in hp
+        type: 'damage',
+      });
+    }
+    if (result.characterHpUpdated) {
+      io.to(ctx.room.sessionId).emit('character:updated', {
+        characterId: result.characterHpUpdated.characterId,
+        changes: { hitPoints: result.characterHpUpdated.hp },
+      });
+    }
+
+    // Broadcast the updated reaction state for the attacker. We use
+    // combat:action-used with the real economy from room state.
+    const attackerEconomy = ctx.room.actionEconomies.get(data.attackerTokenId);
+    if (attackerEconomy) {
+      io.to(ctx.room.sessionId).emit('combat:action-used', {
+        tokenId: data.attackerTokenId,
+        actionType: 'reaction',
+        economy: attackerEconomy,
+      });
+    }
+  });
+
+  socket.on('combat:oa-decline', (_data) => {
+    // Intentional no-op — reserved for future audit logging.
+  });
+
+  // ----------------------------------------------------------------------
+  // combat:spell-cast-attempt — broadcast a leveled spell cast intent
+  // to every client so eligible counterspellers can show their
+  // prompt. The original cast resolver waits ~2s for a counterspell
+  // response before committing the spell's effects.
+  //
+  // combat:spell-counterspelled — sent by a counterspeller's client
+  // when they confirm they're spending their reaction. Broadcast back
+  // to everyone so the original caster's client aborts the cast.
+  // ----------------------------------------------------------------------
+  socket.on('combat:spell-cast-attempt', (data: {
+    castId?: string;
+    casterTokenId?: string;
+    casterName?: string;
+    spellName?: string;
+    spellLevel?: number;
+  }) => {
+    if (!data?.castId || !data?.spellName || data?.spellLevel == null) return;
+    const ctx = getPlayerBySocketId(socket.id);
+    if (!ctx) return;
+    io.to(ctx.room.sessionId).emit('combat:spell-cast-attempt', data);
+  });
+
+  socket.on('combat:spell-counterspelled', (data: {
+    castId?: string;
+    counterCasterName?: string;
+    counterSlotLevel?: number;
+  }) => {
+    if (!data?.castId) return;
+    const ctx = getPlayerBySocketId(socket.id);
+    if (!ctx) return;
+    io.to(ctx.room.sessionId).emit('combat:spell-counterspelled', data);
+  });
+
+  // ----------------------------------------------------------------------
+  // combat:attack-hit-attempt — broadcast when an attack rolls a value
+  // that would hit. The target's owner gets a Shield prompt if their
+  // character has Shield prepared. Server is just a relay; the
+  // attack resolver waits ~1.4 s for a response.
+  //
+  // combat:shield-cast — fired by the target's client when they
+  // confirm they're spending the slot+reaction on Shield. Broadcast
+  // back so the original attacker's resolver can recompute the hit.
+  // ----------------------------------------------------------------------
+  socket.on('combat:attack-hit-attempt', (data: {
+    attackId?: string;
+    targetTokenId?: string;
+    attackerName?: string;
+    attackTotal?: number;
+    currentAC?: number;
+  }) => {
+    if (!data?.attackId || !data?.targetTokenId) return;
+    const ctx = getPlayerBySocketId(socket.id);
+    if (!ctx) return;
+    io.to(ctx.room.sessionId).emit('combat:attack-hit-attempt', data);
+  });
+
+  socket.on('combat:shield-cast', (data: { attackId?: string; defenderName?: string }) => {
+    if (!data?.attackId) return;
+    const ctx = getPlayerBySocketId(socket.id);
+    if (!ctx) return;
+    io.to(ctx.room.sessionId).emit('combat:shield-cast', data);
   });
 
   socket.on('combat:cast-spell', (data) => {

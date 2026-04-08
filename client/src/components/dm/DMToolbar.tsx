@@ -1,12 +1,25 @@
-import { useState, useCallback } from 'react';
+import { useState } from 'react';
+import { ArrowLeft } from 'lucide-react';
 import { useMapStore } from '../../stores/useMapStore';
 import { useSessionStore } from '../../stores/useSessionStore';
 import { emitUpdateSettings } from '../../socket/emitters';
 import { CreatureLibrary } from './CreatureLibrary';
+import { SceneManager } from './SceneManager';
 import { theme } from '../../styles/theme';
+import { EMOJI } from '../../styles/emoji';
+import { Section, Button, NumberInput, FieldGroup, Divider } from '../ui';
 
 type DMView = 'main' | 'creatures' | 'settings';
 
+/**
+ * DM Tools tab content. Rewritten for the UI unification pass using
+ * shared primitives (Section, Button, Divider, NumberInput).
+ *
+ * Renders one of three views:
+ *   • main       — scene manager + quick-action sections
+ *   • creatures  — full creature library
+ *   • settings   — game settings form
+ */
 export function DMToolbar() {
   const [view, setView] = useState<DMView>('main');
   const currentMap = useMapStore((s) => s.currentMap);
@@ -15,9 +28,15 @@ export function DMToolbar() {
   if (view === 'creatures') {
     return (
       <div style={styles.container}>
-        <button style={styles.backButton} onClick={() => setView('main')}>
+        <Button
+          variant="ghost"
+          size="sm"
+          leadingIcon={<ArrowLeft size={12} />}
+          onClick={() => setView('main')}
+          style={{ alignSelf: 'flex-start', marginBottom: theme.space.md }}
+        >
           Back to DM Tools
-        </button>
+        </Button>
         <CreatureLibrary />
       </div>
     );
@@ -26,9 +45,15 @@ export function DMToolbar() {
   if (view === 'settings') {
     return (
       <div style={styles.container}>
-        <button style={styles.backButton} onClick={() => setView('main')}>
+        <Button
+          variant="ghost"
+          size="sm"
+          leadingIcon={<ArrowLeft size={12} />}
+          onClick={() => setView('main')}
+          style={{ alignSelf: 'flex-start', marginBottom: theme.space.md }}
+        >
           Back to DM Tools
-        </button>
+        </Button>
         <SettingsPanel settings={settings} />
       </div>
     );
@@ -36,123 +61,151 @@ export function DMToolbar() {
 
   return (
     <div style={styles.container}>
-      <h3 style={styles.title}>DM Tools</h3>
+      <h3 style={styles.title}>
+        <span style={{ marginRight: theme.space.sm }}>{EMOJI.map.dm}</span>
+        DM Tools
+      </h3>
 
-      {/* Map Section */}
-      <Section title="Map">
-        {currentMap ? (
-          <div style={styles.mapInfo}>
-            <span style={styles.mapName}>{currentMap.name}</span>
-            <span style={styles.mapSize}>{currentMap.width / currentMap.gridSize}x{currentMap.height / currentMap.gridSize}</span>
-          </div>
-        ) : (
-          <p style={styles.hint}>No map loaded</p>
-        )}
-        <div style={styles.buttonRow}>
-          <button style={styles.actionButton} onClick={() => window.dispatchEvent(new CustomEvent('open-map-browser'))}>
-            Load Map
-          </button>
-          <button style={styles.actionButton} onClick={() => window.dispatchEvent(new CustomEvent('open-map-upload'))}>
-            Upload Map
-          </button>
-        </div>
-      </Section>
+      <Divider variant="ornate" marginY={theme.space.sm} />
+
+      {/* Scene Manager (renders its own Section wrapper internally) */}
+      <SceneManager />
+
+      <Divider variant="ornate" marginY={theme.space.sm} />
 
       {/* Creatures & NPCs */}
-      <Section title="Creatures & NPCs">
-        <p style={styles.hint}>Browse and spawn monsters, NPCs, and enemies onto the map</p>
-        <button
-          style={styles.primaryButton}
+      <Section title="Creatures & NPCs" emoji={EMOJI.combat.attack}>
+        <p style={styles.hint}>
+          Browse and spawn monsters, NPCs, and enemies onto the map
+        </p>
+        <Button
+          variant="primary"
+          size="md"
+          fullWidth
           onClick={() => setView('creatures')}
           disabled={!currentMap}
         >
           Open Creature Library
-        </button>
+        </Button>
       </Section>
 
-      {/* Combat — Start/End buttons live in the dedicated Combat sidebar tab */}
+      <Divider variant="plain" />
 
       {/* Settings */}
-      <Section title="Settings">
-        <button style={styles.actionButton} onClick={() => setView('settings')}>
+      <Section title="Settings" emoji="⚙">
+        <Button variant="ghost" size="md" fullWidth onClick={() => setView('settings')}>
           Game Settings
-        </button>
+        </Button>
       </Section>
     </div>
   );
 }
 
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <div style={styles.section}>
-      <div style={styles.sectionTitle}>{title}</div>
-      {children}
-    </div>
-  );
-}
-
-function SettingsPanel({ settings }: { settings: { gridSize: number; gridOpacity: number; enableFogOfWar: boolean; enableDynamicLighting: boolean } }) {
+function SettingsPanel({
+  settings,
+}: {
+  settings: {
+    gridSize: number;
+    gridOpacity: number;
+    enableFogOfWar: boolean;
+    enableDynamicLighting: boolean;
+  };
+}) {
   return (
     <div style={styles.settingsContainer}>
       <h3 style={styles.title}>Game Settings</h3>
+      <Divider variant="ornate" marginY={theme.space.sm} />
 
-      <div style={styles.settingRow}>
-        <span style={styles.settingLabel}>Grid Size (px)</span>
-        <input
-          type="number"
+      <FieldGroup label="Grid Size (px)">
+        <NumberInput
           value={settings.gridSize}
-          onChange={(e) => emitUpdateSettings({ gridSize: Number(e.target.value) })}
-          style={styles.numberInput}
-          min={20} max={200} step={5}
+          onChange={(e) =>
+            emitUpdateSettings({ gridSize: Number(e.target.value) })
+          }
+          min={20}
+          max={200}
+          step={5}
+          size="md"
+          fullWidth={false}
+          containerStyle={{ width: 100 }}
         />
-      </div>
+      </FieldGroup>
 
-      <div style={styles.settingRow}>
-        <span style={styles.settingLabel}>Grid Opacity</span>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <input
-            type="range"
-            min={0}
-            max={1}
-            step={0.05}
-            value={settings.gridOpacity ?? 0.15}
-            onChange={(e) => emitUpdateSettings({ gridOpacity: Number(e.target.value) })}
-            style={styles.rangeInput}
-          />
-          <span style={{ fontSize: 11, color: theme.text.muted, width: 32, textAlign: 'right' as const }}>
-            {Math.round((settings.gridOpacity ?? 0.15) * 100)}%
-          </span>
-        </div>
-      </div>
+      <FieldGroup
+        label="Grid Opacity"
+        helperText={`${Math.round((settings.gridOpacity ?? 0.15) * 100)}%`}
+      >
+        <input
+          type="range"
+          min={0}
+          max={1}
+          step={0.05}
+          value={settings.gridOpacity ?? 0.15}
+          onChange={(e) =>
+            emitUpdateSettings({ gridOpacity: Number(e.target.value) })
+          }
+          style={styles.rangeInput}
+        />
+      </FieldGroup>
 
-      <div style={styles.settingRow} onClick={() => emitUpdateSettings({ enableFogOfWar: !settings.enableFogOfWar })}>
+      <div
+        style={styles.settingRow}
+        onClick={() =>
+          emitUpdateSettings({ enableFogOfWar: !settings.enableFogOfWar })
+        }
+      >
         <span style={styles.settingLabel}>Fog of War (players only)</span>
         <ToggleSwitch checked={settings.enableFogOfWar} />
       </div>
-      <p style={styles.hint}>Players see fog around areas without their hero. GM always sees full map.</p>
+      <p style={styles.hint}>
+        Players see fog around areas without their hero. GM always sees full map.
+      </p>
 
-      <div style={styles.settingRow} onClick={() => emitUpdateSettings({ enableDynamicLighting: !settings.enableDynamicLighting })}>
+      <div
+        style={styles.settingRow}
+        onClick={() =>
+          emitUpdateSettings({
+            enableDynamicLighting: !settings.enableDynamicLighting,
+          })
+        }
+      >
         <span style={styles.settingLabel}>Dynamic Lighting</span>
         <ToggleSwitch checked={settings.enableDynamicLighting} />
       </div>
-      <p style={styles.hint}>Uses walls to block line of sight and cast shadows from light sources.</p>
+      <p style={styles.hint}>
+        Uses walls to block line of sight and cast shadows from light sources.
+      </p>
     </div>
   );
 }
 
 function ToggleSwitch({ checked }: { checked: boolean }) {
   return (
-    <div style={{
-      width: 36, height: 20, borderRadius: 10, position: 'relative' as const, cursor: 'pointer',
-      background: checked ? 'rgba(212, 168, 67, 0.3)' : theme.bg.deep,
-      border: `1px solid ${checked ? theme.gold.border : theme.border.default}`,
-      transition: 'all 0.2s',
-    }}>
-      <div style={{
-        width: 14, height: 14, borderRadius: 7, position: 'absolute' as const, top: 2,
-        left: checked ? 18 : 2, transition: 'all 0.2s',
-        background: checked ? theme.gold.primary : theme.text.muted,
-      }} />
+    <div
+      style={{
+        width: 36,
+        height: 20,
+        borderRadius: 10,
+        position: 'relative' as const,
+        cursor: 'pointer',
+        background: checked ? theme.gold.bg : theme.bg.deep,
+        border: `1px solid ${checked ? theme.gold.border : theme.border.default}`,
+        transition: `all ${theme.motion.normal}`,
+      }}
+    >
+      <div
+        style={{
+          width: 14,
+          height: 14,
+          borderRadius: 7,
+          position: 'absolute' as const,
+          top: 2,
+          left: checked ? 18 : 2,
+          transition: `all ${theme.motion.normal}`,
+          background: checked ? theme.gold.primary : theme.text.muted,
+          boxShadow: checked ? theme.goldGlow.soft : 'none',
+        }}
+      />
     </div>
   );
 }
@@ -161,150 +214,42 @@ const styles: Record<string, React.CSSProperties> = {
   container: {
     display: 'flex',
     flexDirection: 'column',
-    padding: 16,
-    gap: 4,
+    padding: theme.space.xl,
+    gap: theme.space.xs,
     overflowY: 'auto',
     height: '100%',
   },
   title: {
-    fontSize: 16,
-    fontWeight: 700,
+    ...theme.type.display,
     color: theme.gold.primary,
-    fontFamily: theme.font.display,
-    margin: '0 0 8px',
-  },
-  section: {
+    margin: `0 0 ${theme.space.md}px`,
     display: 'flex',
-    flexDirection: 'column',
-    gap: 8,
-    padding: '12px 0',
-    borderBottom: `1px solid ${theme.border.default}`,
-  },
-  sectionTitle: {
-    fontSize: 11,
-    fontWeight: 700,
-    color: theme.gold.dim,
-    textTransform: 'uppercase',
-    letterSpacing: '0.08em',
+    alignItems: 'center',
   },
   hint: {
-    fontSize: 11,
+    ...theme.type.small,
     color: theme.text.muted,
     margin: 0,
-    lineHeight: 1.4,
-  },
-  buttonRow: {
-    display: 'flex',
-    gap: 6,
-  },
-  actionButton: {
-    flex: 1,
-    padding: '8px 12px',
-    border: `1px solid ${theme.border.default}`,
-    borderRadius: theme.radius.sm,
-    background: theme.bg.elevated,
-    color: theme.text.secondary,
-    cursor: 'pointer',
-    fontSize: 12,
-    fontWeight: 500,
-    transition: 'all 0.15s',
-  },
-  primaryButton: {
-    padding: '10px 16px',
-    border: `1px solid ${theme.gold.border}`,
-    borderRadius: theme.radius.sm,
-    background: 'rgba(212, 168, 67, 0.15)',
-    color: theme.gold.primary,
-    cursor: 'pointer',
-    fontSize: 13,
-    fontWeight: 600,
-    transition: 'all 0.15s',
-  },
-  dangerButton: {
-    padding: '10px 16px',
-    border: `1px solid rgba(192, 57, 43, 0.5)`,
-    borderRadius: theme.radius.sm,
-    background: 'rgba(192, 57, 43, 0.15)',
-    color: theme.danger,
-    cursor: 'pointer',
-    fontSize: 13,
-    fontWeight: 600,
-    transition: 'all 0.15s',
-  },
-  backButton: {
-    padding: '6px 12px',
-    border: `1px solid ${theme.border.default}`,
-    borderRadius: theme.radius.sm,
-    background: theme.bg.elevated,
-    color: theme.text.secondary,
-    cursor: 'pointer',
-    fontSize: 11,
-    marginBottom: 8,
-    alignSelf: 'flex-start',
-  },
-  mapInfo: {
-    display: 'flex',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    padding: '6px 10px',
-    background: theme.bg.elevated,
-    borderRadius: theme.radius.sm,
-    border: `1px solid ${theme.border.default}`,
-  },
-  mapName: {
-    fontSize: 12,
-    fontWeight: 600,
-    color: theme.text.primary,
-  },
-  mapSize: {
-    fontSize: 11,
-    color: theme.text.muted,
-  },
-  combatBadge: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: 8,
-    padding: '8px 12px',
-    background: 'rgba(192, 57, 43, 0.1)',
-    border: `1px solid rgba(192, 57, 43, 0.3)`,
-    borderRadius: theme.radius.sm,
-    color: theme.danger,
-    fontSize: 13,
-    fontWeight: 600,
-  },
-  combatDot: {
-    width: 8, height: 8, borderRadius: 4,
-    background: theme.danger,
-    animation: 'pulse 2s ease-in-out infinite',
+    lineHeight: 1.5,
   },
   settingsContainer: {
     display: 'flex',
     flexDirection: 'column',
-    gap: 12,
+    gap: theme.space.lg,
   },
   settingRow: {
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'space-between',
     cursor: 'pointer',
-    padding: '4px 0',
+    padding: `${theme.space.xs}px 0`,
   },
   settingLabel: {
-    fontSize: 13,
+    ...theme.type.body,
     color: theme.text.secondary,
   },
-  numberInput: {
-    width: 60,
-    padding: '4px 8px',
-    border: `1px solid ${theme.border.default}`,
-    borderRadius: theme.radius.sm,
-    background: theme.bg.deep,
-    color: theme.text.primary,
-    fontSize: 12,
-    textAlign: 'center' as const,
-  },
   rangeInput: {
-    width: 80,
+    width: '100%',
     height: 4,
     cursor: 'pointer',
     accentColor: theme.gold.primary,

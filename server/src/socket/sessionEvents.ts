@@ -11,7 +11,7 @@ import { sessionJoinSchema, sessionKickSchema, sessionUpdateSettingsSchema } fro
 
 export function registerSessionEvents(io: Server, socket: Socket): void {
 
-  socket.on('session:join', (data) => {
+  socket.on('session:join', async (data) => {
     const parsed = sessionJoinSchema.safeParse(data);
     if (!parsed.success) {
       socket.emit('session:error', { message: 'Invalid join data' });
@@ -22,11 +22,12 @@ export function registerSessionEvents(io: Server, socket: Socket): void {
 
     // Look up session from DB
     const session = db.prepare(`
-      SELECT id, name, room_code, dm_user_id, current_map_id, game_mode, settings
+      SELECT id, name, room_code, dm_user_id, current_map_id, player_map_id, game_mode, settings
       FROM sessions WHERE room_code = ?
     `).get(roomCode) as {
       id: string; name: string; room_code: string; dm_user_id: string;
-      current_map_id: string | null; game_mode: string; settings: string;
+      current_map_id: string | null; player_map_id: string | null;
+      game_mode: string; settings: string;
     } | undefined;
 
     if (!session) {
@@ -65,6 +66,13 @@ export function registerSessionEvents(io: Server, socket: Socket): void {
     if (!room) {
       room = createRoom(session.id, session.room_code, session.dm_user_id);
       room.currentMapId = session.current_map_id;
+      // Rehydrate the player ribbon from the DB. Falls back to
+      // current_map_id so existing sessions that predate the
+      // player_map_id column still get a sensible ribbon set.
+      // Without this, `room.playerMapId` stays null after server
+      // restarts and the Scene Manager can never highlight the
+      // "PLAYERS" ribbon on any map card.
+      room.playerMapId = session.player_map_id ?? session.current_map_id;
       room.gameMode = session.game_mode as GameMode;
     }
 
@@ -150,6 +158,24 @@ export function registerSessionEvents(io: Server, socket: Socket): void {
           }
         }
 
+        // Rehydrate drawings for the current map and filter to what
+        // this rejoining player is allowed to see (shared, dm-only,
+        // or their own player-only). Drawings imported from the file
+        // module to avoid a circular dep.
+        const { loadDrawingsForMap, filterDrawingsForPlayer } =
+          await import('./drawingEvents.js');
+        const allDrawings = loadDrawingsForMap(room.currentMapId);
+        if (room.drawings.size === 0) {
+          for (const d of allDrawings) room.drawings.set(d.id, d);
+        }
+        const visibleDrawings = filterDrawingsForPlayer(allDrawings, {
+          userId,
+          displayName,
+          socketId: socket.id,
+          role: isDM ? 'dm' : 'player',
+          characterId: currentPlayer.character_id,
+        });
+
         socket.emit('map:loaded', {
           map: {
             id: mapRow.id as string, name: mapRow.name as string,
@@ -161,6 +187,77 @@ export function registerSessionEvents(io: Server, socket: Socket): void {
             fogState: JSON.parse(mapRow.fog_state as string || '[]'),
           },
           tokens,
+          drawings: visibleDrawings,
+        });
+      }
+    }
+
+    // ── Rehydrate combat state on reconnect ──────────────────
+    // If the room is still mid-combat (e.g. the player refreshed),
+    // resync the full combat state so the initiative tracker, turn
+    // index, and action economy all come back. We prefer the live
+    // in-memory state because it has the most recent mutations, and
+    // fall back to the persisted combat_state table if the server was
+    // restarted. Either way the refreshing client gets the same
+    // snapshot every other client currently has.
+    {
+      let combatState = room.combatState;
+      if (!combatState) {
+        const row = db.prepare(
+          'SELECT round_number, current_turn_index, combatants, started_at FROM combat_state WHERE session_id = ?',
+        ).get(session.id) as {
+          round_number: number;
+          current_turn_index: number;
+          combatants: string;
+          started_at: string;
+        } | undefined;
+        if (row) {
+          try {
+            const combatants = JSON.parse(row.combatants);
+            combatState = {
+              sessionId: session.id,
+              active: true,
+              roundNumber: row.round_number,
+              currentTurnIndex: row.current_turn_index,
+              combatants,
+              startedAt: row.started_at,
+            };
+            room.combatState = combatState;
+            room.gameMode = 'combat';
+          } catch {
+            /* malformed row — ignore */
+          }
+        }
+      }
+
+      if (combatState && combatState.active) {
+        // Rebuild the action economy for the current combatant if the
+        // in-memory map was cleared (server restart). Without this,
+        // the ActionEconomy panel renders stale defaults.
+        const cur = combatState.combatants[combatState.currentTurnIndex];
+        let economy = cur ? room.actionEconomies.get(cur.tokenId) : undefined;
+        if (!economy && cur) {
+          economy = {
+            action: false,
+            bonusAction: false,
+            movementRemaining: cur.speed,
+            movementMax: cur.speed,
+            reaction: false,
+          };
+          room.actionEconomies.set(cur.tokenId, economy);
+        }
+
+        socket.emit('combat:state-sync', {
+          combatants: combatState.combatants,
+          roundNumber: combatState.roundNumber,
+          currentTurnIndex: combatState.currentTurnIndex,
+          actionEconomy: economy ?? {
+            action: false,
+            bonusAction: false,
+            movementRemaining: 30,
+            movementMax: 30,
+            reaction: false,
+          },
         });
       }
     }

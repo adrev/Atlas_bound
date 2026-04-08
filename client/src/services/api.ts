@@ -48,9 +48,18 @@ export function getSession(sessionId: string) {
 // --- Maps ---
 export function createMap(
   sessionId: string,
-  data: { name: string; width: number; height: number; gridSize?: number }
+  data: {
+    name: string;
+    width: number;
+    height: number;
+    gridSize?: number;
+    /** Set when loading a prebuilt map so the server dedups by name.
+     *  The same session + same name returns the existing id instead
+     *  of inserting a duplicate row, preserving walls/fog/tokens. */
+    prebuiltKey?: string;
+  }
 ) {
-  return request<{ id: string }>(`/sessions/${sessionId}/maps`, {
+  return request<{ id: string; reused?: boolean }>(`/sessions/${sessionId}/maps`, {
     method: 'POST',
     body: JSON.stringify(data),
   });

@@ -1,6 +1,5 @@
 import { useState, useEffect } from 'react';
 import {
-  Heart,
   Plus,
   Minus,
   Shield,
@@ -25,27 +24,37 @@ import {
 import { emitRoll } from '../../socket/emitters';
 import { CharacterImport } from './CharacterImport';
 import { CharacterSheetFull } from './CharacterSheetFull';
+import { theme } from '../../styles/theme';
+import { HPBar, StatBlock } from '../ui';
 
-/* ── DDB Color Palette ─────────────────────────────────── */
+/* ── Color Palette ─────────────────────────────────────────
+ * Thin alias over the shared theme tokens. Keeps the existing
+ * `C.red`, `C.green` etc. references working so we don't have to
+ * sweep every usage in this 848-line file, while making every color
+ * route through the unified theme.ts. Before the unification pass
+ * this was a local hardcoded palette that drifted from the theme —
+ * e.g. C.red was #c53131 while theme.danger is #c0392b, causing
+ * the HP bar in the sidebar to look different from the tooltip.
+ */
 const C = {
-  bgDeep: '#1a1a1a',
-  bgCard: '#222',
-  bgElevated: '#2a2a2a',
-  bgHover: '#333',
-  red: '#c53131',
-  redDim: '#8b2222',
-  redGlow: '0 0 8px rgba(197,49,49,0.4)',
-  textPrimary: '#eee',
-  textSecondary: '#aaa',
-  textMuted: '#888',
-  textDim: '#666',
-  border: '#444',
-  borderDim: '#333',
-  green: '#45a049',
-  greenDim: '#2d6e30',
-  blue: '#4a9fd5',
-  purple: '#8b5cf6',
-  gold: '#d4a843',
+  bgDeep: theme.bg.deep,
+  bgCard: theme.bg.card,
+  bgElevated: theme.bg.elevated,
+  bgHover: theme.bg.hover,
+  red: theme.state.danger,
+  redDim: theme.dangerDim,
+  redGlow: theme.dangerGlow,
+  textPrimary: theme.text.primary,
+  textSecondary: theme.text.secondary,
+  textMuted: theme.text.muted,
+  textDim: theme.text.muted,
+  border: theme.border.default,
+  borderDim: theme.border.default,
+  green: theme.state.success,
+  greenDim: theme.healDim,
+  blue: theme.blue,
+  purple: theme.purple,
+  gold: theme.gold.primary,
 } as const;
 
 const ABILITY_LABELS: Record<AbilityName, string> = {
@@ -189,13 +198,22 @@ export function CharacterSheet() {
       // Damage only, no attack or save specified - just roll damage
       emitRoll(spell.damage, `${spell.name} Damage`);
     } else if (spell.name === 'Light' || spell.name === 'Dancing Lights') {
-      // Light spells - toggle a light source on the caster's token
+      // Light / Dancing Lights — toggle a light source on the caster's
+      // token. This also cuts the fog of war around the lit token (see
+      // FogLayer.tsx) so the party can see what's been illuminated.
+      // Uses a cool blue "magic" hue so the LightingLayer tints the glow
+      // correctly. Light cantrip gives 20 ft bright + 20 ft dim; Dancing
+      // Lights is equivalent.
       const tokens = useMapStore.getState().tokens;
       const myToken = Object.values(tokens).find(t => t.characterId === character?.id);
       if (myToken) {
         if (myToken.hasLight) {
           // Already lit - turn it off
-          emitTokenUpdate(myToken.id, { hasLight: false });
+          emitTokenUpdate(myToken.id, {
+            hasLight: false,
+            lightRadius: 0,
+            lightDimRadius: 0,
+          });
           emitRoll('1d0+0', `ends ${spell.name}`);
         } else {
           const gridSize = useMapStore.getState().currentMap?.gridSize ?? 70;
@@ -203,9 +221,9 @@ export function CharacterSheet() {
             hasLight: true,
             lightRadius: gridSize * 4,   // 20ft bright (4 squares)
             lightDimRadius: gridSize * 8, // 40ft dim (8 squares)
-            lightColor: '#ffffcc',
+            lightColor: '#8cb4ff', // magic blue — matches LightingLayer heuristic
           });
-          emitRoll('1d0+0', `casts ${spell.name} - light created!`);
+          emitRoll('1d0+0', `casts ${spell.name} - magical light blooms!`);
         }
       } else {
         emitRoll('1d0+0', `casts ${spell.name}`);
@@ -270,8 +288,13 @@ export function CharacterSheet() {
       }}>
         {/* ═══════════ HEADER ═══════════ */}
         <div style={{
-          display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px',
-          background: C.bgCard, borderBottom: `2px solid ${C.red}`,
+          display: 'flex', alignItems: 'center', gap: 12, padding: '14px 14px',
+          background: C.bgCard,
+          // Replaced the harsh hard-red underline with a subtle gold
+          // ornate divider for the Dungeon Master vibe. Softer, more
+          // refined, matches the rest of the unified styling.
+          borderBottom: `1px solid ${theme.border.default}`,
+          boxShadow: `0 1px 0 ${theme.gold.border}`,
         }}>
           <PortraitWithUpload character={character} onUpdate={updateCharacter} />
           <div style={{ flex: 1, minWidth: 0 }}>
@@ -331,11 +354,16 @@ export function CharacterSheet() {
           </div>
         </div>
 
-        <div style={{ padding: '8px 10px 12px', display: 'flex', flexDirection: 'column', gap: 8 }}>
+        {/* More breathing room: padding bumped up and gap between
+            sections increased from 8→12 so the ability scores, HP
+            bar, and actions sections feel less cramped. */}
+        <div style={{ padding: '14px 12px 16px', display: 'flex', flexDirection: 'column', gap: 12 }}>
 
-          {/* ═══════════ ABILITY SCORES 3x2 GRID ═══════════ */}
+          {/* ═══════════ ABILITY SCORES 3x2 GRID ═══════════
+              Gap bumped from 4→6 so the ability score boxes breathe
+              a little and the 3x2 grid feels less packed. */}
           <div style={{
-            display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 4,
+            display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 6,
           }}>
             {(['str', 'dex', 'con', 'int', 'wis', 'cha'] as AbilityName[]).map((ability) => {
               const score = parsedScores[ability] || 10;
@@ -366,7 +394,7 @@ export function CharacterSheet() {
           </div>
 
           {/* ═══════════ QUICK STATS ROW ═══════════ */}
-          <div style={{ display: 'flex', gap: 4 }}>
+          <div style={{ display: 'flex', gap: 6 }}>
             {[
               { label: 'AC', value: String(character.armorClass), icon: <Shield size={10} color={C.textMuted} /> },
               { label: 'SPD', value: `${character.speed}ft` },
@@ -388,31 +416,22 @@ export function CharacterSheet() {
             ))}
           </div>
 
-          {/* ═══════════ HP BAR ═══════════ */}
+          {/* ═══════════ HP BAR ═══════════
+              Uses the shared HPBar primitive so the sidebar, tooltip,
+              and full sheet all render identical HP visuals. Keeps
+              the adjacent Dmg/Heal/Temp-HP controls unchanged. */}
           <div style={{
             padding: '8px 10px', background: C.bgCard, borderRadius: 6,
             border: `1px solid ${C.border}`,
           }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                <Heart size={12} color={hpBarColor} fill={hpBarColor} />
-                <span style={{ fontSize: 10, fontWeight: 700, color: C.textMuted, textTransform: 'uppercase' }}>HP</span>
-              </div>
-              <span style={{ fontSize: 14, fontWeight: 700, color: C.textPrimary }}>
-                {character.hitPoints}/{character.maxHitPoints}
-              </span>
-            </div>
-            <div style={{
-              width: '100%', height: 8, background: 'rgba(0,0,0,0.5)',
-              borderRadius: 4, overflow: 'hidden', marginBottom: 6,
-            }}>
-              <div style={{
-                height: '100%', borderRadius: 4,
-                width: `${Math.max(0, hpRatio * 100)}%`,
-                background: hpBarColor,
-                transition: 'width 0.3s ease, background 0.3s ease',
-              }} />
-            </div>
+            <HPBar
+              current={character.hitPoints}
+              max={character.maxHitPoints}
+              temp={character.tempHitPoints}
+              size="normal"
+              showEmoji
+              style={{ marginBottom: 6 }}
+            />
             <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
               <button onClick={() => adjustHP(-1)} style={hpBtnStyle} title="-1 HP">
                 <Minus size={10} />

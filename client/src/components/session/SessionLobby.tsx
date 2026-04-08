@@ -251,13 +251,24 @@ export function SessionLobby() {
 
 const styles: Record<string, React.CSSProperties> = {
   container: {
-    width: '100%',
-    height: '100%',
+    // The global `#root { overflow: hidden }` rule in globals.css
+    // prevents normal page scrolling, so we own our own scroll
+    // context by fixing the container to the viewport and applying
+    // `overflowY: auto` here. Without this the "Your Games" list
+    // below the fold is unreachable because it gets clipped by #root.
+    // We use `position: fixed` (not absolute) so the scroll context
+    // doesn't depend on the parent's position rules — fixed is
+    // always relative to the viewport.
+    position: 'fixed',
+    inset: 0,
     display: 'flex',
+    flexDirection: 'column',
     alignItems: 'center',
-    justifyContent: 'center',
+    justifyContent: 'flex-start',
+    overflowY: 'auto',
+    overflowX: 'hidden',
     background: `radial-gradient(ellipse at center, ${theme.bg.base} 0%, ${theme.bg.deepest} 70%)`,
-    padding: 24,
+    padding: '40px 24px',
   },
   content: {
     maxWidth: 800,
@@ -266,6 +277,7 @@ const styles: Record<string, React.CSSProperties> = {
     flexDirection: 'column',
     alignItems: 'center',
     gap: 32,
+    margin: 'auto 0', // vertically center when there's room, allow scroll when there isn't
     animation: 'fadeIn 0.5s ease',
   },
   header: {

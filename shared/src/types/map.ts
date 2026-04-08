@@ -92,3 +92,23 @@ export interface MapPing {
   displayName: string;
   timestamp: number;
 }
+
+/**
+ * Lightweight summary of a map used by the Scene Manager sidebar.
+ * Only includes fields needed for the thumbnail card — no walls,
+ * no fog, no per-token data beyond the count badge. Keeps the
+ * `map:list-result` payload small even for sessions with 50+ maps.
+ */
+export interface MapSummary {
+  id: string;
+  name: string;
+  imageUrl: string | null;
+  width: number;
+  height: number;
+  gridSize: number;
+  /** Number of tokens currently on this map (for the thumbnail badge) */
+  tokenCount: number;
+  createdAt: string;
+  /** True if this map is currently the "player ribbon" (where the party is) */
+  isPlayerMap: boolean;
+}

@@ -23,18 +23,28 @@ const DARKNESS_ALPHA = 0.85;
 
 /** Detect if a light color looks "cool" (blue/purple) vs "warm" (yellow/red/white) */
 function isMagicLight(color: string): boolean {
-  // Simple heuristic: blues and purples are magic, everything else is torch
+  if (!color) return false;
   const lc = color.toLowerCase();
-  return (
+  // Named-color shortcuts
+  if (
     lc.includes('blue') ||
-    lc.includes('#00') ||
-    lc.includes('#33') ||
     lc.includes('cyan') ||
     lc.includes('purple') ||
     lc.includes('violet') ||
-    lc === '#3498db' ||
-    lc === '#9b59b6'
-  );
+    lc.includes('magenta')
+  ) return true;
+  // Hex: #RRGGBB — treat as "magic" when the blue channel clearly
+  // dominates the red channel (cool hue). This correctly flags light
+  // colors like #8cb4ff, #3498db, #6699ff, #9b59b6 (purple) as magic,
+  // while torch yellows like #ffcc44 and warm whites stay mundane.
+  const hex = lc.replace(/[^0-9a-f]/g, '');
+  if (hex.length === 6) {
+    const r = parseInt(hex.slice(0, 2), 16);
+    const g = parseInt(hex.slice(2, 4), 16);
+    const b = parseInt(hex.slice(4, 6), 16);
+    if (b > r + 20 && b >= g - 40) return true;
+  }
+  return false;
 }
 
 interface ComputedLight {

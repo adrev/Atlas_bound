@@ -8,6 +8,7 @@ export function initDatabase(): void {
       room_code TEXT UNIQUE NOT NULL,
       dm_user_id TEXT NOT NULL,
       current_map_id TEXT,
+      player_map_id TEXT,
       combat_active INTEGER DEFAULT 0,
       game_mode TEXT DEFAULT 'free-roam',
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
@@ -144,6 +145,26 @@ export function initDatabase(): void {
     CREATE INDEX IF NOT EXISTS idx_session_players_user
       ON session_players(user_id);
 
+    -- DM / player drawings. One row per committed (non-ephemeral)
+    -- drawing. Geometry is a JSON blob whose shape depends on kind.
+    CREATE TABLE IF NOT EXISTS drawings (
+      id TEXT PRIMARY KEY,
+      map_id TEXT NOT NULL REFERENCES maps(id) ON DELETE CASCADE,
+      creator_user_id TEXT NOT NULL,
+      creator_role TEXT NOT NULL,
+      kind TEXT NOT NULL,
+      visibility TEXT NOT NULL,
+      color TEXT NOT NULL,
+      stroke_width REAL NOT NULL,
+      geometry TEXT NOT NULL,
+      grid_snapped INTEGER NOT NULL DEFAULT 0,
+      created_at INTEGER NOT NULL,
+      fade_after_ms INTEGER
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_drawings_map
+      ON drawings(map_id);
+
     -- Compendium tables
     CREATE TABLE IF NOT EXISTS compendium_monsters (
       slug TEXT PRIMARY KEY,
@@ -242,6 +263,16 @@ export function initDatabase(): void {
   try { db.exec(`ALTER TABLE chat_messages ADD COLUMN hidden INTEGER DEFAULT 0`); } catch { /* exists */ }
   try { db.exec(`ALTER TABLE characters ADD COLUMN hit_dice TEXT DEFAULT '[]'`); } catch { /* exists */ }
   try { db.exec(`ALTER TABLE characters ADD COLUMN concentrating_on TEXT`); } catch { /* exists */ }
+
+  // Map Builder / Player Ribbon — add player_map_id to sessions so we can
+  // decouple "where the DM is viewing" from "where the players are on the
+  // map". Backfill from existing current_map_id so existing sessions keep
+  // working. current_map_id stays as the DM's ephemeral viewing pointer
+  // (used for DM reconnect rehydration).
+  try {
+    db.exec(`ALTER TABLE sessions ADD COLUMN player_map_id TEXT`);
+    db.exec(`UPDATE sessions SET player_map_id = current_map_id WHERE player_map_id IS NULL AND current_map_id IS NOT NULL`);
+  } catch { /* exists */ }
   // Spell-related fields. These exist in the CREATE TABLE definition but
   // weren't there originally, so existing databases need them backfilled
   // via ALTER TABLE. Without these the spell save DC defaults to 10 and

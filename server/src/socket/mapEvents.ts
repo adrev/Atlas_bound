@@ -2,7 +2,11 @@ import type { Server, Socket } from 'socket.io';
 import type { Token, WallSegment, FogPolygon } from '@dnd-vtt/shared';
 import { v4 as uuidv4 } from 'uuid';
 import db from '../db/connection.js';
-import { getPlayerBySocketId } from '../utils/roomState.js';
+import {
+  getPlayerBySocketId, resolveViewingMapId, socketsOnMap,
+} from '../utils/roomState.js';
+import * as OpportunityAttackService from '../services/OpportunityAttackService.js';
+import { loadDrawingsForMap, filterDrawingsForPlayer } from './drawingEvents.js';
 import {
   mapLoadSchema, tokenMoveSchema, tokenAddSchema, tokenRemoveSchema,
   tokenUpdateSchema, fogRevealHideSchema, wallAddSchema, wallRemoveSchema,
@@ -48,9 +52,29 @@ export function registerMapEvents(io: Server, socket: Socket): void {
 
     // Store tokens in room memory
     ctx.room.currentMapId = mapId;
+    // If this is the first map load for the session (fresh room with
+    // no player ribbon yet), seed the ribbon to this map so players
+    // get a coherent view. Scene manager activation (`map:activate-for-players`)
+    // will override this later when the DM explicitly moves the ribbon.
+    if (!ctx.room.playerMapId) {
+      ctx.room.playerMapId = mapId;
+      try {
+        db.prepare('UPDATE sessions SET player_map_id = ? WHERE id = ?')
+          .run(mapId, ctx.room.sessionId);
+      } catch { /* ignore */ }
+    }
     ctx.room.tokens.clear();
     for (const token of tokens) {
       ctx.room.tokens.set(token.id, token);
+    }
+
+    // Rehydrate drawings for this map into room memory. Ephemeral
+    // drawings are lost on server restart, which is fine — they're
+    // ephemeral by design. Only permanent ones come out of SQLite.
+    const persistedDrawings = loadDrawingsForMap(mapId);
+    ctx.room.drawings.clear();
+    for (const d of persistedDrawings) {
+      ctx.room.drawings.set(d.id, d);
     }
 
     // Update session's current map
@@ -70,7 +94,17 @@ export function registerMapEvents(io: Server, socket: Socket): void {
       fogState: JSON.parse(mapRow.fog_state as string) as FogPolygon[],
     };
 
-    io.to(ctx.room.sessionId).emit('map:loaded', { map: mapData, tokens });
+    // Send per-player payloads so each client only receives drawings
+    // they have permission to see (shared drawings go to everyone,
+    // dm-only only to DMs, player-only only to the creator + DMs).
+    for (const player of ctx.room.players.values()) {
+      const visibleDrawings = filterDrawingsForPlayer(persistedDrawings, player);
+      io.to(player.socketId).emit('map:loaded', {
+        map: mapData,
+        tokens,
+        drawings: visibleDrawings,
+      });
+    }
   });
 
   socket.on('map:token-move', (data) => {
@@ -81,8 +115,34 @@ export function registerMapEvents(io: Server, socket: Socket): void {
     if (!ctx) return;
 
     const { tokenId, x, y } = parsed.data;
-    const token = ctx.room.tokens.get(tokenId);
-    if (!token) return;
+    // First try the canonical in-memory map (ribbon tokens). If not
+    // there, fall back to a direct DB lookup so DMs can still move
+    // tokens on a preview map they're editing.
+    let token = ctx.room.tokens.get(tokenId);
+    if (!token) {
+      const row = db.prepare('SELECT * FROM tokens WHERE id = ?').get(tokenId) as Record<string, unknown> | undefined;
+      if (!row) return;
+      token = {
+        id: row.id as string,
+        mapId: row.map_id as string,
+        characterId: row.character_id as string | null,
+        name: row.name as string,
+        x: row.x as number,
+        y: row.y as number,
+        size: row.size as number,
+        imageUrl: row.image_url as string | null,
+        color: row.color as string,
+        layer: row.layer as Token['layer'],
+        visible: Boolean(row.visible),
+        hasLight: Boolean(row.has_light),
+        lightRadius: row.light_radius as number,
+        lightDimRadius: row.light_dim_radius as number,
+        lightColor: row.light_color as string,
+        conditions: JSON.parse(row.conditions as string),
+        ownerUserId: row.owner_user_id as string | null,
+        createdAt: row.created_at as string,
+      };
+    }
 
     // Validate ownership: in combat, players can only move their own tokens
     if (ctx.room.gameMode === 'combat' && ctx.player.role !== 'dm') {
@@ -93,15 +153,73 @@ export function registerMapEvents(io: Server, socket: Socket): void {
       if (token.ownerUserId !== ctx.player.userId) return;
     }
 
-    // Update in memory
-    token.x = x;
-    token.y = y;
+    // Capture the OLD position BEFORE we overwrite it — needed for
+    // Opportunity Attack detection.
+    const oldX = token.x;
+    const oldY = token.y;
+
+    // Update in memory (only if it lives on the canonical ribbon map)
+    if (ctx.room.tokens.has(tokenId)) {
+      token.x = x;
+      token.y = y;
+    }
 
     // Persist to DB
     db.prepare('UPDATE tokens SET x = ?, y = ? WHERE id = ?').run(x, y, tokenId);
 
-    // Broadcast to room
-    io.to(ctx.room.sessionId).emit('map:token-moved', { tokenId, x, y });
+    // Broadcast to every socket currently rendering the token's map.
+    // This filter is critical: a DM editing a preview map must not
+    // leak token updates to players who are still on the ribbon.
+    const recipients = socketsOnMap(ctx.room, token.mapId);
+    for (const sid of recipients) {
+      io.to(sid).emit('map:token-moved', { tokenId, x, y, mapId: token.mapId });
+    }
+
+    // ── Opportunity Attack detection ───────────────────────────
+    // Only fires during combat. For each enemy that lost the mover
+    // from their reach on this step, emit a private prompt to the
+    // attacker's owner (or the DM for NPC attackers). The player
+    // then clicks Attack / Let them go in the modal.
+    if (ctx.room.combatState?.active) {
+      const opportunities = OpportunityAttackService.detectOpportunityAttacks(
+        ctx.room.sessionId,
+        tokenId,
+        oldX,
+        oldY,
+        x,
+        y,
+      );
+      for (const opp of opportunities) {
+        const targetOwnerId = opp.attackerOwnerUserId;
+        // Routing rules:
+        //   • NPC attackers (no owner) → DM(s) only
+        //   • Player attackers → BOTH the attacker's owner AND the DM
+        //     This way the DM can always resolve any OA, even when the
+        //     attacking player isn't connected (solo DM testing,
+        //     spectator games, dropped connections).
+        //   • Same socket never gets the same prompt twice.
+        const sentToSocketIds = new Set<string>();
+        const emittedTo: string[] = [];
+        for (const player of ctx.room.players.values()) {
+          const isDM = player.role === 'dm';
+          const isAttackerOwner = targetOwnerId && player.userId === targetOwnerId;
+          let shouldSend = false;
+          if (targetOwnerId) {
+            // PC attacker: send to owner AND every DM
+            if (isAttackerOwner || isDM) shouldSend = true;
+          } else {
+            // NPC attacker: DMs only
+            if (isDM) shouldSend = true;
+          }
+          if (shouldSend && !sentToSocketIds.has(player.socketId)) {
+            io.to(player.socketId).emit('combat:oa-opportunity', opp);
+            sentToSocketIds.add(player.socketId);
+            emittedTo.push(`${player.userId}(${player.role})`);
+          }
+        }
+        console.log(`[OA EMIT] ${opp.attackerName} → ${opp.moverName} | targetOwner=${targetOwnerId ?? 'NPC'} | sent to: ${emittedTo.length > 0 ? emittedTo.join(', ') : '⚠ NO ONE (no matching socket)'}`);
+      }
+    }
   });
 
   socket.on('map:token-add', (data) => {
@@ -120,14 +238,18 @@ export function registerMapEvents(io: Server, socket: Socket): void {
       if (!isOwnToken && !isLootDrop) return;
     }
 
-    if (!ctx.room.currentMapId) return;
+    // Resolve which map this socket is editing — for DMs, this is
+    // their preview cursor if set, else the player ribbon. Players
+    // can only add tokens to the ribbon map.
+    const targetMapId = resolveViewingMapId(ctx.room, ctx.player.userId, ctx.player.role);
+    if (!targetMapId) return;
 
     const tokenId = uuidv4();
     const now = new Date().toISOString();
 
     const token: Token = {
       id: tokenId,
-      mapId: ctx.room.currentMapId,
+      mapId: targetMapId,
       characterId: parsed.data.characterId ?? null,
       name: parsed.data.name,
       x: parsed.data.x,
@@ -146,8 +268,11 @@ export function registerMapEvents(io: Server, socket: Socket): void {
       createdAt: now,
     };
 
-    // Store in memory
-    ctx.room.tokens.set(tokenId, token);
+    // Only store in canonical room memory if the target is the
+    // player ribbon — the room.tokens map is the ribbon's tokens.
+    if (targetMapId === ctx.room.playerMapId) {
+      ctx.room.tokens.set(tokenId, token);
+    }
 
     // Persist to DB
     db.prepare(`
@@ -164,7 +289,11 @@ export function registerMapEvents(io: Server, socket: Socket): void {
       JSON.stringify(token.conditions), token.ownerUserId,
     );
 
-    io.to(ctx.room.sessionId).emit('map:token-added', token);
+    // Broadcast only to sockets currently rendering this target map.
+    const recipients = socketsOnMap(ctx.room, targetMapId);
+    for (const sid of recipients) {
+      io.to(sid).emit('map:token-added', token);
+    }
   });
 
   socket.on('map:token-remove', (data) => {
@@ -175,10 +304,31 @@ export function registerMapEvents(io: Server, socket: Socket): void {
     if (!ctx || ctx.player.role !== 'dm') return;
 
     const { tokenId } = parsed.data;
-    ctx.room.tokens.delete(tokenId);
+
+    // Look up which map this token belongs to so we know where to
+    // broadcast the removal. In-memory first, then DB fallback.
+    let tokenMapId: string | null = null;
+    const inMem = ctx.room.tokens.get(tokenId);
+    if (inMem) {
+      tokenMapId = inMem.mapId;
+      ctx.room.tokens.delete(tokenId);
+    } else {
+      const row = db.prepare('SELECT map_id FROM tokens WHERE id = ?').get(tokenId) as { map_id: string } | undefined;
+      if (row) tokenMapId = row.map_id;
+    }
+
     db.prepare('DELETE FROM tokens WHERE id = ?').run(tokenId);
 
-    io.to(ctx.room.sessionId).emit('map:token-removed', { tokenId });
+    // Broadcast only to sockets currently rendering this map.
+    if (tokenMapId) {
+      const recipients = socketsOnMap(ctx.room, tokenMapId);
+      for (const sid of recipients) {
+        io.to(sid).emit('map:token-removed', { tokenId, mapId: tokenMapId });
+      }
+    } else {
+      // Map unknown — fall back to full broadcast (shouldn't happen)
+      io.to(ctx.room.sessionId).emit('map:token-removed', { tokenId });
+    }
   });
 
   socket.on('map:token-update', (data) => {
@@ -189,28 +339,72 @@ export function registerMapEvents(io: Server, socket: Socket): void {
     if (!ctx) return;
 
     const { tokenId, changes } = parsed.data;
-    const token = ctx.room.tokens.get(tokenId);
-    if (!token) return;
-
-    // Permission check:
-    //   • DM can do anything
-    //   • Token owner can do anything to their own token
-    //   • Any player can update an UNOWNED (NPC) token if the change is
-    //     limited to game-state fields (position, conditions). This is what
-    //     lets a player's Thunderwave push back a bandit, apply paralyzed
-    //     from Hold Person, etc. Without this NPC effects from player-cast
-    //     spells silently fail.
-    const isDM = ctx.player.role === 'dm';
-    const isOwner = token.ownerUserId === ctx.player.userId;
-    if (!isDM && !isOwner) {
-      const isUnownedNpc = token.ownerUserId === null;
-      const allowedFields = new Set(['x', 'y', 'conditions']);
-      const onlyGameStateChanges = Object.keys(changes).every((k) => allowedFields.has(k));
-      if (!isUnownedNpc || !onlyGameStateChanges) return;
+    // Try in-memory first (ribbon tokens), then DB fallback for
+    // tokens on other maps. This lets a DM edit tokens on a preview
+    // map without the ribbon tokens being loaded into memory.
+    let token = ctx.room.tokens.get(tokenId);
+    let tokenMapId: string | null = null;
+    if (token) {
+      tokenMapId = token.mapId;
+    } else {
+      const row = db.prepare('SELECT * FROM tokens WHERE id = ?').get(tokenId) as Record<string, unknown> | undefined;
+      if (!row) return;
+      tokenMapId = row.map_id as string;
+      token = {
+        id: row.id as string,
+        mapId: row.map_id as string,
+        characterId: row.character_id as string | null,
+        name: row.name as string,
+        x: row.x as number,
+        y: row.y as number,
+        size: row.size as number,
+        imageUrl: row.image_url as string | null,
+        color: row.color as string,
+        layer: row.layer as Token['layer'],
+        visible: Boolean(row.visible),
+        hasLight: Boolean(row.has_light),
+        lightRadius: row.light_radius as number,
+        lightDimRadius: row.light_dim_radius as number,
+        lightColor: row.light_color as string,
+        conditions: JSON.parse(row.conditions as string),
+        ownerUserId: row.owner_user_id as string | null,
+        createdAt: row.created_at as string,
+      };
     }
 
-    // Apply changes in memory
-    Object.assign(token, changes);
+    // Permission check:
+    //   • DM can do anything, including editing conditions on any token.
+    //   • Token owner can update their own token EXCEPT for conditions —
+    //     players are not allowed to self-apply conditions via this path.
+    //     If a player wants a condition (e.g. Haste from casting on self),
+    //     they must go through condition:apply-with-meta via the spell
+    //     cast resolver. This prevents a player from granting themselves
+    //     conditions the DM hasn't sanctioned.
+    //   • Any player can update an UNOWNED (NPC) token if the change is
+    //     limited to game-state fields (position, conditions). This is
+    //     what lets a player's Thunderwave push back a bandit, apply
+    //     paralyzed from Hold Person, etc. Without this NPC effects from
+    //     player-cast spells silently fail.
+    const isDM = ctx.player.role === 'dm';
+    const isOwner = token.ownerUserId === ctx.player.userId;
+    if (!isDM) {
+      // Block self-condition edits for owners.
+      if (isOwner && changes.conditions !== undefined) {
+        return;
+      }
+      if (!isOwner) {
+        const isUnownedNpc = token.ownerUserId === null;
+        const allowedFields = new Set(['x', 'y', 'conditions']);
+        const onlyGameStateChanges = Object.keys(changes).every((k) => allowedFields.has(k));
+        if (!isUnownedNpc || !onlyGameStateChanges) return;
+      }
+    }
+
+    // Apply changes in memory (only if the token actually lives on the
+    // canonical ribbon map — DM preview-map tokens aren't in room.tokens)
+    if (ctx.room.tokens.has(tokenId)) {
+      Object.assign(token, changes);
+    }
 
     // Build update SQL
     const setClauses: string[] = [];
@@ -236,7 +430,15 @@ export function registerMapEvents(io: Server, socket: Socket): void {
       db.prepare(`UPDATE tokens SET ${setClauses.join(', ')} WHERE id = ?`).run(...params);
     }
 
-    io.to(ctx.room.sessionId).emit('map:token-updated', { tokenId, changes });
+    // Broadcast only to sockets rendering this token's map
+    if (tokenMapId) {
+      const recipients = socketsOnMap(ctx.room, tokenMapId);
+      for (const sid of recipients) {
+        io.to(sid).emit('map:token-updated', { tokenId, changes, mapId: tokenMapId });
+      }
+    } else {
+      io.to(ctx.room.sessionId).emit('map:token-updated', { tokenId, changes });
+    }
   });
 
   socket.on('map:fog-reveal', (data) => {
@@ -244,19 +446,28 @@ export function registerMapEvents(io: Server, socket: Socket): void {
     if (!parsed.success) return;
 
     const ctx = getPlayerBySocketId(socket.id);
-    if (!ctx || ctx.player.role !== 'dm' || !ctx.room.currentMapId) return;
+    if (!ctx || ctx.player.role !== 'dm') return;
 
-    // Get current fog state
-    const mapRow = db.prepare('SELECT fog_state FROM maps WHERE id = ?').get(ctx.room.currentMapId) as { fog_state: string } | undefined;
+    // Resolve which map THIS DM is editing (preview cursor or ribbon).
+    const targetMapId = resolveViewingMapId(ctx.room, ctx.player.userId, ctx.player.role);
+    if (!targetMapId) return;
+
+    // Get current fog state for that specific map
+    const mapRow = db.prepare('SELECT fog_state FROM maps WHERE id = ?').get(targetMapId) as { fog_state: string } | undefined;
     if (!mapRow) return;
 
     const fogState: FogPolygon[] = JSON.parse(mapRow.fog_state);
     fogState.push({ points: parsed.data.points });
 
     db.prepare('UPDATE maps SET fog_state = ? WHERE id = ?')
-      .run(JSON.stringify(fogState), ctx.room.currentMapId);
+      .run(JSON.stringify(fogState), targetMapId);
 
-    io.to(ctx.room.sessionId).emit('map:fog-updated', { fogState });
+    // Broadcast only to sockets rendering this map (filters out
+    // players still on the ribbon while the DM previews elsewhere).
+    const recipients = socketsOnMap(ctx.room, targetMapId);
+    for (const sid of recipients) {
+      io.to(sid).emit('map:fog-updated', { fogState, mapId: targetMapId });
+    }
   });
 
   socket.on('map:fog-hide', (data) => {
@@ -264,9 +475,12 @@ export function registerMapEvents(io: Server, socket: Socket): void {
     if (!parsed.success) return;
 
     const ctx = getPlayerBySocketId(socket.id);
-    if (!ctx || ctx.player.role !== 'dm' || !ctx.room.currentMapId) return;
+    if (!ctx || ctx.player.role !== 'dm') return;
 
-    const mapRow = db.prepare('SELECT fog_state FROM maps WHERE id = ?').get(ctx.room.currentMapId) as { fog_state: string } | undefined;
+    const targetMapId = resolveViewingMapId(ctx.room, ctx.player.userId, ctx.player.role);
+    if (!targetMapId) return;
+
+    const mapRow = db.prepare('SELECT fog_state FROM maps WHERE id = ?').get(targetMapId) as { fog_state: string } | undefined;
     if (!mapRow) return;
 
     let fogState: FogPolygon[] = JSON.parse(mapRow.fog_state);
@@ -275,9 +489,12 @@ export function registerMapEvents(io: Server, socket: Socket): void {
     fogState = fogState.filter(f => JSON.stringify(f.points) !== targetPoints);
 
     db.prepare('UPDATE maps SET fog_state = ? WHERE id = ?')
-      .run(JSON.stringify(fogState), ctx.room.currentMapId);
+      .run(JSON.stringify(fogState), targetMapId);
 
-    io.to(ctx.room.sessionId).emit('map:fog-updated', { fogState });
+    const recipients = socketsOnMap(ctx.room, targetMapId);
+    for (const sid of recipients) {
+      io.to(sid).emit('map:fog-updated', { fogState, mapId: targetMapId });
+    }
   });
 
   socket.on('map:wall-add', (data) => {
@@ -285,18 +502,24 @@ export function registerMapEvents(io: Server, socket: Socket): void {
     if (!parsed.success) return;
 
     const ctx = getPlayerBySocketId(socket.id);
-    if (!ctx || ctx.player.role !== 'dm' || !ctx.room.currentMapId) return;
+    if (!ctx || ctx.player.role !== 'dm') return;
 
-    const mapRow = db.prepare('SELECT walls FROM maps WHERE id = ?').get(ctx.room.currentMapId) as { walls: string } | undefined;
+    const targetMapId = resolveViewingMapId(ctx.room, ctx.player.userId, ctx.player.role);
+    if (!targetMapId) return;
+
+    const mapRow = db.prepare('SELECT walls FROM maps WHERE id = ?').get(targetMapId) as { walls: string } | undefined;
     if (!mapRow) return;
 
     const walls: WallSegment[] = JSON.parse(mapRow.walls);
     walls.push(parsed.data);
 
     db.prepare('UPDATE maps SET walls = ? WHERE id = ?')
-      .run(JSON.stringify(walls), ctx.room.currentMapId);
+      .run(JSON.stringify(walls), targetMapId);
 
-    io.to(ctx.room.sessionId).emit('map:walls-updated', { walls });
+    const recipients = socketsOnMap(ctx.room, targetMapId);
+    for (const sid of recipients) {
+      io.to(sid).emit('map:walls-updated', { walls, mapId: targetMapId });
+    }
   });
 
   socket.on('map:wall-remove', (data) => {
@@ -304,9 +527,12 @@ export function registerMapEvents(io: Server, socket: Socket): void {
     if (!parsed.success) return;
 
     const ctx = getPlayerBySocketId(socket.id);
-    if (!ctx || ctx.player.role !== 'dm' || !ctx.room.currentMapId) return;
+    if (!ctx || ctx.player.role !== 'dm') return;
 
-    const mapRow = db.prepare('SELECT walls FROM maps WHERE id = ?').get(ctx.room.currentMapId) as { walls: string } | undefined;
+    const targetMapId = resolveViewingMapId(ctx.room, ctx.player.userId, ctx.player.role);
+    if (!targetMapId) return;
+
+    const mapRow = db.prepare('SELECT walls FROM maps WHERE id = ?').get(targetMapId) as { walls: string } | undefined;
     if (!mapRow) return;
 
     const walls: WallSegment[] = JSON.parse(mapRow.walls);
@@ -314,9 +540,12 @@ export function registerMapEvents(io: Server, socket: Socket): void {
     walls.splice(parsed.data.index, 1);
 
     db.prepare('UPDATE maps SET walls = ? WHERE id = ?')
-      .run(JSON.stringify(walls), ctx.room.currentMapId);
+      .run(JSON.stringify(walls), targetMapId);
 
-    io.to(ctx.room.sessionId).emit('map:walls-updated', { walls });
+    const recipients = socketsOnMap(ctx.room, targetMapId);
+    for (const sid of recipients) {
+      io.to(sid).emit('map:walls-updated', { walls, mapId: targetMapId });
+    }
   });
 
   socket.on('map:ping', (data) => {

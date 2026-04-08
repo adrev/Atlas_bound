@@ -2,6 +2,7 @@ import { useCallback, useRef, useState } from 'react';
 import type Konva from 'konva';
 import type { KonvaEventObject } from 'konva/lib/Node';
 import { useMapStore } from '../stores/useMapStore';
+import { useDrawStore } from '../stores/useDrawStore';
 
 interface ViewportState {
   x: number;
@@ -102,6 +103,10 @@ export function useCanvasViewport() {
   const handleContextMenu = useCallback(
     (e: KonvaEventObject<PointerEvent>) => {
       e.evt.preventDefault();
+      // Suppress the context menu entirely while in draw mode so the
+      // DM can right-click-drag without the map menu popping up. Esc
+      // exits draw mode when the DM wants access again.
+      if (useDrawStore.getState().isDrawMode) return;
       // Right-click on empty map space = open map context menu
       if (e.target === e.target.getStage()) {
         const stage = e.target.getStage();

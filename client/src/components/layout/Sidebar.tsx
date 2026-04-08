@@ -30,17 +30,19 @@ interface TabDef {
 
 const TABS: TabDef[] = [
   { id: 'combat', label: 'Combat', icon: <Swords size={16} /> },
-  { id: 'character', label: 'Character', icon: <BookOpen size={16} /> },
+  // Label reads "Hero" (shorter + more thematic for the DM vibe)
+  // while the internal id stays 'character' so existing event
+  // listeners, routing, and component names don't need to change.
+  { id: 'character', label: 'Hero', icon: <BookOpen size={16} /> },
   { id: 'compendium', label: 'Wiki', icon: <Library size={16} /> },
   { id: 'chat', label: 'Chat', icon: <MessageSquare size={16} /> },
   { id: 'players', label: 'Players', icon: <Users size={16} /> },
-  { id: 'dm', label: 'DM Tools', icon: <Settings size={16} />, dmOnly: true },
+  { id: 'dm', label: 'Tools', icon: <Settings size={16} />, dmOnly: true },
 ];
 
 export function Sidebar() {
   const [activeTab, setActiveTab] = useState<TabId>('chat');
   const isDM = useSessionStore((s) => s.isDM);
-  const combatActive = useCombatStore((s) => s.active);
 
   // Listen for token click to switch to character tab
   useEffect(() => {
@@ -53,32 +55,46 @@ export function Sidebar() {
 
   return (
     <div style={styles.container}>
-      {/* Initiative tracker shown at top during combat */}
-      {combatActive && activeTab === 'combat' && (
-        <div style={styles.initiativeSection}>
-          <InitiativeTracker />
-        </div>
-      )}
-
-      {/* Tab bar */}
+      {/* Tab bar — rune-slab / book-chapter style.
+          Each tab is its own "tile" with a subtle stone background,
+          gold-tinted borders, and a thin ornate separator between
+          them. Active tab gets a warm parchment glow and a prominent
+          gold bottom border like the ribbon of a chapter marker. */}
       <div style={styles.tabBar}>
-        {visibleTabs.map((tab) => (
-          <button
+        {visibleTabs.map((tab, idx) => (
+          <div
             key={tab.id}
             style={{
-              ...styles.tab,
-              ...(activeTab === tab.id ? styles.tabActive : {}),
+              display: 'flex',
+              alignItems: 'stretch',
+              flex: 1,
+              minWidth: 0,
             }}
-            onClick={() => setActiveTab(tab.id)}
-            title={tab.label}
           >
-            {tab.icon}
-            <span style={styles.tabLabel}>{tab.label}</span>
-          </button>
+            <button
+              style={{
+                ...styles.tab,
+                ...(activeTab === tab.id ? styles.tabActive : {}),
+              }}
+              onClick={() => setActiveTab(tab.id)}
+              title={tab.label}
+            >
+              {tab.icon}
+              <span style={styles.tabLabel}>{tab.label}</span>
+            </button>
+            {/* Rune-slab separator between tiles — a thin vertical
+                gold-dim line with fade at top and bottom. Omitted
+                after the last tab. */}
+            {idx < visibleTabs.length - 1 && (
+              <div aria-hidden style={styles.tabSeparator} />
+            )}
+          </div>
         ))}
       </div>
 
-      {/* Tab content */}
+      {/* Tab content. The initiative tracker lives ONLY inside the
+          Combat tab — switching to Chat / Players / DM Tools no longer
+          shows it overlaid on top. */}
       <div style={styles.content}>
         {activeTab === 'combat' && <CombatPanel />}
         {activeTab === 'character' && <CharacterSheet />}
@@ -91,11 +107,29 @@ export function Sidebar() {
   );
 }
 
+/**
+ * Decide whether a token should participate in combat. Filters out
+ * utility markers like the Light cantrip's spawned light tokens
+ * (`Light (CasterName)` / `Dancing Lights (CasterName)`) and any
+ * tiny non-character markers. Loot drops have a characterId pointing
+ * at a loot bag record so they're identified by their image path.
+ */
+function isCombatantToken(t: { name: string; size: number; characterId: string | null; imageUrl: string | null }): boolean {
+  if (/^(Light|Dancing Lights) \(/.test(t.name)) return false;
+  if ((t.imageUrl ?? '').includes('/uploads/items/')) return false;
+  if (t.size < 0.5 && !t.characterId) return false;
+  return true;
+}
+
 function CombatPanel() {
   const combatActive = useCombatStore((s) => s.active);
   const isDM = useSessionStore((s) => s.isDM);
   const tokens = useMapStore((s) => s.tokens);
-  const tokenCount = Object.keys(tokens).length;
+  // Only count tokens that would actually enter initiative — light
+  // markers / loot drops are excluded so the button label and the
+  // disabled-state heuristic match what gets sent to the server.
+  const combatantTokens = Object.values(tokens).filter(isCombatantToken);
+  const tokenCount = combatantTokens.length;
 
   // DM-only Start/End Combat button. The label flips based on whether
   // combat is currently active.
@@ -115,10 +149,10 @@ function CombatPanel() {
         }}
         disabled={tokenCount === 0}
         onClick={() => {
-          const tokenIds = Object.keys(tokens);
-          console.log('[START COMBAT] Click. tokens:', tokenIds.length, 'isDM:', isDM);
+          const tokenIds = combatantTokens.map((t) => t.id);
+          console.log('[START COMBAT] Click. combatants:', tokenIds.length, 'isDM:', isDM);
           if (tokenIds.length === 0) {
-            console.warn('[START COMBAT] No tokens on map — button should be disabled');
+            console.warn('[START COMBAT] No combatant tokens on map — button should be disabled');
             return;
           }
           console.log('[START COMBAT] Emitting combat:start with', tokenIds);
@@ -156,6 +190,10 @@ function CombatPanel() {
     );
   }
 
+  // The full initiative tracker (round counter, combatants list,
+  // action economy, End Turn) lives inside the Combat tab content
+  // only. This way other tabs (Chat, Players, DM Tools) aren't
+  // covered by the tracker.
   return (
     <div style={styles.combatPanel}>
       {combatButton}
@@ -177,44 +215,91 @@ const styles: Record<string, React.CSSProperties> = {
   },
   initiativeSection: {
     borderBottom: `1px solid ${theme.border.default}`,
+    // Cap the tracker to ~45% of the sidebar so the tab content
+    // (chat, players, etc) below always gets room. Any overflow
+    // scrolls internally. Without this cap, a long initiative order
+    // could push the tab content right off the bottom of the screen.
+    maxHeight: '45vh',
+    overflowY: 'auto' as const,
     flexShrink: 0,
   },
   tabBar: {
     display: 'flex',
-    borderBottom: `1px solid ${theme.border.default}`,
-    background: theme.bg.base,
+    alignItems: 'stretch',
+    // Layered background for the rune-slab parchment look: warm
+    // deep stone base with a subtle top highlight line.
+    background: `linear-gradient(180deg, ${theme.parchmentEdge} 0%, ${theme.bg.deep} 2px, ${theme.bg.base} 100%)`,
+    borderBottom: `1px solid ${theme.gold.border}`,
+    boxShadow: `inset 0 -1px 0 ${theme.border.default}`,
     flexShrink: 0,
     overflow: 'hidden',
+    // Small padding so the first/last tabs don't touch the
+    // sidebar edges and feel visually balanced.
+    padding: `4px 4px 0`,
   },
+  // Note: use ONLY the border shorthand (not a mix of shorthand
+  // `borderBottom` and the longhand `borderBottomColor`). React warns
+  // on the mix and, more importantly, the longhand override can get
+  // "stuck" in the DOM when tabs re-render — causing a visible grey
+  // line under tabs that were previously active. Using the full
+  // shorthand in BOTH states lets React replace the value atomically.
   tab: {
+    // `flex: 1` on the button fills its wrapper cell (which itself
+    // has `flex: 1`), giving equal-width cells. The wrapper also
+    // contains the separator, so this still produces balanced cells.
     flex: 1,
     display: 'flex',
     flexDirection: 'column',
     alignItems: 'center',
-    gap: 2,
-    padding: '10px 4px',
+    justifyContent: 'center',
+    gap: 4,
+    padding: `${theme.space.md}px ${theme.space.xs}px`,
     background: 'transparent',
     border: 'none',
-    borderBottom: '2px solid transparent',
+    borderRadius: `${theme.radius.sm}px ${theme.radius.sm}px 0 0`,
     color: theme.text.muted,
     fontSize: 10,
     cursor: 'pointer',
-    transition: 'all 0.15s ease',
+    transition: `all ${theme.motion.normal}`,
+    whiteSpace: 'nowrap' as const,
     minWidth: 0,
+    position: 'relative' as const,
   },
   tabActive: {
     color: theme.gold.primary,
-    borderBottomColor: theme.gold.primary,
-    background: theme.gold.bg,
+    // Parchment-colored active tile with a gold gradient bottom
+    // border (the "chapter marker ribbon"). Subtle top glow too.
+    background: `linear-gradient(180deg, rgba(232, 196, 85, 0.08), ${theme.gold.bg})`,
+    boxShadow: `inset 0 -2px 0 ${theme.gold.primary}, inset 0 1px 0 rgba(232, 196, 85, 0.3)`,
+    // Pull up 1px so the active tab visually rises above the row.
+    transform: 'translateY(-1px)',
   },
   tabLabel: {
-    fontSize: 10,
-    fontWeight: 600,
+    fontSize: 9,
+    fontWeight: 700,
     textTransform: 'uppercase' as const,
-    letterSpacing: '0.5px',
+    // Letter-spacing reduced from 0.5 → 0.3 to save a few pixels
+    // per tab without losing the caps-label feel.
+    letterSpacing: '0.3px',
     whiteSpace: 'nowrap' as const,
-    overflow: 'hidden',
-    textOverflow: 'ellipsis',
+  },
+  // Vertical rune-slab divider between tabs — a thin "carved"
+  // separator that evokes an inscribed line on a stone tile.
+  // Uses a layered 2-pixel gradient (bright highlight + shadow)
+  // so it reads clearly without feeling heavy.
+  tabSeparator: {
+    width: 2,
+    alignSelf: 'stretch',
+    background: `
+      linear-gradient(90deg,
+        rgba(0,0,0,0.35) 0%,
+        rgba(0,0,0,0.35) 50%,
+        rgba(232, 196, 85, 0.5) 50%,
+        rgba(232, 196, 85, 0.5) 100%
+      )
+    `,
+    margin: `${theme.space.sm}px 0`,
+    flexShrink: 0,
   },
   content: {
     flex: 1,

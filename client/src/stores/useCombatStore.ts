@@ -18,6 +18,13 @@ interface CombatState {
 
 interface CombatActions {
   startCombat: (combatants: Combatant[], roundNumber: number) => void;
+  /** Resync the entire combat state (used on reconnect/refresh). */
+  syncCombatState: (args: {
+    combatants: Combatant[];
+    roundNumber: number;
+    currentTurnIndex: number;
+    actionEconomy: ActionEconomy;
+  }) => void;
   endCombat: () => void;
   setCombatants: (combatants: Combatant[]) => void;
   nextTurn: (currentTurnIndex: number, roundNumber: number, economy: ActionEconomy) => void;
@@ -63,6 +70,17 @@ export const useCombatStore = create<CombatState & CombatActions>((set) => ({
       initiativePrompts: [],
     }),
 
+  syncCombatState: ({ combatants, roundNumber, currentTurnIndex, actionEconomy }) =>
+    set({
+      active: true,
+      combatants,
+      roundNumber,
+      currentTurnIndex,
+      actionEconomy,
+      initiativeRolls: new Map(),
+      initiativePrompts: [],
+    }),
+
   endCombat: () =>
     set({
       active: false,
@@ -87,7 +105,15 @@ export const useCombatStore = create<CombatState & CombatActions>((set) => ({
     set((state) => {
       const newRolls = new Map(state.initiativeRolls);
       newRolls.set(tokenId, total);
-      return { initiativeRolls: newRolls };
+      // CRITICAL: also update the combatant's live initiative value in
+      // the combatants array so the initiative tracker displays it.
+      // Previously this only touched the orphaned initiativeRolls Map
+      // and the tracker kept showing whatever the server broadcast with
+      // combat:started (which was often 0 for player-owned tokens).
+      const combatants = state.combatants.map((c) =>
+        c.tokenId === tokenId ? { ...c, initiative: total } : c,
+      );
+      return { initiativeRolls: newRolls, combatants };
     }),
 
   addInitiativePrompt: (tokenId, bonus) =>

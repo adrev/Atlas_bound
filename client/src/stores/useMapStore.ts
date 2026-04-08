@@ -29,7 +29,25 @@ interface PingData {
   timestamp: number;
 }
 
+/**
+ * Drag preview state — set while a token is being actively dragged.
+ * Used by TokenLayer to render a low-opacity ghost at the original
+ * position plus a blue distance line to the cursor (Roll20-style).
+ */
+interface DragPreview {
+  tokenId: string;
+  startX: number;
+  startY: number;
+  currentX: number;
+  currentY: number;
+}
+
 interface MapState {
+  /**
+   * The map the CURRENT client is looking at. For players this is
+   * always the same as `playerMapId` (the ribbon). For DMs it may
+   * be a different map they're previewing.
+   */
   currentMap: MapData | null;
   tokens: Record<string, Token>;
   selectedTokenId: string | null;
@@ -46,6 +64,21 @@ interface MapState {
   lockedTokenIds: Set<string>;
   isTargeting: boolean;
   targetingData: { spell?: any; weapon?: any; action?: any; casterTokenId: string; casterName: string } | null;
+  dragPreview: DragPreview | null;
+  /**
+   * The id of the map the PLAYERS are currently on ("yellow ribbon").
+   * For players this is always equal to `currentMap?.id`. For DMs it
+   * may differ when they're previewing a different map. Drives the
+   * preview-mode banner and the scene manager's ribbon indicator.
+   */
+  playerMapId: string | null;
+  /**
+   * True when this is a DM who is currently viewing a different map
+   * from the players. Derived from `currentMap.id !== playerMapId`.
+   * When true, the spell cast resolver refuses to cast (can't target
+   * creatures on a different map) and the PreviewModeBanner shows.
+   */
+  isDmPreviewingDifferentMap: boolean;
 }
 
 interface MapActions {
@@ -68,6 +101,27 @@ interface MapActions {
   copyToken: (token: Token) => void;
   startTargetingMode: (data: { spell?: any; weapon?: any; action?: any; casterTokenId: string; casterName: string }) => void;
   cancelTargetingMode: () => void;
+  beginDragPreview: (preview: DragPreview) => void;
+  updateDragPreview: (currentX: number, currentY: number) => void;
+  endDragPreview: () => void;
+  /**
+   * Update the id of the "player ribbon" map. Called whenever the
+   * server tells us the ribbon has moved (via `map:player-map-changed`
+   * or the initial `map:loaded` for a player). Also recomputes
+   * `isDmPreviewingDifferentMap` based on the current view.
+   */
+  setPlayerMapId: (mapId: string | null) => void;
+  /**
+   * Apply an incoming `map:loaded` payload. Handles both the normal
+   * "players are loading the ribbon" case and the "DM previewing a
+   * different map" case (distinguished by `isPreview`). Updates
+   * `currentMap`, tokens, walls, fog, AND the derived preview flag.
+   */
+  applyMapLoad: (args: {
+    map: MapData & { walls: WallSegment[]; fogState: FogPolygon[] };
+    tokens: Token[];
+    isPreview?: boolean;
+  }) => void;
 }
 
 const initialState: MapState = {
@@ -87,6 +141,9 @@ const initialState: MapState = {
   lockedTokenIds: new Set(),
   isTargeting: false,
   targetingData: null,
+  dragPreview: null,
+  playerMapId: null,
+  isDmPreviewingDifferentMap: false,
 };
 
 export const useMapStore = create<MapState & MapActions>((set) => ({
@@ -174,8 +231,38 @@ export const useMapStore = create<MapState & MapActions>((set) => ({
 
   copyToken: (token) => set({ copiedToken: token }),
 
-  startTargetingMode: (data) => set({ isTargeting: true, targetingData: data }),
+  startTargetingMode: (data) => {
+    // Block spell casts when the DM is previewing a different map
+    // from the players — casting here would try to apply damage /
+    // conditions to creatures that aren't in the current scene.
+    // Weapons and melee actions are still allowed since they're
+    // local to whatever token is selected.
+    const state = useMapStore.getState();
+    if (data.spell && state.isDmPreviewingDifferentMap) {
+      // The PreviewModeBanner is already visible in this mode so
+      // the DM has context — a browser alert ensures they get the
+      // "why did nothing happen" signal without introducing a new
+      // toast subsystem.
+      console.warn('[SceneManager] Cast blocked: previewing a different map');
+      if (typeof window !== 'undefined' && typeof window.alert === 'function') {
+        window.alert(
+          'Cannot cast spells while previewing a different map.\n\nMove the players here first (use "Move Players Here" in the preview banner or the scene manager).',
+        );
+      }
+      return;
+    }
+    set({ isTargeting: true, targetingData: data });
+  },
   cancelTargetingMode: () => set({ isTargeting: false, targetingData: null }),
+
+  beginDragPreview: (preview) => set({ dragPreview: preview }),
+  updateDragPreview: (currentX, currentY) =>
+    set((state) =>
+      state.dragPreview
+        ? { dragPreview: { ...state.dragPreview, currentX, currentY } }
+        : state,
+    ),
+  endDragPreview: () => set({ dragPreview: null }),
 
   toggleLockToken: (id) =>
     set((state) => {
@@ -184,4 +271,45 @@ export const useMapStore = create<MapState & MapActions>((set) => ({
       else next.add(id);
       return { lockedTokenIds: next };
     }),
+
+  setPlayerMapId: (mapId) =>
+    set((state) => ({
+      playerMapId: mapId,
+      // Recompute the preview flag: true when we're looking at
+      // something OTHER than the ribbon. Both must be non-null for
+      // a "different map" condition to be meaningful.
+      isDmPreviewingDifferentMap:
+        !!state.currentMap && !!mapId && state.currentMap.id !== mapId,
+    })),
+
+  applyMapLoad: ({ map, tokens, isPreview }) => {
+    set((state) => {
+      // If this is a preview payload, leave playerMapId untouched —
+      // we're just peeking at a different map. Otherwise (normal
+      // load), the incoming map IS the ribbon, so sync playerMapId.
+      const nextPlayerMapId = isPreview ? state.playerMapId : map.id;
+      return {
+        currentMap: {
+          id: map.id,
+          name: map.name,
+          imageUrl: map.imageUrl,
+          width: map.width,
+          height: map.height,
+          gridSize: map.gridSize,
+          gridType: map.gridType,
+          gridOffsetX: map.gridOffsetX,
+          gridOffsetY: map.gridOffsetY,
+        },
+        tokens: tokens.reduce(
+          (acc, t) => ({ ...acc, [t.id]: t }),
+          {} as Record<string, Token>,
+        ),
+        walls: map.walls ?? [],
+        fogRegions: map.fogState ?? [],
+        playerMapId: nextPlayerMapId,
+        isDmPreviewingDifferentMap:
+          !!nextPlayerMapId && map.id !== nextPlayerMapId,
+      };
+    });
+  },
 }));

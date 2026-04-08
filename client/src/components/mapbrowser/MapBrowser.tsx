@@ -5,6 +5,7 @@ import { useMapStore } from '../../stores/useMapStore';
 import { emitLoadMap } from '../../socket/emitters';
 import { PrebuiltMapGallery } from './PrebuiltMapGallery';
 import { MapUpload } from './MapUpload';
+import { getMapThumbnail } from '../../utils/prebuiltMapImages';
 
 interface SavedMap {
   id: string;
@@ -72,22 +73,29 @@ export function MapBrowser({ onMapLoaded }: MapBrowserProps) {
         <>
           <div style={styles.sectionTitle}>Your Maps ({savedMaps.length})</div>
           <div style={styles.savedGrid}>
-            {savedMaps.map((map) => (
-              <div key={map.id} style={styles.savedCard}>
-                <div style={styles.savedThumb}>
-                  {map.imageUrl ? (
-                    <img src={map.imageUrl} alt={map.name} style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: 6 }} />
-                  ) : (
-                    <div style={{ width: '100%', height: '100%', background: theme.bg.elevated, borderRadius: 6, display: 'flex', alignItems: 'center', justifyContent: 'center', color: theme.text.muted, fontSize: 11 }}>No image</div>
-                  )}
+            {savedMaps.map((map) => {
+              // Prebuilt maps store imageUrl = null in the DB because
+              // the image is a client-side asset. Fall back to the
+              // prebuilt thumbnail lookup by name so the card actually
+              // shows something instead of "No image".
+              const thumbSrc = getMapThumbnail(map);
+              return (
+                <div key={map.id} style={styles.savedCard}>
+                  <div style={styles.savedThumb}>
+                    {thumbSrc ? (
+                      <img src={thumbSrc} alt={map.name} style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: 6 }} />
+                    ) : (
+                      <div style={{ width: '100%', height: '100%', background: theme.bg.elevated, borderRadius: 6, display: 'flex', alignItems: 'center', justifyContent: 'center', color: theme.text.muted, fontSize: 11 }}>No image</div>
+                    )}
+                  </div>
+                  <div style={styles.savedInfo}>
+                    <div style={{ fontWeight: 600, color: theme.text.primary, fontSize: 13 }}>{map.name}</div>
+                    <div style={{ fontSize: 10, color: theme.text.muted }}>{Math.round(map.width / map.gridSize)}x{Math.round(map.height / map.gridSize)} grid</div>
+                  </div>
+                  <button style={styles.loadBtn} onClick={() => handleLoadSaved(map)}>Load</button>
                 </div>
-                <div style={styles.savedInfo}>
-                  <div style={{ fontWeight: 600, color: theme.text.primary, fontSize: 13 }}>{map.name}</div>
-                  <div style={{ fontSize: 10, color: theme.text.muted }}>{Math.round(map.width / map.gridSize)}x{Math.round(map.height / map.gridSize)} grid</div>
-                </div>
-                <button style={styles.loadBtn} onClick={() => handleLoadSaved(map)}>Load</button>
-              </div>
-            ))}
+              );
+            })}
           </div>
           <div style={styles.divider} />
         </>

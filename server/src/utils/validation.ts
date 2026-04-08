@@ -92,6 +92,82 @@ export const mapPingSchema = z.object({
   y: z.number(),
 });
 
+// --- Scene Manager (Player Ribbon) schemas ---
+export const mapListSchema = z.object({}).passthrough();
+export const mapPreviewLoadSchema = z.object({ mapId: z.string().min(1) });
+export const mapActivateForPlayersSchema = z.object({ mapId: z.string().min(1) });
+export const mapDeleteSchema = z.object({ mapId: z.string().min(1) });
+
+// --- Drawing event schemas ---
+
+const drawingKindSchema = z.enum([
+  'freehand', 'rect', 'circle', 'line', 'arrow', 'text', 'ephemeral',
+]);
+const drawingVisibilitySchema = z.enum(['shared', 'dm-only', 'player-only']);
+
+const drawingGeometrySchema = z.object({
+  points: z.array(z.number()).optional(),
+  rect: z.object({
+    x: z.number(),
+    y: z.number(),
+    width: z.number(),
+    height: z.number(),
+  }).optional(),
+  circle: z.object({
+    x: z.number(),
+    y: z.number(),
+    radius: z.number().min(0),
+  }).optional(),
+  text: z.object({
+    x: z.number(),
+    y: z.number(),
+    content: z.string().max(500),
+    fontSize: z.number().min(6).max(120),
+  }).optional(),
+});
+
+export const drawingCreateSchema = z.object({
+  drawing: z.object({
+    // `id`, `createdAt`, `creatorUserId`, `creatorRole` are set server-side,
+    // but we accept them from the client so undo/redo can preserve IDs
+    // when re-creating a previously deleted drawing.
+    id: z.string().min(1),
+    mapId: z.string().min(1),
+    creatorUserId: z.string().min(1),
+    creatorRole: z.enum(['dm', 'player']),
+    kind: drawingKindSchema,
+    visibility: drawingVisibilitySchema,
+    color: z.string().min(1).max(32),
+    strokeWidth: z.number().min(0.5).max(64),
+    geometry: drawingGeometrySchema,
+    gridSnapped: z.boolean(),
+    createdAt: z.number().int(),
+    fadeAfterMs: z.number().int().nullable(),
+  }),
+});
+
+export const drawingDeleteSchema = z.object({
+  drawingId: z.string().min(1),
+});
+
+export const drawingClearAllSchema = z.object({
+  scope: z.enum(['all', 'mine']),
+});
+
+export const drawingStreamSchema = z.object({
+  tempId: z.string().min(1),
+  creatorUserId: z.string().min(1),
+  kind: drawingKindSchema,
+  visibility: drawingVisibilitySchema,
+  color: z.string().min(1).max(32),
+  strokeWidth: z.number().min(0.5).max(64),
+  geometry: drawingGeometrySchema,
+});
+
+export const drawingStreamEndSchema = z.object({
+  tempId: z.string().min(1),
+});
+
 // --- Combat event schemas ---
 export const combatStartSchema = z.object({
   tokenIds: z.array(z.string().min(1)).min(1),
@@ -319,4 +395,13 @@ export const createMapSchema = z.object({
   height: z.coerce.number().int().min(100).max(10000).default(1050),
   gridSize: z.coerce.number().int().min(20).max(200).default(70),
   gridType: z.enum(['square', 'hex']).default('square'),
+  /**
+   * Set by the PrebuiltMapGallery when loading a prebuilt map.
+   * Tells the server "this is the same template as a prior request";
+   * if the session already has a map matching this key (by exact name),
+   * return the existing map id instead of inserting a new row.
+   * Enables the DM to click a prebuilt twice without losing the
+   * walls / fog / tokens they've already set up on it.
+   */
+  prebuiltKey: z.string().max(100).optional(),
 });

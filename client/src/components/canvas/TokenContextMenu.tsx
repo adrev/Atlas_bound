@@ -194,7 +194,10 @@ export function TokenContextMenu() {
             {/* Combat actions */}
             {character && <Item icon="❤️" label={`HP: ${hp}/${maxHp}`} onClick={() => setSubMenu('hp')} hasArrow />}
             <Item icon="⚔️" label="Attack" onClick={() => setSubMenu('attack')} hasArrow />
-            <Item icon="🎭" label="Conditions" onClick={() => setSubMenu('conditions')} hasArrow />
+            {/* Conditions can only be applied by the DM. Players who want to
+                inflict a condition on themselves (e.g. via a buff spell) do
+                so through the cast flow, not by picking from this menu. */}
+            {isDM && <Item icon="🎭" label="Conditions" onClick={() => setSubMenu('conditions')} hasArrow />}
             <Item icon="📊" label="View Stats" onClick={async () => {
               // For NPC/creature tokens: open compendium stat block
               // For player tokens: open character sheet

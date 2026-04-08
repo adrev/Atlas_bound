@@ -11,8 +11,12 @@ export type {
 export { abilityModifier, proficiencyBonusForLevel, SKILL_ABILITY_MAP } from './types/character.js';
 export type {
   GameMap, WallSegment, FogPolygon, Token, LightSource, Condition,
-  PrebuiltMap, MapPing,
+  PrebuiltMap, MapPing, MapSummary,
 } from './types/map.js';
+export type {
+  Drawing, DrawingKind, DrawingVisibility, DrawingGeometry,
+  DrawingStreamPayload,
+} from './types/drawing.js';
 export type {
   Combatant, CombatState, ActionEconomy, ActionType,
   InitiativeRollRequest, InitiativeRollResult, SpellCastEvent,
@@ -24,6 +28,7 @@ export type {
   ClientMapEvents, ServerMapEvents,
   ClientCombatEvents, ServerCombatEvents,
   ClientChatEvents, ServerChatEvents,
+  ClientDrawingEvents, ServerDrawingEvents,
 } from './types/socket-events.js';
 
 // Utils

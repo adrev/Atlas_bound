@@ -3,9 +3,87 @@ import { useMapStore } from '../../stores/useMapStore';
 import { useCharacterStore } from '../../stores/useCharacterStore';
 import { useSessionStore } from '../../stores/useSessionStore';
 import { useCombatStore } from '../../stores/useCombatStore';
-import { emitRoll, emitCharacterUpdate, emitTokenUpdate, emitSystemMessage, emitTokenAdd } from '../../socket/emitters';
+import { emitRoll, emitCharacterUpdate, emitTokenUpdate, emitSystemMessage, emitTokenAdd, emitUseAction, emitDash, emitSpellCastAttempt, emitAttackHitAttempt } from '../../socket/emitters';
+import type { ActionType } from '@dnd-vtt/shared';
+
+/**
+ * Map a spell's castingTime string or a weapon's use context to the
+ * action economy slot it consumes. Returns null for spells/effects
+ * that don't fit the standard slots (rituals, 1 minute casts, etc.)
+ * so we don't silently burn the main Action.
+ */
+function actionSlotForCastingTime(castingTime: string | undefined | null): ActionType | null {
+  if (!castingTime) return 'action';
+  const t = castingTime.toLowerCase();
+  if (t.includes('bonus action')) return 'bonusAction';
+  if (t.includes('reaction')) return 'reaction';
+  if (t.includes('1 action') || t === 'action') return 'action';
+  // Rituals, minutes, hours — not a combat action.
+  return null;
+}
+
+/**
+ * Check whether the current combatant still has the named slot
+ * available this turn. Returns true if:
+ *   • combat is inactive (free-roam rules — anything goes), OR
+ *   • the token isn't the current combatant (DM moving other tokens), OR
+ *   • the slot hasn't been spent yet.
+ * Returns false and shows a toast if the slot is already spent. Used
+ * by the weapon / spell / dash resolvers to hard-block second actions.
+ */
+function canSpendActionSlot(casterTokenId: string, slot: ActionType, label: string): boolean {
+  const combat = useCombatStore.getState();
+  if (!combat.active) return true;
+  const current = combat.combatants[combat.currentTurnIndex];
+  if (!current || current.tokenId !== casterTokenId) return true;
+  const spent =
+    slot === 'action' ? combat.actionEconomy.action :
+    slot === 'bonusAction' ? combat.actionEconomy.bonusAction :
+    combat.actionEconomy.reaction;
+  if (!spent) return true;
+  showActionDeniedToast(slot, label);
+  return false;
+}
+
+/**
+ * Tiny transient overlay shown when an action is rejected because the
+ * slot is already spent this turn. Mirrors the movement-denied toast
+ * style so both look native to the canvas.
+ */
+function showActionDeniedToast(slot: ActionType, label: string) {
+  const slotName = slot === 'action' ? 'Action' : slot === 'bonusAction' ? 'Bonus Action' : 'Reaction';
+  const hint = slot === 'reaction'
+    ? 'Reactions reset at the start of your next turn.'
+    : 'End your turn to reset the action economy.';
+  const existing = document.getElementById('action-denied-toast');
+  if (existing) existing.remove();
+  const toast = document.createElement('div');
+  toast.id = 'action-denied-toast';
+  toast.innerHTML = `
+    <div style="font-size:13px;font-weight:700;color:#c53131;margin-bottom:4px">
+      ${slotName} already spent
+    </div>
+    <div style="font-size:11px;color:#ccc;line-height:1.5">
+      You've already used your ${slotName} this turn (${label}).<br/>
+      ${hint}
+    </div>
+  `;
+  Object.assign(toast.style, {
+    position: 'fixed', top: '18%', left: '50%',
+    transform: 'translateX(-50%)',
+    padding: '12px 18px', background: '#1a1a1a', color: '#eee',
+    borderRadius: '8px', border: '2px solid #c53131',
+    zIndex: '99999', minWidth: '260px', maxWidth: '360px',
+    boxShadow: '0 6px 20px rgba(0,0,0,0.6)',
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+  });
+  document.body.appendChild(toast);
+  setTimeout(() => toast.remove(), 2800);
+}
 import { enrichSpellFromDescription } from '../../utils/spell-enrich';
 import { effectiveSpellSaveDC, effectiveSpellAttackBonus } from '../../utils/spell-stats';
+import { InfoTooltip } from '../ui/InfoTooltip';
+import { lookupCombatAction, lookupCondition, lookupWeaponProperty } from '../../utils/rules-text';
 import {
   getOwnRollModifiers,
   getTargetRollModifiers,
@@ -150,6 +228,11 @@ export function TokenActionPanel() {
   const allCharacters = useCharacterStore((s) => s.allCharacters);
   const isDM = useSessionStore((s) => s.isDM);
   const userId = useSessionStore((s) => s.userId);
+  // Subscribe to the combat store so the Combat Actions section
+  // re-renders when turns advance or the DM ends combat.
+  const combatActive = useCombatStore((s) => s.active);
+  const currentTurnIdx = useCombatStore((s) => s.currentTurnIndex);
+  const currentCombatantId = useCombatStore((s) => s.combatants[s.currentTurnIndex]?.tokenId);
 
   const isTargeting = useMapStore((s) => s.isTargeting);
   const targetingData = useMapStore((s) => s.targetingData);
@@ -412,14 +495,21 @@ export function TokenActionPanel() {
           });
         }
 
-        // --- Phase 4: Concentration ---
-        if (spell.isConcentration && casterChar) {
-          const currentConc = casterChar.concentratingOn;
-          if (currentConc) {
-            emitSystemMessage(`✦ ${casterName} drops concentration on ${currentConc}`);
+        // --- Gate: check that the required action slot is still
+        // available BEFORE we spend the spell slot / trigger animations.
+        // If the player has already taken their Action this turn and
+        // tries to cast another Action-cost spell, we bail out so they
+        // don't lose their slot on a refused cast.
+        {
+          const precheckSlot = actionSlotForCastingTime(spell.castingTime);
+          if (precheckSlot && !canSpendActionSlot(
+            currentTargeting.casterTokenId,
+            precheckSlot,
+            spell.name,
+          )) {
+            useMapStore.getState().cancelTargetingMode();
+            return;
           }
-          emitCharacterUpdate(casterId, { concentratingOn: spell.name });
-          useCharacterStore.getState().applyRemoteUpdate(casterId, { concentratingOn: spell.name });
         }
 
         // --- Phase 2: Spell Slot Consumption (with upcast fallback) ---
@@ -430,6 +520,9 @@ export function TokenActionPanel() {
         // check: the GLOBAL toggle (dmIgnoreSpellSlots), and a PER-SPELL
         // flag (spell.dmOverride) for granting individual story-moment
         // spells without unlocking everything.
+        //
+        // ORDER MATTERS: spell slot is consumed BEFORE the counterspell
+        // window (per RAW, a counterspelled spell still burns its slot).
         let castAtLevel = spell.level;
         let dmOverride = false;
         if (spell.level > 0 && casterChar) {
@@ -461,6 +554,52 @@ export function TokenActionPanel() {
         }
         // Stash for the header below
         (spell as any).__dmOverride = dmOverride;
+
+        // --- Action economy consumption ---
+        // Per RAW, the Action is spent regardless of whether the spell
+        // is counterspelled. Consume it BEFORE the counterspell window
+        // so a counterspelled cast still uses up the slot.
+        {
+          const slot = actionSlotForCastingTime(spell.castingTime);
+          const inCombat = useCombatStore.getState().active;
+          const current = useCombatStore.getState().combatants[useCombatStore.getState().currentTurnIndex];
+          const isCurrentCaster = current?.tokenId === currentTargeting.casterTokenId;
+          if (slot && inCombat && isCurrentCaster) {
+            emitUseAction(slot);
+          }
+        }
+
+        // --- Counterspell window ---
+        // Broadcast the cast attempt and pause briefly so any other
+        // player with Counterspell prepared can respond. If they
+        // respond with a counterspell, abort the cast — slot and
+        // action are already gone (correct per RAW).
+        if (spell.level > 0) {
+          const counterspelled = await broadcastCastAndAwaitCounterspell({
+            casterTokenId: currentTargeting.casterTokenId,
+            casterName,
+            spellName: spell.name,
+            spellLevel: castAtLevel,
+          });
+          if (counterspelled) {
+            emitSystemMessage(`✦ ${casterName} casts ${spell.name} — COUNTERSPELLED, slot wasted.`);
+            useMapStore.getState().cancelTargetingMode();
+            return;
+          }
+        }
+
+        // --- Phase 4: Concentration ---
+        // Set ONLY after the counterspell check passes — a
+        // counterspelled spell never takes effect, so it shouldn't
+        // change concentration state.
+        if (spell.isConcentration && casterChar) {
+          const currentConc = casterChar.concentratingOn;
+          if (currentConc) {
+            emitSystemMessage(`✦ ${casterName} drops concentration on ${currentConc}`);
+          }
+          emitCharacterUpdate(casterId, { concentratingOn: spell.name });
+          useCharacterStore.getState().applyRemoteUpdate(casterId, { concentratingOn: spell.name });
+        }
 
         // --- Resolve damage dice and spell properties from description ---
         // Strip HTML for clean parsing
@@ -520,6 +659,24 @@ export function TokenActionPanel() {
           }
         }
 
+        // --- Phase 5b: Upcast scaling (Fireball +1d6/level, etc.) ---
+        // Only relevant for leveled spells cast above their base level.
+        // Reads the spell description for "the damage increases by Xd6
+        // for each slot level above Yth" and adds the bonus dice.
+        let upcastNote: string | null = null;
+        if (spell.level > 0 && damageDice && castAtLevel > spell.level) {
+          const upcast = applyUpcastDamage(
+            damageDice,
+            spell.description || '',
+            spell.level,
+            castAtLevel,
+          );
+          if (upcast.bonusDice) {
+            damageDice = upcast.dice;
+            upcastNote = `   Upcast: ${upcast.bonusDice} (${upcast.extraLevels} level${upcast.extraLevels !== 1 ? 's' : ''} above ${spell.level})`;
+          }
+        }
+
         // Check if spell allows half damage on save
         const desc = (spell.description || '').toLowerCase();
         const halfOnSave = desc.includes('half as much damage') || desc.includes('half damage') || desc.includes('save for half');
@@ -544,6 +701,7 @@ export function TokenActionPanel() {
             headerLines.push(`   Spent level ${spell.level} slot`);
           }
         }
+        if (upcastNote) headerLines.push(upcastNote);
         delete (spell as any).__dmOverride;
         const resultParts: string[] = [];
         const dmgType = (spell.damageType || '').toLowerCase();
@@ -569,16 +727,42 @@ export function TokenActionPanel() {
             : {};
           const targetDexMod = abilityModifier((targetScores2 as any).dex || 10);
           const acResult = effectiveAC(baseAC, targetConditions, targetDexMod);
-          const targetAC = acResult.value;
+          let targetAC = acResult.value;
           // Crit on nat 20 OR forced crit (Paralyzed/Unconscious melee within 5ft)
-          const isHit = atkResult.isCritical || (!atkResult.isFumble && atkResult.total >= targetAC);
-          const isCrit = atkResult.isCritical || (isHit && atkResult.forceCritOnHit && resolvedAttackType === 'melee');
+          let isHit = atkResult.isCritical || (!atkResult.isFumble && atkResult.total >= targetAC);
+          let isCrit = atkResult.isCritical || (isHit && atkResult.forceCritOnHit && resolvedAttackType === 'melee');
+
+          // Shield reaction window — if the attack would hit, give
+          // the target a chance to cast Shield. If they do, recompute
+          // hit with AC+5 and (if it now misses) flip the result.
+          // Early-out for NPC targets (no one to cast Shield) so we
+          // don't pause every enemy attack by 1.5 s.
+          let shieldNote = '';
+          if (isHit && !atkResult.isCritical && targetToken.ownerUserId) {
+            const shielded = await broadcastHitAndAwaitShield({
+              targetTokenId: targetToken.id,
+              attackerName: casterName,
+              attackTotal: atkResult.total,
+              currentAC: targetAC,
+            });
+            if (shielded) {
+              targetAC += 5;
+              const newHit = atkResult.total >= targetAC;
+              if (!newHit) {
+                isHit = false;
+                isCrit = false;
+                shieldNote = ' [Shield +5 AC → MISS]';
+              } else {
+                shieldNote = ' [Shield +5 AC → still hits]';
+              }
+            }
+          }
 
           const hitIcon = isCrit ? '💥' : isHit ? '✓' : '✗';
           // Show breakdown so the user can see condition effects in the math
           const acNote = acResult.notes.length > 0 ? ` (base ${acResult.base}${acResult.notes.map(n => ' ' + n).join('')})` : '';
           const modNote = combined.notes.length > 0 ? ` [${combined.notes.join(', ')}]` : '';
-          resultParts.push(`${hitIcon} Attack ${atkResult.breakdown} vs AC ${targetAC}${acNote} → ${isCrit ? 'CRIT' : isHit ? 'HIT' : 'MISS'}${modNote}`);
+          resultParts.push(`${hitIcon} Attack ${atkResult.breakdown} vs AC ${targetAC}${acNote} → ${isCrit ? 'CRIT' : isHit ? 'HIT' : 'MISS'}${modNote}${shieldNote}`);
 
           if (isHit && damageDice && effectiveCharId) {
             const finalDice = isCrit ? damageDice.replace(/(\d+)d/, (_: string, n: string) => `${parseInt(n) * 2}d`) : damageDice;
@@ -662,11 +846,14 @@ export function TokenActionPanel() {
               setTimeout(() => {
                 const targetTokenData = useMapStore.getState().tokens[targetToken.id];
                 if (targetTokenData) {
-                  // Add to local store immediately for visual feedback
+                  // Local-only visual feedback. We intentionally do NOT
+                  // call emitTokenUpdate for conditions anymore — the
+                  // server now rejects self-condition updates from
+                  // non-DMs. The authoritative condition comes back via
+                  // condition:apply-with-meta's broadcast.
                   const existingConditions = targetTokenData.conditions || [];
                   const newConditions = [...new Set([...existingConditions, ...conditions])] as any;
-                  emitTokenUpdate(targetToken.id, { conditions: newConditions });
-                  // ALSO register metadata with the server for duration tracking
+                  useMapStore.getState().updateToken(targetToken.id, { conditions: newConditions });
                   for (const condName of conditions) {
                     emitApplyConditionWithMeta({
                       targetTokenId: targetToken.id,
@@ -728,9 +915,14 @@ export function TokenActionPanel() {
             resultParts.push(`now ${buffs.join(', ')}`);
             const targetTokenData = useMapStore.getState().tokens[targetToken.id];
             if (targetTokenData) {
+              // Local optimistic update only — the server broadcasts
+              // the authoritative condition via the condition:apply-
+              // with-meta handler. Never call emitTokenUpdate for
+              // conditions on the caster's own token — the server
+              // rejects it for non-DMs now.
               const existing = targetTokenData.conditions || [];
               const newConds = [...new Set([...existing, ...buffs])] as any;
-              emitTokenUpdate(targetToken.id, { conditions: newConds });
+              useMapStore.getState().updateToken(targetToken.id, { conditions: newConds });
               const durMeta = getSpellDurationMeta(spell.name);
               const currentRound = useCombatStore.getState().roundNumber || 0;
               const expiresAfterRound = currentRound > 0
@@ -758,6 +950,26 @@ export function TokenActionPanel() {
         const atk = currentTargeting.weapon || currentTargeting.action;
         const atkBonus = atk.attack_bonus ?? 0;
         const dmgDice = atk.damage_dice || atk.damage || '1d6';
+
+        // Weapon attacks and generic creature actions consume the Action
+        // slot by default. Off-hand weapon attacks (two-weapon fighting)
+        // override to bonusAction via __actionSlot on the atk object.
+        // Multiattack is still one Action — it counts as a single Attack
+        // action in 5e. We GATE the attack behind canSpendActionSlot so
+        // a second action-cost attack this turn is refused outright.
+        const atkSlot: ActionType = (atk as any).__actionSlot ?? 'action';
+        if (!canSpendActionSlot(currentTargeting.casterTokenId, atkSlot, atk.name)) {
+          useMapStore.getState().cancelTargetingMode();
+          return;
+        }
+        {
+          const inCombatA = useCombatStore.getState().active;
+          const currentA = useCombatStore.getState().combatants[useCombatStore.getState().currentTurnIndex];
+          const isCurrentAttacker = currentA?.tokenId === currentTargeting.casterTokenId;
+          if (inCombatA && isCurrentAttacker) {
+            emitUseAction(atkSlot);
+          }
+        }
         // Detect Thrown property — we'll drop the weapon from inventory + spawn
         // an item token at the target's location after the attack resolves.
         const wIsThrown = ((atk.properties as string[] | undefined) || []).some(p => p.toLowerCase() === 'thrown');
@@ -779,6 +991,56 @@ export function TokenActionPanel() {
         const wAttackerOwn = getOwnRollModifiers(wCasterConds);
         const wTargetIncoming = getTargetRollModifiers(wTargetConds);
         const wCombined = combineAttackModifiers(wAttackerOwn, wTargetIncoming);
+
+        // Ranged attack disadvantage when an enemy is within 5 ft.
+        // Per RAW: "You have disadvantage on a ranged attack roll if
+        // you are within 5 feet of a hostile creature who can see you
+        // and who isn't incapacitated."
+        const wIsRangedWeapon = ((atk.properties as string[] | undefined) || [])
+          .some((p) => /(range|ammunition|thrown)/i.test(p));
+        const wIsActuallyRangedShot = wIsRangedWeapon && !((atk.properties as string[] | undefined) || []).includes('Melee');
+        if (wIsActuallyRangedShot && wCasterToken) {
+          const gridSize = useMapStore.getState().currentMap?.gridSize ?? 70;
+          const allTokens = useMapStore.getState().tokens;
+          let hasAdjacentEnemy = false;
+          // Two-team model: PC tokens (any non-null ownerUserId) are
+          // all on one side; NPC tokens (null ownerUserId) are on the
+          // other. Players standing next to each other don't impose
+          // ranged disadvantage.
+          const casterIsPC = !!(wCasterToken as any).ownerUserId;
+          for (const enemy of Object.values(allTokens)) {
+            if (!enemy || (enemy as any).id === (wCasterToken as any).id) continue;
+            const enemyIsPC = !!(enemy as any).ownerUserId;
+            if (enemyIsPC === casterIsPC) continue;
+            const ec = ((enemy as any).conditions || []) as string[];
+            if (ec.includes('incapacitated') || ec.includes('unconscious')) continue;
+            // Edge-to-edge distance ≤ 5 ft (1 grid cell)
+            const eSize = (enemy as any).size || 1;
+            const cSize = (wCasterToken as any).size || 1;
+            const ecx = (enemy as any).x + (gridSize * eSize) / 2;
+            const ecy = (enemy as any).y + (gridSize * eSize) / 2;
+            const ccx = (wCasterToken as any).x + (gridSize * cSize) / 2;
+            const ccy = (wCasterToken as any).y + (gridSize * cSize) / 2;
+            const dx = Math.max(0, Math.abs(ecx - ccx) - (eSize * gridSize) / 2 - (cSize * gridSize) / 2);
+            const dy = Math.max(0, Math.abs(ecy - ccy) - (eSize * gridSize) / 2 - (cSize * gridSize) / 2);
+            const edgeDist = Math.max(dx, dy);
+            if (edgeDist <= gridSize + 1) {
+              hasAdjacentEnemy = true;
+              break;
+            }
+          }
+          if (hasAdjacentEnemy) {
+            // Inject disadvantage. If we already had advantage from
+            // some other source, they cancel out per 5e RAW.
+            if (wCombined.attackAdvantage === 'advantage') {
+              wCombined.attackAdvantage = 'normal';
+            } else {
+              wCombined.attackAdvantage = 'disadvantage';
+            }
+            wCombined.notes.push('Ranged in melee (disadv)');
+          }
+        }
+
         const wAtkResult = rollAttackWithModifiers(atkBonus, wCombined);
 
         // Effective AC accounts for Hasted / Shield / Mage Armor / etc.
@@ -787,10 +1049,34 @@ export function TokenActionPanel() {
           : {};
         const wTargetDex = abilityModifier((wTargetScores as any).dex || 10);
         const wAcResult = effectiveAC(targetChar?.armorClass ?? 10, wTargetConds, wTargetDex);
-        const wTargetAC = wAcResult.value;
-        const wIsHit = wAtkResult.isCritical || (!wAtkResult.isFumble && wAtkResult.total >= wTargetAC);
+        let wTargetAC = wAcResult.value;
+        let wIsHit = wAtkResult.isCritical || (!wAtkResult.isFumble && wAtkResult.total >= wTargetAC);
         const wIsMelee = (atk.properties as string[] | undefined)?.includes('Melee');
-        const wIsCrit = wAtkResult.isCritical || (wIsHit && wAtkResult.forceCritOnHit && wIsMelee);
+        let wIsCrit = wAtkResult.isCritical || (wIsHit && wAtkResult.forceCritOnHit && wIsMelee);
+
+        // Shield reaction window for weapon attacks too. Skip for
+        // NPC targets to avoid the 1.5 s pause when monsters fight
+        // each other.
+        let wShieldNote = '';
+        if (wIsHit && !wAtkResult.isCritical && targetToken.ownerUserId) {
+          const shielded = await broadcastHitAndAwaitShield({
+            targetTokenId: targetToken.id,
+            attackerName: currentTargeting.casterName,
+            attackTotal: wAtkResult.total,
+            currentAC: wTargetAC,
+          });
+          if (shielded) {
+            wTargetAC += 5;
+            const newHit = wAtkResult.total >= wTargetAC;
+            if (!newHit) {
+              wIsHit = false;
+              wIsCrit = false;
+              wShieldNote = ' [Shield +5 AC → MISS]';
+            } else {
+              wShieldNote = ' [Shield +5 AC → still hits]';
+            }
+          }
+        }
 
         // Build the consolidated chat message (same shape as spell results)
         const wHeader = `⚔ ${currentTargeting.casterName} → ${targetToken.name}: ${atk.name}`;
@@ -798,7 +1084,7 @@ export function TokenActionPanel() {
         const wAcNote = wAcResult.notes.length > 0 ? ` (base ${wAcResult.base}${wAcResult.notes.map(n => ' ' + n).join('')})` : '';
         const wModNote = wCombined.notes.length > 0 ? ` [${wCombined.notes.join(', ')}]` : '';
         const wParts: string[] = [];
-        wParts.push(`${wHitIcon} Attack ${wAtkResult.breakdown} vs AC ${wTargetAC}${wAcNote} → ${wIsCrit ? 'CRIT' : wIsHit ? 'HIT' : 'MISS'}${wModNote}`);
+        wParts.push(`${wHitIcon} Attack ${wAtkResult.breakdown} vs AC ${wTargetAC}${wAcNote} → ${wIsCrit ? 'CRIT' : wIsHit ? 'HIT' : 'MISS'}${wModNote}${wShieldNote}`);
 
         if (wIsHit && effectiveCharId) {
           const wFinalDice = wIsCrit ? dmgDice.replace(/(\d+)d/, (_: string, n: string) => `${parseInt(n) * 2}d`) : dmgDice;
@@ -1036,6 +1322,13 @@ export function TokenActionPanel() {
   const canAct = isDM || isOwner;
   const isNPC = !token.ownerUserId || (character?.userId === 'npc');
 
+  // The Combat Actions section only shows when the viewed token is
+  // actually the active combatant — so non-current players can't use
+  // it to burn actions out-of-turn. `currentTurnIdx` is in the
+  // subscription deps so this re-evaluates on every turn advance.
+  void currentTurnIdx; // referenced only to subscribe
+  const isCurrentCombatant = combatActive && currentCombatantId === selectedTokenId;
+
   const scores = character ? parse<Record<string, number>>(character.abilityScores, {}) : {};
   const baseHp = character?.hitPoints ?? compendiumData?.hitPoints ?? 0;
   const hp = localHp !== null ? localHp : baseHp;
@@ -1223,11 +1516,15 @@ export function TokenActionPanel() {
           />
         )}
 
-        {/* Conditions */}
-        {(conditions.length > 0 || canAct) && (
+        {/* Conditions — players can SEE theirs, only the DM can add or
+            remove. A player can still acquire a condition by casting a
+            spell on themselves (e.g. Haste target=self) because that
+            flows through the cast resolver, which the DM-only restriction
+            here doesn't block. */}
+        {(conditions.length > 0 || isDM) && (
           <ConditionsBar
             conditions={conditions}
-            canEdit={canAct}
+            canEdit={isDM}
             onToggle={(cond) => {
               const current = [...conditions] as string[];
               const updated = current.includes(cond)
@@ -1343,6 +1640,93 @@ export function TokenActionPanel() {
         )}
         {/* (conditions moved to header) */}
 
+        {/* Combat Actions — the seven core 5e "pick an Action" choices
+            that every combatant gets, whether they're a spellcaster or
+            not. Rendered only during combat for the current combatant
+            so they don't clutter the panel outside of turns. Each
+            button is gated by canSpendActionSlot — pressing Dash twice
+            pops the denial toast. */}
+        {canAct && combatActive && isCurrentCombatant && (
+          <Section title="Combat Actions">
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+              <CombatActionBtn
+                action="Dash"
+                color="#5ba3d5"
+                onClick={() => {
+                  if (!canSpendActionSlot(selectedTokenId!, 'action', 'Dash')) return;
+                  emitDash();
+                }}
+              />
+              <CombatActionBtn
+                action="Dodge"
+                color="#a07bc2"
+                onClick={() => {
+                  if (!canSpendActionSlot(selectedTokenId!, 'action', 'Dodge')) return;
+                  const current = [...(token.conditions || [])] as string[];
+                  if (!current.includes('dodging')) current.push('dodging');
+                  useMapStore.getState().updateToken(token.id, { conditions: current as any });
+                  emitUseAction('action');
+                  emitSystemMessage(`🛡 ${token.name} takes the Dodge action — attacks against have disadvantage until next turn.`);
+                }}
+              />
+              <CombatActionBtn
+                action="Disengage"
+                color="#4fc7ae"
+                onClick={() => {
+                  if (!canSpendActionSlot(selectedTokenId!, 'action', 'Disengage')) return;
+                  const current = [...(token.conditions || [])] as string[];
+                  if (!current.includes('disengaged')) current.push('disengaged');
+                  useMapStore.getState().updateToken(token.id, { conditions: current as any });
+                  emitUseAction('action');
+                  emitSystemMessage(`💨 ${token.name} takes the Disengage action — no Opportunity Attacks from movement this turn.`);
+                }}
+              />
+              <CombatActionBtn
+                action="Hide"
+                color="#808080"
+                onClick={() => {
+                  if (!canSpendActionSlot(selectedTokenId!, 'action', 'Hide')) return;
+                  const dex = mergedScores.dex || 10;
+                  const stealthMod = Math.floor((dex - 10) / 2) + (profBonus || 0);
+                  emitRoll(`1d20+${stealthMod}`, `${token.name} Hide (Stealth)`);
+                  emitUseAction('action');
+                }}
+              />
+              <CombatActionBtn
+                action="Search"
+                color="#d4a843"
+                onClick={() => {
+                  if (!canSpendActionSlot(selectedTokenId!, 'action', 'Search')) return;
+                  const wis = mergedScores.wis || 10;
+                  const perMod = Math.floor((wis - 10) / 2) + (profBonus || 0);
+                  emitRoll(`1d20+${perMod}`, `${token.name} Search (Perception)`);
+                  emitUseAction('action');
+                }}
+              />
+              <CombatActionBtn
+                action="Help"
+                color="#5cb77a"
+                onClick={() => {
+                  if (!canSpendActionSlot(selectedTokenId!, 'action', 'Help')) return;
+                  emitUseAction('action');
+                  emitSystemMessage(`🤝 ${token.name} takes the Help action — an ally of their choice has advantage on their next ability check or attack.`);
+                }}
+              />
+              <CombatActionBtn
+                action="Ready"
+                color="#d18b4e"
+                onClick={() => {
+                  if (!canSpendActionSlot(selectedTokenId!, 'action', 'Ready')) return;
+                  if (!canSpendActionSlot(selectedTokenId!, 'reaction', 'Ready (reserves Reaction)')) return;
+                  emitUseAction('action');
+                  emitUseAction('reaction');
+                  emitSystemMessage(`⏳ ${token.name} takes the Ready action — reserving a trigger for this round.`);
+                }}
+              />
+            </div>
+          </Section>
+        )}
+
         {/* Compendium Actions (for creatures) */}
         {compActions.length > 0 && (
           <Section title="Actions">
@@ -1378,6 +1762,7 @@ export function TokenActionPanel() {
               const isFinesse = props.some(p => p.toLowerCase().includes('finesse'));
               const isRanged = props.some(p => p.toLowerCase().includes('range') || p.toLowerCase().includes('ammunition'));
               const isThrown = props.some(p => p.toLowerCase().includes('thrown'));
+              const isLight = props.some(p => p.toLowerCase() === 'light');
               const mb = (w as any).magicBonus || 0;
               const atkMod = (isFinesse ? Math.max(strMod, dexMod) : isRanged ? dexMod : strMod) + profBonus + mb;
               const dmgMod = isFinesse ? Math.max(strMod, dexMod) : isRanged ? dexMod : strMod;
@@ -1390,6 +1775,20 @@ export function TokenActionPanel() {
                       <ActionBtn label={`+${atkMod}`} color={C.red} onClick={() => {
                         useMapStore.getState().startTargetingMode({
                           weapon: { name: `${w.name} (Melee)`, attack_bonus: atkMod, damage_dice: `${w.damage}+${dmgMod}`, properties: ['Melee'] },
+                          casterTokenId: selectedTokenId!, casterName: token.name,
+                        });
+                      }} />
+                    )}
+                    {canAct && !isRanged && isLight && (
+                      <ActionBtn label={`Off+${atkMod}`} color={C.gold} onClick={() => {
+                        useMapStore.getState().startTargetingMode({
+                          weapon: {
+                            name: `${w.name} (Off-hand)`,
+                            attack_bonus: atkMod,
+                            damage_dice: String(w.damage), // no ability mod on off-hand
+                            properties: ['Melee', 'Light'],
+                            __actionSlot: 'bonusAction',
+                          },
                           casterTokenId: selectedTokenId!, casterName: token.name,
                         });
                       }} />
@@ -1415,8 +1814,12 @@ export function TokenActionPanel() {
                   <div style={{ fontSize: 9, color: C.textMuted, marginTop: 1, lineHeight: 1.3 }}>
                     {isRanged ? 'Ranged' : 'Melee'} Weapon Attack: +{atkMod} to hit{isRanged && w.range ? `, range ${w.range} ft.` : ', reach 5 ft.'}
                     {w.damage && ` Hit: ${w.damage}+${dmgMod} ${w.damageType}`}
-                    {props.length > 0 && `. ${props.join(', ')}`}
                   </div>
+                  {props.length > 0 && (
+                    <div style={{ marginTop: 2 }}>
+                      <WeaponProperties properties={props} />
+                    </div>
+                  )}
                 </div>
               );
             })}
@@ -1431,6 +1834,11 @@ export function TokenActionPanel() {
               const isFinesse = props.some((p: string) => p.toLowerCase().includes('finesse'));
               const isRanged = props.some((p: string) => p.toLowerCase().includes('range'));
               const isThrown = props.some((p: string) => p.toLowerCase().includes('thrown'));
+              // Two-Weapon Fighting requires the "Light" property on
+              // both weapons. Off-hand attacks are a BONUS ACTION and
+              // skip the ability modifier on damage (unless you have
+              // a feature that changes this).
+              const isLight = props.some((p: string) => p.toLowerCase() === 'light');
               const meleeAtkMod = (isFinesse ? Math.max(strMod, dexMod) : strMod) + profBonus;
               const rangedAtkMod = (isFinesse ? Math.max(strMod, dexMod) : dexMod) + profBonus;
               const meleeDmgMod = isFinesse ? Math.max(strMod, dexMod) : strMod;
@@ -1446,6 +1854,26 @@ export function TokenActionPanel() {
                       <ActionBtn label={`Melee +${meleeAtkMod} (5ft)`} color={C.red} onClick={() => {
                         useMapStore.getState().startTargetingMode({
                           weapon: { ...w, name: `${w.name} (Melee)`, attack_bonus: meleeAtkMod, damage_dice: `${dmgDice}+${meleeDmgMod}`, properties: ['Melee'] },
+                          casterTokenId: selectedTokenId!, casterName: token.name,
+                        });
+                      }} />
+                    )}
+
+                    {/* Off-hand attack (Two-Weapon Fighting) — uses
+                        bonus action, no damage modifier. Shown only on
+                        Light melee weapons. */}
+                    {!isRanged && isLight && canAct && (
+                      <ActionBtn label={`Off-hand (BA)`} color={C.gold} onClick={() => {
+                        useMapStore.getState().startTargetingMode({
+                          weapon: {
+                            ...w,
+                            name: `${w.name} (Off-hand)`,
+                            attack_bonus: meleeAtkMod,
+                            // No ability modifier on damage for off-hand
+                            damage_dice: dmgDice,
+                            properties: ['Melee', 'Light'],
+                            __actionSlot: 'bonusAction',
+                          },
                           casterTokenId: selectedTokenId!, casterName: token.name,
                         });
                       }} />
@@ -1485,6 +1913,12 @@ export function TokenActionPanel() {
                     {/* Direct damage roll (no targeting) */}
                     <ActionBtn label={`${dmgDice}`} color={C.textMuted} onClick={() => emitRoll(`${dmgDice}+${meleeDmgMod}`, `${token.name} ${w.name} DMG`)} />
                   </div>
+                  {/* Weapon properties with hover tooltips */}
+                  {props.length > 0 && (
+                    <div style={{ marginTop: 2 }}>
+                      <WeaponProperties properties={props} />
+                    </div>
+                  )}
                 </div>
               );
             })}
@@ -1854,6 +2288,16 @@ async function resolveAreaSpell(
 
   const meta = await parseSpellMeta(spell, casterChar?.level ?? 1);
 
+  // --- Gate the whole cast behind the action economy slot check.
+  // If the slot is already spent we refuse the cast BEFORE burning the
+  // spell slot. Applies to AoE / self-cast spells too.
+  {
+    const precheckSlot = actionSlotForCastingTime(spell.castingTime);
+    if (precheckSlot && !canSpendActionSlot(casterTokenId, precheckSlot, spell.name)) {
+      return;
+    }
+  }
+
   // --- Spell slot consumption (with upcast fallback) ---
   // D&D 5e: a spell of level N can be cast using ANY slot of level N or
   // higher. The caster picks. We auto-pick the lowest available slot ≥ N
@@ -1893,6 +2337,35 @@ async function resolveAreaSpell(
     }
   }
 
+  // Action economy consumption — burn the slot BEFORE the
+  // counterspell window so a counterspelled cast still uses up the
+  // attacker's Action (per RAW). Mirrors the single-target path.
+  {
+    const slot = actionSlotForCastingTime(spell.castingTime);
+    const combatS = useCombatStore.getState();
+    const currentS = combatS.combatants[combatS.currentTurnIndex];
+    if (slot && combatS.active && currentS?.tokenId === casterTokenId) {
+      emitUseAction(slot);
+    }
+  }
+
+  // Counterspell window — broadcast and pause for AoE spells too.
+  // Slot AND action are already gone; only the spell's effects are
+  // canceled by a successful counterspell.
+  if (spell.level > 0) {
+    const castAtLevel = (spell as any).__castAtLevel ?? spell.level;
+    const counterspelled = await broadcastCastAndAwaitCounterspell({
+      casterTokenId,
+      casterName,
+      spellName: spell.name,
+      spellLevel: castAtLevel,
+    });
+    if (counterspelled) {
+      emitSystemMessage(`✦ ${casterName} casts ${spell.name} — COUNTERSPELLED, slot wasted.`);
+      return;
+    }
+  }
+
   // Default origin to caster's position
   const aoeOrigin = origin ?? { x: casterX, y: casterY };
   const allTokens = mapState.tokens;
@@ -1909,12 +2382,31 @@ async function resolveAreaSpell(
   );
 
   // Stash for unified per-token loop below
-  const damageDice = meta.damageDice;
+  let damageDice = meta.damageDice;
   const resolvedSavingThrow = meta.savingThrow;
   const halfOnSave = meta.halfOnSave;
   const pushDistance = meta.pushDistance;
   const aoeShape = meta.aoeShape;
   const aoeRadius = meta.aoeRadius;
+
+  const castAtLevel = (spell as any).__castAtLevel ?? spell.level;
+
+  // Apply upcast damage scaling for AoE spells too. Reads the
+  // description for "+Xd6 for each slot level above Yth" and bumps
+  // the dice count accordingly.
+  let upcastNote: string | null = null;
+  if (spell.level > 0 && damageDice && castAtLevel > spell.level) {
+    const upcast = applyUpcastDamage(
+      damageDice,
+      spell.description || '',
+      spell.level,
+      castAtLevel,
+    );
+    if (upcast.bonusDice) {
+      damageDice = upcast.dice;
+      upcastNote = `   Upcast: ${upcast.bonusDice} (${upcast.extraLevels} level${upcast.extraLevels !== 1 ? 's' : ''} above ${spell.level})`;
+    }
+  }
 
   // Build the cast announcement header for the consolidated message.
   const shapeLabel = aoeShape === 'cube' ? 'Cube' : aoeShape === 'cone' ? 'Cone' : aoeShape === 'line' ? 'Line' : 'Radius';
@@ -1922,7 +2414,6 @@ async function resolveAreaSpell(
     `✦ ${casterName} casts ${spell.name}`,
     `   ${aoeRadius}-ft ${shapeLabel} • ${affectedTokens.length} creature${affectedTokens.length !== 1 ? 's' : ''} in area`,
   ];
-  const castAtLevel = (spell as any).__castAtLevel ?? spell.level;
   const dmOverride = !!(spell as any).__dmOverride;
   if (spell.level > 0) {
     if (dmOverride) {
@@ -1933,6 +2424,7 @@ async function resolveAreaSpell(
       headerLines.push(`   Spent level ${spell.level} slot`);
     }
   }
+  if (upcastNote) headerLines.push(upcastNote);
   // Clean up the temporary markers so a re-cast doesn't see stale data
   delete (spell as any).__castAtLevel;
   delete (spell as any).__dmOverride;
@@ -2130,9 +2622,13 @@ async function resolveAreaSpell(
         setTimeout(() => {
           const targetTokenData = useMapStore.getState().tokens[aToken.id];
           if (targetTokenData) {
+            // Local optimistic update — the authoritative condition
+            // comes back from the server via the condition:apply-with-
+            // meta broadcast. Direct emitTokenUpdate is now blocked
+            // server-side when a non-DM targets their own token.
             const existingConditions = targetTokenData.conditions || [];
             const newConditions = [...new Set([...existingConditions, ...conditions])] as any;
-            emitTokenUpdate(aToken.id, { conditions: newConditions });
+            useMapStore.getState().updateToken(aToken.id, { conditions: newConditions });
             for (const condName of conditions) {
               emitApplyConditionWithMeta({
                 targetTokenId: aToken.id,
@@ -2161,6 +2657,125 @@ async function resolveAreaSpell(
  */
 async function castSelfSpell(spell: any, casterTokenId: string, casterName: string) {
   await resolveAreaSpell(spell, casterTokenId, casterName, null, 0);
+}
+
+/**
+ * Cast the Light / Dancing Lights cantrip. Enters a "place light"
+ * targeting mode: the player clicks anywhere on the map to drop a
+ * dedicated light marker token at that position. The marker emits a
+ * 20 ft bright / 40 ft dim radius and cuts the fog of war around
+ * itself (see FogLayer.tsx). Casting again dismisses the caster's
+ * existing light markers.
+ */
+async function castLightSpell(
+  spell: any,
+  casterTokenId: string,
+  casterName: string,
+  actionSlot: ActionType,
+) {
+  const mapState = useMapStore.getState();
+  const currentMap = mapState.currentMap;
+  if (!currentMap) return;
+
+  const casterToken = mapState.tokens[casterTokenId];
+  if (!casterToken) return;
+
+  // ── Dismissal path: caster already has light tokens out, toggle off.
+  // Light markers are identified by name prefix "Light (" / "Dancing
+  // Lights (" and the caster's name. This survives page refresh
+  // because it's serialized to the DB unlike a client-side tag.
+  const markerPrefix = `${spell.name} (${casterName})`;
+  const existing = Object.values(mapState.tokens).filter(
+    (t: any) => t.name === markerPrefix,
+  ) as any[];
+  if (existing.length > 0) {
+    const { emitTokenRemove } = await import('../../socket/emitters');
+    for (const mt of existing) {
+      emitTokenRemove(mt.id);
+    }
+    emitSystemMessage(`✦ ${casterName} ends ${spell.name}`);
+    const cbt = useCombatStore.getState();
+    const cur = cbt.combatants[cbt.currentTurnIndex];
+    if (cbt.active && cur?.tokenId === casterTokenId) {
+      emitUseAction(actionSlot);
+    }
+    return;
+  }
+
+  const gridSize = currentMap.gridSize || 70;
+
+  // Show a hint and listen for a single canvas click. We DON'T use
+  // EffectLayer aim mode because Light places a point light, not an
+  // AoE — the template wouldn't add anything visually useful.
+  const hintEl = document.createElement('div');
+  hintEl.textContent = `Cast ${spell.name} — click on the map to place a light. Esc to cancel.`;
+  Object.assign(hintEl.style, {
+    position: 'fixed', top: '12%', left: '50%', transform: 'translateX(-50%)',
+    padding: '10px 18px', background: 'rgba(0,0,0,0.85)', color: '#fff',
+    borderRadius: '8px', border: '2px solid #8cb4ff',
+    zIndex: '99999', fontSize: '13px', fontWeight: '600', fontFamily: 'sans-serif',
+    boxShadow: '0 4px 16px rgba(0,0,0,0.6)',
+  });
+  document.body.appendChild(hintEl);
+
+  function cleanup() {
+    window.removeEventListener('canvas-click', onCanvasClick as EventListener);
+    window.removeEventListener('keydown', onKey);
+    if (hintEl.parentNode) hintEl.remove();
+  }
+
+  function onKey(e: KeyboardEvent) {
+    if (e.key === 'Escape') {
+      cleanup();
+      emitSystemMessage(`✦ ${casterName} cancels ${spell.name}`);
+    }
+  }
+
+  async function onCanvasClick(e: Event) {
+    const detail = (e as CustomEvent).detail as { mapX: number; mapY: number };
+    cleanup();
+
+    // Spawn a dedicated light marker token at the click position.
+    // The marker is tiny (0.25 tile), invisible-looking (pure blue
+    // circle as the fallback image), and emits magic-blue light.
+    // Ownership goes to the caster so they can dismiss it even as a
+    // non-DM.
+    const { emitTokenAdd } = await import('../../socket/emitters');
+    emitTokenAdd({
+      mapId: currentMap.id,
+      characterId: null,
+      // Named with the caster so the dismiss path can find it after
+      // refresh without a custom tag column.
+      name: markerPrefix,
+      x: detail.mapX - (gridSize * 0.125),
+      y: detail.mapY - (gridSize * 0.125),
+      size: 0.25,
+      imageUrl: null,
+      color: '#8cb4ff',
+      layer: 'token',
+      visible: true,
+      hasLight: true,
+      lightRadius: gridSize * 4,    // 20 ft bright
+      lightDimRadius: gridSize * 8, // 40 ft total
+      lightColor: '#8cb4ff',
+      conditions: [],
+      ownerUserId: (casterToken as any).ownerUserId ?? null,
+    });
+
+    emitSystemMessage(
+      `✦ ${casterName} casts ${spell.name} — a floating mote of magical light blooms at the chosen spot, illuminating 20 ft around it.`,
+    );
+
+    // Burn the Action slot if we're in combat
+    const cbt = useCombatStore.getState();
+    const cur = cbt.combatants[cbt.currentTurnIndex];
+    if (cbt.active && cur?.tokenId === casterTokenId) {
+      emitUseAction(actionSlot);
+    }
+  }
+
+  window.addEventListener('canvas-click', onCanvasClick as EventListener);
+  window.addEventListener('keydown', onKey);
 }
 
 /**
@@ -2279,6 +2894,22 @@ async function castSpellFromButton(spell: any, casterTokenId: string, casterName
   const casterChar = useMapStore.getState().tokens[casterTokenId]?.characterId
     ? useCharacterStore.getState().allCharacters[useMapStore.getState().tokens[casterTokenId]!.characterId!]
     : null;
+
+  // ── Special-case: Light / Dancing Lights ───────────────────────
+  // Light is a "touch an object" cantrip — in the VTT we let the
+  // caster click anywhere on the map to place a standalone "Light"
+  // marker token at that position. The marker emits a 20 ft bright /
+  // 40 ft dim radius and cuts the fog of war around it so the party
+  // can see what's been illuminated. Casting it a second time
+  // dismisses the caster's existing light tokens.
+  if (spell.name === 'Light' || spell.name === 'Dancing Lights') {
+    const lightSlot = actionSlotForCastingTime(spell.castingTime) ?? 'action';
+    if (!canSpendActionSlot(casterTokenId, lightSlot, spell.name)) return;
+
+    await castLightSpell(spell, casterTokenId, casterName, lightSlot);
+    return;
+  }
+
   const meta = await parseSpellMeta(spell, casterChar?.level ?? 1);
 
   const isSelfRange = (spell.range || '').toLowerCase().includes('self');
@@ -2327,6 +2958,233 @@ function ActionBtn({ label, color, onClick }: { label: string; color: string; on
   );
 }
 
+/**
+ * Bigger button used by the Combat Actions section for Dash / Dodge /
+ * Disengage / Hide / Search / Help / Ready. Includes a tooltip so the
+ * player can see the 5e rules for each action on hover.
+ */
+/**
+ * Apply upcast damage scaling. Many spells (Fireball, Burning Hands,
+ * Lightning Bolt, etc.) say "the damage increases by Xd6 for each
+ * slot level above Yth". This helper:
+ *   1. Looks for that exact phrase in the spell description.
+ *   2. Computes how many extra dice to add (castLevel - baseLevel) ×
+ *      bonus dice.
+ *   3. Returns the upcast-adjusted damage dice string.
+ *
+ * Falls back to the original dice when no upcast clause is found
+ * (Magic Missile, Cure Wounds, etc. have different wording — they're
+ * handled per-spell where it matters).
+ */
+function applyUpcastDamage(
+  baseDice: string,
+  description: string,
+  baseLevel: number,
+  castLevel: number,
+): { dice: string; bonusDice: string | null; extraLevels: number } {
+  if (castLevel <= baseLevel || !baseDice || baseLevel <= 0) {
+    return { dice: baseDice, bonusDice: null, extraLevels: 0 };
+  }
+  const cleanDesc = (description || '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ');
+  // Match "increases by 1d6" or "1d6 for each slot level above 3rd".
+  // IMPORTANT: the optional `spell ` between "each" and "slot" is critical
+  // — 2024 PHB phrasing is "each spell slot level above N" whereas the
+  // original regex only allowed "each slot level above N", which silently
+  // broke upcast for every spell imported from DDB's modern text.
+  const m = cleanDesc.match(
+    /(?:damage|healing)\s+(?:increases?|increase)\s+by\s+(\d+d\d+)\s+for\s+each\s+(?:spell\s+)?slot\s+level\s+above\s+(?:the\s+)?(\d+)/i,
+  ) ?? cleanDesc.match(/(\d+d\d+)\s+for\s+each\s+(?:spell\s+)?slot\s+level\s+above\s+(?:the\s+)?(\d+)/i);
+  if (!m) return { dice: baseDice, bonusDice: null, extraLevels: 0 };
+
+  const bonus = m[1];
+  const above = parseInt(m[2], 10);
+  const extraLevels = castLevel - above;
+  if (extraLevels <= 0) return { dice: baseDice, bonusDice: null, extraLevels: 0 };
+
+  const bonusMatch = bonus.match(/^(\d+)d(\d+)$/);
+  if (!bonusMatch) return { dice: baseDice, bonusDice: null, extraLevels: 0 };
+  const bonusCount = parseInt(bonusMatch[1], 10) * extraLevels;
+  const bonusSides = parseInt(bonusMatch[2], 10);
+
+  // Add the bonus dice to the base. If the base is "8d6" and the
+  // bonus is "1d6 per level above 3rd" cast at 5th, we want "10d6".
+  // The base might also have a +modifier like "8d6+0" — we keep the
+  // modifier in place and just bump the dice count.
+  const baseMatch = baseDice.match(/^(\d+)d(\d+)([+-]\d+)?$/);
+  if (baseMatch && parseInt(baseMatch[2], 10) === bonusSides) {
+    const newCount = parseInt(baseMatch[1], 10) + bonusCount;
+    const mod = baseMatch[3] ?? '';
+    return {
+      dice: `${newCount}d${bonusSides}${mod}`,
+      bonusDice: `+${bonusCount}d${bonusSides}`,
+      extraLevels,
+    };
+  }
+
+  // Different die size — append the bonus as a separate term so the
+  // dice roller still handles it.
+  return {
+    dice: `${baseDice}+${bonusCount}d${bonusSides}`,
+    bonusDice: `+${bonusCount}d${bonusSides}`,
+    extraLevels,
+  };
+}
+
+/**
+ * Broadcast that an attack would hit so the target's owner can pop
+ * a Shield prompt. Returns `true` if Shield was cast (caller should
+ * recompute the hit with +5 AC) or `false` if the window elapsed.
+ */
+async function broadcastHitAndAwaitShield(args: {
+  targetTokenId: string;
+  attackerName: string;
+  attackTotal: number;
+  currentAC: number;
+}): Promise<boolean> {
+  const attackId = `${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
+  emitAttackHitAttempt({ ...args, attackId });
+
+  return new Promise<boolean>((resolve) => {
+    const timeout = setTimeout(() => {
+      window.removeEventListener('shield-cast', onShield as EventListener);
+      resolve(false);
+    }, 1500);
+    function onShield(e: Event) {
+      const detail = (e as CustomEvent).detail as { attackId?: string };
+      if (detail?.attackId && detail.attackId !== attackId) return;
+      clearTimeout(timeout);
+      window.removeEventListener('shield-cast', onShield as EventListener);
+      resolve(true);
+    }
+    window.addEventListener('shield-cast', onShield as EventListener);
+  });
+}
+
+/**
+ * Broadcast a leveled spell cast attempt and wait briefly for a
+ * counterspell to come back. Returns `true` if the spell was
+ * counterspelled (resolver should abort) or `false` if the window
+ * elapsed without interruption.
+ *
+ * The window is short (1.4 s) so casts feel responsive — long
+ * enough that another player has time to react, short enough that
+ * combat doesn't grind to a halt waiting for a counterspell that
+ * never comes.
+ */
+async function broadcastCastAndAwaitCounterspell(args: {
+  casterTokenId: string;
+  casterName: string;
+  spellName: string;
+  spellLevel: number;
+}): Promise<boolean> {
+  // Cantrips and slot-zero "spells" can't be counterspelled in 5e —
+  // Counterspell only targets a creature casting a spell, but per
+  // the prompt window we still skip them to avoid noise.
+  if (args.spellLevel <= 0) return false;
+
+  const castId = `${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
+  emitSpellCastAttempt({ ...args, castId });
+
+  return new Promise<boolean>((resolve) => {
+    const timeout = setTimeout(() => {
+      window.removeEventListener('spell-counterspelled', onCounter as EventListener);
+      resolve(false);
+    }, 1400);
+    function onCounter(e: Event) {
+      const detail = (e as CustomEvent).detail as { castId?: string };
+      if (detail?.castId && detail.castId !== castId) return;
+      clearTimeout(timeout);
+      window.removeEventListener('spell-counterspelled', onCounter as EventListener);
+      resolve(true);
+    }
+    window.addEventListener('spell-counterspelled', onCounter as EventListener);
+  });
+}
+
+/**
+ * Inline list of weapon property pills. Each property gets a rules
+ * tooltip so hovering "Finesse" or "Thrown" shows the full 5e rules
+ * for what the property does. Raw property strings from the imported
+ * weapon data can look like "Range 80/320" — `lookupWeaponProperty`
+ * strips the numeric suffix so the prefix matches.
+ */
+function WeaponProperties({ properties }: { properties: string[] }) {
+  if (!properties || properties.length === 0) return null;
+  return (
+    <span style={{ display: 'inline-flex', flexWrap: 'wrap', gap: 3, marginLeft: 3 }}>
+      {properties.map((prop, idx) => {
+        const rule = lookupWeaponProperty(prop);
+        const pill = (
+          <span style={{
+            padding: '0px 5px', fontSize: 8, fontWeight: 600,
+            background: 'rgba(212,168,67,0.08)',
+            border: '1px solid rgba(212,168,67,0.25)',
+            borderRadius: 3, color: '#d4a843',
+            textTransform: 'capitalize' as const,
+            cursor: rule ? 'help' : 'default',
+            display: 'inline-block',
+          }}>
+            {prop}
+          </span>
+        );
+        if (!rule) return <span key={idx}>{pill}</span>;
+        return (
+          <InfoTooltip
+            key={idx}
+            title={rule.title}
+            body={rule.body}
+            footer={rule.footer}
+            accent={rule.accent}
+          >
+            {pill}
+          </InfoTooltip>
+        );
+      })}
+    </span>
+  );
+}
+
+/**
+ * Compact Combat Actions button used by Dash/Dodge/Disengage/etc.
+ * Styled to match the rest of the panel (dark background, muted
+ * border, subtle accent) with a rich hover tooltip pulled from the
+ * rules-text dictionary so the user gets the full 5e rules without
+ * opening a browser. Pass the action name (case-insensitive) —
+ * `lookupCombatAction` finds the matching entry.
+ */
+function CombatActionBtn({ action, color, onClick, disabled }: {
+  action: string; color: string; onClick: () => void; disabled?: boolean;
+}) {
+  const rule = lookupCombatAction(action);
+  const btn = (
+    <button
+      onClick={disabled ? undefined : onClick}
+      disabled={disabled}
+      style={{
+        padding: '5px 9px', fontSize: 9, fontWeight: 700, borderRadius: 3,
+        // Muted "pill" that matches the rest of the ActionBtn vocabulary:
+        // dark card background, faint colored border, colored text.
+        background: disabled ? 'rgba(255,255,255,0.02)' : `${color}14`,
+        border: `1px solid ${disabled ? 'rgba(255,255,255,0.08)' : `${color}44`}`,
+        color: disabled ? '#555' : color,
+        cursor: disabled ? 'not-allowed' : 'pointer',
+        fontFamily: 'inherit', textTransform: 'uppercase',
+        letterSpacing: '0.5px', minWidth: 58,
+        opacity: disabled ? 0.6 : 1,
+        transition: 'all 0.12s ease',
+      }}
+    >
+      {action}
+    </button>
+  );
+  if (!rule) return btn;
+  return (
+    <InfoTooltip title={rule.title} body={rule.body} footer={rule.footer} accent={rule.accent ?? color}>
+      {btn}
+    </InfoTooltip>
+  );
+}
+
 const CONDITION_COLORS: Record<string, string> = {
   // Standard 5e conditions
   blinded: '#4a4a4a', charmed: '#ff69b4', deafened: '#95a5a6',
@@ -2344,6 +3202,13 @@ const CONDITION_COLORS: Record<string, string> = {
   'true-strike': '#d4a843', marked: '#c0392b', hexed: '#9b59b6',
   outlined: '#ffd700', baned: '#8b0000', slowed: '#7f8c8d',
   cursed: '#7e3a96', weakened: '#6b6b6b',
+  // Combat action flags — set when a player takes Dodge / Disengage
+  // (cleared at the start of their next turn by the server's nextTurn
+  // handler, see combatEvents.ts).
+  dodging: '#9b59b6', disengaged: '#1abc9c',
+  // Shield spell (1st-level abjuration) — +5 AC until the start of
+  // the caster's next turn. Same expiration flow as Dodge/Disengage.
+  'shield-spell': '#3498db',
 };
 
 const ALL_CONDITIONS = Object.keys(CONDITION_COLORS);
@@ -2429,20 +3294,38 @@ function ConditionsBar({ conditions, canEdit, onToggle }: {
 
   return (
     <div style={{ marginTop: 4 }}>
-      {/* Active conditions */}
+      {/* Active conditions — each badge is wrapped in an InfoTooltip
+          so hovering shows the full 5e rules text for what the
+          condition does. */}
       {conditions.length > 0 && (
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 3, marginBottom: 3 }}>
-          {conditions.map((cond: string) => (
-            <span key={cond} onClick={() => canEdit && onToggle(cond)} style={{
-              padding: '1px 6px', fontSize: 8, fontWeight: 600,
-              background: `${CONDITION_COLORS[cond] || '#888'}22`,
-              border: `1px solid ${CONDITION_COLORS[cond] || '#888'}`,
-              borderRadius: 8, color: CONDITION_COLORS[cond] || '#888',
-              textTransform: 'capitalize', cursor: canEdit ? 'pointer' : 'default',
-            }}>
-              {cond} {canEdit && '×'}
-            </span>
-          ))}
+          {conditions.map((cond: string) => {
+            const rule = lookupCondition(cond);
+            const badge = (
+              <span onClick={() => canEdit && onToggle(cond)} style={{
+                padding: '1px 6px', fontSize: 8, fontWeight: 600,
+                background: `${CONDITION_COLORS[cond] || '#888'}22`,
+                border: `1px solid ${CONDITION_COLORS[cond] || '#888'}`,
+                borderRadius: 8, color: CONDITION_COLORS[cond] || '#888',
+                textTransform: 'capitalize', cursor: canEdit ? 'pointer' : 'help',
+                display: 'inline-block',
+              }}>
+                {cond} {canEdit && '×'}
+              </span>
+            );
+            if (!rule) return <span key={cond}>{badge}</span>;
+            return (
+              <InfoTooltip
+                key={cond}
+                title={rule.title}
+                body={rule.body}
+                footer={rule.footer}
+                accent={rule.accent ?? CONDITION_COLORS[cond]}
+              >
+                {badge}
+              </InfoTooltip>
+            );
+          })}
         </div>
       )}
       {/* Add condition button */}
@@ -2457,14 +3340,29 @@ function ConditionsBar({ conditions, canEdit, onToggle }: {
           </button>
           {showAll && (
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 2, marginTop: 3 }}>
-              {ALL_CONDITIONS.filter(c => !conditions.includes(c)).map(cond => (
-                <button key={cond} onClick={() => onToggle(cond)} style={{
-                  padding: '1px 5px', fontSize: 7, borderRadius: 3,
-                  background: C.bgHover, border: `1px solid ${C.borderDim}`,
-                  color: C.textMuted, cursor: 'pointer', fontFamily: 'inherit',
-                  textTransform: 'capitalize',
-                }}>{cond}</button>
-              ))}
+              {ALL_CONDITIONS.filter(c => !conditions.includes(c)).map(cond => {
+                const rule = lookupCondition(cond);
+                const btn = (
+                  <button onClick={() => onToggle(cond)} style={{
+                    padding: '1px 5px', fontSize: 7, borderRadius: 3,
+                    background: C.bgHover, border: `1px solid ${C.borderDim}`,
+                    color: C.textMuted, cursor: 'pointer', fontFamily: 'inherit',
+                    textTransform: 'capitalize',
+                  }}>{cond}</button>
+                );
+                if (!rule) return <span key={cond}>{btn}</span>;
+                return (
+                  <InfoTooltip
+                    key={cond}
+                    title={rule.title}
+                    body={rule.body}
+                    footer={rule.footer}
+                    accent={rule.accent}
+                  >
+                    {btn}
+                  </InfoTooltip>
+                );
+              })}
             </div>
           )}
         </>

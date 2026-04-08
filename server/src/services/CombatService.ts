@@ -12,6 +12,14 @@ export function startCombat(sessionId: string, tokenIds: string[]): CombatState 
     const token = room.tokens.get(tokenId);
     if (!token) continue;
 
+    // Skip utility markers — light spell tokens, loot drops, and any
+    // tiny non-character object. The client also filters these out
+    // before calling combat:start, but we double-check here in case
+    // a stale or malformed request slips through.
+    if (/^(Light|Dancing Lights) \(/.test(token.name)) continue;
+    if ((token.imageUrl ?? '').includes('/uploads/items/')) continue;
+    if ((token.size as number) < 0.5 && !token.characterId) continue;
+
     let hp = 10;
     let maxHp = 10;
     let tempHp = 0;
@@ -26,15 +34,25 @@ export function startCombat(sessionId: string, tokenIds: string[]): CombatState 
     if (token.characterId) {
       const charRow = db.prepare('SELECT * FROM characters WHERE id = ?').get(token.characterId) as Record<string, unknown> | undefined;
       if (charRow) {
-        hp = charRow.hit_points as number;
-        maxHp = charRow.max_hit_points as number;
-        tempHp = charRow.temp_hit_points as number;
-        ac = charRow.armor_class as number;
-        speed = charRow.speed as number;
+        hp = (charRow.hit_points as number) ?? 10;
+        maxHp = (charRow.max_hit_points as number) ?? 10;
+        tempHp = (charRow.temp_hit_points as number) ?? 0;
+        ac = (charRow.armor_class as number) ?? 10;
+        speed = (charRow.speed as number) ?? 30;
         portrait = charRow.portrait_url as string | null;
 
-        const abilities = JSON.parse(charRow.ability_scores as string);
-        initBonus = Math.floor((abilities.dex - 10) / 2);
+        // DEX mod for initiative bonus. DDB imports sometimes store the
+        // scores under full names ("dexterity") instead of "dex", so we
+        // check both. Also guard against NaN — if the column is missing
+        // entirely we just use 0 instead of producing NaN initiative.
+        try {
+          const rawAbilities = charRow.ability_scores;
+          const abilities = typeof rawAbilities === 'string' ? JSON.parse(rawAbilities) : (rawAbilities ?? {});
+          const dex = Number(abilities?.dex ?? abilities?.dexterity ?? 10);
+          initBonus = Number.isFinite(dex) ? Math.floor((dex - 10) / 2) : 0;
+        } catch {
+          initBonus = 0;
+        }
 
         // Characters created via creature library have userId 'npc'
         const charUserId = charRow.user_id as string | null;
@@ -65,6 +83,12 @@ export function startCombat(sessionId: string, tokenIds: string[]): CombatState 
   // Players: each rolls individually
   const npcGroupInitiatives = new Map<string, number>();
   for (const combatant of combatants) {
+    // Ensure the bonus is a real number BEFORE we use it in the total,
+    // otherwise a stale NaN bleeds into the final initiative and the
+    // client shows the combatant as unsorted / zeroed.
+    if (!Number.isFinite(combatant.initiativeBonus)) {
+      combatant.initiativeBonus = 0;
+    }
     if (combatant.isNPC) {
       // Grouped NPC initiative
       if (!npcGroupInitiatives.has(combatant.name)) {
@@ -77,7 +101,18 @@ export function startCombat(sessionId: string, tokenIds: string[]): CombatState 
       const dieValue = Math.floor(Math.random() * 20) + 1;
       combatant.initiative = dieValue + combatant.initiativeBonus;
     }
+    // Belt & braces: a combatant must never end this loop with a
+    // 0/NaN/undefined initiative, or the downstream allInitiativesRolled
+    // check skips the sort and the "initiative-set" broadcast filter
+    // suppresses its row on the client.
+    if (!Number.isFinite(combatant.initiative) || combatant.initiative === 0) {
+      combatant.initiative = Math.floor(Math.random() * 20) + 1 + combatant.initiativeBonus;
+    }
   }
+
+  console.log('[COMBAT START] rolled initiatives:',
+    combatants.map((c) => `${c.name}${c.isNPC ? '' : ' (PC)'}=${c.initiative}(bonus ${c.initiativeBonus})`).join(', '),
+  );
 
   // Sort by initiative (highest first), break ties by DEX bonus
   combatants.sort((a, b) => {
@@ -365,6 +400,45 @@ export function useAction(
   }
 
   economy[actionType] = true;
+  return economy;
+}
+
+/**
+ * Take the Dash action for the current combatant. Consumes the Action
+ * slot AND doubles the remaining movement. Returns the updated
+ * economy or null if combat is inactive / no current combatant.
+ */
+export function useDash(sessionId: string): ActionEconomy | null {
+  const room = getRoom(sessionId);
+  if (!room?.combatState) return null;
+
+  const current = room.combatState.combatants[room.combatState.currentTurnIndex];
+  if (!current) return null;
+
+  let economy = room.actionEconomies.get(current.tokenId);
+  if (!economy) {
+    economy = {
+      action: false,
+      bonusAction: false,
+      movementRemaining: current.speed,
+      movementMax: current.speed,
+      reaction: false,
+    };
+    room.actionEconomies.set(current.tokenId, economy);
+  }
+
+  // Refuse if Action is already spent — the client does this gate too
+  // but we enforce it here as a safety net.
+  if (economy.action) return economy;
+
+  // Spend the action slot and grant an extra speed worth of movement.
+  // We add to remaining (not reset to double) so a creature that has
+  // already moved 15 of 30 feet still gets 45 total (15 used + 30
+  // remaining after dash = 45 feet of forward progress). Max is
+  // bumped to speed * 2 so the UI bar reflects the boost.
+  economy.action = true;
+  economy.movementRemaining = economy.movementRemaining + current.speed;
+  economy.movementMax = current.speed * 2;
   return economy;
 }
 

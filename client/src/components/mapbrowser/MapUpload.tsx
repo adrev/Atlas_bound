@@ -2,7 +2,9 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 import { theme } from '../../styles/theme';
 import { useSessionStore } from '../../stores/useSessionStore';
 import { useMapStore } from '../../stores/useMapStore';
-import { emitLoadMap } from '../../socket/emitters';
+import {
+  emitLoadMap, emitPreviewLoadMap, emitListMaps,
+} from '../../socket/emitters';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -40,8 +42,8 @@ interface MapUploadProps {
 
 export function MapUpload({ open, onClose, onMapCreated }: MapUploadProps) {
   const sessionId = useSessionStore((s) => s.sessionId);
-  const setCurrentMapId = useSessionStore((s) => s.setCurrentMapId);
-  const setMap = useMapStore((s) => s.setMap);
+  const isDM = useSessionStore((s) => s.isDM);
+  const playerMapId = useMapStore((s) => s.playerMapId);
 
   const [file, setFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
@@ -266,21 +268,17 @@ export function MapUpload({ open, onClose, onMapCreated }: MapUploadProps) {
 
       const data = await res.json();
 
-      // Set map locally FIRST with the uploaded image URL, then emit
-      setCurrentMapId(data.id);
-      setMap({
-        id: data.id,
-        name: data.name,
-        imageUrl: data.imageUrl,
-        width: data.width,
-        height: data.height,
-        gridSize: data.gridSize,
-        gridType: data.gridType ?? 'square',
-        gridOffsetX: grid.offsetX,
-        gridOffsetY: grid.offsetY,
-      });
-      // Now tell the server to load for other players
-      emitLoadMap(data.id);
+      // Routing decision:
+      //   • DM + existing ribbon → PREVIEW load (don't yank players)
+      //   • DM + no ribbon yet → ACTIVATE load (first map of session)
+      //   • Non-DM → legacy path (shouldn't normally happen)
+      if (isDM && playerMapId) {
+        emitPreviewLoadMap(data.id);
+      } else {
+        emitLoadMap(data.id);
+      }
+      // Bump the scene manager so the newly uploaded map shows up.
+      emitListMaps();
       onMapCreated?.();
       onClose();
     } catch (err) {
@@ -288,7 +286,7 @@ export function MapUpload({ open, onClose, onMapCreated }: MapUploadProps) {
     } finally {
       setLoading(false);
     }
-  }, [sessionId, file, mapName, imageDims, grid, setCurrentMapId, setMap, onMapCreated, onClose]);
+  }, [sessionId, file, mapName, imageDims, grid, isDM, playerMapId, onMapCreated, onClose]);
 
   // -----------------------------------------------------------------------
   // Cleanup preview URL

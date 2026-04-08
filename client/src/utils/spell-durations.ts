@@ -29,8 +29,10 @@ export const SPELL_DURATIONS: Record<string, SpellDurationMeta> = {
   'Bane': { durationRounds: 10 },
   'Heroism': { durationRounds: 10 },
   'Faerie Fire': { durationRounds: 10 },
-  'Hex': { durationRounds: 6000 },              // 1 hour outside concentration breaks
-  "Hunter's Mark": { durationRounds: 6000 },
+  // 1-hour concentration-anchored debuffs. 5e says 1 minute = 10
+  // rounds, so 1 hour = 60 * 10 = 600 rounds, NOT 6000.
+  'Hex': { durationRounds: 600 },
+  "Hunter's Mark": { durationRounds: 600 },
 
   // 1-minute control spells with end-of-turn save retry
   'Hold Person': { durationRounds: 10, saveAbility: 'wis' },
@@ -39,9 +41,10 @@ export const SPELL_DURATIONS: Record<string, SpellDurationMeta> = {
   'Hideous Laughter': { durationRounds: 10, saveAbility: 'wis', saveOnDamage: true },
   'Fear': { durationRounds: 10, saveAbility: 'wis' },
   'Hypnotic Pattern': { durationRounds: 10, saveAbility: 'wis', saveOnDamage: true },
-  'Suggestion': { durationRounds: 80 },          // 8 hours, but combat-relevant
-  'Charm Person': { durationRounds: 6000 },
-  'Charm Monster': { durationRounds: 6000 },
+  // 8-hour concentration spells. 8 * 60 * 10 = 4800 rounds.
+  'Suggestion': { durationRounds: 4800 },
+  'Charm Person': { durationRounds: 600 },        // 1 hour
+  'Charm Monster': { durationRounds: 600 },       // 1 hour (concentration)
   'Dominate Person': { durationRounds: 10, saveAbility: 'wis' },
   'Dominate Monster': { durationRounds: 10, saveAbility: 'wis' },
   'Polymorph': { durationRounds: 10, saveAbility: 'wis' },
@@ -76,6 +79,16 @@ export const SPELL_DURATIONS: Record<string, SpellDurationMeta> = {
 
   // Color Spray — until end of caster's next turn (1 round-ish)
   'Color Spray': { durationRounds: 1 },
+
+  // Command — affects the target's NEXT turn only. 1 round max.
+  'Command': { durationRounds: 1 },
+
+  // Power Word Stun — until the target succeeds on a save; default
+  // 10 rounds is generous but reasonable.
+  'Power Word Stun': { durationRounds: 10, saveAbility: 'con' },
+
+  // Eyebite — 1 minute, WIS save each round.
+  'Eyebite': { durationRounds: 10, saveAbility: 'wis' },
 };
 
 /**

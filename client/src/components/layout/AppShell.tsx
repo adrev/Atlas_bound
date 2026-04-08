@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams } from 'react-router-dom';
 import { Copy, PanelRightClose, PanelRightOpen, X } from 'lucide-react';
 import { useSocket } from '../../hooks/useSocket';
@@ -7,7 +7,11 @@ import { useMapStore } from '../../stores/useMapStore';
 import { useCharacterStore } from '../../stores/useCharacterStore';
 import { useCombatStore } from '../../stores/useCombatStore';
 import { BattleMap } from '../canvas/BattleMap';
+import { PreviewModeBanner } from '../dm/PreviewModeBanner';
 import { InitiativeModal } from '../combat/InitiativeModal';
+import { OpportunityAttackModal } from '../combat/OpportunityAttackModal';
+import { CounterspellModal } from '../combat/CounterspellModal';
+import { ShieldModal } from '../combat/ShieldModal';
 import { Sidebar } from './Sidebar';
 import { BottomBar } from './BottomBar';
 import { MapBrowser } from '../mapbrowser/MapBrowser';
@@ -75,18 +79,27 @@ export function AppShell() {
 
   useSocket(roomCode, displayName);
 
-  // Show initiative modal when combat starts - use subscribe to avoid re-render loops
+  // Show the InitiativeModal whenever combat transitions from
+  // inactive → active. We deliberately use a hook subscription +
+  // useEffect rather than Zustand's imperative `.subscribe()` here
+  // because the imperative version fires its callback synchronously
+  // on every store update — including updates that land DURING
+  // InitiativeModal's render — which triggered React's
+  // "Cannot update a component (AppShell) while rendering a
+  // different component (InitiativeModal)" warning. The
+  // useEffect runs after commit so the warning goes away.
+  const combatActive = useCombatStore((s) => s.active);
+  const combatantCount = useCombatStore((s) => s.combatants.length);
+  const prevCombatActiveRef = useRef(false);
   useEffect(() => {
-    const unsub = useCombatStore.subscribe((state, prev) => {
-      if (state.active && !prev.active && state.combatants.length > 0) {
-        setShowInitiativeModal(true);
-      }
-      if (!state.active && prev.active) {
-        setShowInitiativeModal(false);
-      }
-    });
-    return unsub;
-  }, []);
+    const wasActive = prevCombatActiveRef.current;
+    if (combatActive && !wasActive && combatantCount > 0) {
+      setShowInitiativeModal(true);
+    } else if (!combatActive && wasActive) {
+      setShowInitiativeModal(false);
+    }
+    prevCombatActiveRef.current = combatActive;
+  }, [combatActive, combatantCount]);
 
   // Listen for custom events from DMToolbar
   useEffect(() => {
@@ -100,7 +113,33 @@ export function AppShell() {
     };
   }, []);
 
-  // Listen for token click -> open character sheet
+  // QuickActions → Short Rest dispatches this event. We open the
+  // full character sheet modal for the current user's character so
+  // their existing Short Rest dialog button is available.
+  useEffect(() => {
+    const handleOpenFullSheet = () => {
+      const myChar = useCharacterStore.getState().myCharacter;
+      if (myChar?.id) {
+        setFullSheetCharId(myChar.id);
+      }
+    };
+    window.addEventListener('open-full-character-sheet', handleOpenFullSheet);
+    return () => {
+      window.removeEventListener('open-full-character-sheet', handleOpenFullSheet);
+    };
+  }, []);
+
+  // Listen for token click -> open character sheet.
+  //
+  // This always routes through AppShell's own `fullSheetCharId` modal
+  // path so the sheet opens reliably regardless of which sidebar tab
+  // is active. Previously, if the target was the current user's own
+  // character, this handler dispatched `open-my-full-sheet` for the
+  // CharacterSheet sidebar component to pick up — but CharacterSheet
+  // is conditionally mounted (only rendered when the Character tab
+  // is active), so clicking Inventory while on the Chat tab silently
+  // did nothing. Routing everything through this modal fixes the bug
+  // and also ensures `requestedTab` is honored in both cases.
   useEffect(() => {
     const handleOpenCharacterSheet = (e: Event) => {
       const detail = (e as CustomEvent).detail;
@@ -108,22 +147,29 @@ export function AppShell() {
       const tab = detail?.tab as string | undefined;
       if (!charId) return;
 
-      const currentMyChar = useCharacterStore.getState().myCharacter;
-      const currentAllChars = useCharacterStore.getState().allCharacters;
-
       // Store the requested tab for when the sheet opens
       if (tab) setRequestedTab(tab);
 
-      if (currentMyChar && currentMyChar.id === charId) {
-        window.dispatchEvent(new Event('open-my-full-sheet'));
-        return;
-      }
+      // Ensure the character is in the store, then open the modal.
+      const currentMyChar = useCharacterStore.getState().myCharacter;
+      const currentAllChars = useCharacterStore.getState().allCharacters;
+      const inStore =
+        (currentMyChar && currentMyChar.id === charId)
+          ? currentMyChar
+          : currentAllChars[charId];
 
-      const char = currentAllChars[charId];
-      if (char) {
+      if (inStore) {
+        // Make sure myCharacter is also mirrored into allCharacters so
+        // the modal's `fullSheetCharacter` lookup finds it.
+        if (currentMyChar && currentMyChar.id === charId && !currentAllChars[charId]) {
+          useCharacterStore.getState().setAllCharacters({
+            ...currentAllChars,
+            [charId]: currentMyChar,
+          });
+        }
         setFullSheetCharId(charId);
       } else {
-        // Fetch into the store so the live subscription picks it up
+        // Fetch into the store so the live subscription picks it up.
         fetch(`/api/characters/${charId}`)
           .then((r) => r.ok ? r.json() : null)
           .then((data) => {
@@ -264,6 +310,9 @@ export function AppShell() {
         {/* Canvas area */}
         <div style={styles.canvasArea}>
           <BattleMap />
+          {/* DM-only: overlays on top of the canvas when previewing a
+             map the players aren't on. Auto-hides for players. */}
+          <PreviewModeBanner />
         </div>
 
         {/* Sidebar */}
@@ -299,6 +348,13 @@ export function AppShell() {
       {showInitiativeModal && (
         <InitiativeModal onClose={() => setShowInitiativeModal(false)} />
       )}
+      {/* Opportunity Attack prompt — always mounted, only renders
+          when the OA queue has an entry. */}
+      <OpportunityAttackModal />
+      {/* Counterspell prompt — same pattern. */}
+      <CounterspellModal />
+      {/* Shield reaction prompt — same pattern. */}
+      <ShieldModal />
       {/* Character Sheet Full overlay - from token click */}
       {fullSheetCharacter && (
         <div style={styles.fullSheetOverlay}>

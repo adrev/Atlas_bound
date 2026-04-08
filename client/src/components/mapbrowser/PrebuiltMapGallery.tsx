@@ -3,7 +3,9 @@ import { theme } from '../../styles/theme';
 import { createMap } from '../../services/api';
 import { useSessionStore } from '../../stores/useSessionStore';
 import { useMapStore } from '../../stores/useMapStore';
-import { emitLoadMap } from '../../socket/emitters';
+import {
+  emitLoadMap, emitPreviewLoadMap, emitListMaps,
+} from '../../socket/emitters';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -226,8 +228,8 @@ interface PrebuiltMapGalleryProps {
 export function PrebuiltMapGallery({ onMapLoaded }: PrebuiltMapGalleryProps) {
   const sessionId = useSessionStore((s) => s.sessionId);
   const settings = useSessionStore((s) => s.settings);
-  const setCurrentMapId = useSessionStore((s) => s.setCurrentMapId);
-  const setMap = useMapStore((s) => s.setMap);
+  const isDM = useSessionStore((s) => s.isDM);
+  const playerMapId = useMapStore((s) => s.playerMapId);
 
   const [filter, setFilter] = useState<FilterTab>('all');
   const [loadingId, setLoadingId] = useState<string | null>(null);
@@ -249,29 +251,32 @@ export function PrebuiltMapGallery({ onMapLoaded }: PrebuiltMapGalleryProps) {
         const gridSize = settings.gridSize || 70;
         const mapWidth = map.gridCols * gridSize;
         const mapHeight = map.gridRows * gridSize;
+        // Pass prebuiltKey so the server dedups by name — clicking
+        // Goblin Camp twice returns the same row and preserves any
+        // walls / fog / tokens the DM set up the first time.
         const result = await createMap(sessionId, {
           name: map.name,
           width: mapWidth,
           height: mapHeight,
           gridSize,
+          prebuiltKey: map.id,
         });
 
-        // Set map locally FIRST with the image, then emit to server
-        // This ensures the local imageUrl is set before the server broadcasts back
-        setCurrentMapId(result.id);
-        setMap({
-          id: result.id,
-          name: map.name,
-          imageUrl: map.imageFile,
-          width: mapWidth,
-          height: mapHeight,
-          gridSize,
-          gridType: 'square',
-          gridOffsetX: 0,
-          gridOffsetY: 0,
-        });
-        // Now tell the server to load this map for other players
-        emitLoadMap(result.id);
+        // Routing decision:
+        //   • DM, and the session already has a ribbon → PREVIEW load
+        //     (don't yank the players off their current map).
+        //   • DM, no ribbon yet → ACTIVATE load (first map of the
+        //     session; nothing to interrupt).
+        //   • Non-DM (shouldn't normally happen, but for safety) →
+        //     use the legacy `map:load` path.
+        if (isDM && playerMapId) {
+          emitPreviewLoadMap(result.id);
+        } else {
+          emitLoadMap(result.id);
+        }
+        // Refresh the scene manager so the new (or deduped) map
+        // appears in the sidebar for the DM.
+        emitListMaps();
         onMapLoaded?.();
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Failed to load map');
@@ -279,7 +284,7 @@ export function PrebuiltMapGallery({ onMapLoaded }: PrebuiltMapGalleryProps) {
         setLoadingId(null);
       }
     },
-    [sessionId, settings.gridSize, setCurrentMapId, setMap, onMapLoaded],
+    [sessionId, settings.gridSize, isDM, playerMapId, onMapLoaded],
   );
 
   return (

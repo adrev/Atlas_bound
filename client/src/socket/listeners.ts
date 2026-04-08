@@ -5,6 +5,8 @@ import { useCombatStore } from '../stores/useCombatStore';
 import { useChatStore } from '../stores/useChatStore';
 import { useDiceStore } from '../stores/useDiceStore';
 import { useCharacterStore } from '../stores/useCharacterStore';
+import { useDrawStore } from '../stores/useDrawStore';
+import { useSceneStore } from '../stores/useSceneStore';
 
 const PREBUILT_IMAGE_MAP: Record<string, string> = {
   'Goblin Camp': '/maps/goblin-camp.png',
@@ -70,7 +72,7 @@ export function registerListeners(socket: Socket): () => void {
   });
 
   // --- Map ---
-  socket.on('map:loaded', ({ map, tokens }) => {
+  socket.on('map:loaded', ({ map, tokens, drawings, isPreview }) => {
     // Preserve locally-set imageUrl (e.g. from prebuilt maps) if server returns null
     // The server stores null for prebuilt maps since the image is a client-side asset
     const currentMap = useMapStore.getState().currentMap;
@@ -87,44 +89,94 @@ export function registerListeners(socket: Socket): () => void {
       preservedImageUrl = PREBUILT_IMAGE_MAP[map.name] ?? null;
     }
 
-    useMapStore.getState().setMap({
-      id: map.id,
-      name: map.name,
-      imageUrl: preservedImageUrl,
-      width: map.width,
-      height: map.height,
-      gridSize: map.gridSize,
-      gridType: map.gridType,
-      gridOffsetX: map.gridOffsetX,
-      gridOffsetY: map.gridOffsetY,
+    // Use the new applyMapLoad action which handles the preview flag
+    // and keeps playerMapId in sync. A preview payload does NOT move
+    // the ribbon; a normal (ribbon) payload DOES.
+    useMapStore.getState().applyMapLoad({
+      map: {
+        id: map.id,
+        name: map.name,
+        imageUrl: preservedImageUrl,
+        width: map.width,
+        height: map.height,
+        gridSize: map.gridSize,
+        gridType: map.gridType,
+        gridOffsetX: map.gridOffsetX,
+        gridOffsetY: map.gridOffsetY,
+        walls: map.walls,
+        fogState: map.fogState,
+      },
+      tokens,
+      isPreview,
     });
-    useMapStore.getState().setTokens(tokens);
-    useMapStore.getState().updateWalls(map.walls);
-    useMapStore.getState().updateFog(map.fogState);
+    // Keep session store's currentMapId in sync with whatever this
+    // client is looking at (preview or ribbon). Everything outside
+    // the map/scene stores (e.g. API fetch helpers) still reads it.
     useSessionStore.getState().setCurrentMapId(map.id);
+    // Rehydrate any drawings the server included for this map. The
+    // server pre-filters by visibility, so we can load this as-is.
+    useDrawStore.getState().loadDrawings(drawings ?? []);
+
+    // Bump the scene manager's ribbon indicator if this was a normal
+    // (non-preview) load. Preview loads leave the ribbon unchanged.
+    if (!isPreview) {
+      useSceneStore.getState().updatePlayerMap(map.id);
+    }
   });
 
-  socket.on('map:token-moved', ({ tokenId, x, y }) => {
+  // Scene Manager: full list of maps in this session arrived.
+  socket.on('map:list-result', ({ maps, playerMapId }) => {
+    useSceneStore.getState().setMaps(maps, playerMapId);
+    // Also sync the map store's playerMapId so the preview banner
+    // derives correctly on the very first list fetch.
+    useMapStore.getState().setPlayerMapId(playerMapId);
+  });
+
+  // Scene Manager: lightweight ribbon-moved ping. Another DM moved
+  // the ribbon, or we ourselves did — update sidebars.
+  socket.on('map:player-map-changed', ({ mapId }) => {
+    useSceneStore.getState().updatePlayerMap(mapId);
+    useMapStore.getState().setPlayerMapId(mapId);
+  });
+
+  // Helper: does this incoming event belong to the map we're currently
+  // rendering? When the server-side filter is doing its job these should
+  // all match, but the mapId hint lets us drop stragglers silently rather
+  // than render a token that doesn't live on our current view.
+  const isForCurrentMap = (mapId?: string): boolean => {
+    if (!mapId) return true; // legacy events with no mapId — trust them
+    const currentId = useMapStore.getState().currentMap?.id;
+    return !currentId || currentId === mapId;
+  };
+
+  socket.on('map:token-moved', ({ tokenId, x, y, mapId }) => {
+    if (!isForCurrentMap(mapId)) return;
     useMapStore.getState().moveToken(tokenId, x, y);
   });
 
   socket.on('map:token-added', (token) => {
+    // `token.mapId` is on the Token type itself; use it for filtering.
+    if (!isForCurrentMap(token.mapId)) return;
     useMapStore.getState().addToken(token);
   });
 
-  socket.on('map:token-removed', ({ tokenId }) => {
+  socket.on('map:token-removed', ({ tokenId, mapId }) => {
+    if (!isForCurrentMap(mapId)) return;
     useMapStore.getState().removeToken(tokenId);
   });
 
-  socket.on('map:token-updated', ({ tokenId, changes }) => {
+  socket.on('map:token-updated', ({ tokenId, changes, mapId }) => {
+    if (!isForCurrentMap(mapId)) return;
     useMapStore.getState().updateToken(tokenId, changes);
   });
 
-  socket.on('map:fog-updated', ({ fogState }) => {
+  socket.on('map:fog-updated', ({ fogState, mapId }) => {
+    if (!isForCurrentMap(mapId)) return;
     useMapStore.getState().updateFog(fogState);
   });
 
-  socket.on('map:walls-updated', ({ walls }) => {
+  socket.on('map:walls-updated', ({ walls, mapId }) => {
+    if (!isForCurrentMap(mapId)) return;
     useMapStore.getState().updateWalls(walls);
   });
 
@@ -134,7 +186,24 @@ export function registerListeners(socket: Socket): () => void {
 
   // --- Combat ---
   socket.on('combat:started', ({ combatants, roundNumber }) => {
+    console.log('[COMBAT] combat:started received',
+      combatants.map((c: any) => `${c.name}${c.isNPC ? '' : ' (PC)'}=${c.initiative}(bonus ${c.initiativeBonus})`).join(', '),
+    );
     useCombatStore.getState().startCombat(combatants, roundNumber);
+    useSessionStore.getState().setGameMode('combat');
+  });
+
+  // Sent once per session:join when combat is already active. Restores
+  // the combatants list, current turn index, and action economy so a
+  // page refresh mid-combat rehydrates the initiative tracker UI
+  // without starting combat from scratch.
+  socket.on('combat:state-sync', ({ combatants, roundNumber, currentTurnIndex, actionEconomy }) => {
+    useCombatStore.getState().syncCombatState({
+      combatants,
+      roundNumber,
+      currentTurnIndex,
+      actionEconomy,
+    });
     useSessionStore.getState().setGameMode('combat');
   });
 
@@ -148,15 +217,34 @@ export function registerListeners(socket: Socket): () => void {
   });
 
   socket.on('combat:initiative-set', ({ tokenId, total }) => {
+    console.log('[COMBAT] initiative-set', tokenId, '→', total);
     useCombatStore.getState().setInitiative(tokenId, total);
   });
 
   socket.on('combat:all-initiatives-ready', ({ combatants }) => {
+    console.log('[COMBAT] all-initiatives-ready',
+      combatants.map((c: any) => `${c.name}${c.isNPC ? '' : ' (PC)'}=${c.initiative}`).join(', '),
+    );
     useCombatStore.getState().setCombatants(combatants);
   });
 
   socket.on('combat:turn-advanced', ({ currentTurnIndex, roundNumber, actionEconomy }) => {
     useCombatStore.getState().nextTurn(currentTurnIndex, roundNumber, actionEconomy);
+
+    // Pan the camera to whoever's turn it is now. BattleMap listens
+    // for `canvas-center-on` and adjusts the viewport at the current
+    // zoom. We look up the combatant AFTER nextTurn() has written the
+    // new index so we're following the combatant who's actually up.
+    const combat = useCombatStore.getState();
+    const current = combat.combatants[combat.currentTurnIndex];
+    if (current?.tokenId) {
+      window.dispatchEvent(new CustomEvent('canvas-center-on', {
+        detail: { tokenId: current.tokenId },
+      }));
+      // Also select them so the TokenActionPanel and InitiativeTracker
+      // highlight match the camera focus.
+      useMapStore.getState().selectToken(current.tokenId);
+    }
   });
 
   socket.on('combat:hp-changed', ({ tokenId, hp, tempHp }) => {
@@ -173,6 +261,46 @@ export function registerListeners(socket: Socket): () => void {
 
   socket.on('combat:action-used', ({ economy }) => {
     useCombatStore.getState().updateActionEconomy(economy);
+  });
+
+  // Opportunity Attack prompt — the server sends this to the
+  // attacker's owner (or DM for NPC attackers). We push it onto the
+  // OA queue which the OpportunityAttackModal renders.
+  socket.on('combat:oa-opportunity', (data) => {
+    // Lazy-import to avoid a circular dependency with the component.
+    import('../components/combat/OpportunityAttackModal').then(({ pushOpportunityAttack }) => {
+      pushOpportunityAttack(data);
+    });
+  });
+
+  // Spell cast attempt — broadcast when a leveled spell is being
+  // cast. Every other client checks if their character is eligible
+  // to counterspell and shows a prompt.
+  socket.on('combat:spell-cast-attempt', (data) => {
+    import('../components/combat/CounterspellModal').then(({ pushCounterspellOpportunity }) => {
+      pushCounterspellOpportunity(data);
+    });
+  });
+
+  // Counterspell confirmation — fired by a counterspeller's client.
+  // The original caster's resolver listens via the window event so
+  // it can abort the cast mid-resolve.
+  socket.on('combat:spell-counterspelled', (data) => {
+    window.dispatchEvent(new CustomEvent('spell-counterspelled', { detail: data }));
+  });
+
+  // Attack-would-hit broadcast — push a Shield prompt onto the
+  // queue if the target's owner is this client.
+  socket.on('combat:attack-hit-attempt', (data) => {
+    import('../components/combat/ShieldModal').then(({ pushShieldOpportunity }) => {
+      pushShieldOpportunity(data);
+    });
+  });
+
+  // Shield confirmation — broadcast so the attacker's resolver
+  // recomputes the hit with +5 AC.
+  socket.on('combat:shield-cast', (data) => {
+    window.dispatchEvent(new CustomEvent('shield-cast', { detail: data }));
   });
 
   socket.on('combat:movement-used', ({ tokenId, remaining }) => {
@@ -208,6 +336,28 @@ export function registerListeners(socket: Socket): () => void {
     useChatStore.getState().setHistory(messages);
   });
 
+  // --- Drawings ---
+  socket.on('drawing:created', (drawing) => {
+    useDrawStore.getState().addDrawing(drawing);
+  });
+
+  socket.on('drawing:deleted', ({ drawingId }) => {
+    useDrawStore.getState().removeDrawing(drawingId);
+  });
+
+  socket.on('drawing:cleared', ({ scope, userId }) => {
+    const currentUserId = useSessionStore.getState().userId ?? undefined;
+    useDrawStore.getState().clearAllLocal(scope, userId, currentUserId);
+  });
+
+  socket.on('drawing:streamed', (payload) => {
+    useDrawStore.getState().setPreview(payload);
+  });
+
+  socket.on('drawing:stream-end', ({ tempId }) => {
+    useDrawStore.getState().clearPreview(tempId);
+  });
+
   // Return cleanup function
   return () => {
     socket.off('session:state-sync');
@@ -217,6 +367,8 @@ export function registerListeners(socket: Socket): () => void {
     socket.off('session:settings-updated');
     socket.off('session:error');
     socket.off('map:loaded');
+    socket.off('map:list-result');
+    socket.off('map:player-map-changed');
     socket.off('map:token-moved');
     socket.off('map:token-added');
     socket.off('map:token-removed');
@@ -225,6 +377,7 @@ export function registerListeners(socket: Socket): () => void {
     socket.off('map:walls-updated');
     socket.off('map:pinged');
     socket.off('combat:started');
+    socket.off('combat:state-sync');
     socket.off('combat:ended');
     socket.off('combat:initiative-prompt');
     socket.off('combat:initiative-set');
@@ -234,6 +387,11 @@ export function registerListeners(socket: Socket): () => void {
     socket.off('combat:condition-changed');
     socket.off('combat:death-save-updated');
     socket.off('combat:action-used');
+    socket.off('combat:oa-opportunity');
+    socket.off('combat:spell-cast-attempt');
+    socket.off('combat:spell-counterspelled');
+    socket.off('combat:attack-hit-attempt');
+    socket.off('combat:shield-cast');
     socket.off('combat:movement-used');
     socket.off('combat:spell-cast');
     socket.off('character:updated');
@@ -241,5 +399,10 @@ export function registerListeners(socket: Socket): () => void {
     socket.off('chat:new-message');
     socket.off('chat:roll-result');
     socket.off('chat:history');
+    socket.off('drawing:created');
+    socket.off('drawing:deleted');
+    socket.off('drawing:cleared');
+    socket.off('drawing:streamed');
+    socket.off('drawing:stream-end');
   };
 }

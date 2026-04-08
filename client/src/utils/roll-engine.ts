@@ -198,6 +198,14 @@ export function getOwnRollModifiers(conditions: string[]): RollModifiers {
     out.notes.push('Hasted (adv. DEX saves)');
   }
 
+  // Dodging: advantage on DEX saves until the start of your next turn.
+  // (Attacks against you get disadvantage — that's handled in
+  // getTargetRollModifiers.)
+  if (set.has('dodging')) {
+    applyAdvantage(out, 'save', 'advantage', 'dex');
+    out.notes.push('Dodging (adv. DEX saves)');
+  }
+
   // Slowed: handled in Phase 2 as a save penalty (-2)
 
   return out;
@@ -269,6 +277,14 @@ export function getTargetRollModifiers(conditions: string[]): RollModifiers {
   if (set.has('invisible')) {
     applyAdvantage(out, 'attack', 'disadvantage');
     out.notes.push('Target Invisible (disadv. to attackers)');
+  }
+
+  // Dodging target → disadvantage to attackers (target took the Dodge
+  // action). This is applied to the target so any incoming attack is
+  // rolled with disadvantage via the combine step.
+  if (set.has('dodging')) {
+    applyAdvantage(out, 'attack', 'disadvantage');
+    out.notes.push('Target Dodging (disadv. to attackers)');
   }
 
   return out;
@@ -468,7 +484,31 @@ export function effectiveAC(baseAC: number, conditions: string[], dexMod: number
   const out: EffectiveStat = { value: baseAC, base: baseAC, notes: [] };
   const set = new Set(conditions.map(c => c.toLowerCase()));
 
-  // Modifiers from active spell buffs
+  // ── Step 1: Resolve the "base" AC (floor effects from Mage Armor /
+  // Barkskin). These REPLACE the base AC when they're higher; they are
+  // NOT additive. Applying them first ensures the flat bonuses below
+  // stack on top of them cleanly (rather than being absorbed when the
+  // floor overwrites whatever the bonuses produced).
+  if (set.has('mage-armored')) {
+    const mageArmorAC = 13 + dexMod;
+    if (mageArmorAC > out.value) {
+      const diff = mageArmorAC - out.value;
+      out.value = mageArmorAC;
+      out.notes.push(`+${diff} Mage Armor (13+DEX)`);
+    }
+  }
+
+  if (set.has('barkskin')) {
+    if (16 > out.value) {
+      const diff = 16 - out.value;
+      out.value = 16;
+      out.notes.push(`+${diff} Barkskin (min 16)`);
+    }
+  }
+
+  // ── Step 2: Apply flat bonuses / penalties on top of the (possibly
+  // replaced) base AC. Order doesn't matter within this block since
+  // they're all additive.
   if (set.has('hasted')) {
     out.value += 2;
     out.notes.push('+2 Hasted');
@@ -482,27 +522,14 @@ export function effectiveAC(baseAC: number, conditions: string[], dexMod: number
     out.value += 2;
     out.notes.push('+2 Shield of Faith');
   }
-
-  // Floor effects: Mage Armor sets AC = 13 + DEX mod (only if higher
-  // than current). The 5e rule is "you can't wear armor", but we don't
-  // know whether the base AC came from worn armor — we just use the
-  // higher value.
-  if (set.has('mage-armored')) {
-    const mageArmorAC = 13 + dexMod;
-    if (mageArmorAC > out.value) {
-      const diff = mageArmorAC - out.value;
-      out.value = mageArmorAC;
-      out.notes.push(`+${diff} Mage Armor (13+DEX)`);
-    }
-  }
-
-  // Barkskin: AC = max(currentAC, 16)
-  if (set.has('barkskin')) {
-    if (16 > out.value) {
-      const diff = 16 - out.value;
-      out.value = 16;
-      out.notes.push(`+${diff} Barkskin (min 16)`);
-    }
+  if (set.has('shield-spell')) {
+    // The Shield cantrip (1st-level abjuration) — +5 AC until the
+    // start of the caster's next turn. Applied retroactively to the
+    // triggering attack by the cast resolver, AND persists as a
+    // condition so subsequent attacks in the same round also get
+    // the bonus.
+    out.value += 5;
+    out.notes.push('+5 Shield spell');
   }
 
   return out;

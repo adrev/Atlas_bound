@@ -1,8 +1,9 @@
 import type { Player, SessionSettings, GameMode } from './session.js';
-import type { Token, WallSegment, FogPolygon, Condition, MapPing } from './map.js';
+import type { Token, WallSegment, FogPolygon, Condition, MapPing, MapSummary } from './map.js';
 import type { Combatant, ActionType, InitiativeRollResult, SpellCastEvent, ActionEconomy } from './combat.js';
 import type { ChatMessage, DiceRollData } from './chat.js';
 import type { Character } from './character.js';
+import type { Drawing, DrawingStreamPayload } from './drawing.js';
 
 // --- Session Events ---
 export interface ClientSessionEvents {
@@ -42,6 +43,19 @@ export interface ClientMapEvents {
   'map:wall-add': WallSegment;
   'map:wall-remove': { index: number };
   'map:ping': { x: number; y: number };
+
+  // --- Scene Manager (Player Ribbon / DM preview) events ---
+  /** Request the full list of maps in this session for the scene manager sidebar */
+  'map:list': {};
+  /** DM-only: load a map into this DM's private preview view. Does NOT
+   *  move the player ribbon, does NOT broadcast to other clients. */
+  'map:preview-load': { mapId: string };
+  /** DM-only: move the player ribbon to this map. Broadcasts `map:loaded`
+   *  to every player and every DM who isn't already viewing it. */
+  'map:activate-for-players': { mapId: string };
+  /** DM-only: delete a map from the session library. Refuses if it is
+   *  currently the player ribbon (DM must move the ribbon first). */
+  'map:delete': { mapId: string };
 }
 
 export interface ServerMapEvents {
@@ -60,14 +74,31 @@ export interface ServerMapEvents {
       fogState: FogPolygon[];
     };
     tokens: Token[];
+    /** Permanent drawings for this map, filtered by visibility for the
+     *  recipient. Ephemeral drawings are never included. */
+    drawings?: Drawing[];
+    /** True when this payload is a DM's private preview of a map the
+     *  players aren't on. Lets the client know not to update its
+     *  `playerMapId` cursor. */
+    isPreview?: boolean;
   };
-  'map:token-moved': { tokenId: string; x: number; y: number };
+  'map:token-moved': { tokenId: string; x: number; y: number; mapId?: string };
   'map:token-added': Token;
-  'map:token-removed': { tokenId: string };
-  'map:token-updated': { tokenId: string; changes: Partial<Token> };
-  'map:fog-updated': { fogState: FogPolygon[] };
-  'map:walls-updated': { walls: WallSegment[] };
+  'map:token-removed': { tokenId: string; mapId?: string };
+  'map:token-updated': { tokenId: string; changes: Partial<Token>; mapId?: string };
+  'map:fog-updated': { fogState: FogPolygon[]; mapId?: string };
+  'map:walls-updated': { walls: WallSegment[]; mapId?: string };
   'map:pinged': MapPing;
+
+  // --- Scene Manager (Player Ribbon / DM preview) events ---
+  /** Full list of maps in this session, with the ribbon flag already
+   *  computed. Sent in response to `map:list` and also whenever the
+   *  library changes (add/delete/rename). */
+  'map:list-result': { maps: MapSummary[]; playerMapId: string | null };
+  /** Lightweight ribbon-moved notification. Broadcast to every client
+   *  (DMs and players) whenever the player ribbon changes so their
+   *  scene manager sidebars can update without re-fetching. */
+  'map:player-map-changed': { mapId: string };
 }
 
 // --- Combat Events ---
@@ -106,6 +137,34 @@ export interface ServerCombatEvents {
   'combat:spell-cast': SpellCastEvent & { rollData?: DiceRollData };
 }
 
+// --- Drawing Events ---
+/**
+ * The DM (and optionally players) can draw freehand / shapes / text on
+ * the current map. All drawings are broadcast to the room in real time,
+ * filtered by visibility (shared / dm-only / player-only).
+ *
+ * `drawing:create` commits a finished drawing (persisted to DB unless
+ * ephemeral). `drawing:stream` and `drawing:stream-end` are the
+ * lightweight preview stream used while the creator is still dragging
+ * their cursor, so watching clients see the stroke being drawn live
+ * instead of popping in on release.
+ */
+export interface ClientDrawingEvents {
+  'drawing:create': { drawing: Drawing };
+  'drawing:delete': { drawingId: string };
+  'drawing:clear-all': { scope: 'all' | 'mine' };
+  'drawing:stream': DrawingStreamPayload;
+  'drawing:stream-end': { tempId: string };
+}
+
+export interface ServerDrawingEvents {
+  'drawing:created': Drawing;
+  'drawing:deleted': { drawingId: string };
+  'drawing:cleared': { scope: 'all' | 'mine'; userId?: string };
+  'drawing:streamed': DrawingStreamPayload;
+  'drawing:stream-end': { tempId: string };
+}
+
 // --- Character Events ---
 export interface ClientCharacterEvents {
   'character:update': { characterId: string; changes: Record<string, unknown> };
@@ -136,11 +195,13 @@ export type ClientToServerEvents =
   ClientMapEvents &
   ClientCombatEvents &
   ClientCharacterEvents &
-  ClientChatEvents;
+  ClientChatEvents &
+  ClientDrawingEvents;
 
 export type ServerToClientEvents =
   ServerSessionEvents &
   ServerMapEvents &
   ServerCombatEvents &
   ServerCharacterEvents &
-  ServerChatEvents;
+  ServerChatEvents &
+  ServerDrawingEvents;

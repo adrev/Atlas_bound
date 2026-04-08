@@ -1,4 +1,4 @@
-import type { Token, Condition } from '@dnd-vtt/shared';
+import type { Token, Condition, Drawing } from '@dnd-vtt/shared';
 import type { CombatState, ActionEconomy } from '@dnd-vtt/shared';
 
 export interface RoomPlayer {
@@ -41,6 +41,33 @@ export interface RoomState {
   dmUserId: string;
   players: Map<string, RoomPlayer>;
   gameMode: 'free-roam' | 'combat';
+  /**
+   * The map the players are currently rendering ("yellow ribbon").
+   * This is what gets hydrated from `sessions.player_map_id` and is
+   * the canonical source of truth for "where the party is".
+   *
+   * All player-facing broadcasts (initiative, combat, HP changes,
+   * token moves on the active scene) fan out to sockets on this
+   * map. When the DM clicks "Move Players Here" the ribbon moves
+   * to the new map and this field is updated.
+   */
+  playerMapId: string | null;
+  /**
+   * Per-DM ephemeral "viewing" cursor. Key = userId. Only populated
+   * for DMs who have navigated away from the player ribbon to preview
+   * a different map (to set up the next encounter, etc.). When absent,
+   * the DM is viewing the player ribbon map.
+   *
+   * Cleared on disconnect (after a short grace period so mid-session
+   * refreshes don't lose the preview). Players never have entries.
+   */
+  dmViewingMap: Map<string, string>;
+  /**
+   * @deprecated Kept for backward compat. Was the single map-cursor
+   * for the whole room; now only used as a fallback hint for the DM's
+   * rehydration on rejoin. New code should read `playerMapId` for the
+   * ribbon or `dmViewingMap.get(userId)` for a DM's current view.
+   */
   currentMapId: string | null;
   tokens: Map<string, Token>;
   combatState: CombatState | null;
@@ -51,6 +78,13 @@ export interface RoomState {
    * concentration-anchored spells when the caster drops focus.
    */
   conditionMeta: Map<string, Map<string, ConditionMetadata>>;
+  /**
+   * drawingId → Drawing. All drawings for the CURRENT map, including
+   * ephemeral ones (those exist in memory only and auto-expire on the
+   * clients). Permanent drawings are also mirrored to the `drawings`
+   * SQLite table so they survive a server restart.
+   */
+  drawings: Map<string, Drawing>;
 }
 
 const rooms = new Map<string, RoomState>();
@@ -67,11 +101,14 @@ export function createRoom(
     dmUserId,
     players: new Map(),
     gameMode: 'free-roam',
+    playerMapId: null,
+    dmViewingMap: new Map(),
     currentMapId: null,
     tokens: new Map(),
     combatState: null,
     actionEconomies: new Map(),
     conditionMeta: new Map(),
+    drawings: new Map(),
   };
   rooms.set(sessionId, room);
   roomCodeIndex.set(roomCode, sessionId);
@@ -127,4 +164,56 @@ export function getPlayerBySocketId(
 
 export function getAllRooms(): Map<string, RoomState> {
   return rooms;
+}
+
+/**
+ * Resolve "which map is this player currently rendering?".
+ *
+ *   • Players always see the player ribbon map (`room.playerMapId`).
+ *   • DMs see whatever they've previewed in `dmViewingMap`; if they
+ *     haven't previewed anything, they default to the player ribbon.
+ *
+ * Used by the map/token/wall/fog/drawing handlers to decide which
+ * map a given edit should persist to AND which sockets should
+ * receive the resulting broadcast.
+ */
+export function resolveViewingMapId(
+  room: RoomState,
+  userId: string,
+  role: 'dm' | 'player',
+): string | null {
+  if (role === 'dm') {
+    const preview = room.dmViewingMap.get(userId);
+    if (preview) return preview;
+  }
+  return room.playerMapId ?? room.currentMapId;
+}
+
+/**
+ * Return the socket ids of every player currently rendering a given
+ * map. A socket is "rendering" a map if:
+ *   • It's a player and the map is the player ribbon
+ *   • It's a DM and the map is either their current preview OR the
+ *     player ribbon (if they have no active preview)
+ *
+ * Used by broadcast helpers to filter token/wall/fog/drawing updates
+ * so they only reach sockets that actually see that map.
+ */
+export function socketsOnMap(room: RoomState, mapId: string): string[] {
+  const out: string[] = [];
+  for (const player of room.players.values()) {
+    if (player.role === 'dm') {
+      const preview = room.dmViewingMap.get(player.userId);
+      if (preview) {
+        if (preview === mapId) out.push(player.socketId);
+      } else {
+        // No preview — DM is on the ribbon
+        if (room.playerMapId === mapId) out.push(player.socketId);
+      }
+    } else {
+      // Player
+      if (room.playerMapId === mapId) out.push(player.socketId);
+    }
+  }
+  return out;
 }

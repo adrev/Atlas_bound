@@ -25,6 +25,10 @@ import { parseSpellMetaFromDesc, enrichSpellFromDescription } from '../../utils/
 import { useMapStore } from '../../stores/useMapStore';
 import { useSessionStore } from '../../stores/useSessionStore';
 import { useCharacterStore } from '../../stores/useCharacterStore';
+import { InfoTooltip } from '../ui/InfoTooltip';
+import { lookupWeaponProperty } from '../../utils/rules-text';
+import { theme } from '../../styles/theme';
+import { HPBar } from '../ui';
 
 /* ── Strip HTML tags from descriptions ──────────────────── */
 function stripHtml(html: string): string {
@@ -42,6 +46,188 @@ function stripHtml(html: string): string {
     .replace(/&#39;/g, "'")
     .replace(/\n{3,}/g, '\n\n')
     .trim();
+}
+
+/* ── Weapon property helpers ─────────────────────────────── */
+
+/**
+ * Figure out which ability mod a weapon uses for attack + damage based on
+ * its properties. Returns:
+ *   { ability, label, explanation } where
+ *     ability     — the AbilityName to use for attack/damage rolls
+ *     label       — short caps badge text ("STR", "DEX", "DEX (Finesse)")
+ *     explanation — hover tooltip body
+ *
+ * Rules:
+ *   • Ranged weapons always use DEX
+ *   • Finesse weapons use the HIGHER of STR/DEX (player's choice, we pick max)
+ *   • Melee weapons default to STR
+ */
+function getWeaponAttackAbility(
+  properties: string[] | undefined,
+  strMod: number,
+  dexMod: number,
+): { ability: AbilityName; label: string; explanation: string } {
+  const props = (properties || []).map(p => p.toLowerCase());
+  const isFinesse = props.some(p => p.includes('finesse'));
+  const isRanged = props.some(p => p.includes('ranged')) ||
+                   props.some(p => p.includes('ammunition')) ||
+                   props.some(p => p.includes('range '));
+  const isThrown = props.some(p => p.includes('thrown'));
+
+  if (isRanged && !isThrown) {
+    return {
+      ability: 'dex',
+      label: 'DEX',
+      explanation:
+        'Ranged weapons ALWAYS use your Dexterity modifier for attack and ' +
+        'damage rolls, regardless of the weapon\u2019s other properties.',
+    };
+  }
+
+  if (isFinesse) {
+    const useDex = dexMod >= strMod;
+    return {
+      ability: useDex ? 'dex' : 'str',
+      label: useDex ? 'DEX (Finesse)' : 'STR (Finesse)',
+      explanation:
+        'Finesse weapons let you choose between Strength and Dexterity for ' +
+        'both attack and damage rolls — you must use the same modifier for ' +
+        'both. We pick whichever is higher for you automatically.\n\n' +
+        `Current: STR ${fmtModStr(strMod)}, DEX ${fmtModStr(dexMod)} \u2192 ${useDex ? 'DEX' : 'STR'} is better.` +
+        (isThrown ? '\n\nThrown: if you throw this weapon, you still use the chosen ability mod.' : ''),
+    };
+  }
+
+  if (isThrown) {
+    return {
+      ability: 'str',
+      label: 'STR (Thrown)',
+      explanation:
+        'Thrown melee weapons use your Strength modifier for attack and ' +
+        'damage rolls, whether you\u2019re swinging or throwing them.\n\n' +
+        '(If the weapon also had Finesse \u2014 like a Dagger \u2014 you could ' +
+        'use DEX instead. This one doesn\u2019t.)',
+    };
+  }
+
+  // Plain melee weapon
+  return {
+    ability: 'str',
+    label: 'STR',
+    explanation:
+      'Melee weapons without the Finesse property use your Strength ' +
+      'modifier for attack and damage rolls.',
+  };
+}
+
+/** Format a numeric modifier with an explicit sign prefix (+3 / -1). */
+function fmtModStr(mod: number): string {
+  return mod >= 0 ? `+${mod}` : `${mod}`;
+}
+
+/**
+ * Inline list of weapon property pills with hover tooltips for each,
+ * pulled from the rules-text dictionary. Mirrors the
+ * `WeaponProperties` component used in the TokenActionPanel so the
+ * vocabulary matches — hovering "Finesse", "Nick", "Thrown", etc.
+ * shows the full 2024 PHB rules.
+ */
+function WeaponPropertyPills({
+  properties,
+  small,
+}: {
+  properties: string[] | undefined;
+  small?: boolean;
+}) {
+  if (!properties || properties.length === 0) return null;
+  const fontSize = small ? 8 : 9;
+  const padding = small ? '1px 5px' : '2px 6px';
+  return (
+    <span style={{ display: 'inline-flex', flexWrap: 'wrap', gap: 3 }}>
+      {properties.map((prop, idx) => {
+        const rule = lookupWeaponProperty(prop);
+        const pill = (
+          <span
+            style={{
+              padding,
+              fontSize,
+              fontWeight: 600,
+              background: 'rgba(212,168,67,0.08)',
+              border: '1px solid rgba(212,168,67,0.25)',
+              borderRadius: 3,
+              color: '#d4a843',
+              textTransform: 'capitalize' as const,
+              cursor: rule ? 'help' : 'default',
+              display: 'inline-block',
+              lineHeight: 1.3,
+              whiteSpace: 'nowrap',
+            }}
+          >
+            {prop}
+          </span>
+        );
+        if (!rule) return <span key={idx}>{pill}</span>;
+        return (
+          <InfoTooltip
+            key={idx}
+            title={rule.title}
+            body={rule.body}
+            footer={rule.footer}
+            accent={rule.accent}
+          >
+            {pill}
+          </InfoTooltip>
+        );
+      })}
+    </span>
+  );
+}
+
+/**
+ * Badge showing which ability mod a weapon uses for attack/damage
+ * (STR / DEX / "DEX (Finesse)") with a hover tooltip explaining why.
+ */
+function WeaponAbilityBadge({
+  properties,
+  strMod,
+  dexMod,
+}: {
+  properties: string[] | undefined;
+  strMod: number;
+  dexMod: number;
+}) {
+  const { label, explanation } = getWeaponAttackAbility(properties, strMod, dexMod);
+  const accent = label.startsWith('DEX') ? '#3498db' : '#c0392b';
+
+  return (
+    <InfoTooltip
+      title={`Uses ${label.split(' ')[0]} modifier`}
+      body={explanation}
+      footer="Attack and damage both use this ability\u2019s modifier."
+      accent={accent}
+    >
+      <span
+        style={{
+          padding: '2px 6px',
+          fontSize: 9,
+          fontWeight: 700,
+          background: `${accent}22`,
+          border: `1px solid ${accent}55`,
+          borderRadius: 3,
+          color: accent,
+          textTransform: 'uppercase' as const,
+          letterSpacing: '0.04em',
+          cursor: 'help',
+          display: 'inline-block',
+          lineHeight: 1.3,
+          whiteSpace: 'nowrap',
+        }}
+      >
+        {label}
+      </span>
+    </InfoTooltip>
+  );
 }
 
 /* ── Dice roll with local result + toast + server emit ──── */
@@ -120,9 +306,23 @@ function showRollToast(notation: string, reason: string) {
 /* ── Safe JSON parser ────────────────────────────────────── */
 function parse<T>(val: unknown, fallback: T): T {
   if (typeof val === 'string') {
-    try { return JSON.parse(val); } catch { return fallback; }
+    try { val = JSON.parse(val); } catch { return fallback; }
   }
-  return (val as T) ?? fallback;
+  if (val == null) return fallback;
+  // If BOTH the parsed value and the fallback are plain objects (not
+  // arrays), merge so that missing keys from a stale or partial DB shape
+  // still inherit their defaults. This prevents crashes like
+  // `defenses.resistances.length` when defenses comes back as `{}`.
+  if (
+    typeof val === 'object' &&
+    !Array.isArray(val) &&
+    typeof fallback === 'object' &&
+    fallback !== null &&
+    !Array.isArray(fallback)
+  ) {
+    return { ...(fallback as object), ...(val as object) } as T;
+  }
+  return val as T;
 }
 
 const RARITY_COLORS: Record<string, string> = {
@@ -130,25 +330,33 @@ const RARITY_COLORS: Record<string, string> = {
   'very rare': '#a335ee', legendary: '#ff8000', artifact: '#e6cc80',
 };
 
-/* ── DDB Color Palette ───────────────────────────────────── */
+/* ── Color Palette ─────────────────────────────────────────
+ * Thin alias over the shared theme tokens. Keeps the existing
+ * `C.red`, `C.green` etc. references working so we don't have to
+ * sweep every usage in this 2690-line file, while making every color
+ * route through the unified theme.ts. Before the unification pass
+ * this was a local hardcoded palette that drifted from the theme —
+ * e.g. C.red was #c53131 while theme.danger is #c0392b, causing the
+ * HP bar in the full sheet to look different from the tooltip.
+ */
 const C = {
-  bgDeep: '#1a1a1a',
-  bgCard: '#222222',
-  bgElevated: '#2a2a2a',
-  bgHover: '#333',
-  red: '#c53131',
-  redDim: '#8b2222',
-  redGlow: '0 0 4px rgba(197,49,49,0.5)',
-  textPrimary: '#eee',
-  textSecondary: '#aaa',
-  textMuted: '#888',
-  textDim: '#666',
-  border: '#444',
-  borderDim: '#333',
-  green: '#45a049',
-  blue: '#4a9fd5',
-  purple: '#8b5cf6',
-  gold: '#d4a843',
+  bgDeep: theme.bg.deep,
+  bgCard: theme.bg.card,
+  bgElevated: theme.bg.elevated,
+  bgHover: theme.bg.hover,
+  red: theme.state.danger,
+  redDim: theme.dangerDim,
+  redGlow: theme.dangerGlow,
+  textPrimary: theme.text.primary,
+  textSecondary: theme.text.secondary,
+  textMuted: theme.text.muted,
+  textDim: theme.text.muted,
+  border: theme.border.default,
+  borderDim: theme.border.default,
+  green: theme.state.success,
+  blue: theme.blue,
+  purple: theme.purple,
+  gold: theme.gold.primary,
 } as const;
 
 /* ── Label Maps ──────────────────────────────────────────── */
@@ -335,9 +543,26 @@ export function CharacterSheetFull({ character, onClose, initialTab }: { charact
   const characteristics = parse<CharacterCharacteristics>(character.characteristics, { alignment: '', gender: '', eyes: '', hair: '', skin: '', height: '', weight: '', age: '', faith: '', size: '' });
   const personality = parse<CharacterPersonality>(character.personality, { traits: '', ideals: '', bonds: '', flaws: '' });
   const notes = parse<CharacterNotes>(character.notes, { organizations: '', allies: '', enemies: '', backstory: '', other: '' });
-  const proficiencies = parse<CharacterProficiencies>(character.proficiencies, { armor: [], weapons: [], tools: [], languages: [] });
-  const senses = parse<CharacterSenses>(character.senses, { passivePerception: 10, passiveInvestigation: 10, passiveInsight: 10, darkvision: 0 });
-  const defenses = parse<CharacterDefenses>(character.defenses, { resistances: [], immunities: [], vulnerabilities: [] });
+  const proficienciesRaw = parse<CharacterProficiencies>(character.proficiencies, { armor: [], weapons: [], tools: [], languages: [] });
+  const proficiencies: CharacterProficiencies = {
+    armor: Array.isArray(proficienciesRaw.armor) ? proficienciesRaw.armor : [],
+    weapons: Array.isArray(proficienciesRaw.weapons) ? proficienciesRaw.weapons : [],
+    tools: Array.isArray(proficienciesRaw.tools) ? proficienciesRaw.tools : [],
+    languages: Array.isArray(proficienciesRaw.languages) ? proficienciesRaw.languages : [],
+  };
+  const sensesRaw = parse<CharacterSenses>(character.senses, { passivePerception: 10, passiveInvestigation: 10, passiveInsight: 10, darkvision: 0 });
+  const senses: CharacterSenses = {
+    passivePerception: typeof sensesRaw.passivePerception === 'number' ? sensesRaw.passivePerception : 10,
+    passiveInvestigation: typeof sensesRaw.passiveInvestigation === 'number' ? sensesRaw.passiveInvestigation : 10,
+    passiveInsight: typeof sensesRaw.passiveInsight === 'number' ? sensesRaw.passiveInsight : 10,
+    darkvision: typeof sensesRaw.darkvision === 'number' ? sensesRaw.darkvision : 0,
+  };
+  const defensesRaw = parse<CharacterDefenses>(character.defenses, { resistances: [], immunities: [], vulnerabilities: [] });
+  const defenses: CharacterDefenses = {
+    resistances: Array.isArray(defensesRaw.resistances) ? defensesRaw.resistances : [],
+    immunities: Array.isArray(defensesRaw.immunities) ? defensesRaw.immunities : [],
+    vulnerabilities: Array.isArray(defensesRaw.vulnerabilities) ? defensesRaw.vulnerabilities : [],
+  };
   const conditions = parse<string[]>(character.conditions, []);
   const currency = parse<CharacterCurrency>(character.currency, { cp: 0, sp: 0, ep: 0, gp: 0, pp: 0 });
   const deathSaves = parse<DeathSaves>(character.deathSaves, { successes: 0, failures: 0 });
@@ -388,9 +613,14 @@ export function CharacterSheetFull({ character, onClose, initialTab }: { charact
         color: C.textPrimary,
       }}
     >
-      {/* Modal container */}
+      {/* Modal container.
+          Sized to fit any reasonable viewport: 95vw width capped at
+          1100px, 95vh height. We let the inner layout scroll
+          vertically rather than clipping content — narrow windows
+          (laptop, embedded iframe) get a scrollable sheet instead
+          of cut-off columns. */}
       <div style={{
-        width: '95vw', maxWidth: 1100, maxHeight: '90vh',
+        width: '95vw', maxWidth: 1100, height: '95vh', maxHeight: '95vh',
         background: C.bgDeep, borderRadius: 8,
         border: `1px solid ${C.border}`,
         boxShadow: '0 8px 40px rgba(0,0,0,0.6)',
@@ -412,8 +642,18 @@ export function CharacterSheetFull({ character, onClose, initialTab }: { charact
           &times;
         </button>
 
-        {/* Three-column layout */}
-        <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
+        {/* Three-column layout.
+            On narrow viewports the LeftColumn is too wide to fit
+            alongside the center column's ability-score row — we
+            wrap in a scrollable container so the sheet degrades
+            gracefully rather than clipping. */}
+        <div style={{
+          display: 'flex',
+          flex: 1,
+          overflow: 'auto',
+          flexWrap: 'nowrap',
+          minHeight: 0,
+        }}>
           {/* ═══ LEFT COLUMN ═══ */}
           <LeftColumn
             abilityScores={abilityScores}
@@ -426,8 +666,17 @@ export function CharacterSheetFull({ character, onClose, initialTab }: { charact
             getSkillMod={getSkillMod}
           />
 
-          {/* ═══ CENTER COLUMN ═══ */}
-          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+          {/* ═══ CENTER COLUMN ═══
+              flex: 1 to grow, minWidth: 0 so it can shrink smaller
+              than its content (required when children have their
+              own fixed widths that would otherwise pin the column). */}
+          <div style={{
+            flex: 1,
+            minWidth: 0,
+            display: 'flex',
+            flexDirection: 'column',
+            overflow: 'hidden',
+          }}>
             {/* Header */}
             <HeaderBar character={character} />
 
@@ -525,7 +774,13 @@ export function CharacterSheetFull({ character, onClose, initialTab }: { charact
                 />
               )}
               {activeTab === 'inventory' && (
-                <InventoryTab inventory={inventory} currency={currency} characterId={character.id} />
+                <InventoryTab
+                  inventory={inventory}
+                  currency={currency}
+                  characterId={character.id}
+                  strMod={getMod('str')}
+                  dexMod={getMod('dex')}
+                />
               )}
               {activeTab === 'features' && (
                 <FeaturesTab features={features} />
@@ -565,7 +820,8 @@ function LeftColumn({ abilityScores, skills, savingThrows, profBonus, senses, pr
 }) {
   return (
     <div style={{
-      width: 240, minWidth: 240, background: C.bgCard,
+      width: 220, minWidth: 220, flexShrink: 0,
+      background: C.bgCard,
       borderRight: `1px solid ${C.borderDim}`,
       overflowY: 'auto', padding: '12px 10px', fontSize: 12,
     }}>
@@ -1055,36 +1311,28 @@ function StatBox({ label, value, onClick }: { label: string; value: string; onCl
 
 /* ═══════════════════════════════════════════════════════════
    HP SECTION
+   Uses the shared HPBar primitive so the full character sheet
+   matches the sidebar and tooltip HP visuals exactly. Death-save
+   tracker uses themed skull-style dots at 0 HP.
    ═══════════════════════════════════════════════════════════ */
-function HPSection({ hp, maxHp, tempHp, hpPct, hpColor, deathSaves }: {
-  hp: number; maxHp: number; tempHp: number; hpPct: number; hpColor: string;
+function HPSection({ hp, maxHp, tempHp, deathSaves }: {
+  hp: number; maxHp: number; tempHp: number;
+  hpPct: number;  // kept in the type signature for caller compat
+  hpColor: string; // kept in the type signature for caller compat
   deathSaves: DeathSaves;
 }) {
   return (
     <div style={{ padding: '4px 16px 8px' }}>
-      {/* HP bar */}
-      <div style={{
-        height: 18, background: C.bgElevated, borderRadius: 9,
-        overflow: 'hidden', border: `1px solid ${C.borderDim}`,
-        position: 'relative',
-      }}>
-        <div style={{
-          width: `${hpPct}%`, height: '100%',
-          background: hpColor, borderRadius: 9,
-          transition: 'width 0.3s, background 0.3s',
-        }} />
-        <div style={{
-          position: 'absolute', inset: 0, display: 'flex',
-          alignItems: 'center', justifyContent: 'center',
-          fontSize: 11, fontWeight: 700, color: '#fff',
-          textShadow: '0 1px 2px rgba(0,0,0,0.6)',
-        }}>
-          {hp} / {maxHp}
-          {tempHp > 0 && <span style={{ color: C.blue, marginLeft: 4 }}>+{tempHp} temp</span>}
-        </div>
-      </div>
+      <HPBar
+        current={hp}
+        max={maxHp}
+        temp={tempHp}
+        size="large"
+        showEmoji
+      />
 
-      {/* Death saves (if at 0 HP) */}
+      {/* Death saves (if at 0 HP) — unchanged layout, colors now
+          flow through theme via the redefined C alias. */}
       {hp <= 0 && (
         <div style={{ display: 'flex', gap: 12, marginTop: 6, fontSize: 11 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
@@ -1187,10 +1435,19 @@ function ActionsTab({ inventory, spells, features, abilityScores, profBonus, get
                   padding: '6px 8px', background: C.bgCard,
                   borderRadius: 4, border: `1px solid ${C.borderDim}`,
                 }}>
-                  <div style={{ flex: 1 }}>
-                    <div style={{ fontWeight: 600, fontSize: 13 }}>{w.name}</div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                      <span style={{ fontWeight: 600, fontSize: 13 }}>{w.name}</span>
+                      <WeaponAbilityBadge
+                        properties={w.properties}
+                        strMod={getMod('str')}
+                        dexMod={getMod('dex')}
+                      />
+                    </div>
                     {w.properties && w.properties.length > 0 && (
-                      <div style={{ fontSize: 10, color: C.textMuted }}>{w.properties.join(', ')}</div>
+                      <div style={{ marginTop: 3 }}>
+                        <WeaponPropertyPills properties={w.properties} small />
+                      </div>
                     )}
                   </div>
                   <div style={{ fontSize: 11, color: C.textMuted, minWidth: 60, textAlign: 'center' }}>{range}</div>
@@ -1981,7 +2238,19 @@ const INV_FILTERS: { key: InvFilter; label: string }[] = [
   { key: 'attunement', label: 'ATTUNEMENT' },
 ];
 
-function InventoryTab({ inventory, currency, characterId }: { inventory: InventoryItem[]; currency: CharacterCurrency; characterId: string }) {
+function InventoryTab({
+  inventory,
+  currency,
+  characterId,
+  strMod,
+  dexMod,
+}: {
+  inventory: InventoryItem[];
+  currency: CharacterCurrency;
+  characterId: string;
+  strMod: number;
+  dexMod: number;
+}) {
   const [filter, setFilter] = useState<InvFilter>('all');
   const [expanded, setExpanded] = useState<Record<number, boolean>>({});
 
@@ -2103,10 +2372,29 @@ function InventoryTab({ inventory, currency, characterId }: { inventory: Invento
                 {item.description && (
                   <div style={{ color: C.textSecondary, marginBottom: 6, whiteSpace: 'pre-wrap' }}>{stripHtml(item.description)}</div>
                 )}
-                <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
-                  {item.damage && <span><b style={{ color: C.textMuted }}>Damage:</b> {item.damage} {item.damageType ?? ''}</span>}
+                <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
+                  {item.damage && (
+                    <span>
+                      <b style={{ color: C.textMuted }}>Damage:</b> {item.damage} {item.damageType ?? ''}
+                    </span>
+                  )}
+                  {/* Ability badge (STR/DEX/Finesse) — weapons only. Hover
+                      explains which stat is used and why. */}
+                  {item.type === 'weapon' && (
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                      <b style={{ color: C.textMuted }}>Uses:</b>
+                      <WeaponAbilityBadge
+                        properties={item.properties}
+                        strMod={strMod}
+                        dexMod={dexMod}
+                      />
+                    </span>
+                  )}
                   {item.properties && item.properties.length > 0 && (
-                    <span><b style={{ color: C.textMuted }}>Properties:</b> {item.properties.join(', ')}</span>
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                      <b style={{ color: C.textMuted }}>Properties:</b>
+                      <WeaponPropertyPills properties={item.properties} />
+                    </span>
                   )}
                   {item.attunement && <Badge color={item.attuned ? C.red : C.textDim}>{item.attuned ? 'Attuned' : 'Requires Attunement'}</Badge>}
                 </div>

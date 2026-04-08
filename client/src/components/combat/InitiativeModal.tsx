@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { useCombatStore } from '../../stores/useCombatStore';
 import { useSessionStore } from '../../stores/useSessionStore';
 import { useCharacterStore } from '../../stores/useCharacterStore';
+import { useMapStore } from '../../stores/useMapStore';
 import { emitRollInitiative, emitSetInitiative } from '../../socket/emitters';
 import { theme } from '../../styles/theme';
 import type { Combatant } from '@dnd-vtt/shared';
@@ -19,35 +20,63 @@ export function InitiativeModal({ onClose }: InitiativeModalProps) {
   const isDM = useSessionStore((s) => s.isDM);
   const userId = useSessionStore((s) => s.userId);
   const myCharacter = useCharacterStore((s) => s.myCharacter);
+  const tokens = useMapStore((s) => s.tokens);
   const [rolledTokenIds, setRolledTokenIds] = useState<Set<string>>(new Set());
   const [autoCloseCountdown, setAutoCloseCountdown] = useState<number | null>(null);
 
-  // Find my combatant (the one linked to my character)
-  const myCombatant = combatants.find(
-    (c) => !c.isNPC && c.characterId === userId
-  );
+  // Find my combatant. Previously this compared `c.characterId === userId`
+  // which is wrong — characterId is a CHARACTER UUID, not a user UUID,
+  // so the check never matched and the player's "Roll Initiative"
+  // button was never rendered. The correct way is to look up the
+  // combatant whose token is owned by the current user, OR whose
+  // characterId matches the current user's linked character.
+  const myCombatant = combatants.find((c) => {
+    if (c.isNPC) return false;
+    // Primary: match via the linked character record.
+    if (myCharacter && c.characterId && c.characterId === myCharacter.id) {
+      return true;
+    }
+    // Fallback: match via the token's ownerUserId. This covers
+    // placeholder characters or tokens that haven't synced their
+    // character record yet.
+    const tok = tokens[c.tokenId];
+    if (tok && tok.ownerUserId === userId) return true;
+    return false;
+  });
 
-  // Check if all initiatives are set
+  // Check if all initiatives are set (non-zero initiative OR has a
+  // logged roll). The initial combat:started broadcast already carries
+  // rolled values, and the server auto-rolls everyone — so we now
+  // treat any combatant with non-zero initiative as "ready" even if
+  // the initiative-set confirmation hasn't arrived on this client yet.
   const allReady = combatants.length > 0 && combatants.every(
-    (c) => initiativeRolls.has(c.tokenId)
+    (c) => initiativeRolls.has(c.tokenId) || (c.initiative !== 0 && Number.isFinite(c.initiative)),
   );
 
-  // Auto-close after all initiatives are ready
+  // Auto-close after all initiatives are ready. We track the
+  // countdown via a ref + a separate render-tick state so the
+  // setInterval callback never calls a parent setState (which
+  // React 19 treats as "setState during render" if it happens
+  // inside another setState's updater callback).
   useEffect(() => {
     if (!allReady) {
       setAutoCloseCountdown(null);
       return;
     }
-    setAutoCloseCountdown(2);
+    let remaining = 2;
+    setAutoCloseCountdown(remaining);
     const interval = setInterval(() => {
-      setAutoCloseCountdown((prev) => {
-        if (prev === null || prev <= 1) {
-          clearInterval(interval);
-          onClose();
-          return 0;
-        }
-        return prev - 1;
-      });
+      remaining -= 1;
+      setAutoCloseCountdown(remaining);
+      if (remaining <= 0) {
+        clearInterval(interval);
+        // Defer the parent setState to a microtask so it lands
+        // outside any state-updater scope and outside the current
+        // render cycle. Without this we hit React 19's "Cannot
+        // update a component while rendering a different component"
+        // warning when the countdown hits zero.
+        Promise.resolve().then(() => onClose());
+      }
     }, 1000);
     return () => clearInterval(interval);
   }, [allReady, onClose]);
@@ -75,21 +104,33 @@ export function InitiativeModal({ onClose }: InitiativeModalProps) {
     }
   }, [combatants, initiativeRolls]);
 
-  // Sort combatants: those with initiative results first (sorted by result desc), then those without
+  // Sort combatants by their known initiative value — prefer the
+  // event-confirmed Map entry, fall back to the combatant's own
+  // initiative field, and then to 0 (pending).
+  const rollFor = (c: Combatant) => {
+    const mapRoll = initiativeRolls.get(c.tokenId);
+    if (mapRoll !== undefined) return mapRoll;
+    if (c.initiative !== 0 && Number.isFinite(c.initiative)) return c.initiative;
+    return null;
+  };
   const sortedCombatants = [...combatants].sort((a, b) => {
-    const aRoll = initiativeRolls.get(a.tokenId);
-    const bRoll = initiativeRolls.get(b.tokenId);
-    if (aRoll !== undefined && bRoll !== undefined) return bRoll - aRoll;
-    if (aRoll !== undefined) return -1;
-    if (bRoll !== undefined) return 1;
+    const ar = rollFor(a);
+    const br = rollFor(b);
+    if (ar !== null && br !== null) return br - ar;
+    if (ar !== null) return -1;
+    if (br !== null) return 1;
     return 0;
   });
 
+  const isRolled = (c: Combatant) =>
+    initiativeRolls.has(c.tokenId) ||
+    (c.initiative !== 0 && Number.isFinite(c.initiative));
+
   const npcsNeedRoll = isDM && combatants.some(
-    (c) => c.isNPC && !initiativeRolls.has(c.tokenId)
+    (c) => c.isNPC && !isRolled(c),
   );
 
-  const myNeedsRoll = myCombatant && !initiativeRolls.has(myCombatant.tokenId) && !rolledTokenIds.has(myCombatant.tokenId);
+  const myNeedsRoll = myCombatant && !isRolled(myCombatant) && !rolledTokenIds.has(myCombatant.tokenId);
 
   return (
     <div style={styles.overlay}>
@@ -99,13 +140,24 @@ export function InitiativeModal({ onClose }: InitiativeModalProps) {
 
         {/* Combatant list */}
         <div style={styles.combatantList}>
-          {sortedCombatants.map((combatant) => (
-            <CombatantRow
-              key={combatant.tokenId}
-              combatant={combatant}
-              rollResult={initiativeRolls.get(combatant.tokenId) ?? null}
-            />
-          ))}
+          {sortedCombatants.map((combatant) => {
+            // Prefer the event-confirmed roll value from the Map, but
+            // fall back to the combatant's own initiative field so
+            // players see their value even on the instant combat:started
+            // fires (before the per-combatant initiative-set events have
+            // landed on their client).
+            const mapRoll = initiativeRolls.get(combatant.tokenId);
+            const rollResult = mapRoll !== undefined
+              ? mapRoll
+              : (combatant.initiative !== 0 && Number.isFinite(combatant.initiative) ? combatant.initiative : null);
+            return (
+              <CombatantRow
+                key={combatant.tokenId}
+                combatant={combatant}
+                rollResult={rollResult}
+              />
+            );
+          })}
         </div>
 
         {/* Action buttons */}

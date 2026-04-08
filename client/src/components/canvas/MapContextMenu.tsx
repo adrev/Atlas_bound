@@ -2,7 +2,11 @@ import { useState, useEffect } from 'react';
 import { useSessionStore } from '../../stores/useSessionStore';
 import { useMapStore } from '../../stores/useMapStore';
 import { useCombatStore } from '../../stores/useCombatStore';
-import { emitPing, emitTokenAdd, emitStartCombat, emitEndCombat } from '../../socket/emitters';
+import { useDrawStore } from '../../stores/useDrawStore';
+import {
+  emitPing, emitTokenAdd, emitStartCombat, emitEndCombat,
+  emitDrawingClearAll,
+} from '../../socket/emitters';
 
 const C = {
   bg: '#1a1a1a', bgHover: '#2a2a2a', border: '#444',
@@ -110,6 +114,14 @@ export function MapContextMenu() {
           close();
         }} />
 
+        {/* Draw Mode — available to everyone. Players get a personal
+            draw layer (visible to them + DM); DMs get the full toolbar
+            with shared / dm-only / personal visibility options. */}
+        <Item icon="✏️" label="Draw Mode" onClick={() => {
+          useDrawStore.getState().enterDrawMode();
+          close();
+        }} />
+
         {isDM && (
           <>
             <div style={{ height: 1, background: C.border, margin: '2px 0' }} />
@@ -117,6 +129,15 @@ export function MapContextMenu() {
             {/* Wall drawing */}
             <Item icon="🧱" label="Draw Walls" onClick={() => {
               useMapStore.getState().setTool('wall');
+              close();
+            }} />
+
+            {/* Clear all drawings on the current map (DM only) */}
+            <Item icon="🗑️" label="Clear All Drawings" onClick={() => {
+              // eslint-disable-next-line no-alert
+              if (confirm('Clear all drawings on this map? This cannot be undone.')) {
+                emitDrawingClearAll('all');
+              }
               close();
             }} />
 
@@ -164,18 +185,14 @@ export function MapContextMenu() {
 
         <div style={{ height: 1, background: C.border, margin: '2px 0' }} />
 
-        {/* Center view */}
+        {/* Center view — dispatch the canvas-center-on event so BattleMap
+            updates its local viewport. (The useMapStore.viewport field
+            is a stale leftover; the real viewport lives in the
+            useCanvasViewport hook.) */}
         <Item icon="🔍" label="Center View Here" onClick={() => {
-          const container = document.querySelector('[style*="cursor"]')?.parentElement;
-          if (container) {
-            const w = container.clientWidth / 2;
-            const h = container.clientHeight / 2;
-            const scale = useMapStore.getState().viewport.scale || 1;
-            useMapStore.getState().setViewport({
-              x: w - menu.mapX * scale,
-              y: h - menu.mapY * scale,
-            });
-          }
+          window.dispatchEvent(new CustomEvent('canvas-center-on', {
+            detail: { mapX: menu.mapX, mapY: menu.mapY },
+          }));
           close();
         }} />
       </div>
