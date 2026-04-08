@@ -9,21 +9,38 @@ import { theme } from '../../styles/theme';
 import { EMOJI } from '../../styles/emoji';
 import { Section, Button, NumberInput, FieldGroup, Divider } from '../ui';
 
-type DMView = 'main' | 'creatures' | 'settings';
+type DMView = 'main' | 'creatures' | 'maps' | 'settings';
 
 /**
  * DM Tools tab content. Rewritten for the UI unification pass using
  * shared primitives (Section, Button, Divider, NumberInput).
  *
- * Renders one of three views:
- *   • main       — scene manager + quick-action sections
+ * Renders one of four views:
+ *   • main       — section cards with buttons to open each sub-view
  *   • creatures  — full creature library
+ *   • maps       — full scene / map manager (layers, previews, activate)
  *   • settings   — game settings form
+ *
+ * Both the creature library and the map library live behind buttons
+ * so the DM has room to manage each one. If no map is loaded when
+ * "Open Map Library" is clicked, we short-circuit to the global
+ * MapBrowser overlay (map picker) via the `open-map-browser` event
+ * instead of switching to the scene manager view.
  */
 export function DMToolbar() {
   const [view, setView] = useState<DMView>('main');
   const currentMap = useMapStore((s) => s.currentMap);
   const settings = useSessionStore((s) => s.settings);
+
+  const handleOpenMapLibrary = () => {
+    if (!currentMap) {
+      // No map loaded yet — go straight to the map picker overlay so
+      // the DM can pick an initial map before managing scene layers.
+      window.dispatchEvent(new CustomEvent('open-map-browser'));
+      return;
+    }
+    setView('maps');
+  };
 
   if (view === 'creatures') {
     return (
@@ -38,6 +55,23 @@ export function DMToolbar() {
           Back to DM Tools
         </Button>
         <CreatureLibrary />
+      </div>
+    );
+  }
+
+  if (view === 'maps') {
+    return (
+      <div style={styles.container}>
+        <Button
+          variant="ghost"
+          size="sm"
+          leadingIcon={<ArrowLeft size={12} />}
+          onClick={() => setView('main')}
+          style={{ alignSelf: 'flex-start', marginBottom: theme.space.md }}
+        >
+          Back to DM Tools
+        </Button>
+        <SceneManager />
       </div>
     );
   }
@@ -68,10 +102,24 @@ export function DMToolbar() {
 
       <Divider variant="ornate" marginY={theme.space.sm} />
 
-      {/* Scene Manager (renders its own Section wrapper internally) */}
-      <SceneManager />
+      {/* Scenes & Maps */}
+      <Section title="Scenes & Maps" emoji={EMOJI.map.dm}>
+        <p style={styles.hint}>
+          {currentMap
+            ? 'Manage map layers, preview scenes, or add a new map to the campaign.'
+            : 'No map loaded yet. Open the map library to pick your first scene.'}
+        </p>
+        <Button
+          variant="primary"
+          size="md"
+          fullWidth
+          onClick={handleOpenMapLibrary}
+        >
+          Open Map Library
+        </Button>
+      </Section>
 
-      <Divider variant="ornate" marginY={theme.space.sm} />
+      <Divider variant="plain" />
 
       {/* Creatures & NPCs */}
       <Section title="Creatures & NPCs" emoji={EMOJI.combat.attack}>

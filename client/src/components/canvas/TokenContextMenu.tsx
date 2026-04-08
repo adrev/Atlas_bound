@@ -8,12 +8,24 @@ import {
   emitRoll, emitPing, emitStartCombat,
 } from '../../socket/emitters';
 import { abilityModifier } from '@dnd-vtt/shared';
+import { theme } from '../../styles/theme';
 
+// Theme-routed palette — matches TokenActionPanel + TokenTooltip so
+// every hover / left-click / right-click surface shares the same look.
 const C = {
-  bg: '#1a1a1a', bgCard: '#222', bgHover: '#2a2a2a',
-  border: '#444', borderDim: '#333',
-  text: '#eee', textSec: '#aaa', textMuted: '#777',
-  red: '#c53131', green: '#45a049', gold: '#d4a843', blue: '#4a9fd5', purple: '#9b59b6',
+  bg: theme.bg.deep,
+  bgCard: theme.bg.card,
+  bgHover: theme.bg.hover,
+  border: theme.border.default,
+  borderDim: theme.border.default,
+  text: theme.text.primary,
+  textSec: theme.text.secondary,
+  textMuted: theme.text.muted,
+  red: theme.state.danger,
+  green: theme.state.success,
+  gold: theme.gold.primary,
+  blue: theme.blue,
+  purple: theme.purple,
 };
 
 function parse<T>(val: unknown, fallback: T): T {
@@ -120,7 +132,7 @@ export function TokenContextMenu() {
             <div style={{ display: 'flex', gap: 4, marginBottom: 6 }}>
               <input type="number" value={hpInput} onChange={e => setHpInput(e.target.value)} placeholder="Amount" autoFocus
                 onKeyDown={e => { if (e.key === 'Enter') { const v = parseInt(hpInput); if (!isNaN(v) && v > 0 && token.characterId) { emitCharacterUpdate(token.characterId, { hitPoints: Math.max(0, hp - v) }); close(); } } }}
-                style={{ flex: 1, padding: '5px 8px', fontSize: 13, background: '#333', border: `1px solid ${C.border}`, borderRadius: 4, color: C.text, outline: 'none' }} />
+                style={{ flex: 1, padding: '5px 8px', fontSize: 13, background: theme.bg.elevated, border: `1px solid ${C.border}`, borderRadius: 4, color: C.text, outline: 'none' }} />
             </div>
             <div style={{ display: 'flex', gap: 3 }}>
               <Btn label="Damage" color={C.red} onClick={() => { const v = parseInt(hpInput); if (!isNaN(v) && v > 0 && token.characterId) { emitCharacterUpdate(token.characterId, { hitPoints: Math.max(0, hp - v) }); close(); } }} />
@@ -365,7 +377,7 @@ function Btn({ label, color, onClick }: { label: string; color: string; onClick:
 
 function MiniBtn({ label, color, onClick }: { label: string; color: string; onClick: () => void }) {
   return (
-    <button onClick={onClick} style={{ padding: '3px 6px', fontSize: 9, border: `1px solid ${C.border}`, borderRadius: 3, background: '#333', color, cursor: 'pointer', fontWeight: 600 }}>
+    <button onClick={onClick} style={{ padding: '3px 6px', fontSize: 9, border: `1px solid ${C.border}`, borderRadius: 3, background: theme.bg.elevated, color, cursor: 'pointer', fontWeight: 600 }}>
       {label}
     </button>
   );

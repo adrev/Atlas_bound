@@ -4,6 +4,7 @@ import { useCharacterStore } from '../../stores/useCharacterStore';
 import { useSessionStore } from '../../stores/useSessionStore';
 import { useCombatStore } from '../../stores/useCombatStore';
 import { emitRoll, emitCharacterUpdate, emitTokenUpdate, emitSystemMessage, emitTokenAdd, emitUseAction, emitDash, emitSpellCastAttempt, emitAttackHitAttempt } from '../../socket/emitters';
+import { theme } from '../../styles/theme';
 import type { ActionType } from '@dnd-vtt/shared';
 
 /**
@@ -160,11 +161,26 @@ function LootButton({ characterId, tokenName }: { characterId: string; tokenName
   );
 }
 
+// Thin alias over the shared theme tokens. Every color in this panel
+// routes through theme.ts so it stays in lockstep with the rest of the
+// app. Before the unification pass this was a hardcoded grey palette
+// that drifted from theme — e.g. `bg: #1a1a1a` vs theme.bg.deep
+// `#12121e` — which made the Hero tab look slightly "off" from every
+// other panel.
 const C = {
-  bg: '#1a1a1a', bgCard: '#222', bgHover: '#2a2a2a',
-  border: '#444', borderDim: '#333',
-  text: '#eee', textSec: '#aaa', textMuted: '#777',
-  red: '#c53131', green: '#45a049', gold: '#d4a843', blue: '#4a9fd5', purple: '#8b5cf6',
+  bg: theme.bg.deep,
+  bgCard: theme.bg.card,
+  bgHover: theme.bg.hover,
+  border: theme.border.default,
+  borderDim: theme.border.default,
+  text: theme.text.primary,
+  textSec: theme.text.secondary,
+  textMuted: theme.text.muted,
+  red: theme.state.danger,
+  green: theme.state.success,
+  gold: theme.gold.primary,
+  blue: theme.blue,
+  purple: theme.purple,
 };
 
 function parse<T>(val: unknown, fallback: T): T {
@@ -222,8 +238,30 @@ function rollDamageDice(notation: string): number {
   return Math.max(0, total + mod);
 }
 
-export function TokenActionPanel() {
-  const selectedTokenId = useMapStore((s) => s.selectedTokenId);
+/**
+ * Props for TokenActionPanel.
+ *
+ * - `embedded`: when true, render the panel inline (no fixed position,
+ *   no close button) so it can be dropped into the Hero sidebar tab
+ *   or any other host container. Still respects `embeddedTokenId`.
+ * - `embeddedTokenId`: render the panel for a specific token instead
+ *   of keying off the map's `selectedTokenId`. Used by the Hero tab
+ *   so the player always sees their own character's full action panel
+ *   even when another token is selected on the map. Can be undefined
+ *   (character has no token placed yet) — the component shows an
+ *   empty-state hint in that case.
+ */
+interface TokenActionPanelProps {
+  embedded?: boolean;
+  embeddedTokenId?: string;
+}
+
+export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenActionPanelProps = {}) {
+  const isEmbedded = embedded;
+  const mapSelectedTokenId = useMapStore((s) => s.selectedTokenId);
+  // Effective id: when embedded, the prop wins (even if undefined);
+  // otherwise fall back to whatever token is selected on the map.
+  const selectedTokenId = isEmbedded ? embeddedTokenId : mapSelectedTokenId;
   const tokens = useMapStore((s) => s.tokens);
   const allCharacters = useCharacterStore((s) => s.allCharacters);
   const isDM = useSessionStore((s) => s.isDM);
@@ -1312,10 +1350,29 @@ export function TokenActionPanel() {
     })));
   }, [compendiumData]);
 
-  if (!visible || !selectedTokenId) return null;
+  // Empty-state: embedded mode shows a hint, floating popup returns
+  // null so it stays hidden until a token is selected.
+  const emptyHint = (msg: string) => (
+    <div style={{
+      padding: '24px 16px', textAlign: 'center',
+      color: C.textMuted, fontSize: 12, lineHeight: 1.5,
+      background: C.bg, width: '100%', height: '100%',
+    }}>
+      {msg}
+    </div>
+  );
+
+  if (isEmbedded) {
+    if (!selectedTokenId) return emptyHint('No token on the map for your character yet.\nPlace your hero on the battle map to use this panel.');
+  } else {
+    if (!visible || !selectedTokenId) return null;
+  }
 
   const token = tokens[selectedTokenId];
-  if (!token) return null;
+  if (!token) {
+    if (isEmbedded) return emptyHint('Your token is not on the current map.');
+    return null;
+  }
 
   const character = token.characterId ? allCharacters[token.characterId] : null;
   const isOwner = token.ownerUserId === userId;
@@ -1422,19 +1479,35 @@ export function TokenActionPanel() {
     return null;
   };
 
+  const wrapperStyle: React.CSSProperties = isEmbedded
+    ? {
+        // Inline — fills its parent (the Hero sidebar tab). The whole
+        // panel (header + body) scrolls together so on small viewports
+        // the player can still reach every attack/spell section.
+        width: '100%', height: '100%',
+        background: C.bg, color: C.text,
+        fontFamily: '-apple-system, sans-serif',
+        display: 'flex', flexDirection: 'column',
+        overflowY: 'auto',
+      }
+    : {
+        // Floating popup — fixed to the bottom-left of the map.
+        position: 'fixed', bottom: 90, left: 12, zIndex: 500,
+        width: 320, maxHeight: 'calc(100vh - 160px)',
+        background: C.bg, border: `1px solid ${C.border}`, borderRadius: 12,
+        boxShadow: '0 8px 40px rgba(0,0,0,0.7)',
+        fontFamily: '-apple-system, sans-serif', color: C.text,
+        overflow: 'hidden', display: 'flex', flexDirection: 'column',
+      };
+
   return (
-    <div style={{
-      position: 'fixed', bottom: 90, left: 12, zIndex: 500,
-      width: 320, maxHeight: 'calc(100vh - 160px)',
-      background: C.bg, border: `1px solid ${C.border}`, borderRadius: 12,
-      boxShadow: '0 8px 40px rgba(0,0,0,0.7)',
-      fontFamily: '-apple-system, sans-serif', color: C.text,
-      overflow: 'hidden', display: 'flex', flexDirection: 'column',
-    }}>
-      <button onClick={close} style={{
-        position: 'absolute', top: 6, right: 8, zIndex: 10,
-        background: 'none', border: 'none', color: C.textMuted, fontSize: 18, cursor: 'pointer',
-      }}>&times;</button>
+    <div style={wrapperStyle}>
+      {!isEmbedded && (
+        <button onClick={close} style={{
+          position: 'absolute', top: 6, right: 8, zIndex: 10,
+          background: 'none', border: 'none', color: C.textMuted, fontSize: 18, cursor: 'pointer',
+        }}>&times;</button>
+      )}
 
       {/* Header */}
       <div style={{ padding: '10px 12px', borderBottom: `1px solid ${C.border}`, background: C.bgCard }}>
@@ -1615,8 +1688,14 @@ export function TokenActionPanel() {
         )}
       </div>
 
-      {/* Scrollable content */}
-      <div style={{ flex: 1, overflowY: 'auto', padding: '6px 10px' }}>
+      {/* Scrollable content. In floating-popup mode this is the
+          only scroll container; in embedded mode (Hero tab) the
+          outer wrapper scrolls instead so the header scrolls along
+          with the body — no nested scrolling. */}
+      <div style={isEmbedded
+        ? { padding: '6px 10px' }
+        : { flex: 1, overflowY: 'auto', padding: '6px 10px' }
+      }>
         {/* === DEAD STATE === */}
         {hp <= 0 && maxHp > 0 && isNPC && token.characterId && (
           <LootBagPanel characterId={token.characterId} creatureName={token.name} />

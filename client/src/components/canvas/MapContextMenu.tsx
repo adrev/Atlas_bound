@@ -7,10 +7,16 @@ import {
   emitPing, emitTokenAdd, emitStartCombat, emitEndCombat,
   emitDrawingClearAll,
 } from '../../socket/emitters';
+import { theme } from '../../styles/theme';
 
 const C = {
-  bg: '#1a1a1a', bgHover: '#2a2a2a', border: '#444',
-  text: '#eee', textMuted: '#777', red: '#c53131', gold: '#d4a843',
+  bg: theme.bg.deep,
+  bgHover: theme.bg.hover,
+  border: theme.border.default,
+  text: theme.text.primary,
+  textMuted: theme.text.muted,
+  red: theme.state.danger,
+  gold: theme.gold.primary,
 };
 
 interface MenuState {

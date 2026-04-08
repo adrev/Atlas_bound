@@ -59,6 +59,19 @@ function dbRowToCharacter(row: Record<string, unknown>) {
   };
 }
 
+// GET /api/characters?userId=XXX - List characters owned by a user.
+// Used by the Hero sidebar tab so the player can pick which imported
+// character to activate. Excludes NPC records (userId === 'npc') and
+// loot bag placeholders.
+router.get('/', (req: Request, res: Response) => {
+  const userId = typeof req.query.userId === 'string' ? req.query.userId : null;
+  const rows = (userId
+    ? db.prepare('SELECT * FROM characters WHERE user_id = ? ORDER BY updated_at DESC').all(userId)
+    : db.prepare("SELECT * FROM characters WHERE user_id != 'npc' ORDER BY updated_at DESC").all()
+  ) as Record<string, unknown>[];
+  res.json(rows.map(dbRowToCharacter));
+});
+
 // POST /api/characters - Create a new character
 router.post('/', (req: Request, res: Response) => {
   const parsed = createCharacterSchema.safeParse(req.body);

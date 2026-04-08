@@ -2,12 +2,20 @@ import { useState, useEffect, useCallback } from 'react';
 import { useCharacterStore } from '../../stores/useCharacterStore';
 import { useSessionStore } from '../../stores/useSessionStore';
 import { useMapStore } from '../../stores/useMapStore';
+import { theme } from '../../styles/theme';
 
 const C = {
-  bg: '#1a1a1a', bgCard: '#222', bgHover: '#2a2a2a',
-  border: '#444', borderDim: '#333',
-  text: '#eee', textSec: '#aaa', textMuted: '#777',
-  red: '#c53131', green: '#45a049', gold: '#d4a843',
+  bg: theme.bg.deep,
+  bgCard: theme.bg.card,
+  bgHover: theme.bg.hover,
+  border: theme.border.default,
+  borderDim: theme.border.default,
+  text: theme.text.primary,
+  textSec: theme.text.secondary,
+  textMuted: theme.text.muted,
+  red: theme.state.danger,
+  green: theme.state.success,
+  gold: theme.gold.primary,
 };
 
 const RARITY_COLORS: Record<string, string> = {

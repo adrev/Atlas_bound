@@ -4,20 +4,25 @@ import { useCharacterStore } from '../../stores/useCharacterStore';
 import { useCombatStore } from '../../stores/useCombatStore';
 import { useSessionStore } from '../../stores/useSessionStore';
 import { abilityModifier } from '@dnd-vtt/shared';
+import { theme } from '../../styles/theme';
 
 const HOVER_DELAY = 150;
 
+// Every color in this tooltip is a thin alias over the shared theme
+// tokens so the hover popup stays in lockstep with the rest of the
+// app. Previously this was a hardcoded grey palette that drifted from
+// theme — same "off" look the Hero tab had before the unification pass.
 const C = {
-  bg: '#1a1a1a',
-  bgCard: '#222',
-  bgElevated: '#2a2a2a',
-  red: '#c53131',
-  text: '#eee',
-  textSec: '#aaa',
-  textMuted: '#777',
-  border: '#444',
-  green: '#45a049',
-  yellow: '#e6a817',
+  bg: theme.bg.deep,
+  bgCard: theme.bg.card,
+  bgElevated: theme.bg.elevated,
+  red: theme.state.danger,
+  text: theme.text.primary,
+  textSec: theme.text.secondary,
+  textMuted: theme.text.muted,
+  border: theme.border.default,
+  green: theme.state.success,
+  yellow: theme.hp.half,
   orange: '#e67e22',
 };
 
@@ -122,7 +127,7 @@ export function TokenTooltip() {
           }}>
             <div style={{
               width: 100, height: 100, borderRadius: '50%', overflow: 'hidden',
-              border: `3px solid ${isOwner ? C.green : token.ownerUserId ? '#4a9fd5' : C.red}`,
+              border: `3px solid ${isOwner ? C.green : token.ownerUserId ? theme.blue : C.red}`,
               boxShadow: `0 0 12px ${isOwner ? 'rgba(69,160,73,0.4)' : 'rgba(197,49,49,0.4)'}`,
             }}>
               <img src={portraitUrl} alt={token.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />

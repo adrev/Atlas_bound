@@ -1,4 +1,5 @@
-import { useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { X } from 'lucide-react';
 import { theme } from '../../styles/theme';
 import { EMOJI } from '../../styles/emoji';
 import { useMapStore } from '../../stores/useMapStore';
@@ -31,9 +32,19 @@ export function PreviewModeBanner() {
     [maps, playerMapId],
   );
 
+  // Tracks the currentMap.id the DM manually dismissed the banner
+  // for. Reset whenever the DM switches to a different preview map so
+  // the banner re-appears naturally.
+  const [dismissedForMapId, setDismissedForMapId] = useState<string | null>(null);
+  useEffect(() => {
+    if (currentMap?.id !== dismissedForMapId) setDismissedForMapId(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentMap?.id]);
+
   if (!isDM) return null;
   if (!isPreviewing) return null;
   if (!currentMap) return null;
+  if (dismissedForMapId === currentMap.id) return null;
 
   const handleJumpToPlayers = () => {
     if (playerMapId) emitPreviewLoadMap(playerMapId);
@@ -53,88 +64,106 @@ export function PreviewModeBanner() {
         zIndex: 60,
         display: 'flex',
         alignItems: 'center',
-        gap: theme.space.lg,
-        padding: `${theme.space.md}px ${theme.space.lg + 2}px`,
+        gap: theme.space.md,
+        padding: `8px ${theme.space.md}px 8px 10px`,
         borderRadius: theme.radius.md,
         background: 'rgba(24, 20, 14, 0.96)',
         border: `1px solid ${theme.gold.border}`,
         boxShadow: `${theme.shadow.lg}, ${theme.goldGlow.soft}`,
         color: theme.text.primary,
         fontFamily: theme.font.body,
-        minWidth: 420,
-        maxWidth: '90%',
+        whiteSpace: 'nowrap' as const,
       }}
     >
-      {/* Icon badge */}
+      {/* "PREVIEW" chip */}
       <div
         style={{
           display: 'flex',
           alignItems: 'center',
-          justifyContent: 'center',
-          width: 36,
-          height: 36,
-          borderRadius: '50%',
+          gap: 6,
+          padding: '4px 10px',
+          borderRadius: theme.radius.sm,
           background: theme.gold.bg,
           border: `1px solid ${theme.gold.border}`,
-          fontSize: 18,
+          color: theme.gold.primary,
+          fontSize: 10,
+          fontWeight: 700,
+          letterSpacing: '0.12em',
+          textTransform: 'uppercase' as const,
           boxShadow: theme.goldGlow.soft,
+          flexShrink: 0,
         }}
       >
-        {EMOJI.map.viewing}
+        <span style={{ fontSize: 13, lineHeight: 1 }}>{EMOJI.map.viewing}</span>
+        Preview
       </div>
 
-      {/* Text */}
-      <div
+      {/* Description — single line */}
+      <span
         style={{
-          display: 'flex',
-          flexDirection: 'column',
-          gap: 2,
-          flex: 1,
-          minWidth: 0,
+          fontSize: 12,
+          color: theme.text.secondary,
+          lineHeight: 1.2,
         }}
       >
-        <span
-          style={{
-            ...theme.type.h3,
-            color: theme.gold.primary,
-          }}
-        >
-          Preview Mode
-        </span>
-        <span
-          style={{
-            ...theme.type.small,
-            color: theme.text.secondary,
-            whiteSpace: 'nowrap' as const,
-            overflow: 'hidden',
-            textOverflow: 'ellipsis' as const,
-          }}
-        >
-          Players are on{' '}
-          <strong style={{ color: theme.text.primary, fontWeight: 600 }}>
-            {playerMapSummary?.name ?? 'another map'}
-          </strong>
-          {playerMapSummary && (
-            <>
-              {' '}
-              ({playerMapSummary.tokenCount} token
-              {playerMapSummary.tokenCount !== 1 ? 's' : ''})
-            </>
-          )}
-        </span>
-      </div>
+        Viewing{' '}
+        <strong style={{ color: theme.gold.primary, fontWeight: 600 }}>
+          {currentMap.name}
+        </strong>
+        {' · '}
+        Players on{' '}
+        <strong style={{ color: theme.text.primary, fontWeight: 600 }}>
+          {playerMapSummary?.name ?? 'another map'}
+        </strong>
+        {playerMapSummary && (
+          <span style={{ color: theme.text.muted, fontWeight: 400 }}>
+            {' '}({playerMapSummary.tokenCount} token
+            {playerMapSummary.tokenCount !== 1 ? 's' : ''})
+          </span>
+        )}
+      </span>
 
       {/* Actions */}
-      <div style={{ display: 'flex', gap: theme.space.sm, flexShrink: 0 }}>
+      <div style={{ display: 'flex', gap: theme.space.sm, flexShrink: 0, marginLeft: theme.space.sm }}>
         {playerMapId && (
           <Button variant="ghost" size="sm" onClick={handleJumpToPlayers}>
             Jump to Players
           </Button>
         )}
         <Button variant="primary" size="sm" onClick={handleMovePlayersHere}>
-          Move Players to {currentMap.name}
+          Move Players Here
         </Button>
       </div>
+
+      {/* Dismiss */}
+      <button
+        onClick={() => setDismissedForMapId(currentMap.id)}
+        title="Dismiss (banner returns if you preview a different map)"
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          width: 26,
+          height: 26,
+          padding: 0,
+          background: 'transparent',
+          border: `1px solid ${theme.border.default}`,
+          borderRadius: 4,
+          color: theme.text.muted,
+          cursor: 'pointer',
+          flexShrink: 0,
+        }}
+        onMouseEnter={(e) => {
+          e.currentTarget.style.color = theme.gold.primary;
+          e.currentTarget.style.borderColor = theme.gold.primary;
+        }}
+        onMouseLeave={(e) => {
+          e.currentTarget.style.color = theme.text.muted;
+          e.currentTarget.style.borderColor = theme.border.default;
+        }}
+      >
+        <X size={14} />
+      </button>
     </div>
   );
 }

@@ -578,7 +578,7 @@ export function LootEditor({ characterId, tokenName, onClose }: LootEditorProps)
                   <button onClick={() => updateQuantity(entry.id, entry.quantity + 1)} style={S.qtyBtn}>+</button>
                 </div>
                 <button onClick={() => dropItem(entry)} title="Drop on map"
-                  style={{ ...S.removeBtn, background: 'rgba(212,168,67,0.1)', border: '1px solid rgba(212,168,67,0.3)', color: '#d4a843' }}>
+                  style={{ ...S.removeBtn, background: theme.gold.bg, border: `1px solid ${theme.gold.border}`, color: theme.gold.primary }}>
                   <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
                     <path d="M12 5v14M5 12l7 7 7-7"/>
                   </svg>

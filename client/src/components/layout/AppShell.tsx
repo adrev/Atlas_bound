@@ -332,15 +332,10 @@ export function AppShell() {
       {(showMapBrowser || (!currentMap && isDM)) && (
         <div style={styles.mapBrowserOverlay}>
           <div style={styles.mapBrowserContainer}>
-            {currentMap && (
-              <button
-                style={styles.closeMapBrowser}
-                onClick={() => setShowMapBrowser(false)}
-              >
-                X Close
-              </button>
-            )}
-            <MapBrowser onMapLoaded={() => setShowMapBrowser(false)} />
+            <MapBrowser
+              onMapLoaded={() => setShowMapBrowser(false)}
+              onClose={currentMap ? () => setShowMapBrowser(false) : undefined}
+            />
           </div>
         </div>
       )}
@@ -502,21 +497,6 @@ const styles: Record<string, React.CSSProperties> = {
     border: `1px solid ${theme.border.default}`,
     boxShadow: theme.shadow.lg,
     position: 'relative' as const,
-  },
-  closeMapBrowser: {
-    position: 'sticky' as const,
-    bottom: 0,
-    zIndex: 20,
-    display: 'block',
-    width: '100%',
-    padding: '10px 16px',
-    background: theme.bg.deep,
-    borderTop: `1px solid ${theme.border.default}`,
-    color: theme.text.secondary,
-    fontSize: 13,
-    fontWeight: 600,
-    cursor: 'pointer',
-    textAlign: 'center' as const,
   },
   fullSheetOverlay: {
     position: 'fixed' as const,

@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { Plus, X } from 'lucide-react';
 import { theme } from '../../styles/theme';
 import { useSessionStore } from '../../stores/useSessionStore';
 import { useMapStore } from '../../stores/useMapStore';
@@ -20,9 +21,13 @@ interface SavedMap {
 
 interface MapBrowserProps {
   onMapLoaded?: () => void;
+  /** Optional dismiss handler. When provided, a close X is shown
+   *  next to the Upload button in the header. Omit for the initial
+   *  "no map yet" state where the DM must pick before closing. */
+  onClose?: () => void;
 }
 
-export function MapBrowser({ onMapLoaded }: MapBrowserProps) {
+export function MapBrowser({ onMapLoaded, onClose }: MapBrowserProps) {
   const [uploadOpen, setUploadOpen] = useState(false);
   const [savedMaps, setSavedMaps] = useState<SavedMap[]>([]);
   const sessionId = useSessionStore((s) => s.sessionId);
@@ -62,44 +67,89 @@ export function MapBrowser({ onMapLoaded }: MapBrowserProps) {
           <h2 style={styles.title}>Map Browser</h2>
           <p style={styles.subtitle}>Select a pre-built map or upload your own</p>
         </div>
-        <button style={styles.uploadBtn} onClick={() => setUploadOpen(true)}>
-          <span style={styles.uploadIcon}>+</span>
-          Upload Custom Map
-        </button>
+        <div style={styles.headerActions}>
+          <button
+            style={styles.uploadBtn}
+            onClick={() => setUploadOpen(true)}
+            onMouseEnter={(e) => { e.currentTarget.style.background = `linear-gradient(135deg, ${theme.gold.dim}, ${theme.gold.bright})`; }}
+            onMouseLeave={(e) => { e.currentTarget.style.background = theme.gold.bg; }}
+          >
+            <Plus size={14} strokeWidth={2.5} />
+            Upload Custom Map
+          </button>
+          {onClose && (
+            <button
+              style={styles.closeBtn}
+              onClick={onClose}
+              title="Close"
+              aria-label="Close map browser"
+              onMouseEnter={(e) => {
+                e.currentTarget.style.background = theme.bg.hover;
+                e.currentTarget.style.color = theme.gold.bright;
+                e.currentTarget.style.borderColor = theme.gold.primary;
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.background = theme.bg.elevated;
+                e.currentTarget.style.color = theme.gold.primary;
+                e.currentTarget.style.borderColor = theme.gold.border;
+              }}
+            >
+              <X size={16} />
+            </button>
+          )}
+        </div>
       </div>
 
-      {/* Custom / Saved Maps */}
-      {savedMaps.length > 0 && (
-        <>
-          <div style={styles.sectionTitle}>Your Maps ({savedMaps.length})</div>
-          <div style={styles.savedGrid}>
-            {savedMaps.map((map) => {
-              // Prebuilt maps store imageUrl = null in the DB because
-              // the image is a client-side asset. Fall back to the
-              // prebuilt thumbnail lookup by name so the card actually
-              // shows something instead of "No image".
-              const thumbSrc = getMapThumbnail(map);
-              return (
-                <div key={map.id} style={styles.savedCard}>
-                  <div style={styles.savedThumb}>
-                    {thumbSrc ? (
-                      <img src={thumbSrc} alt={map.name} style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: 6 }} />
-                    ) : (
-                      <div style={{ width: '100%', height: '100%', background: theme.bg.elevated, borderRadius: 6, display: 'flex', alignItems: 'center', justifyContent: 'center', color: theme.text.muted, fontSize: 11 }}>No image</div>
-                    )}
-                  </div>
-                  <div style={styles.savedInfo}>
-                    <div style={{ fontWeight: 600, color: theme.text.primary, fontSize: 13 }}>{map.name}</div>
-                    <div style={{ fontSize: 10, color: theme.text.muted }}>{Math.round(map.width / map.gridSize)}x{Math.round(map.height / map.gridSize)} grid</div>
-                  </div>
-                  <button style={styles.loadBtn} onClick={() => handleLoadSaved(map)}>Load</button>
-                </div>
-              );
-            })}
-          </div>
-          <div style={styles.divider} />
-        </>
-      )}
+      {/*
+        Split saved maps into two sections:
+          • Recent Maps — scenes loaded into this session from the
+            prebuilt library (imageUrl is null because the asset lives
+            client-side). Shows what the DM has actually been using.
+          • My Maps — user-uploaded custom images (imageUrl is set).
+            Scoped like Homebrew in the compendium so the DM can find
+            their own uploads without scrolling past prebuilts.
+      */}
+      {(() => {
+        const uploadedMaps = savedMaps.filter((m) => !!m.imageUrl);
+        const recentMaps = savedMaps.filter((m) => !m.imageUrl);
+        const renderCard = (map: SavedMap) => {
+          const thumbSrc = getMapThumbnail(map);
+          return (
+            <div key={map.id} style={styles.savedCard}>
+              <div style={styles.savedThumb}>
+                {thumbSrc ? (
+                  <img src={thumbSrc} alt={map.name} style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: 6 }} />
+                ) : (
+                  <div style={{ width: '100%', height: '100%', background: theme.bg.elevated, borderRadius: 6, display: 'flex', alignItems: 'center', justifyContent: 'center', color: theme.text.muted, fontSize: 11 }}>No image</div>
+                )}
+              </div>
+              <div style={styles.savedInfo}>
+                <div style={{ fontWeight: 600, color: theme.text.primary, fontSize: 13 }}>{map.name}</div>
+                <div style={{ fontSize: 10, color: theme.text.muted }}>{Math.round(map.width / map.gridSize)}x{Math.round(map.height / map.gridSize)} grid</div>
+              </div>
+              <button style={styles.loadBtn} onClick={() => handleLoadSaved(map)}>Load</button>
+            </div>
+          );
+        };
+        return (
+          <>
+            {recentMaps.length > 0 && (
+              <>
+                <div style={styles.sectionTitle}>Recent Maps ({recentMaps.length})</div>
+                <div style={styles.savedGrid}>{recentMaps.map(renderCard)}</div>
+                <div style={styles.divider} />
+              </>
+            )}
+            {uploadedMaps.length > 0 && (
+              <>
+                <div style={styles.sectionTitle}>My Maps ({uploadedMaps.length})</div>
+                <div style={styles.savedGrid}>{uploadedMaps.map(renderCard)}</div>
+                <div style={styles.divider} />
+              </>
+            )}
+          </>
+        );
+      })()}
 
       <div style={styles.sectionTitle}>Pre-Built Maps</div>
       <PrebuiltMapGallery onMapLoaded={onMapLoaded} />
@@ -146,12 +196,18 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 13,
     color: theme.text.secondary,
   },
+  headerActions: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 8,
+    flexShrink: 0,
+  },
   uploadBtn: {
     display: 'flex',
     alignItems: 'center',
     gap: 8,
     padding: '9px 20px',
-    borderRadius: theme.radius.md,
+    borderRadius: theme.radius.sm,
     border: `1px solid ${theme.gold.border}`,
     background: theme.gold.bg,
     color: theme.gold.primary,
@@ -159,13 +215,23 @@ const styles: Record<string, React.CSSProperties> = {
     fontWeight: 600,
     fontFamily: theme.font.body,
     cursor: 'pointer',
-    transition: 'all 0.15s',
+    transition: `all ${theme.motion.fast}`,
     whiteSpace: 'nowrap',
   },
-  uploadIcon: {
-    fontSize: 18,
-    fontWeight: 700,
-    lineHeight: 1,
+  closeBtn: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: 36,
+    height: 36,
+    padding: 0,
+    background: theme.bg.elevated,
+    border: `1px solid ${theme.gold.border}`,
+    borderRadius: theme.radius.sm,
+    color: theme.gold.primary,
+    cursor: 'pointer',
+    transition: `all ${theme.motion.fast}`,
+    flexShrink: 0,
   },
   divider: {
     height: 1,

@@ -217,7 +217,7 @@ export function CompendiumPanel() {
                 src={`/uploads/${r.category === 'monsters' ? 'tokens' : r.category === 'spells' ? 'spells' : 'items'}/${r.slug}.png`}
                 alt=""
                 loading="lazy"
-                style={{ width: 28, height: 28, borderRadius: '50%', objectFit: 'cover', flexShrink: 0, border: '1.5px solid #444' }}
+                style={{ width: 28, height: 28, borderRadius: '50%', objectFit: 'cover', flexShrink: 0, border: `1.5px solid ${theme.border.default}` }}
                 onError={(e) => {
                   const img = e.currentTarget as HTMLImageElement;
                   if (!img.src.includes('default-item')) img.src = '/uploads/items/default-item.svg';
