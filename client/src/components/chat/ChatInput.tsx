@@ -106,12 +106,12 @@ export function ChatInput() {
           display: 'flex', alignItems: 'center', gap: 6,
           padding: '4px 8px', fontSize: 11, fontWeight: 600,
           background: 'rgba(155, 89, 182, 0.15)', borderRadius: theme.radius.sm,
-          color: '#c39bd3', border: '1px solid rgba(155, 89, 182, 0.3)',
+          color: '${theme.purple}', border: '1px solid rgba(155, 89, 182, 0.3)',
         }}>
           <span>Whispering to: {players.find(p => p.userId === whisperTarget)?.displayName || 'Unknown'}</span>
           <button
             onClick={() => setWhisperTarget(null)}
-            style={{ background: 'none', border: 'none', color: '#c39bd3', cursor: 'pointer', fontSize: 14, padding: '0 2px' }}
+            style={{ background: 'none', border: 'none', color: '${theme.purple}', cursor: 'pointer', fontSize: 14, padding: '0 2px' }}
           >&times;</button>
         </div>
       )}
@@ -122,7 +122,7 @@ export function ChatInput() {
           ref={inputRef}
           style={{
             ...styles.input,
-            ...(whisperTarget ? { borderColor: '#9b59b6', background: 'rgba(155, 89, 182, 0.05)' } : {}),
+            ...(whisperTarget ? { borderColor: '${theme.purple}', background: 'rgba(155, 89, 182, 0.05)' } : {}),
           }}
           placeholder={
             whisperTarget
@@ -196,13 +196,13 @@ const styles: Record<string, React.CSSProperties> = {
   },
   whisperActive: {
     background: 'rgba(155, 89, 182, 0.2)',
-    borderColor: '#9b59b6',
-    color: '#c39bd3',
+    borderColor: '${theme.purple}',
+    color: '${theme.purple}',
   },
   whisperActiveBtn: {
     background: 'rgba(155, 89, 182, 0.2)',
-    borderColor: '#9b59b6',
-    color: '#c39bd3',
+    borderColor: '${theme.purple}',
+    color: '${theme.purple}',
     marginLeft: 'auto',
   },
   inputRow: {

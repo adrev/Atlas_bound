@@ -179,21 +179,21 @@ function MonsterDetail({ monster: initialMonster }: { monster: CompendiumMonster
       {versions.length > 1 && (
         <div style={{ marginBottom: 8 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-            <span style={{ fontSize: 10, color: '#888', fontWeight: 600 }}>Source:</span>
+            <span style={{ fontSize: 10, color: theme.text.muted, fontWeight: 600 }}>Source:</span>
             {versions.map(v => {
               const isActive = v.slug === selectedSlug;
               const isOriginal = v.slug === originalSlug;
               return (
                 <button key={v.slug} onClick={() => handleVersionChange(v.slug)} style={{
                   padding: '3px 8px', fontSize: 10, borderRadius: 12, cursor: 'pointer',
-                  border: isActive ? '1px solid #c53131' : '1px solid transparent',
-                  background: isActive ? 'rgba(197,49,49,0.15)' : 'rgba(255,255,255,0.05)',
-                  color: isActive ? '#eee' : '#999',
+                  border: isActive ? `1px solid ${theme.state.danger}` : '1px solid transparent',
+                  background: isActive ? theme.state.dangerBg : 'rgba(255,255,255,0.05)',
+                  color: isActive ? theme.text.primary : theme.text.muted,
                   fontWeight: isActive ? 600 : 400,
                   fontFamily: 'inherit', transition: 'all 0.15s',
                 }}>
                   {v.source}
-                  {isOriginal && !isActive && <span style={{ marginLeft: 3, fontSize: 8, color: '#666' }}>●</span>}
+                  {isOriginal && !isActive && <span style={{ marginLeft: 3, fontSize: 8, color: theme.text.muted }}>●</span>}
                 </button>
               );
             })}
@@ -206,13 +206,13 @@ function MonsterDetail({ monster: initialMonster }: { monster: CompendiumMonster
               padding: '6px 10px', background: 'rgba(197,49,49,0.08)',
               borderRadius: 6, border: '1px solid rgba(197,49,49,0.2)',
             }}>
-              <span style={{ flex: 1, fontSize: 11, color: '#aaa' }}>
-                Viewing <strong style={{ color: '#eee' }}>{monster.source}</strong> — HP {monster.hitPoints}, AC {monster.armorClass}
+              <span style={{ flex: 1, fontSize: 11, color: theme.text.secondary }}>
+                Viewing <strong style={{ color: theme.text.primary }}>{monster.source}</strong> — HP {monster.hitPoints}, AC {monster.armorClass}
               </span>
               <button onClick={applyChanges} style={{
                 padding: '5px 16px', fontSize: 11, fontWeight: 700, borderRadius: 4,
-                background: '#c53131', border: 'none',
-                color: '#fff', cursor: 'pointer', fontFamily: 'inherit',
+                background: theme.state.danger, border: 'none',
+                color: theme.text.primary, cursor: 'pointer', fontFamily: 'inherit',
                 whiteSpace: 'nowrap',
               }}>
                 Apply
@@ -224,7 +224,7 @@ function MonsterDetail({ monster: initialMonster }: { monster: CompendiumMonster
 
       {/* Single source label */}
       {versions.length <= 1 && (monster.source || (versions.length === 1 && versions[0].source)) && (
-        <div style={{ fontSize: 10, color: '#666', marginBottom: 6 }}>
+        <div style={{ fontSize: 10, color: theme.text.muted, marginBottom: 6 }}>
           Source: {versions.length === 1 ? versions[0].source : monster.source}
         </div>
       )}
@@ -243,7 +243,7 @@ function MonsterDetail({ monster: initialMonster }: { monster: CompendiumMonster
                   setImgExists(false);
                 }
               }}
-              style={{ width: 64, height: 64, borderRadius: '50%', objectFit: 'cover', border: '3px solid #c53131' }}
+              style={{ width: 64, height: 64, borderRadius: '50%', objectFit: 'cover', border: `3px solid ${theme.state.danger}` }}
             />
           )}
           {/* DM upload button */}
@@ -267,8 +267,8 @@ function MonsterDetail({ monster: initialMonster }: { monster: CompendiumMonster
                 style={{
                   position: 'absolute', bottom: -4, right: -4,
                   width: 22, height: 22, borderRadius: '50%',
-                  background: '#1a1a2e', border: '2px solid #444',
-                  color: '#aaa', fontSize: 12, cursor: 'pointer',
+                  background: theme.bg.deep, border: `2px solid ${theme.border.default}`,
+                  color: theme.text.secondary, fontSize: 12, cursor: 'pointer',
                   display: 'flex', alignItems: 'center', justifyContent: 'center',
                   padding: 0,
                 }}
@@ -283,8 +283,8 @@ function MonsterDetail({ monster: initialMonster }: { monster: CompendiumMonster
               title="Placeholder — upload custom art"
               style={{
                 position: 'absolute', top: -2, right: -2,
-                fontSize: 7, fontWeight: 700, color: '#888',
-                background: '#2a2a2a', border: '1px solid #555',
+                fontSize: 7, fontWeight: 700, color: theme.text.muted,
+                background: theme.bg.elevated, border: `1px solid ${theme.border.light}`,
                 borderRadius: 3, padding: '1px 3px', lineHeight: 1,
               }}
             >
@@ -766,7 +766,7 @@ function ItemDetail({ item, onClose }: { item: CompendiumItem & { rawJson?: Reco
             <div style={{ fontSize: 11, color: theme.text.muted, marginBottom: 4 }}>Requires Strength {strRequired}</div>
           )}
           {stealthDisadvantage && (
-            <div style={{ fontSize: 11, color: '#c53131', marginBottom: 4 }}>Disadvantage on Stealth</div>
+            <div style={{ fontSize: 11, color: theme.state.danger, marginBottom: 4 }}>Disadvantage on Stealth</div>
           )}
         </>
       )}
@@ -790,7 +790,7 @@ function ItemDetail({ item, onClose }: { item: CompendiumItem & { rawJson?: Reco
           <button onClick={() => setConfirmDelete(true)} style={{
             padding: '4px 12px', fontSize: 10, fontWeight: 600, borderRadius: 4,
             background: 'rgba(197,49,49,0.1)', border: '1px solid rgba(197,49,49,0.3)',
-            color: '#c53131', cursor: 'pointer', fontFamily: theme.font.body,
+            color: theme.state.danger, cursor: 'pointer', fontFamily: theme.font.body,
           }}>Delete</button>
         </div>
       )}
@@ -801,7 +801,7 @@ function ItemDetail({ item, onClose }: { item: CompendiumItem & { rawJson?: Reco
           marginTop: 8, padding: 10, borderRadius: 6,
           background: 'rgba(197,49,49,0.1)', border: '1px solid rgba(197,49,49,0.3)',
         }}>
-          <div style={{ fontSize: 12, fontWeight: 600, color: '#c53131', marginBottom: 6 }}>
+          <div style={{ fontSize: 12, fontWeight: 600, color: theme.state.danger, marginBottom: 6 }}>
             Permanently delete "{item.name}"?
           </div>
           <div style={{ fontSize: 10, color: theme.text.muted, marginBottom: 8 }}>
@@ -819,7 +819,7 @@ function ItemDetail({ item, onClose }: { item: CompendiumItem & { rawJson?: Reco
             }} style={{
               flex: 1, padding: '5px 0', fontSize: 10, fontWeight: 600, borderRadius: 4,
               background: 'rgba(197,49,49,0.2)', border: '1px solid rgba(197,49,49,0.4)',
-              color: '#c53131', cursor: 'pointer', fontFamily: theme.font.body,
+              color: theme.state.danger, cursor: 'pointer', fontFamily: theme.font.body,
             }}>Delete Forever</button>
           </div>
         </div>
@@ -1173,7 +1173,7 @@ const detailStyles: Record<string, React.CSSProperties> = {
     margin: 0,
     fontSize: 22,
     fontFamily: theme.font.display,
-    color: '#c53131',
+    color: theme.state.danger,
     fontWeight: 700,
   },
   monsterSubtitle: {
@@ -1184,7 +1184,7 @@ const detailStyles: Record<string, React.CSSProperties> = {
   },
   divider: {
     height: 1,
-    background: `linear-gradient(to right, #c53131, ${theme.border.default}, transparent)`,
+    background: `linear-gradient(to right, ${theme.state.danger}, ${theme.border.default}, transparent)`,
     margin: '10px 0',
     border: 'none',
   },
@@ -1196,7 +1196,7 @@ const detailStyles: Record<string, React.CSSProperties> = {
   },
   statLabel: {
     fontWeight: 700,
-    color: '#c53131',
+    color: theme.state.danger,
     marginRight: 6,
   },
   hitDice: {
@@ -1212,7 +1212,7 @@ const detailStyles: Record<string, React.CSSProperties> = {
   abilityBox: {
     flex: 1,
     textAlign: 'center',
-    border: `1px solid #c53131`,
+    border: `1px solid ${theme.state.danger}`,
     borderRadius: theme.radius.sm,
     padding: '4px 2px',
     background: 'rgba(197, 49, 49, 0.05)',
@@ -1220,7 +1220,7 @@ const detailStyles: Record<string, React.CSSProperties> = {
   abilityLabel: {
     fontSize: 10,
     fontWeight: 700,
-    color: '#c53131',
+    color: theme.state.danger,
     letterSpacing: '0.5px',
   },
   abilityScore: {
@@ -1237,7 +1237,7 @@ const detailStyles: Record<string, React.CSSProperties> = {
     margin: '6px 0 8px',
     fontSize: 16,
     fontFamily: theme.font.display,
-    color: '#c53131',
+    color: theme.state.danger,
     borderBottom: '1px solid rgba(197, 49, 49, 0.3)',
     paddingBottom: 4,
   },
@@ -1259,7 +1259,7 @@ const detailStyles: Record<string, React.CSSProperties> = {
     fontWeight: 600,
   },
   damageDice: {
-    color: '#c53131',
+    color: theme.state.danger,
     fontWeight: 600,
     fontFamily: 'monospace',
   },
@@ -1291,7 +1291,7 @@ const detailStyles: Record<string, React.CSSProperties> = {
     padding: '2px 8px',
     borderRadius: 10,
     background: 'rgba(197, 49, 49, 0.15)',
-    color: '#e05555',
+    color: theme.danger,
     border: '1px solid rgba(197, 49, 49, 0.3)',
   },
   badgeGold: {
@@ -1356,7 +1356,7 @@ const detailStyles: Record<string, React.CSSProperties> = {
     padding: '2px 8px',
     borderRadius: 10,
     background: 'rgba(155, 89, 182, 0.15)',
-    color: '#b97be0',
+    color: theme.purple,
     border: '1px solid rgba(155, 89, 182, 0.3)',
   },
 };

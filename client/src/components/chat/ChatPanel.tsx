@@ -47,7 +47,7 @@ function MessageBubble({ message }: { message: ChatMessage }) {
   const isHidden = !!(message as any).hidden;
   const nameColor =
     isHidden
-      ? '#9b59b6'
+      ? theme.purple
       : message.type === 'whisper'
       ? theme.purple
       : message.type === 'ic'
@@ -75,7 +75,7 @@ function MessageBubble({ message }: { message: ChatMessage }) {
           )}
           {isHidden && (
             <span style={{
-              fontSize: 9, fontWeight: 700, color: '#9b59b6',
+              fontSize: 9, fontWeight: 700, color: theme.purple,
               background: 'rgba(155,89,182,0.15)', padding: '1px 6px',
               borderRadius: 3, border: '1px solid rgba(155,89,182,0.3)',
               textTransform: 'uppercase', letterSpacing: '0.04em',
@@ -92,7 +92,7 @@ function MessageBubble({ message }: { message: ChatMessage }) {
 
       {message.type === 'roll' && message.rollData ? (
         <div style={styles.rollContent}>
-          <span style={{ ...styles.rollTotal, ...(isHidden ? { color: '#9b59b6' } : {}) }}>{message.rollData.total}</span>
+          <span style={{ ...styles.rollTotal, ...(isHidden ? { color: theme.purple } : {}) }}>{message.rollData.total}</span>
           <span style={styles.rollNotation}>{message.rollData.notation}</span>
           <span style={styles.rollBreakdown}>
             [{message.rollData.dice.map((d) => d.value).join(', ')}]

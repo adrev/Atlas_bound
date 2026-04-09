@@ -400,7 +400,9 @@ function RollingDieOverlay({
       <div
         style={{
           ...overlayStyles.dieWrap,
-          animation: settled ? 'none' : 'diceTumble 0.7s linear infinite',
+          animation: settled
+            ? 'dieSettle 0.4s cubic-bezier(0.34, 1.56, 0.64, 1) forwards'
+            : 'diceTumble 0.7s linear infinite',
         }}
       >
         <svg width={160} height={160} viewBox="0 0 100 100">
@@ -448,6 +450,12 @@ function RollingDieOverlay({
           50%  { transform: rotate(180deg) scale(0.95); }
           75%  { transform: rotate(270deg) scale(1.05); }
           100% { transform: rotate(360deg) scale(1); }
+        }
+        @keyframes dieSettle {
+          0%   { transform: rotate(0deg) scale(1.15); }
+          40%  { transform: rotate(-5deg) scale(1.25); }
+          70%  { transform: rotate(2deg) scale(1.18); }
+          100% { transform: rotate(0deg) scale(1.2); }
         }
       `}</style>
     </div>

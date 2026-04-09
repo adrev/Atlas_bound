@@ -439,14 +439,15 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: theme.radius.sm,
   },
   modeFreeRoam: {
-    background: 'rgba(52, 152, 219, 0.15)',
+    background: theme.state.infoBg,
     color: theme.blue,
     border: `1px solid rgba(52, 152, 219, 0.3)`,
   },
   modeCombat: {
-    background: 'rgba(192, 57, 43, 0.15)',
-    color: theme.danger,
-    border: `1px solid rgba(192, 57, 43, 0.3)`,
+    background: `linear-gradient(135deg, ${theme.state.dangerBg}, rgba(192,57,43,0.25))`,
+    color: theme.state.danger,
+    border: `1px solid ${theme.state.danger}`,
+    boxShadow: theme.dangerGlow,
     animation: 'pulse 2s ease-in-out infinite',
   },
   main: {

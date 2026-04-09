@@ -279,9 +279,10 @@ const styles: Record<string, React.CSSProperties> = {
     gap: 8,
     margin: '12px 12px 0',
     padding: '8px 10px',
-    background: theme.bg.deep,
-    border: `1px solid ${theme.border.default}`,
+    background: theme.bg.deepest,
+    border: `1px solid ${theme.gold.border}`,
     borderRadius: theme.radius.md,
+    boxShadow: 'inset 0 1px 3px rgba(0,0,0,0.4)',
   },
   searchInput: {
     flex: 1,
