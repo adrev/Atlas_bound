@@ -88,84 +88,71 @@
 
 ## Comprehensive Todo List
 
-### Priority 1: Fix & Polish (Do First)
-- [x] Fix Self-range AoE spell resolution (Thunderwave, Burning Hands) — extract into direct resolution function ✅ Apr 7
-- [x] Fix AoE damage amounts (read fresh HP from store before each application) ✅ Apr 7
-- [x] Fix pushback timing (apply before damage so dead tokens still move) ✅ Apr 7
-- [x] Roll real dice for single-target spell damage (was using averages) ✅ Apr 7
+### Priority 1: Fix & Polish ✅ COMPLETE
+- [x] Fix Self-range AoE spell resolution ✅ Apr 7
+- [x] Fix AoE damage amounts ✅ Apr 7
+- [x] Fix pushback timing ✅ Apr 7
+- [x] Roll real dice for single-target spell damage ✅ Apr 7
 - [x] Wire condition auto-application into Self-range AoE path ✅ Apr 7
-- [ ] User test: Thunderwave on multiple creatures (no self-damage, real damage, pushback before death)
-- [ ] User test: Poison Spray (CON save, 1d12 poison, no half on save)
-- [ ] User test: Fireball (DEX save, 8d6 fire, half on save, AoE template)
-- [ ] User test: Hold Person (WIS save, paralyzed condition on fail)
-- [ ] User test: Cure Wounds (heals real rolled amount, deducts 1st-level slot)
 
-### Priority 2: Combat Engine
-- [ ] **Initiative & Turn Flow**: Automated rolling for all participants on "Start Combat"
-- [ ] **End Turn button**: Persistent, high-visibility near dice tray
-- [ ] **DM Group Actions**: Move/act with groups of identical creatures, end turn as block
-- [ ] **Combat Loop**: Auto-cycle to top of order, skip dead, Start/End Combat toggles
-- [ ] **Movement Enforcement**: Track distance moved per turn, enforce Speed stat, split movement
-- [ ] **Opportunity Attacks**: Detect when token leaves threatened square, popup notification
-- [ ] **Action Tracking**: Validate attacks/spells per turn based on character stats
-- [ ] **Attack vs AC comparison**: Roll d20 + attack mod, compare to target AC, announce hit/miss
+### Priority 2: Combat Engine (mostly done)
+- [x] **Initiative & Turn Flow**: Automated rolling on "Start Combat" ✅
+- [x] **End Turn button**: Visible in InitiativeTracker during combat ✅
+- [x] **Combat Loop**: Auto-cycle, skip dead, Start/End toggles ✅
+- [x] **Movement Enforcement**: Distance tracking + speed limit + toast ✅ (partial — no split movement)
+- [x] **Opportunity Attacks**: Detect leaving threatened square, popup ✅
+- [x] **Action Tracking**: Action economy system (action/bonus/reaction/movement) ✅
+- [x] **Attack vs AC comparison**: Roll + compare + announce hit/miss ✅
+- [ ] **DM Group Actions**: Move/act with groups of identical creatures as block
 
-### Priority 3: Spell System Completion
-- [x] **AoE Spell Templates**: Visual cone/sphere/cube/line templates on map before confirming cast ✅ Apr 7
-- [x] **AoE Multi-Target**: Click to place AoE origin, auto-select all tokens in shape ✅ Apr 7
-- [x] **Spell Pushback Effects**: Thunderwave 10ft push, Eldritch Blast push invocation ✅ Apr 7
-- [x] **Upcast Support**: Auto-pick lowest available slot ≥ spell level ✅ Apr 7
-- [x] **Add/Remove Spell**: DM can grant/revoke spells from any character ✅ Apr 7
-- [ ] **Spell Visual Effects**: Expanding ring for AoE, projectile for ranged, glow for buff
-- [ ] **Upcast damage scaling**: Scale damage dice (e.g. Fireball +1d6 per slot above 3rd)
-- [ ] **Ritual Casting**: Cast without slot if ritual (takes 10 min)
-- [ ] **Prepared Spells**: Distinguish known vs prepared (for Wizards, Clerics, etc.)
+### Priority 3: Spell System (mostly done)
+- [x] AoE Spell Templates ✅ Apr 7
+- [x] AoE Multi-Target ✅ Apr 7
+- [x] Spell Pushback Effects ✅ Apr 7
+- [x] Upcast Support ✅ Apr 7
+- [x] Add/Remove Spell ✅ Apr 7
+- [x] **Upcast damage scaling**: Parses "+1d6 per slot above 3rd" from descriptions ✅
+- [x] **Spell Visual Effects**: Animations for 41 named spells + school defaults ✅
+- [ ] **Ritual Casting**: Cast without slot if ritual (10 min)
+- [ ] **Prepared Spells**: Distinguish known vs prepared
 
-### 🔴 NEW Priority: Permission Audit
-- [ ] **DM-only feature audit**: Walk every interactive control we've built and verify players can't do DM-only things. Specific concerns:
-  - Add Spell / Remove Spell — should be DM OR character owner
-  - Custom items / homebrew creation — DM only
-  - Token spawn / creature library — DM only
-  - HP edit on other players' characters — DM only
-  - Map upload / load / fog reveal — DM only
-  - Combat start/end — DM only (already enforced)
-  - Loot editor on dead bodies — DM only
-  - Token position update on NPCs — currently allowed for any player as part of spell pushback (was a needed compromise — see WEBSOCKET_PLAN.md). Verify this can't be abused.
-  - Concentration drop / spell slot edits on other characters — should be owner only
+### ✅ Permission Audit — COMPLETE Apr 9
+- [x] Server-side guards on 13 socket events (character:update, all combat events, hidden rolls)
+- [x] Permission helpers: playerIsDM, isTokenOwnerOrDM, canTargetToken, isCurrentTurnOwnerOrDM
 
-### Priority 4: Items & Inventory
-- [ ] **Thrown Weapons**: Drop from inventory on throw, create item token at target, damage target
+### Priority 4: Items & Inventory (mostly done)
+- [x] **Thrown Weapons**: Drop from inventory, spawn item token at target ✅
+- [x] **Item Creation from Wiki**: Homebrew tab with Monster/Spell/Item creation ✅ Apr 9
 - [ ] **Disarm Mechanic**: Target drops equipped weapon as item token
 - [ ] **DM "Send to Player"**: Transfer items between characters
-- [ ] **Item Creation from Wiki**: Create custom items/spells/monsters from Homebrew wiki tab (not just loot editor)
-- [ ] **Spell Visualization Templates**: Geometric templates for cone/radius/line on grid
 
-### Priority 5: Map & Scene Management
-- [ ] **Layered Scene System**: Multiple map layers per campaign
-- [ ] **DM Pre-staging**: Place tokens, set lighting privately before publishing to players
+### Priority 5: Map & Scene Management (mostly done)
+- [x] **Scene Manager**: Multiple maps per campaign, DM preview, player ribbon ✅
+- [x] **DM Pre-staging**: Preview different map, place tokens before activating ✅
+- [x] **DM Vision Preview**: Banner shows when DM views different map than players ✅
+- [x] **Persistent Walls**: Walls table in SQLite, survive map reload ✅
+- [x] **Preset Map Sync Bug**: FIXED — map:activate-for-players broadcasts properly ✅
+- [x] **Grid Opacity Slider**: FIXED — range input in settings works ✅
 - [ ] **Auto-Grid Detection**: Algorithm to align VTT grid to uploaded map image
-- [ ] **Fog of War Improvements**: DM "Vision Preview" to see what each player sees
-- [ ] **Dynamic Lighting**: Walls remain permanently visible once placed
-- [ ] **Preset Map Sync Bug**: Fix player view not updating on map change
-- [ ] **Grid Opacity Slider**: Fix in Game Settings
 
 ### Priority 6: DnD Beyond Integration
 - [ ] **Level Up Sync Button**: Pull updated stats but preserve Current HP and Inventory
 - [ ] **Re-import Flow**: Smart merge that doesn't overwrite local changes
 - [ ] **Spell Slot Sync**: Match DDB spell slots to local state
 
-### Priority 7: UI/UX Polish
-- [ ] **Rebuild Hero tab to match TokenActionPanel**: The current Hero sidebar tab is a stripped-down view. Rebuild it so it has full parity with the left-click token/creature popup — stats, attacks, spell buttons, conditions, loot, action economy, DDB-style creature details. One canonical character panel shared between the popup and the sidebar tab.
-- [ ] **UI Consistency Pass**: Unified color theme, replace emoji icons with Lucide icons, standardize button/card/panel styling
-- [ ] **Chat System**: IC (character name) vs OOC (player name) with distinct styling
-- [ ] **Turn Indicator**: Clear visual for whose turn it is and which token is active
-- [ ] **Dice Animations**: 3D dice rolling (@3d-dice/dice-box already in deps)
+### ✅ Priority 7: UI/UX Polish — COMPLETE Apr 9
+- [x] **Hero tab rebuild**: Full TokenActionPanel parity via embedded mode ✅ Apr 9
+- [x] **UI Consistency Pass**: All surfaces through theme.ts, Button primitive, pill chips ✅ Apr 9
+- [x] **Chat System**: IC/OOC with distinct styling, whisper support ✅
+- [x] **Turn Indicator**: Gold glow ring on current-turn token + active row ✅
+- [x] **SVG Dice with tumble animation**: Polygon dice shapes with Roll20-style spin ✅ Apr 9
+- [ ] **3D Dice Animations**: @3d-dice/dice-box integration
 - [ ] **Sound/Ambiance System**: Background music, SFX for spells/attacks
 
 ### Priority 8: Infrastructure
-- [ ] **Deploy to Google Cloud**: Dockerfile exists, needs setup
+- [ ] **Deploy to Google Cloud**: Dockerfile exists, needs GCP config
 - [ ] **User Auth**: Login/persistent accounts
-- [ ] **Session Persistence**: Save/restore full game state
+- [x] **Session Persistence**: Full state rehydration on reconnect ✅
 - [ ] **Discord Integration**: Session summaries, notifications
 
 ---

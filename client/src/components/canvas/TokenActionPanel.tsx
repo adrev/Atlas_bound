@@ -627,10 +627,15 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
         // window (per RAW, a counterspelled spell still burns its slot).
         let castAtLevel = spell.level;
         let dmOverride = false;
+        const isRitualCast = !!(spell as any).__isRitual;
         if (spell.level > 0 && casterChar) {
           const dmIgnoreSlots = useSessionStore.getState().dmIgnoreSpellSlots;
           if (dmIgnoreSlots || spell.dmOverride) {
             dmOverride = true;
+          } else if (isRitualCast) {
+            // Ritual cast — no slot consumed, announce in chat
+            dmOverride = true;
+            emitSystemMessage(`✦ ${casterName} casts ${spell.name} as a Ritual (no slot, +10 min casting time).`);
           } else {
             const slots = typeof casterChar.spellSlots === 'string'
               ? JSON.parse(casterChar.spellSlots) : (casterChar.spellSlots || {});
@@ -2203,15 +2208,23 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
                 const dmIgnoreSlots = useSessionStore.getState().dmIgnoreSpellSlots;
                 const overridden = dmIgnoreSlots || spell.dmOverride;
                 const isSpent = !overridden && (slot ? slotsLeft <= 0 : false);
+                const canRitual = !!spell.ritual && spell.level > 0;
+                // If out of slots but spell is a ritual, still allow casting
+                const effectivelySpent = isSpent && !canRitual;
                 const tooltip = overridden
                   ? `${spell.name} — ${spell.dmOverride ? 'DM override on this spell' : 'DM override active (all slots ignored)'}\n\n${spell.description || ''}`
+                  : isSpent && canRitual
+                    ? `${spell.name} — Out of slots but can be cast as a Ritual (no slot, +10 min casting time)\n\n${spell.description || ''}`
                   : isSpent
                     ? `${spell.name} — Out of level ${spell.level} slots (0/${slotsMax}). Long Rest to recharge.\n\n${spell.description || ''}`
-                    : `${spell.name} — Level ${spell.level} (${slotsLeft}/${slotsMax} slots left, Long Rest to recharge)\n\n${spell.description || ''}`;
+                    : `${spell.name} — Level ${spell.level} (${slotsLeft}/${slotsMax} slots left${canRitual ? ', or cast as Ritual' : ''}, Long Rest to recharge)\n\n${spell.description || ''}`;
                 return (
-                  <button key={i} disabled={isSpent || !canAct} onClick={() => {
-                    if (!canAct || isSpent) return;
-                    castSpellFromButton(spell, selectedTokenId!, token.name);
+                  <button key={i} disabled={effectivelySpent || !canAct} onClick={() => {
+                    if (!canAct || effectivelySpent) return;
+                    // If out of slots, force ritual mode (skip slot consumption)
+                    const spellCopy = { ...spell };
+                    if (isSpent && canRitual) spellCopy.__isRitual = true;
+                    castSpellFromButton(spellCopy, selectedTokenId!, token.name);
                   }} onContextMenu={(e) => {
                     e.preventDefault();
                     const slug = spell.name.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
@@ -2476,10 +2489,15 @@ async function resolveAreaSpell(
   // global "ignore spell slots" override OR this specific spell has its
   // per-spell dmOverride flag set, in which case we skip both the
   // consumption and the availability check.
+  const isRitualCast = !!(spell as any).__isRitual;
   if (spell.level > 0 && casterChar) {
     const dmIgnoreSlots = useSessionStore.getState().dmIgnoreSpellSlots;
     if (dmIgnoreSlots || spell.dmOverride) {
       (spell as any).__dmOverride = true;
+    } else if (isRitualCast) {
+      // Ritual cast — no slot consumed
+      (spell as any).__dmOverride = true;
+      emitSystemMessage(`✦ ${casterName} casts ${spell.name} as a Ritual (no slot, +10 min casting time).`);
     } else {
       const slots = typeof casterChar.spellSlots === 'string'
         ? JSON.parse(casterChar.spellSlots) : (casterChar.spellSlots || {});
