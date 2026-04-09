@@ -15,7 +15,7 @@ import { TokenActionPanel } from '../canvas/TokenActionPanel';
 import { CharacterImport } from '../character/CharacterImport';
 import { useCharacterStore } from '../../stores/useCharacterStore';
 import { emitTokenAdd } from '../../socket/emitters';
-import { Upload, MapPin } from 'lucide-react';
+import { Upload, MapPin, RefreshCw } from 'lucide-react';
 import { ChatPanel } from '../chat/ChatPanel';
 import { PlayerList } from '../session/PlayerList';
 import { DMToolbar } from '../dm/DMToolbar';
@@ -154,6 +154,8 @@ function HeroTab() {
   const [showList, setShowList] = useState(false);
   const [characters, setCharacters] = useState<any[]>([]);
   const [listLoading, setListLoading] = useState(true);
+  const [syncing, setSyncing] = useState(false);
+  const [syncMessage, setSyncMessage] = useState<{ text: string; isError: boolean } | null>(null);
 
   // Load all characters owned by this user.
   const reloadList = () => {
@@ -210,6 +212,33 @@ function HeroTab() {
       conditions: [],
       ownerUserId: userId,
     });
+  };
+
+  const handleSyncFromDDB = async () => {
+    if (!myCharacter?.dndbeyondId) return;
+    setSyncing(true);
+    setSyncMessage(null);
+    try {
+      const resp = await fetch(`/api/dndbeyond/sync/${myCharacter.id}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      if (!resp.ok) {
+        const body = await resp.json().catch(() => ({}));
+        throw new Error(body.error || `Sync failed (${resp.status})`);
+      }
+      const updated = await resp.json();
+      useCharacterStore.getState().setCharacter(updated);
+      setSyncMessage({ text: `Synced from D&D Beyond — now Level ${updated.level}`, isError: false });
+      reloadList();
+      // Auto-dismiss success message after a few seconds
+      setTimeout(() => setSyncMessage(null), 5000);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Sync failed';
+      setSyncMessage({ text: msg, isError: true });
+    } finally {
+      setSyncing(false);
+    }
   };
 
   // ── Active character body (top, takes focus) ───────────
@@ -401,34 +430,73 @@ function HeroTab() {
   );
 
   // ── Bottom action bar ───────────────────────────────────
+  const hasDdbId = !!myCharacter?.dndbeyondId;
+
   const bottomBar = (
     <div style={{
-      display: 'flex', gap: 8,
-      padding: '10px 12px',
+      display: 'flex', flexDirection: 'column', gap: 0,
       borderTop: `1px solid ${theme.border.default}`,
       background: theme.bg.card,
       flexShrink: 0,
     }}>
-      <Button
-        variant="ghost"
-        size="sm"
-        fullWidth
-        leadingIcon={<BookOpen size={13} />}
-        onClick={() => setShowList(true)}
-        style={{ color: theme.gold.primary, borderColor: theme.gold.border }}
-      >
-        Show Character List
-      </Button>
-      <Button
-        variant="ghost"
-        size="sm"
-        fullWidth
-        leadingIcon={<Upload size={13} />}
-        onClick={() => setShowImport(true)}
-        style={{ color: theme.gold.primary, borderColor: theme.gold.border }}
-      >
-        Import Character
-      </Button>
+      {/* Sync toast message */}
+      {syncMessage && (
+        <div style={{
+          padding: '6px 12px',
+          fontSize: 12,
+          color: syncMessage.isError ? theme.danger : theme.state.success,
+          background: syncMessage.isError
+            ? 'rgba(192, 57, 43, 0.12)'
+            : 'rgba(46, 204, 113, 0.12)',
+          borderBottom: `1px solid ${syncMessage.isError
+            ? 'rgba(192, 57, 43, 0.25)'
+            : 'rgba(46, 204, 113, 0.25)'}`,
+          textAlign: 'center',
+        }}>
+          {syncMessage.text}
+        </div>
+      )}
+      <div style={{ display: 'flex', gap: 8, padding: '10px 12px' }}>
+        <Button
+          variant="ghost"
+          size="sm"
+          fullWidth
+          leadingIcon={<BookOpen size={13} />}
+          onClick={() => setShowList(true)}
+          style={{ color: theme.gold.primary, borderColor: theme.gold.border }}
+        >
+          Show Character List
+        </Button>
+        {hasDdbId ? (
+          <Button
+            variant="ghost"
+            size="sm"
+            fullWidth
+            leadingIcon={
+              <RefreshCw
+                size={13}
+                style={syncing ? { animation: 'spin 1s linear infinite' } : undefined}
+              />
+            }
+            onClick={handleSyncFromDDB}
+            disabled={syncing}
+            style={{ color: theme.gold.primary, borderColor: theme.gold.border }}
+          >
+            {syncing ? 'Syncing...' : 'Sync from DDB'}
+          </Button>
+        ) : (
+          <Button
+            variant="ghost"
+            size="sm"
+            fullWidth
+            leadingIcon={<Upload size={13} />}
+            onClick={() => setShowImport(true)}
+            style={{ color: theme.gold.primary, borderColor: theme.gold.border }}
+          >
+            Import Character
+          </Button>
+        )}
+      </div>
     </div>
   );
 

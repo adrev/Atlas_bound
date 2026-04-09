@@ -1,8 +1,8 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { theme } from '../../styles/theme';
 import { useSessionStore } from '../../stores/useSessionStore';
 import { useMapStore } from '../../stores/useMapStore';
-import { emitTokenAdd } from '../../socket/emitters';
+import { emitTokenAdd, emitSystemMessage } from '../../socket/emitters';
 
 const RARITY_COLORS: Record<string, string> = {
   common: '#9d9d9d', uncommon: '#1eff00', rare: '#0070dd',
@@ -28,6 +28,15 @@ interface SearchResult {
   rarity?: string;
 }
 
+interface PlayerCharacter {
+  id: string;
+  name: string;
+  race?: string;
+  class?: string;
+  level?: number;
+  portraitUrl?: string | null;
+}
+
 interface LootEditorProps {
   characterId: string;
   tokenName?: string;
@@ -38,6 +47,10 @@ export function LootEditor({ characterId, tokenName, onClose }: LootEditorProps)
   const [loot, setLoot] = useState<LootEntry[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
+  const [transferEntryId, setTransferEntryId] = useState<string | null>(null);
+  const [playerCharacters, setPlayerCharacters] = useState<PlayerCharacter[]>([]);
+  const [loadingTransfer, setLoadingTransfer] = useState(false);
+  const transferDropdownRef = useRef<HTMLDivElement>(null);
   const [searching, setSearching] = useState(false);
   const [customName, setCustomName] = useState('');
   const [customRarity, setCustomRarity] = useState('common');
@@ -86,6 +99,64 @@ export function LootEditor({ characterId, tokenName, onClose }: LootEditorProps)
 
   const notifyLootChange = () => window.dispatchEvent(new Event('loot-updated'));
   const sessionId = useSessionStore((s) => s.sessionId);
+
+  // Fetch player characters for the "Send to..." dropdown
+  const fetchPlayerCharacters = useCallback(() => {
+    fetch('/api/characters')
+      .then(r => r.ok ? r.json() : [])
+      .then((chars: PlayerCharacter[]) => {
+        // Filter out the current character (the one whose loot we're editing)
+        // and filter out loot bags (race === 'loot')
+        setPlayerCharacters(chars.filter(c => c.id !== characterId && (c as any).race !== 'loot'));
+      })
+      .catch(() => {});
+  }, [characterId]);
+
+  // Fetch player characters when transfer dropdown opens
+  useEffect(() => {
+    if (transferEntryId) fetchPlayerCharacters();
+  }, [transferEntryId, fetchPlayerCharacters]);
+
+  // Close transfer dropdown on outside click
+  useEffect(() => {
+    if (!transferEntryId) return;
+    const handleClick = (e: MouseEvent) => {
+      if (transferDropdownRef.current && !transferDropdownRef.current.contains(e.target as Node)) {
+        setTransferEntryId(null);
+      }
+    };
+    document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, [transferEntryId]);
+
+  // Transfer a loot entry to another character
+  const transferItem = async (entry: LootEntry, targetChar: PlayerCharacter) => {
+    setLoadingTransfer(true);
+    try {
+      const resp = await fetch('/api/loot/transfer', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          fromCharacterId: characterId,
+          toCharacterId: targetChar.id,
+          lootEntryId: entry.id,
+        }),
+      });
+      if (!resp.ok) { console.error('Transfer failed'); return; }
+      const data = await resp.json();
+
+      // Emit system chat message announcing the transfer
+      emitSystemMessage(`DM sent ${data.itemName} to ${data.targetCharacterName}`);
+
+      fetchLoot();
+      notifyLootChange();
+      setTransferEntryId(null);
+    } catch (err) {
+      console.error('Transfer failed:', err);
+    } finally {
+      setLoadingTransfer(false);
+    }
+  };
 
   // Add a compendium item to loot
   const addItem = async (name: string, slug?: string, rarity?: string) => {
@@ -583,6 +654,67 @@ export function LootEditor({ characterId, tokenName, onClose }: LootEditorProps)
                     <path d="M12 5v14M5 12l7 7 7-7"/>
                   </svg>
                 </button>
+                {/* Send to player button */}
+                <div style={{ position: 'relative' }}>
+                  <button
+                    onClick={() => setTransferEntryId(transferEntryId === entry.id ? null : entry.id)}
+                    title="Send to player..."
+                    style={{
+                      ...S.removeBtn,
+                      background: transferEntryId === entry.id ? 'rgba(56,152,236,0.2)' : 'rgba(56,152,236,0.1)',
+                      border: `1px solid ${transferEntryId === entry.id ? 'rgba(56,152,236,0.6)' : 'rgba(56,152,236,0.3)'}`,
+                      color: '#3898ec',
+                    }}
+                  >
+                    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                      <path d="M22 2L11 13"/><path d="M22 2L15 22L11 13L2 9L22 2"/>
+                    </svg>
+                  </button>
+                  {/* Transfer dropdown */}
+                  {transferEntryId === entry.id && (
+                    <div ref={transferDropdownRef} style={S.transferDropdown}>
+                      <div style={S.transferHeader}>Send to...</div>
+                      {playerCharacters.length === 0 ? (
+                        <div style={S.transferEmpty}>No other characters found</div>
+                      ) : (
+                        playerCharacters.map(pc => (
+                          <div
+                            key={pc.id}
+                            onClick={() => !loadingTransfer && transferItem(entry, pc)}
+                            style={S.transferItem}
+                            onMouseEnter={e => (e.currentTarget.style.background = theme.bg.hover)}
+                            onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
+                          >
+                            <div style={{
+                              width: 22, height: 22, borderRadius: '50%', overflow: 'hidden',
+                              background: theme.bg.elevated, border: `1.5px solid ${theme.border.default}`,
+                              display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+                            }}>
+                              {pc.portraitUrl ? (
+                                <img src={pc.portraitUrl} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                                  onError={e => { (e.currentTarget).style.display = 'none'; }} />
+                              ) : (
+                                <span style={{ fontSize: 9, color: theme.text.muted }}>
+                                  {(pc.name || '?')[0].toUpperCase()}
+                                </span>
+                              )}
+                            </div>
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                              <div style={{ fontSize: 11, fontWeight: 600, color: theme.text.primary, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                {pc.name}
+                              </div>
+                              {pc.class && (
+                                <div style={{ fontSize: 8, color: theme.text.muted }}>
+                                  Lvl {pc.level || '?'} {pc.class}
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  )}
+                </div>
                 <button onClick={() => removeItem(entry.id)} title="Delete" style={S.removeBtn}>
                   <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
                     <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
@@ -715,5 +847,24 @@ const S: Record<string, React.CSSProperties> = {
     borderRadius: 4, color: '#c53131', cursor: 'pointer',
     display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0,
     flexShrink: 0,
+  },
+  transferDropdown: {
+    position: 'absolute' as const, right: 0, top: 26, zIndex: 100,
+    width: 200, maxHeight: 220, overflowY: 'auto' as const,
+    background: theme.bg.card, border: `1px solid ${theme.border.default}`,
+    borderRadius: 8, boxShadow: '0 8px 24px rgba(0,0,0,0.5)',
+  },
+  transferHeader: {
+    fontSize: 9, fontWeight: 700, color: theme.text.muted,
+    textTransform: 'uppercase' as const, letterSpacing: '0.04em',
+    padding: '8px 10px 4px',
+  },
+  transferEmpty: {
+    fontSize: 11, color: theme.text.muted, padding: '8px 10px',
+    fontStyle: 'italic' as const,
+  },
+  transferItem: {
+    display: 'flex', alignItems: 'center', gap: 8,
+    padding: '6px 10px', cursor: 'pointer', transition: 'background 0.1s',
   },
 };

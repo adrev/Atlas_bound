@@ -261,6 +261,45 @@ router.post('/characters/:id/inventory/enrich', (req: Request, res: Response) =>
   res.json({ success: true, updated, inventory });
 });
 
+// POST /api/loot/transfer - Transfer a loot entry from one character to another
+router.post('/loot/transfer', (req: Request, res: Response) => {
+  const { fromCharacterId, toCharacterId, lootEntryId } = req.body;
+
+  if (!fromCharacterId || !toCharacterId || !lootEntryId) {
+    res.status(400).json({ error: 'Missing required fields: fromCharacterId, toCharacterId, lootEntryId' });
+    return;
+  }
+
+  // Fetch the loot entry
+  const entry = db.prepare('SELECT * FROM loot_entries WHERE id = ? AND character_id = ?')
+    .get(lootEntryId, String(fromCharacterId)) as any;
+  if (!entry) {
+    res.status(404).json({ error: 'Loot entry not found' });
+    return;
+  }
+
+  // Verify the target character exists
+  const targetChar = db.prepare('SELECT id, name FROM characters WHERE id = ?')
+    .get(String(toCharacterId)) as any;
+  if (!targetChar) {
+    res.status(404).json({ error: 'Target character not found' });
+    return;
+  }
+
+  // Update the entry's character_id to the target
+  db.prepare('UPDATE loot_entries SET character_id = ? WHERE id = ?')
+    .run(String(toCharacterId), lootEntryId);
+
+  // Return the updated entry with target info for chat announcement
+  res.json({
+    success: true,
+    entry: { ...entry, character_id: String(toCharacterId) },
+    itemName: entry.item_name,
+    targetCharacterName: targetChar.name,
+    targetCharacterId: String(toCharacterId),
+  });
+});
+
 // POST /api/characters/:id/loot/drop - Drop an item from inventory onto the map as a loot token
 router.post('/characters/:id/loot/drop', (req: Request, res: Response) => {
   const charId = String(req.params.id);
