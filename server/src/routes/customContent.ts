@@ -127,7 +127,12 @@ function mapMonsterRow(row: Record<string, unknown>) {
 
 router.post('/spells', (req: Request, res: Response) => {
   const { sessionId, name, level, school, castingTime, range, components, duration,
-    description, higherLevels, concentration, ritual, classes, imageUrl } = req.body;
+    description, higherLevels, concentration, ritual, classes, imageUrl,
+    // Combat resolution fields
+    damage, damageType, savingThrow, attackType,
+    aoeType, aoeSize, halfOnSave, pushDistance,
+    appliesCondition, animationType, animationColor,
+  } = req.body;
 
   if (!sessionId || !name) { res.status(400).json({ error: 'sessionId and name required' }); return; }
 
@@ -135,13 +140,19 @@ router.post('/spells', (req: Request, res: Response) => {
   try {
     db.prepare(`INSERT INTO custom_spells (
       slug, session_id, name, level, school, casting_time, range, components, duration,
-      description, higher_levels, concentration, ritual, classes, image_url
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+      description, higher_levels, concentration, ritual, classes, image_url,
+      damage, damage_type, saving_throw, attack_type,
+      aoe_type, aoe_size, half_on_save, push_distance,
+      applies_condition, animation_type, animation_color
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
       slug, sessionId, name, level ?? 0, school ?? 'Evocation',
       castingTime ?? '1 action', range ?? '30 feet', components ?? 'V, S',
       duration ?? 'Instantaneous', description ?? '', higherLevels ?? '',
       concentration ? 1 : 0, ritual ? 1 : 0,
       JSON.stringify(classes ?? []), imageUrl ?? null,
+      damage ?? null, damageType ?? null, savingThrow ?? null, attackType ?? null,
+      aoeType ?? null, aoeSize ?? 0, halfOnSave ? 1 : 0, pushDistance ?? 0,
+      appliesCondition ?? null, animationType ?? null, animationColor ?? null,
     );
     res.json({ slug, name, source: 'Custom' });
   } catch (err) {
@@ -202,6 +213,18 @@ function mapSpellRow(row: Record<string, unknown>) {
     ritual: (row.ritual as number) === 1,
     classes: safeJson(row.classes, []),
     source: 'Custom', imageUrl: row.image_url,
+    // Combat resolution
+    damage: row.damage ?? null,
+    damageType: row.damage_type ?? null,
+    savingThrow: row.saving_throw ?? null,
+    attackType: row.attack_type ?? null,
+    aoeType: row.aoe_type ?? null,
+    aoeSize: row.aoe_size ?? 0,
+    halfOnSave: (row.half_on_save as number) === 1,
+    pushDistance: row.push_distance ?? 0,
+    appliesCondition: row.applies_condition ?? null,
+    animationType: row.animation_type ?? null,
+    animationColor: row.animation_color ?? null,
   };
 }
 

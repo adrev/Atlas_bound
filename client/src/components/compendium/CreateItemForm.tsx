@@ -11,6 +11,8 @@ interface CreateItemFormProps {
 const ITEM_TYPES = ['weapon', 'armor', 'shield', 'gear', 'potion', 'scroll', 'wand', 'ring', 'wondrous'];
 const RARITIES = ['common', 'uncommon', 'rare', 'very rare', 'legendary', 'artifact'];
 const DAMAGE_TYPES = ['bludgeoning', 'piercing', 'slashing', 'fire', 'cold', 'lightning', 'thunder', 'acid', 'poison', 'necrotic', 'radiant', 'force', 'psychic'];
+const WEAPON_PROPERTIES = ['Finesse', 'Light', 'Heavy', 'Thrown', 'Reach', 'Versatile', 'Two-Handed', 'Ammunition', 'Loading'];
+const AC_TYPES = ['light', 'medium', 'heavy'];
 
 const inputStyle: React.CSSProperties = {
   width: '100%',
@@ -51,6 +53,10 @@ export function CreateItemForm({ sessionId, onCreated, onCancel }: CreateItemFor
   const [weight, setWeight] = useState(0);
   const [valueGp, setValueGp] = useState(0);
   const [magicBonus, setMagicBonus] = useState(0);
+  const [properties, setProperties] = useState<string[]>([]);
+  const [range, setRange] = useState('');
+  const [acType, setAcType] = useState('');
+  const [stealthDisadvantage, setStealthDisadvantage] = useState(false);
   const [requiresAttunement, setRequiresAttunement] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
@@ -76,7 +82,9 @@ export function CreateItemForm({ sessionId, onCreated, onCancel }: CreateItemFor
           valueGp: valueGp || undefined,
           magicBonus: magicBonus || undefined,
           requiresAttunement,
-          properties: [],
+          properties: isWeapon ? properties : stealthDisadvantage ? ['Stealth Disadvantage'] : [],
+          range: isWeapon && range.trim() ? range.trim() : undefined,
+          acType: isArmor && acType ? acType : undefined,
         }),
       });
       if (!resp.ok) throw new Error('Failed');
@@ -142,12 +150,74 @@ export function CreateItemForm({ sessionId, onCreated, onCancel }: CreateItemFor
         </div>
       )}
 
+      {/* Weapon properties + range */}
+      {isWeapon && (
+        <>
+          <div>
+            <label style={labelStyle}>Properties</label>
+            <div style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(3, 1fr)',
+              gap: '4px 8px',
+            }}>
+              {WEAPON_PROPERTIES.map((prop) => (
+                <label
+                  key={prop}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 6,
+                    fontSize: 11,
+                    color: properties.includes(prop) ? theme.gold.primary : theme.text.secondary,
+                    cursor: 'pointer',
+                  }}
+                >
+                  <input
+                    type="checkbox"
+                    checked={properties.includes(prop)}
+                    onChange={(e) => {
+                      if (e.target.checked) {
+                        setProperties([...properties, prop]);
+                      } else {
+                        setProperties(properties.filter((p) => p !== prop));
+                      }
+                    }}
+                  />
+                  {prop}
+                </label>
+              ))}
+            </div>
+          </div>
+          <div style={{ width: '50%' }}>
+            <label style={labelStyle}>Range</label>
+            <input style={inputStyle} value={range} onChange={(e) => setRange(e.target.value)} placeholder="80/320" />
+          </div>
+        </>
+      )}
+
       {/* Armor fields */}
       {isArmor && (
-        <div style={{ width: '50%' }}>
-          <label style={labelStyle}>AC Bonus</label>
-          <input style={inputStyle} type="number" value={ac} onChange={(e) => setAc(Number(e.target.value))} />
+        <div style={{ display: 'flex', gap: 6, alignItems: 'flex-end' }}>
+          <div style={{ flex: 1 }}>
+            <label style={labelStyle}>AC Bonus</label>
+            <input style={inputStyle} type="number" value={ac} onChange={(e) => setAc(Number(e.target.value))} />
+          </div>
+          <div style={{ flex: 1 }}>
+            <label style={labelStyle}>AC Type</label>
+            <select style={selectStyle} value={acType} onChange={(e) => setAcType(e.target.value)}>
+              <option value="">—</option>
+              {AC_TYPES.map((t) => (
+                <option key={t} value={t}>{t.charAt(0).toUpperCase() + t.slice(1)}</option>
+              ))}
+            </select>
+          </div>
         </div>
+      )}
+      {isArmor && acType === 'heavy' && (
+        <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 11, color: theme.text.secondary, cursor: 'pointer' }}>
+          <input type="checkbox" checked={stealthDisadvantage} onChange={(e) => setStealthDisadvantage(e.target.checked)} />
+          Disadvantage on Stealth
+        </label>
       )}
 
       {/* Magic bonus + weight + value */}

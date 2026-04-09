@@ -28,6 +28,19 @@ const ABILITY_LABELS: Record<string, string> = {
   str: 'STR', dex: 'DEX', con: 'CON', int: 'INT', wis: 'WIS', cha: 'CHA',
 };
 
+const SPEED_TYPES = ['walk', 'fly', 'swim', 'burrow', 'climb'] as const;
+const SPEED_LABELS: Record<string, string> = {
+  walk: 'Walk', fly: 'Fly', swim: 'Swim', burrow: 'Burrow', climb: 'Climb',
+};
+
+function crToNumeric(cr: string): number {
+  if (cr.includes('/')) {
+    const [num, den] = cr.split('/');
+    return parseInt(num) / parseInt(den);
+  }
+  return parseFloat(cr) || 0;
+}
+
 /* ------------------------------------------------------------------ */
 /*  Styles                                                             */
 /* ------------------------------------------------------------------ */
@@ -88,7 +101,9 @@ export function CreateMonsterForm({ sessionId, onCreated, onCancel }: CreateMons
   const [ac, setAc] = useState(10);
   const [hp, setHp] = useState(10);
   const [hitDice, setHitDice] = useState('1d8');
-  const [speed, setSpeed] = useState(30);
+  const [speeds, setSpeeds] = useState<Record<string, number>>({
+    walk: 30, fly: 0, swim: 0, burrow: 0, climb: 0,
+  });
 
   // Abilities
   const [abilities, setAbilities] = useState<Record<string, number>>({
@@ -100,9 +115,15 @@ export function CreateMonsterForm({ sessionId, onCreated, onCancel }: CreateMons
   const [senses, setSenses] = useState('');
   const [languages, setLanguages] = useState('');
 
-  // Actions & special abilities
+  // Actions, special abilities & legendary actions
   const [actions, setActions] = useState<ActionEntry[]>([{ name: '', desc: '' }]);
   const [specialAbilities, setSpecialAbilities] = useState<ActionEntry[]>([]);
+  const [legendaryActions, setLegendaryActions] = useState<ActionEntry[]>([]);
+
+  // Resistances & immunities
+  const [damageResistances, setDamageResistances] = useState('');
+  const [damageImmunities, setDamageImmunities] = useState('');
+  const [conditionImmunities, setConditionImmunities] = useState('');
 
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
@@ -111,6 +132,10 @@ export function CreateMonsterForm({ sessionId, onCreated, onCancel }: CreateMons
 
   function setAbility(key: string, val: number) {
     setAbilities(prev => ({ ...prev, [key]: val }));
+  }
+
+  function setSpeed(key: string, val: number) {
+    setSpeeds(prev => ({ ...prev, [key]: val }));
   }
 
   function updateAction(idx: number, field: 'name' | 'desc', val: string) {
@@ -129,12 +154,22 @@ export function CreateMonsterForm({ sessionId, onCreated, onCancel }: CreateMons
     setSpecialAbilities(prev => prev.filter((_, i) => i !== idx));
   }
 
+  function updateLegendary(idx: number, field: 'name' | 'desc', val: string) {
+    setLegendaryActions(prev => prev.map((a, i) => (i === idx ? { ...a, [field]: val } : a)));
+  }
+
+  function removeLegendary(idx: number) {
+    setLegendaryActions(prev => prev.filter((_, i) => i !== idx));
+  }
+
   function resetForm() {
     setName(''); setSize('Medium'); setType('humanoid'); setAlignment('unaligned');
-    setCr('0'); setAc(10); setHp(10); setHitDice('1d8'); setSpeed(30);
+    setCr('0'); setAc(10); setHp(10); setHitDice('1d8');
+    setSpeeds({ walk: 30, fly: 0, swim: 0, burrow: 0, climb: 0 });
     setAbilities({ str: 10, dex: 10, con: 10, int: 10, wis: 10, cha: 10 });
     setDescription(''); setSenses(''); setLanguages('');
-    setActions([{ name: '', desc: '' }]); setSpecialAbilities([]);
+    setActions([{ name: '', desc: '' }]); setSpecialAbilities([]); setLegendaryActions([]);
+    setDamageResistances(''); setDamageImmunities(''); setConditionImmunities('');
     setError('');
   }
 
@@ -147,6 +182,12 @@ export function CreateMonsterForm({ sessionId, onCreated, onCancel }: CreateMons
     setSubmitting(true);
     setError('');
 
+    // Build speed object with only non-zero values
+    const speedObj: Record<string, number> = {};
+    for (const [k, v] of Object.entries(speeds)) {
+      if (v > 0) speedObj[k] = v;
+    }
+
     const body = {
       sessionId,
       name: name.trim(),
@@ -156,11 +197,16 @@ export function CreateMonsterForm({ sessionId, onCreated, onCancel }: CreateMons
       armorClass: ac,
       hitPoints: hp,
       hitDice,
-      speed: { walk: speed },
+      speed: speedObj,
       abilityScores: abilities,
       challengeRating: cr,
+      crNumeric: crToNumeric(cr),
       actions: actions.filter(a => a.name.trim()),
       specialAbilities: specialAbilities.filter(a => a.name.trim()),
+      legendaryActions: legendaryActions.filter(a => a.name.trim()),
+      damageResistances: damageResistances.trim(),
+      damageImmunities: damageImmunities.trim(),
+      conditionImmunities: conditionImmunities.trim(),
       description: description.trim(),
       senses: senses.trim(),
       languages: languages.trim(),
@@ -280,9 +326,26 @@ export function CreateMonsterForm({ sessionId, onCreated, onCancel }: CreateMons
           <label style={labelStyle}>Hit Dice</label>
           <TextInput size="sm" value={hitDice} onChange={e => setHitDice(e.target.value)} placeholder="2d8+2" />
         </div>
-        <div style={{ flex: '0 0 65px' }}>
-          <label style={labelStyle}>Speed (ft)</label>
-          <NumberInput size="sm" value={speed} onChange={e => setSpeed(Number(e.target.value))} min={0} max={200} step={5} />
+      </div>
+
+      {/* Speed types */}
+      <div>
+        <div style={sectionHeading}>Speed (ft)</div>
+        <div style={{ ...rowStyle, gap: 6 }}>
+          {SPEED_TYPES.map(st => (
+            <div key={st} style={{ flex: '1 1 0', textAlign: 'center', minWidth: 50 }}>
+              <label style={{ ...labelStyle, textAlign: 'center' }}>{SPEED_LABELS[st]}</label>
+              <NumberInput
+                size="sm"
+                value={speeds[st]}
+                onChange={e => setSpeed(st, Number(e.target.value))}
+                min={0}
+                max={200}
+                step={5}
+                containerStyle={{ width: '100%' }}
+              />
+            </div>
+          ))}
         </div>
       </div>
 
@@ -305,6 +368,47 @@ export function CreateMonsterForm({ sessionId, onCreated, onCancel }: CreateMons
           ))}
         </div>
       </div>
+
+      {/* Damage Resistances / Immunities / Condition Immunities */}
+      <div>
+        <div style={sectionHeading}>Resistances &amp; Immunities</div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          <div>
+            <label style={labelStyle}>Damage Resistances</label>
+            <TextInput
+              size="sm"
+              value={damageResistances}
+              onChange={e => setDamageResistances(e.target.value)}
+              placeholder="fire, cold, bludgeoning"
+            />
+          </div>
+          <div>
+            <label style={labelStyle}>Damage Immunities</label>
+            <TextInput
+              size="sm"
+              value={damageImmunities}
+              onChange={e => setDamageImmunities(e.target.value)}
+              placeholder="poison, necrotic"
+            />
+          </div>
+          <div>
+            <label style={labelStyle}>Condition Immunities</label>
+            <TextInput
+              size="sm"
+              value={conditionImmunities}
+              onChange={e => setConditionImmunities(e.target.value)}
+              placeholder="poisoned, frightened"
+            />
+          </div>
+        </div>
+      </div>
+
+      {/* Legendary Actions */}
+      {renderActionRows(
+        legendaryActions, updateLegendary, removeLegendary,
+        () => setLegendaryActions(prev => [...prev, { name: '', desc: '' }]),
+        'Legendary Actions',
+      )}
 
       {/* Description */}
       <FieldGroup label="Description">

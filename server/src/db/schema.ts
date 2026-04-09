@@ -354,6 +354,24 @@ export function initDatabase(): void {
     CREATE INDEX IF NOT EXISTS idx_custom_monsters_session ON custom_monsters(session_id);
     CREATE INDEX IF NOT EXISTS idx_custom_spells_session ON custom_spells(session_id);
   `);
+
+  // Spell combat resolution columns — added after initial schema.
+  const spellCombatCols: [string, string][] = [
+    ['damage', 'TEXT DEFAULT NULL'],
+    ['damage_type', 'TEXT DEFAULT NULL'],
+    ['saving_throw', 'TEXT DEFAULT NULL'],
+    ['attack_type', 'TEXT DEFAULT NULL'],
+    ['aoe_type', 'TEXT DEFAULT NULL'],
+    ['aoe_size', 'INTEGER DEFAULT 0'],
+    ['half_on_save', 'INTEGER DEFAULT 0'],
+    ['push_distance', 'INTEGER DEFAULT 0'],
+    ['applies_condition', 'TEXT DEFAULT NULL'],
+    ['animation_type', 'TEXT DEFAULT NULL'],
+    ['animation_color', 'TEXT DEFAULT NULL'],
+  ];
+  for (const [col, def] of spellCombatCols) {
+    try { db.exec(`ALTER TABLE custom_spells ADD COLUMN ${col} ${def}`); } catch { /* exists */ }
+  }
 }
 
 /**
