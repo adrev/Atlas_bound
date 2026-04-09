@@ -231,6 +231,7 @@ export interface Character {
   spellSaveDC: number;
   concentratingOn: string | null;
   initiative: number;
+  compendiumSlug: string | null;
   portraitUrl: string | null;
   dndbeyondId: string | null;
   source: 'manual' | 'dndbeyond_api' | 'dndbeyond_import';

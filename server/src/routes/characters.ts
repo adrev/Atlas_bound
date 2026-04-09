@@ -51,6 +51,7 @@ function dbRowToCharacter(row: Record<string, unknown>) {
     spellAttackBonus: row.spell_attack_bonus ?? 0,
     spellSaveDC: row.spell_save_dc ?? 10,
     initiative: row.initiative ?? 0,
+    compendiumSlug: row.compendium_slug ?? null,
     portraitUrl: row.portrait_url,
     dndbeyondId: row.dndbeyond_id,
     source: row.source,
@@ -96,8 +97,8 @@ router.post('/', (req: Request, res: Response) => {
     INSERT INTO characters (
       id, user_id, name, race, class, level, hit_points, max_hit_points,
       armor_class, speed, proficiency_bonus, ability_scores, saving_throws,
-      skills, portrait_url
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      skills, portrait_url, compendium_slug
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     id, data.userId, data.name, data.race, data.class, data.level,
     data.hitPoints, data.maxHitPoints, data.armorClass, data.speed,
@@ -105,6 +106,7 @@ router.post('/', (req: Request, res: Response) => {
     JSON.stringify(data.savingThrows ?? []),
     JSON.stringify(defaultSkills),
     data.portraitUrl ?? null,
+    data.compendiumSlug ?? null,
   );
 
   const row = db.prepare('SELECT * FROM characters WHERE id = ?').get(id) as Record<string, unknown>;

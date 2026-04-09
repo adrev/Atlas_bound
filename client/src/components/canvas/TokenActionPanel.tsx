@@ -306,10 +306,20 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
           }).catch(() => {});
       }
 
-      // Fetch compendium data for this creature
+      // Fetch compendium data for this creature. Prefer the stored
+      // compendiumSlug (set at spawn time by CreatureLibrary) so
+      // stats persist even if the token is later renamed. Fall back
+      // to deriving the slug from the token name.
       if (token) {
-        const slug = token.name.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
-        fetch(`/api/compendium/monsters/${slug}`)
+        const char = token.characterId ? allCharacters[token.characterId] : null;
+        const storedSlug = (char as any)?.compendiumSlug;
+        const derivedSlug = token.name.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
+        const slug = storedSlug || derivedSlug;
+        // Custom homebrew creatures use a different route.
+        const route = slug.startsWith('custom-')
+          ? `/api/custom/monsters/${slug}`
+          : `/api/compendium/monsters/${slug}`;
+        fetch(route)
           .then(r => r.ok ? r.json() : null)
           .then(data => { if (data) setCompendiumData(data); })
           .catch(() => {});
@@ -1465,6 +1475,7 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
           armorClass, speed: spd,
           abilityScores: comp?.abilityScores || {},
           portraitUrl: t.imageUrl,
+          compendiumSlug: comp?.slug || null,
         }),
       });
       if (resp.ok) {

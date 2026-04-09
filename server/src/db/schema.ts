@@ -291,6 +291,7 @@ export function initDatabase(): void {
   try { db.exec(`ALTER TABLE characters ADD COLUMN conditions TEXT DEFAULT '[]'`); } catch { /* exists */ }
   try { db.exec(`ALTER TABLE characters ADD COLUMN currency TEXT DEFAULT '{"cp":0,"sp":0,"ep":0,"gp":0,"pp":0}'`); } catch { /* exists */ }
   try { db.exec(`ALTER TABLE characters ADD COLUMN extras TEXT DEFAULT '[]'`); } catch { /* exists */ }
+  try { db.exec(`ALTER TABLE characters ADD COLUMN compendium_slug TEXT DEFAULT NULL`); } catch { /* exists */ }
 
   // Backfill spellcasting fields for existing DDB-imported characters that
   // were created before these columns existed. Computes spell_save_dc and

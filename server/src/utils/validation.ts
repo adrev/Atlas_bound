@@ -385,6 +385,7 @@ export const createCharacterSchema = z.object({
     used: z.number().int(),
   })).optional(),
   concentratingOn: z.string().nullable().optional(),
+  compendiumSlug: z.string().nullable().optional(),
 });
 
 export const updateCharacterSchema = createCharacterSchema.partial().omit({ userId: true });

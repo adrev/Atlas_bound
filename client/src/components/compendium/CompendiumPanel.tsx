@@ -1,8 +1,11 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { Search } from 'lucide-react';
+import { Search, Plus } from 'lucide-react';
 import { theme } from '../../styles/theme';
+import { Button } from '../ui';
 import { useSessionStore } from '../../stores/useSessionStore';
 import { CompendiumDetailPopup } from './CompendiumDetailPopup';
+import { CreateMonsterForm } from './CreateMonsterForm';
+import { CreateSpellForm } from './CreateSpellForm';
 import type { CompendiumSearchResult, CompendiumCategory } from '@dnd-vtt/shared';
 
 type FilterCategory = 'all' | 'monsters' | 'spells' | 'items' | 'homebrew';
@@ -47,6 +50,8 @@ export function CompendiumPanel() {
   const [loading, setLoading] = useState(false);
   const [selected, setSelected] = useState<CompendiumSearchResult | null>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [createMode, setCreateMode] = useState<'monster' | 'spell' | null>(null);
+  const [refreshKey, setRefreshKey] = useState(0);
 
   const sessionId = useSessionStore((s) => s.sessionId);
 
@@ -115,7 +120,7 @@ export function CompendiumPanel() {
         setLoading(false);
       }).catch(() => { setResults([]); setLoading(false); });
     }
-  }, [category, query, sessionId]);
+  }, [category, query, sessionId, refreshKey]);
 
   const fetchResults = useCallback((q: string, cat: FilterCategory) => {
     if (!q.trim()) return; // Default browse handles empty state
@@ -177,18 +182,53 @@ export function CompendiumPanel() {
         ))}
       </div>
 
+      {/* Homebrew creation buttons */}
+      {category === 'homebrew' && !createMode && (
+        <div style={{
+          display: 'flex', gap: 6, padding: '8px 12px',
+          borderBottom: `1px solid ${theme.border.default}`,
+          flexShrink: 0,
+        }}>
+          <Button variant="ghost" size="sm" leadingIcon={<Plus size={12} />}
+            onClick={() => setCreateMode('monster')}
+            style={{ flex: 1, color: theme.gold.primary, borderColor: theme.gold.border }}>
+            New Monster
+          </Button>
+          <Button variant="ghost" size="sm" leadingIcon={<Plus size={12} />}
+            onClick={() => setCreateMode('spell')}
+            style={{ flex: 1, color: theme.gold.primary, borderColor: theme.gold.border }}>
+            New Spell
+          </Button>
+        </div>
+      )}
+
+      {/* Inline creation forms */}
+      {createMode === 'monster' && (
+        <div style={{ padding: '8px 12px', borderBottom: `1px solid ${theme.border.default}`, maxHeight: '60vh', overflowY: 'auto' }}>
+          <CreateMonsterForm
+            sessionId={sessionId || 'default'}
+            onCreated={() => { setCreateMode(null); setRefreshKey((k) => k + 1); }}
+            onCancel={() => setCreateMode(null)}
+          />
+        </div>
+      )}
+      {createMode === 'spell' && (
+        <div style={{ padding: '8px 12px', borderBottom: `1px solid ${theme.border.default}`, maxHeight: '60vh', overflowY: 'auto' }}>
+          <CreateSpellForm
+            sessionId={sessionId || 'default'}
+            onCreated={() => { setCreateMode(null); setRefreshKey((k) => k + 1); }}
+            onCancel={() => setCreateMode(null)}
+          />
+        </div>
+      )}
+
       {/* Results list */}
       <div style={styles.resultsList}>
-        {!query.trim() && category !== 'homebrew' && (
-          <p style={styles.hintText}>
-            Type a name to search the SRD compendium.
-          </p>
-        )}
-        {category === 'homebrew' && !loading && results.length === 0 && (
+        {category === 'homebrew' && !loading && results.length === 0 && !createMode && (
           <div style={{ textAlign: 'center', padding: 24, color: theme.text.muted }}>
             <div style={{ fontSize: 24, marginBottom: 8 }}>🔨</div>
-            <div style={{ fontSize: 13, fontWeight: 600, color: theme.text.secondary, marginBottom: 4 }}>No Homebrew Content</div>
-            <div style={{ fontSize: 11 }}>Create custom items, spells, or monsters from the loot editor or DM tools.</div>
+            <div style={{ fontSize: 13, fontWeight: 600, color: theme.text.secondary, marginBottom: 4 }}>No Homebrew Content Yet</div>
+            <div style={{ fontSize: 11 }}>Use the buttons above to create custom monsters or spells.</div>
           </div>
         )}
 
