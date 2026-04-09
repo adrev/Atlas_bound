@@ -94,7 +94,10 @@ export function registerChatEvents(io: Server, socket: Socket): void {
     const ctx = getPlayerBySocketId(socket.id);
     if (!ctx) return;
 
-    const { notation, reason, hidden } = parsed.data;
+    // Only the DM can make hidden rolls. Strip the flag for non-DMs
+    // so a player can't secretly roll dice that only they see.
+    const hidden = parsed.data.hidden && ctx.player.role === 'dm';
+    const { notation, reason } = parsed.data;
 
     try {
       const rollData = DiceService.roll(notation, reason);

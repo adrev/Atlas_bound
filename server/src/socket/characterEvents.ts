@@ -1,7 +1,7 @@
 import type { Server, Socket } from 'socket.io';
 import { z } from 'zod';
 import db from '../db/connection.js';
-import { getPlayerBySocketId } from '../utils/roomState.js';
+import { getPlayerBySocketId, playerIsDM } from '../utils/roomState.js';
 
 const characterUpdateSchema = z.object({
   characterId: z.string().min(1),
@@ -116,6 +116,15 @@ export function registerCharacterEvents(io: Server, socket: Socket): void {
     // Verify the character exists
     const existing = db.prepare('SELECT id, user_id FROM characters WHERE id = ?').get(characterId) as Record<string, unknown> | undefined;
     if (!existing) return;
+
+    // Permission: only the character's owner or the DM can update.
+    // NPC characters (user_id = 'npc') can be updated by the DM only.
+    const charUserId = existing.user_id as string;
+    if (charUserId === 'npc') {
+      if (!playerIsDM(ctx)) return;
+    } else {
+      if (charUserId !== ctx.player.userId && !playerIsDM(ctx)) return;
+    }
 
     // Build the DB update
     const setClauses: string[] = [];

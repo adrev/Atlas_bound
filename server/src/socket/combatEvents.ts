@@ -1,5 +1,8 @@
 import type { Server, Socket } from 'socket.io';
-import { getPlayerBySocketId } from '../utils/roomState.js';
+import {
+  getPlayerBySocketId, playerIsDM, isTokenOwnerOrDM,
+  canTargetToken, isCurrentTurnOwnerOrDM,
+} from '../utils/roomState.js';
 import * as CombatService from '../services/CombatService.js';
 import * as DiceService from '../services/DiceService.js';
 import * as ConditionService from '../services/ConditionService.js';
@@ -117,6 +120,7 @@ export function registerCombatEvents(io: Server, socket: Socket): void {
 
     const ctx = getPlayerBySocketId(socket.id);
     if (!ctx) return;
+    if (!isTokenOwnerOrDM(ctx, parsed.data.tokenId)) return;
 
     const { tokenId, bonus } = parsed.data;
 
@@ -146,6 +150,7 @@ export function registerCombatEvents(io: Server, socket: Socket): void {
 
     const ctx = getPlayerBySocketId(socket.id);
     if (!ctx) return;
+    if (!playerIsDM(ctx)) return;
 
     const { tokenId, total } = parsed.data;
     const combatant = CombatService.setInitiative(ctx.room.sessionId, tokenId, total);
@@ -167,6 +172,7 @@ export function registerCombatEvents(io: Server, socket: Socket): void {
   socket.on('combat:next-turn', () => {
     const ctx = getPlayerBySocketId(socket.id);
     if (!ctx) return;
+    if (!isCurrentTurnOwnerOrDM(ctx)) return;
 
     // Allow either the DM OR the current turn's owner to advance.
     // Without this restriction every player has to ask the DM to click
@@ -296,6 +302,7 @@ export function registerCombatEvents(io: Server, socket: Socket): void {
 
     const ctx = getPlayerBySocketId(socket.id);
     if (!ctx) return;
+    if (!canTargetToken(ctx, parsed.data.tokenId)) return;
 
     try {
       const result = CombatService.applyDamage(ctx.room.sessionId, parsed.data.tokenId, parsed.data.amount);
@@ -319,6 +326,7 @@ export function registerCombatEvents(io: Server, socket: Socket): void {
 
     const ctx = getPlayerBySocketId(socket.id);
     if (!ctx) return;
+    if (!isTokenOwnerOrDM(ctx, parsed.data.tokenId)) return;
 
     try {
       const result = CombatService.applyHeal(ctx.room.sessionId, parsed.data.tokenId, parsed.data.amount);
@@ -342,6 +350,7 @@ export function registerCombatEvents(io: Server, socket: Socket): void {
 
     const ctx = getPlayerBySocketId(socket.id);
     if (!ctx) return;
+    if (!playerIsDM(ctx)) return;
 
     try {
       const conditions = CombatService.addCondition(
@@ -364,6 +373,7 @@ export function registerCombatEvents(io: Server, socket: Socket): void {
 
     const ctx = getPlayerBySocketId(socket.id);
     if (!ctx) return;
+    if (!isTokenOwnerOrDM(ctx, parsed.data.tokenId)) return;
 
     try {
       const conditions = CombatService.removeCondition(
@@ -386,6 +396,7 @@ export function registerCombatEvents(io: Server, socket: Socket): void {
 
     const ctx = getPlayerBySocketId(socket.id);
     if (!ctx) return;
+    if (!isTokenOwnerOrDM(ctx, parsed.data.tokenId)) return;
 
     const { tokenId } = parsed.data;
     const combatant = CombatService.getCombatant(ctx.room.sessionId, tokenId);
@@ -427,6 +438,7 @@ export function registerCombatEvents(io: Server, socket: Socket): void {
 
     const ctx = getPlayerBySocketId(socket.id);
     if (!ctx) return;
+    if (!isCurrentTurnOwnerOrDM(ctx)) return;
 
     const economy = CombatService.useAction(ctx.room.sessionId, parsed.data.actionType);
     if (!economy) return;
@@ -447,6 +459,7 @@ export function registerCombatEvents(io: Server, socket: Socket): void {
 
     const ctx = getPlayerBySocketId(socket.id);
     if (!ctx) return;
+    if (!isCurrentTurnOwnerOrDM(ctx)) return;
 
     const remaining = CombatService.useMovement(ctx.room.sessionId, parsed.data.feet);
 
@@ -468,6 +481,7 @@ export function registerCombatEvents(io: Server, socket: Socket): void {
   socket.on('combat:dash', () => {
     const ctx = getPlayerBySocketId(socket.id);
     if (!ctx) return;
+    if (!isCurrentTurnOwnerOrDM(ctx)) return;
 
     const economy = CombatService.useDash(ctx.room.sessionId);
     if (!economy) return;

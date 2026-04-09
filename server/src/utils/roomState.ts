@@ -166,6 +166,55 @@ export function getAllRooms(): Map<string, RoomState> {
   return rooms;
 }
 
+// ── Permission helpers ──────────────────────────────────────
+// Used by socket event handlers to enforce server-side access
+// control. All return booleans — callers should silently return
+// on false (matching the existing pattern in mapEvents/sceneEvents).
+
+type PlayerContext = { room: RoomState; player: RoomPlayer };
+
+/** True if the player is the DM. */
+export function playerIsDM(ctx: PlayerContext): boolean {
+  return ctx.player.role === 'dm';
+}
+
+/** True if the player owns the specified token OR is DM. */
+export function isTokenOwnerOrDM(ctx: PlayerContext, tokenId: string): boolean {
+  if (ctx.player.role === 'dm') return true;
+  const token = ctx.room.tokens.get(tokenId);
+  if (!token) return false;
+  return token.ownerUserId === ctx.player.userId;
+}
+
+/**
+ * True if the player can damage/target the specified token.
+ * DM can damage anyone. Players can damage:
+ *   - NPCs (no ownerUserId) — standard enemy targeting
+ *   - Their own tokens — self-damage from spells etc.
+ * Players CANNOT damage other players' tokens (anti-grief).
+ */
+export function canTargetToken(ctx: PlayerContext, tokenId: string): boolean {
+  if (ctx.player.role === 'dm') return true;
+  const token = ctx.room.tokens.get(tokenId);
+  if (!token) return false;
+  // NPC tokens (no owner) are fair game for any player
+  if (!token.ownerUserId) return true;
+  // Players can only target their own tokens
+  return token.ownerUserId === ctx.player.userId;
+}
+
+/** True if the player owns the current-turn combatant OR is DM. */
+export function isCurrentTurnOwnerOrDM(ctx: PlayerContext): boolean {
+  if (ctx.player.role === 'dm') return true;
+  const state = ctx.room.combatState;
+  if (!state) return false;
+  const current = state.combatants[state.currentTurnIndex];
+  if (!current) return false;
+  const token = ctx.room.tokens.get(current.tokenId);
+  if (!token) return false;
+  return token.ownerUserId === ctx.player.userId;
+}
+
 /**
  * Resolve "which map is this player currently rendering?".
  *
