@@ -186,33 +186,37 @@ export function CreateItemForm({ sessionId, onCreated, onCancel }: CreateItemFor
         </div>
       )}
 
-      {/* Weapon: Properties (2-column grid) */}
+      {/* Weapon: Properties (clickable pill chips) */}
       {isWeapon && (
         <div style={fieldGroup}>
           <label style={labelStyle}>Properties</label>
-          <div style={{
-            display: 'grid',
-            gridTemplateColumns: 'repeat(2, 1fr)',
-            gap: '4px 12px',
-          }}>
-            {WEAPON_PROPERTIES.map((prop) => (
-              <label
-                key={prop.name}
-                style={{
-                  ...checkboxLabelStyle,
-                  color: properties.includes(prop.name) ? theme.gold.primary : theme.text.secondary,
-                }}
-                title={prop.tip}
-              >
-                <input
-                  type="checkbox"
-                  checked={properties.includes(prop.name)}
-                  onChange={() => toggleProperty(prop.name)}
-                  style={{ accentColor: theme.gold.primary }}
-                />
-                {prop.name}
-              </label>
-            ))}
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
+            {WEAPON_PROPERTIES.map((prop) => {
+              const active = properties.includes(prop.name);
+              return (
+                <button
+                  key={prop.name}
+                  type="button"
+                  title={prop.tip}
+                  onClick={() => toggleProperty(prop.name)}
+                  style={{
+                    padding: '3px 10px',
+                    fontSize: 10,
+                    fontWeight: 600,
+                    fontFamily: theme.font.body,
+                    borderRadius: 20,
+                    cursor: 'pointer',
+                    transition: 'all 0.12s',
+                    border: `1px solid ${active ? theme.gold.primary : theme.border.default}`,
+                    background: active ? theme.gold.bg : 'transparent',
+                    color: active ? theme.gold.primary : theme.text.muted,
+                    outline: 'none',
+                  }}
+                >
+                  {prop.name}
+                </button>
+              );
+            })}
           </div>
         </div>
       )}
@@ -252,15 +256,21 @@ export function CreateItemForm({ sessionId, onCreated, onCancel }: CreateItemFor
       {/* Armor: Stealth Disadvantage */}
       {isArmor && acType === 'heavy' && (
         <div style={fieldGroup}>
-          <label style={{ ...checkboxLabelStyle, color: theme.text.secondary }}>
-            <input
-              type="checkbox"
-              checked={stealthDisadvantage}
-              onChange={(e) => setStealthDisadvantage(e.target.checked)}
-              style={{ accentColor: theme.gold.primary }}
-            />
-            Disadvantage on Stealth
-          </label>
+          <button
+            type="button"
+            title="Heavy armor imposes disadvantage on Dexterity (Stealth) checks"
+            onClick={() => setStealthDisadvantage(!stealthDisadvantage)}
+            style={{
+              padding: '3px 10px', fontSize: 10, fontWeight: 600,
+              fontFamily: theme.font.body, borderRadius: 20, cursor: 'pointer',
+              border: `1px solid ${stealthDisadvantage ? theme.state.danger : theme.border.default}`,
+              background: stealthDisadvantage ? theme.state.dangerBg : 'transparent',
+              color: stealthDisadvantage ? theme.state.danger : theme.text.muted,
+              outline: 'none',
+            }}
+          >
+            Stealth Disadvantage
+          </button>
         </div>
       )}
 
@@ -306,18 +316,21 @@ export function CreateItemForm({ sessionId, onCreated, onCancel }: CreateItemFor
 
       {/* Attunement */}
       <div style={fieldGroup}>
-        <label
-          style={{ ...checkboxLabelStyle, color: theme.text.secondary }}
+        <button
+          type="button"
           title="Must spend a short rest attuning before the item's magic works"
+          onClick={() => setRequiresAttunement(!requiresAttunement)}
+          style={{
+            padding: '3px 10px', fontSize: 10, fontWeight: 600,
+            fontFamily: theme.font.body, borderRadius: 20, cursor: 'pointer',
+            border: `1px solid ${requiresAttunement ? theme.purple : theme.border.default}`,
+            background: requiresAttunement ? 'rgba(155,89,182,0.15)' : 'transparent',
+            color: requiresAttunement ? theme.purple : theme.text.muted,
+            outline: 'none',
+          }}
         >
-          <input
-            type="checkbox"
-            checked={requiresAttunement}
-            onChange={(e) => setRequiresAttunement(e.target.checked)}
-            style={{ accentColor: theme.gold.primary }}
-          />
           Requires Attunement
-        </label>
+        </button>
       </div>
 
       {/* Description */}

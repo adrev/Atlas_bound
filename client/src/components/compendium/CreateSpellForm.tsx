@@ -77,6 +77,17 @@ function cap(s: string): string {
   return s.charAt(0).toUpperCase() + s.slice(1);
 }
 
+function pillToggle(active: boolean, color: string, bg: string, borderColor: string): React.CSSProperties {
+  return {
+    padding: '3px 10px', fontSize: 10, fontWeight: 600,
+    fontFamily: theme.font.body, borderRadius: 20, cursor: 'pointer',
+    transition: 'all 0.12s', outline: 'none',
+    border: `1px solid ${active ? borderColor : theme.border.default}`,
+    background: active ? bg : 'transparent',
+    color: active ? color : theme.text.muted,
+  };
+}
+
 // ── Component ───────────────────────────────────────────────
 
 export function CreateSpellForm({ sessionId, onCreated, onCancel }: CreateSpellFormProps) {
@@ -256,32 +267,24 @@ export function CreateSpellForm({ sessionId, onCreated, onCancel }: CreateSpellF
         </div>
       </div>
 
-      {/* Concentration + Ritual */}
-      <div style={{ ...fieldGroup, display: 'flex', gap: 16, alignItems: 'center' }}>
-        <label
-          style={checkboxLabelStyle}
+      {/* Concentration + Ritual (pill toggles) */}
+      <div style={{ ...fieldGroup, display: 'flex', gap: 8, alignItems: 'center' }}>
+        <button
+          type="button"
           title="You must maintain concentration or the spell ends early"
+          onClick={() => setConcentration(!concentration)}
+          style={pillToggle(concentration, theme.gold.primary, theme.gold.bg, theme.gold.border)}
         >
-          <input
-            type="checkbox"
-            checked={concentration}
-            onChange={(e) => setConcentration(e.target.checked)}
-            style={{ accentColor: theme.gold.primary }}
-          />
           Concentration
-        </label>
-        <label
-          style={checkboxLabelStyle}
+        </button>
+        <button
+          type="button"
           title="Can be cast without a spell slot by spending 10 extra minutes"
+          onClick={() => setRitual(!ritual)}
+          style={pillToggle(ritual, theme.blue, theme.state.infoBg, 'rgba(52,152,219,0.4)')}
         >
-          <input
-            type="checkbox"
-            checked={ritual}
-            onChange={(e) => setRitual(e.target.checked)}
-            style={{ accentColor: theme.gold.primary }}
-          />
           Ritual
-        </label>
+        </button>
       </div>
 
       {/* ── Combat (always visible) ────────────────────────── */}
@@ -328,18 +331,17 @@ export function CreateSpellForm({ sessionId, onCreated, onCancel }: CreateSpellF
           </select>
         </div>
         {savingThrow !== 'none' && (
-          <label
-            style={{ ...checkboxLabelStyle, whiteSpace: 'nowrap', paddingBottom: 2 }}
+          <button
+            type="button"
             title="Target takes half damage on a successful save"
+            onClick={() => setHalfOnSave(!halfOnSave)}
+            style={{
+              ...pillToggle(halfOnSave, theme.state.warning, theme.state.warningBg, 'rgba(243,156,18,0.4)'),
+              alignSelf: 'flex-end', marginBottom: 2, whiteSpace: 'nowrap',
+            }}
           >
-            <input
-              type="checkbox"
-              checked={halfOnSave}
-              onChange={(e) => setHalfOnSave(e.target.checked)}
-              style={{ accentColor: theme.gold.primary }}
-            />
             Half on save
-          </label>
+          </button>
         )}
       </div>
 
