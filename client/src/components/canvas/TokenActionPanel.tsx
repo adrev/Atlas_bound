@@ -84,6 +84,7 @@ function showActionDeniedToast(slot: ActionType, label: string) {
 import { enrichSpellFromDescription } from '../../utils/spell-enrich';
 import { effectiveSpellSaveDC, effectiveSpellAttackBonus } from '../../utils/spell-stats';
 import { InfoTooltip } from '../ui/InfoTooltip';
+import { Button } from '../ui';
 import { lookupCombatAction, lookupCondition, lookupWeaponProperty } from '../../utils/rules-text';
 import {
   getOwnRollModifiers,
@@ -1653,50 +1654,64 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
         {/* Quick action buttons — pinned to the header so they don't get
             pushed off-screen by long spell lists. Opening the full sheet
             also closes this panel so they don't overlap. */}
-        {character && !isNPC && (
-          <div style={{ display: 'flex', gap: 4, marginTop: 8 }}>
-            <button
-              onClick={() => {
-                window.dispatchEvent(new CustomEvent('open-character-sheet', { detail: { characterId: character.id, tab: 'actions' } }));
-                close();
-              }}
-              style={quickBtnStyle(C.red)}
-            >📋 View Stats</button>
-            <button
-              onClick={() => {
-                window.dispatchEvent(new CustomEvent('open-character-sheet', { detail: { characterId: character.id, tab: 'inventory' } }));
-                close();
-              }}
-              style={quickBtnStyle(C.gold)}
-            >🎒 Inventory</button>
-          </div>
-        )}
-        {isNPC && token.characterId && (
-          <div style={{ display: 'flex', gap: 4, marginTop: 8 }}>
-            {compendiumData && (
-              <button
+        {/* Quick action buttons — View Stats opens either the full
+            character sheet (PC) or the compendium detail popup (NPC).
+            Inventory opens the character sheet inventory tab (PC) or
+            the loot editor (NPC, DM only). */}
+        <div style={{ display: 'flex', gap: 4, marginTop: 8 }}>
+          {character && !isNPC && (
+            <>
+              <Button variant="ghost" size="sm" fullWidth
                 onClick={() => {
-                  window.dispatchEvent(new CustomEvent('open-compendium-detail', {
-                    detail: { slug: compendiumData.slug || token.name.toLowerCase().replace(/\s+/g, '-'), category: 'monsters', name: token.name },
-                  }));
-                  close();
+                  window.dispatchEvent(new CustomEvent('open-character-sheet', { detail: { characterId: character.id, tab: 'actions' } }));
+                  if (!isEmbedded) close();
                 }}
-                style={quickBtnStyle(C.red)}
-              >📋 Full Stats</button>
-            )}
-            {isDM && (
-              <button
+                style={{ color: C.red, borderColor: `${C.red}44` }}
+              >
+                View Stats
+              </Button>
+              <Button variant="ghost" size="sm" fullWidth
                 onClick={() => {
-                  window.dispatchEvent(new CustomEvent('open-loot-editor', {
-                    detail: { characterId: token.characterId, tokenName: token.name },
-                  }));
-                  close();
+                  window.dispatchEvent(new CustomEvent('open-character-sheet', { detail: { characterId: character.id, tab: 'inventory' } }));
+                  if (!isEmbedded) close();
                 }}
-                style={quickBtnStyle(C.gold)}
-              >🎒 Inventory</button>
-            )}
-          </div>
-        )}
+                style={{ color: C.gold, borderColor: `${C.gold}44` }}
+              >
+                Inventory
+              </Button>
+            </>
+          )}
+          {isNPC && (
+            <>
+              {compendiumData && (
+                <Button variant="ghost" size="sm" fullWidth
+                  onClick={() => {
+                    window.dispatchEvent(new CustomEvent('open-compendium-detail', {
+                      detail: { slug: compendiumData.slug || token.name.toLowerCase().replace(/\s+/g, '-'), category: 'monsters', name: token.name },
+                    }));
+                    if (!isEmbedded) close();
+                  }}
+                  style={{ color: C.red, borderColor: `${C.red}44` }}
+                >
+                  Full Stats
+                </Button>
+              )}
+              {isDM && token.characterId && (
+                <Button variant="ghost" size="sm" fullWidth
+                  onClick={() => {
+                    window.dispatchEvent(new CustomEvent('open-loot-editor', {
+                      detail: { characterId: token.characterId, tokenName: token.name },
+                    }));
+                    if (!isEmbedded) close();
+                  }}
+                  style={{ color: C.gold, borderColor: `${C.gold}44` }}
+                >
+                  Inventory
+                </Button>
+              )}
+            </>
+          )}
+        </div>
       </div>
 
       {/* Scrollable content. In floating-popup mode this is the
