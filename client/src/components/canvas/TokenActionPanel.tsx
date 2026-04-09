@@ -192,6 +192,44 @@ function parse<T>(val: unknown, fallback: T): T {
 function fmtMod(n: number): string { return n >= 0 ? `+${n}` : String(n); }
 
 /**
+ * Eagerly create a character record for a token that doesn't have one.
+ * Module-level so it can be called from the fetch-useEffect (before
+ * the component returns JSX). Same logic as the instance-level
+ * createCharForToken helper but doesn't reference component state.
+ */
+async function createCharForTokenEager(
+  t: { id: string; name: string; imageUrl: string | null },
+  comp: any,
+  currentHp: number, maxHp: number, armorClass: number, speed: number,
+): Promise<string | null> {
+  try {
+    const resp = await fetch('/api/characters', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        userId: 'npc', name: t.name,
+        race: comp?.type || 'monster',
+        class: `CR ${comp?.challengeRating || '0'}`,
+        level: 1, hitPoints: currentHp, maxHitPoints: maxHp,
+        armorClass, speed,
+        abilityScores: comp?.abilityScores || {},
+        portraitUrl: t.imageUrl,
+        compendiumSlug: comp?.slug || null,
+      }),
+    });
+    if (resp.ok) {
+      const data = await resp.json();
+      emitTokenUpdate(t.id, { characterId: data.id } as any);
+      useCharacterStore.getState().setAllCharacters({
+        ...useCharacterStore.getState().allCharacters, [data.id]: { ...data, hitPoints: currentHp },
+      });
+      return data.id;
+    }
+  } catch { /* ignore */ }
+  return null;
+}
+
+/**
  * Apply damage to a target after running it through the resistance /
  * immunity / vulnerability system. Reads the target character's
  * defenses arrays and any active conditions (Stoneskin, Petrified) to
@@ -322,7 +360,22 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
           : `/api/compendium/monsters/${slug}`;
         fetch(route)
           .then(r => r.ok ? r.json() : null)
-          .then(data => { if (data) setCompendiumData(data); })
+          .then(async (data) => {
+            if (!data) return;
+            setCompendiumData(data);
+            // Eagerly create a character record for legacy tokens that
+            // were spawned before CreatureLibrary started auto-creating
+            // them. Without a characterId, the Inventory button won't
+            // show and the combat system can't track HP properly.
+            const freshToken = useMapStore.getState().tokens[selectedTokenId!];
+            if (freshToken && !freshToken.characterId) {
+              const hp = data.hitPoints ?? 10;
+              const ac = data.armorClass ?? 10;
+              const spd = data.speed?.walk ?? 30;
+              const id = await createCharForTokenEager(freshToken, data, hp, hp, ac, spd);
+              if (id) setLocalCharId(id);
+            }
+          })
           .catch(() => {});
       }
     } else {
