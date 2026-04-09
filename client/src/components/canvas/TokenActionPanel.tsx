@@ -72,8 +72,8 @@ function showActionDeniedToast(slot: ActionType, label: string) {
   Object.assign(toast.style, {
     position: 'fixed', top: '18%', left: '50%',
     transform: 'translateX(-50%)',
-    padding: '12px 18px', background: '#1a1a1a', color: '#eee',
-    borderRadius: '8px', border: '2px solid #c53131',
+    padding: '12px 18px', background: theme.bg.deep, color: theme.text.primary,
+    borderRadius: `${theme.radius.md}px`, border: `2px solid ${theme.state.danger}`,
     zIndex: '99999', minWidth: '260px', maxWidth: '360px',
     boxShadow: '0 6px 20px rgba(0,0,0,0.6)',
     fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
@@ -385,8 +385,8 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
           toast.innerHTML = `<div style="font-size:14px;font-weight:700;margin-bottom:4px">Out of Range!</div><div style="font-size:12px;opacity:0.8">${targetToken.name} is ${distFeet}ft away. Max range: ${maxRange}ft.</div>`;
           Object.assign(toast.style, {
             position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%, -50%)',
-            padding: '16px 24px', background: '#1a1a1a', color: '#eee', borderRadius: '10px',
-            border: '2px solid #c53131', zIndex: '99999', textAlign: 'center',
+            padding: '16px 24px', background: theme.bg.deep, color: theme.text.primary, borderRadius: `${theme.radius.lg}px`,
+            border: `2px solid ${theme.state.danger}`, zIndex: '99999', textAlign: 'center',
             boxShadow: '0 8px 32px rgba(0,0,0,0.7), 0 0 15px rgba(197,49,49,0.3)',
           });
           document.body.appendChild(toast);
@@ -1718,14 +1718,14 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
             background: 'rgba(197,49,49,0.15)', border: '1px solid rgba(197,49,49,0.3)',
             display: 'flex', alignItems: 'center', gap: 8,
           }}>
-            <span style={{ fontSize: 11, color: '#eee', flex: 1 }}>
-              🎯 Select target for <strong style={{ color: '#c53131' }}>
+            <span style={{ fontSize: 11, color: theme.text.primary, flex: 1 }}>
+              🎯 Select target for <strong style={{ color: theme.state.danger }}>
                 {targetingData.spell?.name || targetingData.weapon?.name || targetingData.action?.name}
               </strong>
             </span>
             <button onClick={() => useMapStore.getState().cancelTargetingMode()} style={{
-              padding: '2px 8px', fontSize: 10, background: '#333', border: '1px solid #444',
-              borderRadius: 3, color: '#aaa', cursor: 'pointer', fontFamily: 'inherit',
+              padding: '2px 8px', fontSize: 10, background: theme.bg.elevated, border: `1px solid ${theme.border.default}`,
+              borderRadius: theme.radius.sm, color: theme.text.secondary, cursor: 'pointer', fontFamily: theme.font.body,
             }}>Cancel</button>
           </div>
         )}

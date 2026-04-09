@@ -514,10 +514,10 @@ const styles: Record<string, React.CSSProperties> = {
     maxWidth: 1000,
     maxHeight: '90vh',
     overflow: 'auto',
-    background: '#1a1a1a',
-    borderRadius: 12,
+    background: theme.bg.deep,
+    borderRadius: theme.radius.lg,
     border: `1px solid ${theme.border.default}`,
-    boxShadow: '0 16px 64px rgba(0,0,0,0.6)',
+    boxShadow: theme.shadow.lg,
     position: 'relative' as const,
   },
   closeFullSheet: {

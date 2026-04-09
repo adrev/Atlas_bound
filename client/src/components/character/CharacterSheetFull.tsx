@@ -252,16 +252,16 @@ function showRestToast(restType: string, changes: string[]) {
   const toast = document.createElement('div');
   toast.id = 'rest-toast';
   toast.innerHTML = `
-    <div style="font-size:16px;font-weight:700;margin-bottom:6px;color:#d4a843">${restType}</div>
+    <div style="font-size:16px;font-weight:700;margin-bottom:6px;color:${theme.gold.primary}">${restType}</div>
     <div style="font-size:12px;line-height:1.6">
-      ${changes.map(c => `<div style="padding:2px 0;border-bottom:1px solid #333">\u2714 ${c}</div>`).join('')}
+      ${changes.map(c => `<div style="padding:2px 0;border-bottom:1px solid ${theme.border.default}">\u2714 ${c}</div>`).join('')}
     </div>
   `;
   Object.assign(toast.style, {
     position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%, -50%)',
-    padding: '20px 28px', background: '#1a1a1a', color: '#eee', borderRadius: '12px',
-    border: '2px solid #d4a843', zIndex: '99999', minWidth: '300px', maxWidth: '420px',
-    boxShadow: '0 8px 32px rgba(0,0,0,0.7), 0 0 15px rgba(212,168,67,0.3)',
+    padding: '20px 28px', background: theme.bg.deep, color: theme.text.primary, borderRadius: `${theme.radius.lg}px`,
+    border: `2px solid ${theme.gold.primary}`, zIndex: '99999', minWidth: '300px', maxWidth: '420px',
+    boxShadow: `${theme.shadow.lg}, ${theme.goldGlow.soft}`,
     animation: 'fadeIn 0.3s ease',
   });
   document.body.appendChild(toast);

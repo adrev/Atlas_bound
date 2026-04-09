@@ -3,6 +3,7 @@ import { Layer, Line, Text, Circle, Group } from 'react-konva';
 import type { WallSegment } from '@dnd-vtt/shared';
 import { useMapStore } from '../../../stores/useMapStore';
 import { useSessionStore } from '../../../stores/useSessionStore';
+import { theme } from '../../../styles/theme';
 import { emitWallAdd } from '../../../socket/emitters';
 
 /**
@@ -384,13 +385,13 @@ export function WallContextMenu() {
           left: Math.min(menu.screenX, window.innerWidth - 180),
           top: Math.min(menu.screenY, window.innerHeight - 100),
           zIndex: 9999,
-          background: '#1a1a1a', border: '1px solid #444', borderRadius: 8,
-          boxShadow: '0 8px 32px rgba(0,0,0,0.7)', minWidth: 160,
-          fontFamily: '-apple-system, sans-serif', fontSize: 13, color: '#eee',
+          background: theme.bg.deep, border: `1px solid ${theme.border.default}`, borderRadius: theme.radius.md,
+          boxShadow: theme.shadow.lg, minWidth: 160,
+          fontFamily: theme.font.body, fontSize: 13, color: theme.text.primary,
           overflow: 'hidden',
         }}
       >
-        <div style={{ padding: '6px 12px', borderBottom: '1px solid #444', fontSize: 10, color: '#777' }}>
+        <div style={{ padding: '6px 12px', borderBottom: `1px solid ${theme.border.default}`, fontSize: 10, color: theme.text.muted }}>
           Wall #{menu.wallIndex + 1}
         </div>
         <div

@@ -1,5 +1,6 @@
 import { useState, useRef, useLayoutEffect, type ReactNode, type CSSProperties } from 'react';
 import { createPortal } from 'react-dom';
+import { theme } from '../../styles/theme';
 
 /**
  * Rich hover-triggered tooltip component. Unlike native `title`
@@ -104,8 +105,8 @@ export function InfoTooltip({
             top: pos?.top ?? -9999,
             left: pos?.left ?? -9999,
             maxWidth,
-            background: '#1a1a1a',
-            color: '#e8e6e3',
+            background: theme.bg.deep,
+            color: theme.text.primary,
             border: `1px solid ${accent}`,
             borderLeft: `3px solid ${accent}`,
             borderRadius: 6,
@@ -132,7 +133,7 @@ export function InfoTooltip({
           >
             {title}
           </div>
-          <div style={{ fontSize: 11, color: '#e8e6e3', whiteSpace: 'pre-wrap' }}>
+          <div style={{ fontSize: 11, color: theme.text.primary, whiteSpace: 'pre-wrap' }}>
             {body}
           </div>
           {footer && (
@@ -140,9 +141,9 @@ export function InfoTooltip({
               style={{
                 marginTop: 6,
                 paddingTop: 6,
-                borderTop: '1px solid #333',
+                borderTop: `1px solid ${theme.border.default}`,
                 fontSize: 10,
-                color: '#888',
+                color: theme.text.muted,
                 fontStyle: 'italic' as const,
               }}
             >
