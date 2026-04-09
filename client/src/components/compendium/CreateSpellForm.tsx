@@ -56,6 +56,14 @@ const checkboxLabelStyle: React.CSSProperties = {
   fontFamily: theme.font.body, cursor: 'pointer',
 };
 
+const sectionHeaderStyle: React.CSSProperties = {
+  fontSize: 11, fontWeight: 700, color: theme.gold.primary,
+  textTransform: 'uppercase', letterSpacing: '0.08em',
+  margin: '10px 0 6px', fontFamily: theme.font.body,
+  borderBottom: `1px solid ${theme.border.default}`,
+  paddingBottom: 4,
+};
+
 const sectionToggleStyle: React.CSSProperties = {
   background: 'none', border: 'none', padding: '6px 0', margin: '4px 0 2px',
   fontSize: 11, fontWeight: 700, color: theme.gold.primary,
@@ -108,10 +116,7 @@ export function CreateSpellForm({ sessionId, onCreated, onCancel }: CreateSpellF
   const [classes, setClasses] = useState('');
 
   // UI state
-  const [showCombat, setShowCombat] = useState(true);
-  const [showAoe, setShowAoe] = useState(false);
-  const [showEffects, setShowEffects] = useState(false);
-  const [showAnimation, setShowAnimation] = useState(false);
+  const [showAdvanced, setShowAdvanced] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -253,7 +258,10 @@ export function CreateSpellForm({ sessionId, onCreated, onCancel }: CreateSpellF
 
       {/* Concentration + Ritual */}
       <div style={{ ...fieldGroup, display: 'flex', gap: 16, alignItems: 'center' }}>
-        <label style={checkboxLabelStyle}>
+        <label
+          style={checkboxLabelStyle}
+          title="You must maintain concentration or the spell ends early"
+        >
           <input
             type="checkbox"
             checked={concentration}
@@ -262,7 +270,10 @@ export function CreateSpellForm({ sessionId, onCreated, onCancel }: CreateSpellF
           />
           Concentration
         </label>
-        <label style={checkboxLabelStyle}>
+        <label
+          style={checkboxLabelStyle}
+          title="Can be cast without a spell slot by spending 10 extra minutes"
+        >
           <input
             type="checkbox"
             checked={ritual}
@@ -273,114 +284,100 @@ export function CreateSpellForm({ sessionId, onCreated, onCancel }: CreateSpellF
         </label>
       </div>
 
-      {/* ── Combat (collapsible, default open) ──────────────── */}
-      <button type="button" onClick={() => setShowCombat(!showCombat)} style={sectionToggleStyle}>
-        {showCombat ? '\u25BE' : '\u25B8'} {'\u2694'} Combat
-      </button>
-      {showCombat && (
-        <div style={{ marginBottom: 4 }}>
-          {/* Damage + Damage Type */}
-          <div style={{ ...fieldGroup, ...rowStyle }}>
-            <div style={{ flex: 1 }}>
-              <label style={labelStyle}>Damage</label>
+      {/* ── Combat (always visible) ────────────────────────── */}
+      <div style={sectionHeaderStyle}>Combat</div>
+
+      {/* Damage + Damage Type */}
+      <div style={{ ...fieldGroup, ...rowStyle }}>
+        <div style={{ flex: 1 }}>
+          <label style={labelStyle}>Damage</label>
+          <input
+            style={inputStyle}
+            type="text"
+            value={damage}
+            onChange={(e) => setDamage(e.target.value)}
+            placeholder="8d6"
+          />
+        </div>
+        <div style={{ flex: 1 }}>
+          <label style={labelStyle}>Damage Type</label>
+          <select style={selectStyle} value={damageType} onChange={(e) => setDamageType(e.target.value)}>
+            {DAMAGE_TYPES.map((t) => (
+              <option key={t} value={t}>{cap(t)}</option>
+            ))}
+          </select>
+        </div>
+      </div>
+
+      {/* Attack Type + Saving Throw + Half on save */}
+      <div style={{ ...fieldGroup, ...rowStyle, alignItems: 'flex-end' }}>
+        <div style={{ flex: 1 }}>
+          <label style={labelStyle}>Attack Type</label>
+          <select style={selectStyle} value={attackType} onChange={(e) => setAttackType(e.target.value)}>
+            {ATTACK_TYPES.map((t) => (
+              <option key={t} value={t}>{cap(t)}</option>
+            ))}
+          </select>
+        </div>
+        <div style={{ flex: 1 }}>
+          <label style={labelStyle}>Saving Throw</label>
+          <select style={selectStyle} value={savingThrow} onChange={(e) => setSavingThrow(e.target.value)}>
+            {SAVING_THROWS.map((t) => (
+              <option key={t} value={t}>{t === 'none' ? 'None' : t.toUpperCase()}</option>
+            ))}
+          </select>
+        </div>
+        {savingThrow !== 'none' && (
+          <label
+            style={{ ...checkboxLabelStyle, whiteSpace: 'nowrap', paddingBottom: 2 }}
+            title="Target takes half damage on a successful save"
+          >
+            <input
+              type="checkbox"
+              checked={halfOnSave}
+              onChange={(e) => setHalfOnSave(e.target.checked)}
+              style={{ accentColor: theme.gold.primary }}
+            />
+            Half on save
+          </label>
+        )}
+      </div>
+
+      {/* AoE: Type + Size + Push — all one row */}
+      <div style={{ ...fieldGroup, ...rowStyle }}>
+        <div style={{ flex: 1 }}>
+          <label
+            style={labelStyle}
+            title="Area shape — sphere radiates from a point, cone is a triangle from caster, cube is a box, line is a beam"
+          >
+            AoE Type
+          </label>
+          <select style={selectStyle} value={aoeType} onChange={(e) => setAoeType(e.target.value)}>
+            {AOE_TYPES.map((t) => (
+              <option key={t} value={t}>{cap(t)}</option>
+            ))}
+          </select>
+        </div>
+        {aoeType !== 'none' && (
+          <>
+            <div style={{ flex: '0 0 70px' }}>
+              <label style={labelStyle}>Size (ft)</label>
               <input
                 style={inputStyle}
-                type="text"
-                value={damage}
-                onChange={(e) => setDamage(e.target.value)}
-                placeholder="8d6"
+                type="number"
+                min={0}
+                value={aoeSize}
+                onChange={(e) => setAoeSize(Math.max(0, Number(e.target.value)))}
+                placeholder="20"
               />
             </div>
-            <div style={{ flex: 1 }}>
-              <label style={labelStyle}>Damage Type</label>
-              <select style={selectStyle} value={damageType} onChange={(e) => setDamageType(e.target.value)}>
-                {DAMAGE_TYPES.map((t) => (
-                  <option key={t} value={t}>{cap(t)}</option>
-                ))}
-              </select>
-            </div>
-          </div>
-
-          {/* Attack Type + Saving Throw */}
-          <div style={{ ...fieldGroup, ...rowStyle }}>
-            <div style={{ flex: 1 }}>
-              <label style={labelStyle}>Attack Type</label>
-              <select style={selectStyle} value={attackType} onChange={(e) => setAttackType(e.target.value)}>
-                {ATTACK_TYPES.map((t) => (
-                  <option key={t} value={t}>{cap(t)}</option>
-                ))}
-              </select>
-            </div>
-            <div style={{ flex: 1 }}>
-              <label style={labelStyle}>Saving Throw</label>
-              <select style={selectStyle} value={savingThrow} onChange={(e) => setSavingThrow(e.target.value)}>
-                {SAVING_THROWS.map((t) => (
-                  <option key={t} value={t}>{t === 'none' ? 'None' : t.toUpperCase()}</option>
-                ))}
-              </select>
-            </div>
-          </div>
-
-          {/* Half damage on save */}
-          <div style={fieldGroup}>
-            <label style={checkboxLabelStyle}>
-              <input
-                type="checkbox"
-                checked={halfOnSave}
-                onChange={(e) => setHalfOnSave(e.target.checked)}
-                style={{ accentColor: theme.gold.primary }}
-              />
-              Half damage on save
-            </label>
-          </div>
-        </div>
-      )}
-
-      {/* ── AoE (collapsible, default collapsed) ────────────── */}
-      <button type="button" onClick={() => setShowAoe(!showAoe)} style={sectionToggleStyle}>
-        {showAoe ? '\u25BE' : '\u25B8'} {'\uD83C\uDFAF'} Area of Effect
-      </button>
-      {showAoe && (
-        <div style={{ marginBottom: 4 }}>
-          <div style={fieldGroup}>
-            <label style={labelStyle}>AoE Type</label>
-            <select style={selectStyle} value={aoeType} onChange={(e) => setAoeType(e.target.value)}>
-              {AOE_TYPES.map((t) => (
-                <option key={t} value={t}>{cap(t)}</option>
-              ))}
-            </select>
-          </div>
-
-          {aoeType !== 'none' && (
-            <div style={{ ...fieldGroup, ...rowStyle }}>
-              <div style={{ flex: 1 }}>
-                <label style={labelStyle}>AoE Size (ft)</label>
-                <input
-                  style={inputStyle}
-                  type="number"
-                  min={0}
-                  value={aoeSize}
-                  onChange={(e) => setAoeSize(Math.max(0, Number(e.target.value)))}
-                  placeholder="20"
-                />
-              </div>
-              <div style={{ flex: 1 }}>
-                <label style={labelStyle}>Push Distance (ft)</label>
-                <input
-                  style={inputStyle}
-                  type="number"
-                  min={0}
-                  value={pushDistance}
-                  onChange={(e) => setPushDistance(Math.max(0, Number(e.target.value)))}
-                  placeholder="0"
-                />
-              </div>
-            </div>
-          )}
-
-          {aoeType === 'none' && (
-            <div style={fieldGroup}>
-              <label style={labelStyle}>Push Distance (ft)</label>
+            <div style={{ flex: '0 0 70px' }}>
+              <label
+                style={labelStyle}
+                title="Pushes affected creatures this many feet away from the point of origin"
+              >
+                Push (ft)
+              </label>
               <input
                 style={inputStyle}
                 type="number"
@@ -390,35 +387,43 @@ export function CreateSpellForm({ sessionId, onCreated, onCancel }: CreateSpellF
                 placeholder="0"
               />
             </div>
-          )}
-        </div>
-      )}
+          </>
+        )}
+      </div>
 
-      {/* ── Effects (collapsible, default collapsed) ────────── */}
-      <button type="button" onClick={() => setShowEffects(!showEffects)} style={sectionToggleStyle}>
-        {showEffects ? '\u25BE' : '\u25B8'} {'\u2728'} Effects
+      {/* ── Advanced Options (collapsible) ──────────────────── */}
+      <button
+        type="button"
+        onClick={() => setShowAdvanced(!showAdvanced)}
+        style={sectionToggleStyle}
+      >
+        {showAdvanced ? '\u25BE' : '\u25B8'} Advanced Options
       </button>
-      {showEffects && (
+      {showAdvanced && (
         <div style={{ marginBottom: 4 }}>
+          {/* Condition on failed save */}
           <div style={fieldGroup}>
-            <label style={labelStyle}>Applies Condition (on failed save)</label>
+            <label
+              style={labelStyle}
+              title="Automatically applied to targets that fail their saving throw"
+            >
+              Condition on Failed Save
+            </label>
             <select style={selectStyle} value={appliesCondition} onChange={(e) => setAppliesCondition(e.target.value)}>
               {CONDITIONS.map((c) => (
                 <option key={c} value={c}>{cap(c)}</option>
               ))}
             </select>
           </div>
-        </div>
-      )}
 
-      {/* ── Animation (collapsible, default collapsed) ──────── */}
-      <button type="button" onClick={() => setShowAnimation(!showAnimation)} style={sectionToggleStyle}>
-        {showAnimation ? '\u25BE' : '\u25B8'} {'\uD83C\uDFAC'} Animation
-      </button>
-      {showAnimation && (
-        <div style={{ marginBottom: 4 }}>
+          {/* Animation Type */}
           <div style={fieldGroup}>
-            <label style={labelStyle}>Animation Type</label>
+            <label
+              style={labelStyle}
+              title="Visual effect when the spell is cast"
+            >
+              Animation Type
+            </label>
             <select style={selectStyle} value={animationType} onChange={(e) => setAnimationType(e.target.value)}>
               {ANIMATION_TYPES.map((t) => (
                 <option key={t} value={t}>{cap(t)}</option>
@@ -426,8 +431,14 @@ export function CreateSpellForm({ sessionId, onCreated, onCancel }: CreateSpellF
             </select>
           </div>
 
+          {/* Animation Color */}
           <div style={fieldGroup}>
-            <label style={labelStyle}>Animation Color (hex, empty = auto)</label>
+            <label
+              style={labelStyle}
+              title="Leave empty for auto color based on school"
+            >
+              Animation Color
+            </label>
             <div style={{ ...rowStyle, alignItems: 'center' }}>
               <input
                 style={{ ...inputStyle, flex: 1 }}
@@ -436,20 +447,20 @@ export function CreateSpellForm({ sessionId, onCreated, onCancel }: CreateSpellF
                 onChange={(e) => setAnimationColor(e.target.value)}
                 placeholder="#ff4500"
               />
-              {animationColor && (
-                <div style={{
-                  width: 24, height: 24, borderRadius: theme.radius.sm,
-                  border: `1px solid ${theme.gold.border}`,
-                  background: animationColor || 'transparent', flexShrink: 0,
-                }} />
-              )}
+              <div style={{
+                width: 24, height: 24, borderRadius: theme.radius.sm,
+                border: `1px solid ${theme.gold.border}`,
+                background: animationColor || 'transparent', flexShrink: 0,
+              }} />
             </div>
           </div>
         </div>
       )}
 
       {/* ── Description ─────────────────────────────────────── */}
-      <div style={{ ...fieldGroup, marginTop: 6 }}>
+      <div style={{ ...sectionHeaderStyle, marginTop: 6 }}>Description</div>
+
+      <div style={fieldGroup}>
         <label style={labelStyle}>Description *</label>
         <textarea
           style={{ ...inputStyle, minHeight: 80, resize: 'vertical' }}

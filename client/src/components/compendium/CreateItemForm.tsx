@@ -11,36 +11,51 @@ interface CreateItemFormProps {
 const ITEM_TYPES = ['weapon', 'armor', 'shield', 'gear', 'potion', 'scroll', 'wand', 'ring', 'wondrous'];
 const RARITIES = ['common', 'uncommon', 'rare', 'very rare', 'legendary', 'artifact'];
 const DAMAGE_TYPES = ['bludgeoning', 'piercing', 'slashing', 'fire', 'cold', 'lightning', 'thunder', 'acid', 'poison', 'necrotic', 'radiant', 'force', 'psychic'];
-const WEAPON_PROPERTIES = ['Finesse', 'Light', 'Heavy', 'Thrown', 'Reach', 'Versatile', 'Two-Handed', 'Ammunition', 'Loading'];
 const AC_TYPES = ['light', 'medium', 'heavy'];
 
+const WEAPON_PROPERTIES = [
+  { name: 'Melee', tip: 'Used in close combat, reach 5ft' },
+  { name: 'Ranged', tip: 'Used at distance, requires ammunition or thrown' },
+  { name: 'Finesse', tip: 'Use STR or DEX for attack/damage (whichever is higher)' },
+  { name: 'Light', tip: 'Small and easy to handle — enables two-weapon fighting' },
+  { name: 'Heavy', tip: 'Small creatures have disadvantage on attack rolls' },
+  { name: 'Thrown', tip: 'Can be thrown for a ranged attack using STR' },
+  { name: 'Reach', tip: 'Adds 5ft to your melee attack range (10ft total)' },
+  { name: 'Versatile', tip: 'Can be used one- or two-handed for more damage' },
+  { name: 'Two-Handed', tip: 'Requires both hands to attack' },
+  { name: 'Ammunition', tip: 'Requires ammunition (arrows, bolts, etc.)' },
+  { name: 'Loading', tip: 'Only one attack per action regardless of extra attacks' },
+  { name: 'Special', tip: 'Has unique rules described in the item description' },
+  { name: 'Silvered', tip: 'Overcomes resistance to nonmagical attacks (lycanthropes, etc.)' },
+  { name: 'Magical', tip: 'Counts as magical for overcoming resistance and immunity' },
+] as const;
+
 const inputStyle: React.CSSProperties = {
-  width: '100%',
-  padding: '6px 10px',
-  fontSize: 12,
-  background: theme.bg.deepest,
-  border: `1px solid ${theme.gold.border}`,
-  borderRadius: theme.radius.sm,
-  color: theme.text.primary,
-  fontFamily: theme.font.body,
-  outline: 'none',
-  boxSizing: 'border-box',
+  width: '100%', padding: '6px 10px', fontSize: 12,
+  background: theme.bg.deepest, border: `1px solid ${theme.gold.border}`,
+  borderRadius: theme.radius.sm, color: theme.text.primary,
+  fontFamily: theme.font.body, outline: 'none', boxSizing: 'border-box',
 };
 
-const selectStyle: React.CSSProperties = {
-  ...inputStyle,
-  cursor: 'pointer',
-};
+const selectStyle: React.CSSProperties = { ...inputStyle, cursor: 'pointer' };
 
 const labelStyle: React.CSSProperties = {
-  fontSize: 10,
-  fontWeight: 700,
-  color: theme.gold.dim,
-  textTransform: 'uppercase',
-  letterSpacing: '0.08em',
-  marginBottom: 3,
-  display: 'block',
+  fontSize: 10, fontWeight: 700, color: theme.gold.dim,
+  textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 3, display: 'block',
 };
+
+const fieldGroup: React.CSSProperties = { marginBottom: 8 };
+
+const rowStyle: React.CSSProperties = { display: 'flex', gap: 8 };
+
+const checkboxLabelStyle: React.CSSProperties = {
+  display: 'flex', alignItems: 'center', gap: 6,
+  fontSize: 11, cursor: 'pointer',
+};
+
+function cap(s: string): string {
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
 
 export function CreateItemForm({ sessionId, onCreated, onCancel }: CreateItemFormProps) {
   const [name, setName] = useState('');
@@ -60,6 +75,9 @@ export function CreateItemForm({ sessionId, onCreated, onCancel }: CreateItemFor
   const [requiresAttunement, setRequiresAttunement] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
+
+  const isWeapon = type === 'weapon';
+  const isArmor = type === 'armor' || type === 'shield';
 
   const handleSubmit = async () => {
     if (!name.trim()) { setError('Name is required'); return; }
@@ -96,28 +114,46 @@ export function CreateItemForm({ sessionId, onCreated, onCancel }: CreateItemFor
     }
   };
 
-  const isWeapon = type === 'weapon';
-  const isArmor = type === 'armor' || type === 'shield';
+  const toggleProperty = (propName: string) => {
+    if (properties.includes(propName)) {
+      setProperties(properties.filter((p) => p !== propName));
+    } else {
+      setProperties([...properties, propName]);
+    }
+  };
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-      <div style={{ fontSize: 12, fontWeight: 700, color: theme.gold.primary }}>
+    <div style={{
+      display: 'flex', flexDirection: 'column', gap: 0, padding: 10,
+      background: theme.bg.card, border: `1px solid ${theme.border.default}`,
+      borderRadius: theme.radius.md,
+    }}>
+      {/* ── Header ──────────────────────────────────────────── */}
+      <div style={{
+        fontSize: 14, fontWeight: 700, color: theme.gold.primary,
+        fontFamily: theme.font.display, marginBottom: 10,
+      }}>
         Create Custom Item
       </div>
 
       {/* Name */}
-      <div>
+      <div style={fieldGroup}>
         <label style={labelStyle}>Name *</label>
-        <input style={inputStyle} value={name} onChange={(e) => setName(e.target.value)} placeholder="Sword of Awesomeness" />
+        <input
+          style={inputStyle}
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          placeholder="Sword of Awesomeness"
+        />
       </div>
 
       {/* Type + Rarity */}
-      <div style={{ display: 'flex', gap: 6 }}>
+      <div style={{ ...fieldGroup, ...rowStyle }}>
         <div style={{ flex: 1 }}>
           <label style={labelStyle}>Type</label>
           <select style={selectStyle} value={type} onChange={(e) => setType(e.target.value)}>
             {ITEM_TYPES.map((t) => (
-              <option key={t} value={t}>{t.charAt(0).toUpperCase() + t.slice(1)}</option>
+              <option key={t} value={t}>{cap(t)}</option>
             ))}
           </select>
         </div>
@@ -125,15 +161,15 @@ export function CreateItemForm({ sessionId, onCreated, onCancel }: CreateItemFor
           <label style={labelStyle}>Rarity</label>
           <select style={selectStyle} value={rarity} onChange={(e) => setRarity(e.target.value)}>
             {RARITIES.map((r) => (
-              <option key={r} value={r}>{r.charAt(0).toUpperCase() + r.slice(1)}</option>
+              <option key={r} value={r}>{cap(r)}</option>
             ))}
           </select>
         </div>
       </div>
 
-      {/* Weapon fields */}
+      {/* Weapon: Damage + Damage Type */}
       {isWeapon && (
-        <div style={{ display: 'flex', gap: 6 }}>
+        <div style={{ ...fieldGroup, ...rowStyle }}>
           <div style={{ flex: 1 }}>
             <label style={labelStyle}>Damage</label>
             <input style={inputStyle} value={damage} onChange={(e) => setDamage(e.target.value)} placeholder="1d8" />
@@ -141,109 +177,151 @@ export function CreateItemForm({ sessionId, onCreated, onCancel }: CreateItemFor
           <div style={{ flex: 1 }}>
             <label style={labelStyle}>Damage Type</label>
             <select style={selectStyle} value={damageType} onChange={(e) => setDamageType(e.target.value)}>
-              <option value="">—</option>
+              <option value="">--</option>
               {DAMAGE_TYPES.map((d) => (
-                <option key={d} value={d}>{d.charAt(0).toUpperCase() + d.slice(1)}</option>
+                <option key={d} value={d}>{cap(d)}</option>
               ))}
             </select>
           </div>
         </div>
       )}
 
-      {/* Weapon properties + range */}
+      {/* Weapon: Properties (2-column grid) */}
       {isWeapon && (
-        <>
-          <div>
-            <label style={labelStyle}>Properties</label>
-            <div style={{
-              display: 'grid',
-              gridTemplateColumns: 'repeat(3, 1fr)',
-              gap: '4px 8px',
-            }}>
-              {WEAPON_PROPERTIES.map((prop) => (
-                <label
-                  key={prop}
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 6,
-                    fontSize: 11,
-                    color: properties.includes(prop) ? theme.gold.primary : theme.text.secondary,
-                    cursor: 'pointer',
-                  }}
-                >
-                  <input
-                    type="checkbox"
-                    checked={properties.includes(prop)}
-                    onChange={(e) => {
-                      if (e.target.checked) {
-                        setProperties([...properties, prop]);
-                      } else {
-                        setProperties(properties.filter((p) => p !== prop));
-                      }
-                    }}
-                  />
-                  {prop}
-                </label>
-              ))}
-            </div>
+        <div style={fieldGroup}>
+          <label style={labelStyle}>Properties</label>
+          <div style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(2, 1fr)',
+            gap: '4px 12px',
+          }}>
+            {WEAPON_PROPERTIES.map((prop) => (
+              <label
+                key={prop.name}
+                style={{
+                  ...checkboxLabelStyle,
+                  color: properties.includes(prop.name) ? theme.gold.primary : theme.text.secondary,
+                }}
+                title={prop.tip}
+              >
+                <input
+                  type="checkbox"
+                  checked={properties.includes(prop.name)}
+                  onChange={() => toggleProperty(prop.name)}
+                  style={{ accentColor: theme.gold.primary }}
+                />
+                {prop.name}
+              </label>
+            ))}
           </div>
-          <div style={{ width: '50%' }}>
-            <label style={labelStyle}>Range</label>
-            <input style={inputStyle} value={range} onChange={(e) => setRange(e.target.value)} placeholder="80/320" />
-          </div>
-        </>
+        </div>
       )}
 
-      {/* Armor fields */}
+      {/* Weapon: Range */}
+      {isWeapon && (
+        <div style={{ ...fieldGroup, width: '50%' }}>
+          <label style={labelStyle}>Range</label>
+          <input style={inputStyle} value={range} onChange={(e) => setRange(e.target.value)} placeholder="80/320" />
+        </div>
+      )}
+
+      {/* Armor: AC + AC Type */}
       {isArmor && (
-        <div style={{ display: 'flex', gap: 6, alignItems: 'flex-end' }}>
+        <div style={{ ...fieldGroup, ...rowStyle, alignItems: 'flex-end' }}>
           <div style={{ flex: 1 }}>
             <label style={labelStyle}>AC Bonus</label>
             <input style={inputStyle} type="number" value={ac} onChange={(e) => setAc(Number(e.target.value))} />
           </div>
           <div style={{ flex: 1 }}>
-            <label style={labelStyle}>AC Type</label>
+            <label
+              style={labelStyle}
+              title="Light = +DEX mod, Medium = +DEX mod (max 2), Heavy = no DEX mod"
+            >
+              AC Type
+            </label>
             <select style={selectStyle} value={acType} onChange={(e) => setAcType(e.target.value)}>
-              <option value="">—</option>
+              <option value="">--</option>
               {AC_TYPES.map((t) => (
-                <option key={t} value={t}>{t.charAt(0).toUpperCase() + t.slice(1)}</option>
+                <option key={t} value={t}>{cap(t)}</option>
               ))}
             </select>
           </div>
         </div>
       )}
+
+      {/* Armor: Stealth Disadvantage */}
       {isArmor && acType === 'heavy' && (
-        <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 11, color: theme.text.secondary, cursor: 'pointer' }}>
-          <input type="checkbox" checked={stealthDisadvantage} onChange={(e) => setStealthDisadvantage(e.target.checked)} />
-          Disadvantage on Stealth
-        </label>
+        <div style={fieldGroup}>
+          <label style={{ ...checkboxLabelStyle, color: theme.text.secondary }}>
+            <input
+              type="checkbox"
+              checked={stealthDisadvantage}
+              onChange={(e) => setStealthDisadvantage(e.target.checked)}
+              style={{ accentColor: theme.gold.primary }}
+            />
+            Disadvantage on Stealth
+          </label>
+        </div>
       )}
 
-      {/* Magic bonus + weight + value */}
-      <div style={{ display: 'flex', gap: 6 }}>
+      {/* Magic bonus + Weight + Value */}
+      <div style={{ ...fieldGroup, ...rowStyle }}>
         <div style={{ flex: 1 }}>
-          <label style={labelStyle}>Magic +</label>
-          <input style={inputStyle} type="number" value={magicBonus} min={0} max={3} onChange={(e) => setMagicBonus(Number(e.target.value))} />
+          <label
+            style={labelStyle}
+            title="Adds +1/+2/+3 to attack and damage rolls"
+          >
+            Magic +
+          </label>
+          <input
+            style={inputStyle}
+            type="number"
+            value={magicBonus}
+            min={0}
+            max={3}
+            onChange={(e) => setMagicBonus(Number(e.target.value))}
+          />
         </div>
         <div style={{ flex: 1 }}>
           <label style={labelStyle}>Weight</label>
-          <input style={inputStyle} type="number" value={weight} min={0} onChange={(e) => setWeight(Number(e.target.value))} />
+          <input
+            style={inputStyle}
+            type="number"
+            value={weight}
+            min={0}
+            onChange={(e) => setWeight(Number(e.target.value))}
+          />
         </div>
         <div style={{ flex: 1 }}>
           <label style={labelStyle}>Value (gp)</label>
-          <input style={inputStyle} type="number" value={valueGp} min={0} onChange={(e) => setValueGp(Number(e.target.value))} />
+          <input
+            style={inputStyle}
+            type="number"
+            value={valueGp}
+            min={0}
+            onChange={(e) => setValueGp(Number(e.target.value))}
+          />
         </div>
       </div>
 
       {/* Attunement */}
-      <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 11, color: theme.text.secondary, cursor: 'pointer' }}>
-        <input type="checkbox" checked={requiresAttunement} onChange={(e) => setRequiresAttunement(e.target.checked)} />
-        Requires Attunement
-      </label>
+      <div style={fieldGroup}>
+        <label
+          style={{ ...checkboxLabelStyle, color: theme.text.secondary }}
+          title="Must spend a short rest attuning before the item's magic works"
+        >
+          <input
+            type="checkbox"
+            checked={requiresAttunement}
+            onChange={(e) => setRequiresAttunement(e.target.checked)}
+            style={{ accentColor: theme.gold.primary }}
+          />
+          Requires Attunement
+        </label>
+      </div>
 
       {/* Description */}
-      <div>
+      <div style={fieldGroup}>
         <label style={labelStyle}>Description</label>
         <textarea
           style={{ ...inputStyle, minHeight: 60, resize: 'vertical' }}
@@ -253,15 +331,23 @@ export function CreateItemForm({ sessionId, onCreated, onCancel }: CreateItemFor
         />
       </div>
 
-      {error && <div style={{ fontSize: 11, color: theme.state.danger }}>{error}</div>}
+      {/* Error */}
+      {error && (
+        <div style={{
+          fontSize: 11, color: theme.state.danger,
+          marginBottom: 8, fontFamily: theme.font.body,
+        }}>
+          {error}
+        </div>
+      )}
 
       {/* Actions */}
-      <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
-        <Button variant="primary" size="sm" fullWidth onClick={handleSubmit} disabled={submitting}>
-          {submitting ? 'Creating...' : 'Create Item'}
-        </Button>
-        <Button variant="ghost" size="sm" fullWidth onClick={onCancel}>
+      <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 4 }}>
+        <Button variant="ghost" onClick={onCancel}>
           Cancel
+        </Button>
+        <Button variant="primary" onClick={handleSubmit} disabled={submitting}>
+          {submitting ? 'Creating...' : 'Create Item'}
         </Button>
       </div>
     </div>
