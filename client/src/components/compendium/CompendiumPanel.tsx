@@ -6,6 +6,7 @@ import { useSessionStore } from '../../stores/useSessionStore';
 import { CompendiumDetailPopup } from './CompendiumDetailPopup';
 import { CreateMonsterForm } from './CreateMonsterForm';
 import { CreateSpellForm } from './CreateSpellForm';
+import { CreateItemForm } from './CreateItemForm';
 import type { CompendiumSearchResult, CompendiumCategory } from '@dnd-vtt/shared';
 
 type FilterCategory = 'all' | 'monsters' | 'spells' | 'items' | 'homebrew';
@@ -50,7 +51,7 @@ export function CompendiumPanel() {
   const [loading, setLoading] = useState(false);
   const [selected, setSelected] = useState<CompendiumSearchResult | null>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const [createMode, setCreateMode] = useState<'monster' | 'spell' | null>(null);
+  const [createMode, setCreateMode] = useState<'monster' | 'spell' | 'item' | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
 
   const sessionId = useSessionStore((s) => s.sessionId);
@@ -71,13 +72,19 @@ export function CompendiumPanel() {
       ]).then(([monsters, spells, items]) => {
         const results: CompendiumSearchResult[] = [];
         (monsters as any[]).forEach((m: any) => results.push({
-          slug: m.slug, name: m.name, category: 'monsters', snippet: 'Homebrew', cr: m.challengeRating,
+          slug: m.slug, name: m.name, category: 'monsters',
+          snippet: [m.size, m.type].filter(Boolean).join(' ') || 'Custom Monster',
+          cr: m.challengeRating,
         }));
         (spells as any[]).forEach((s: any) => results.push({
-          slug: s.slug, name: s.name, category: 'spells', snippet: 'Homebrew', level: s.level,
+          slug: s.slug, name: s.name, category: 'spells',
+          snippet: [s.school, s.castingTime].filter(Boolean).join(' · ') || 'Custom Spell',
+          level: s.level,
         }));
         (items as any[]).forEach((i: any) => results.push({
-          slug: i.id || i.slug, name: i.name, category: 'items', snippet: 'Homebrew', rarity: i.rarity as any,
+          slug: i.id || i.slug, name: i.name, category: 'items',
+          snippet: [i.type, i.damage].filter(Boolean).join(' · ') || 'Custom Item',
+          rarity: i.rarity as any,
         }));
         if (results.length === 0) {
           setResults([]);
@@ -199,6 +206,11 @@ export function CompendiumPanel() {
             style={{ flex: 1, color: theme.gold.primary, borderColor: theme.gold.border }}>
             New Spell
           </Button>
+          <Button variant="ghost" size="sm" leadingIcon={<Plus size={12} />}
+            onClick={() => setCreateMode('item')}
+            style={{ flex: 1, color: theme.gold.primary, borderColor: theme.gold.border }}>
+            New Item
+          </Button>
         </div>
       )}
 
@@ -215,6 +227,15 @@ export function CompendiumPanel() {
       {createMode === 'spell' && (
         <div style={{ padding: '8px 12px', borderBottom: `1px solid ${theme.border.default}`, maxHeight: '60vh', overflowY: 'auto' }}>
           <CreateSpellForm
+            sessionId={sessionId || 'default'}
+            onCreated={() => { setCreateMode(null); setRefreshKey((k) => k + 1); }}
+            onCancel={() => setCreateMode(null)}
+          />
+        </div>
+      )}
+      {createMode === 'item' && (
+        <div style={{ padding: '8px 12px', borderBottom: `1px solid ${theme.border.default}`, maxHeight: '60vh', overflowY: 'auto' }}>
+          <CreateItemForm
             sessionId={sessionId || 'default'}
             onCreated={() => { setCreateMode(null); setRefreshKey((k) => k + 1); }}
             onCancel={() => setCreateMode(null)}
