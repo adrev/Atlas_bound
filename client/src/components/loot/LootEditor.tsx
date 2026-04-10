@@ -89,13 +89,36 @@ export function LootEditor({ characterId, tokenName, onClose }: LootEditorProps)
     if (searchQuery.length < 2) { setSearchResults([]); return; }
     setSearching(true);
     const timeout = setTimeout(() => {
-      fetch(`/api/compendium/search?q=${encodeURIComponent(searchQuery)}&category=items&limit=8`)
-        .then(r => r.ok ? r.json() : { results: [] })
-        .then(data => { setSearchResults(data.results || []); setSearching(false); })
-        .catch(() => { setSearching(false); });
+      const sid = sessionId || 'default';
+      // Search both SRD compendium AND homebrew items, merge results
+      Promise.all([
+        fetch(`/api/compendium/search?q=${encodeURIComponent(searchQuery)}&category=items&limit=8`)
+          .then(r => r.ok ? r.json() : { results: [] })
+          .then(data => data.results || []),
+        fetch(`/api/custom/items?sessionId=${sid}`)
+          .then(r => r.ok ? r.json() : [])
+          .then((items: any[]) =>
+            items
+              .filter(i => i.name.toLowerCase().includes(searchQuery.toLowerCase()))
+              .slice(0, 4)
+              .map((i: any) => ({
+                slug: i.id || i.slug,
+                name: i.name,
+                category: 'items',
+                snippet: `Homebrew · ${i.type || 'gear'}`,
+                rarity: i.rarity,
+                _custom: true,
+                _customData: i,
+              }))
+          ),
+      ]).then(([srdResults, customResults]) => {
+        // Show homebrew first, then SRD
+        setSearchResults([...customResults, ...srdResults]);
+        setSearching(false);
+      }).catch(() => { setSearching(false); });
     }, 300);
     return () => clearTimeout(timeout);
-  }, [searchQuery]);
+  }, [searchQuery, sessionId]);
 
   const notifyLootChange = () => window.dispatchEvent(new Event('loot-updated'));
   const sessionId = useSessionStore((s) => s.sessionId);
