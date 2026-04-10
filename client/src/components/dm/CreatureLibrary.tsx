@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useMapStore } from '../../stores/useMapStore';
+import { useSessionStore } from '../../stores/useSessionStore';
 import { emitTokenAdd } from '../../socket/emitters';
 import { theme } from '../../styles/theme';
 import type { CompendiumMonster } from '@dnd-vtt/shared';
@@ -143,23 +144,31 @@ export function CreatureLibrary() {
 
         let url: string;
         if (search.trim().length >= 2) {
-          // Search endpoint — returns lightweight results, then fetch full data
-          url = `/api/compendium/search?q=${encodeURIComponent(search.trim())}&category=monsters&limit=20`;
-          const resp = await fetch(url, { signal: controller.signal });
-          if (!resp.ok) throw new Error('Failed to fetch');
-          const data = await resp.json();
-          const slugs: string[] = (data.results || []).map((r: { slug: string }) => r.slug);
-          if (slugs.length === 0) {
+          // Search SRD compendium + homebrew custom monsters in parallel
+          const sid = useSessionStore.getState().sessionId || 'default';
+          const [srdData, customAll] = await Promise.all([
+            fetch(`/api/compendium/search?q=${encodeURIComponent(search.trim())}&category=monsters&limit=20`, { signal: controller.signal })
+              .then(r => r.ok ? r.json() : { results: [] }),
+            fetch(`/api/custom/monsters?sessionId=${sid}`, { signal: controller.signal })
+              .then(r => r.ok ? r.json() : []),
+          ]);
+          const srdSlugs: string[] = (srdData.results || []).map((r: { slug: string }) => r.slug);
+          // Filter custom monsters by search query
+          const q = search.trim().toLowerCase();
+          const customMatches = (customAll as CompendiumMonster[]).filter(
+            (m: any) => m.name.toLowerCase().includes(q)
+          );
+          if (srdSlugs.length === 0 && customMatches.length === 0) {
             setMonsters([]);
             setTotalHint('0 results');
             setLoading(false);
             return;
           }
-          // Fetch full data in small batches of 5 to avoid hammering
-          const fullMonsters: CompendiumMonster[] = [];
-          for (let i = 0; i < slugs.length; i += 5) {
+          // Fetch full SRD data in small batches of 5
+          const fullMonsters: CompendiumMonster[] = [...customMatches];
+          for (let i = 0; i < srdSlugs.length; i += 5) {
             const batch = await Promise.all(
-              slugs.slice(i, i + 5).map(async (slug) => {
+              srdSlugs.slice(i, i + 5).map(async (slug) => {
                 try {
                   const r = await fetch(`/api/compendium/monsters/${slug}`, { signal: controller.signal });
                   return r.ok ? r.json() as Promise<CompendiumMonster> : null;

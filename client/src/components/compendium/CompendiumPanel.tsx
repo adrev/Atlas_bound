@@ -134,16 +134,35 @@ export function CompendiumPanel() {
 
     setLoading(true);
     const params = new URLSearchParams({ q: q.trim(), limit: '20' });
-    if (cat !== 'all') params.set('category', cat);
+    if (cat !== 'all' && cat !== 'homebrew') params.set('category', cat);
+    const sid = sessionId || 'default';
 
-    fetch(`/api/compendium/search?${params}`)
-      .then((r) => r.json())
-      .then((data) => {
-        setResults(data.results ?? []);
-        setLoading(false);
-      })
-      .catch(() => {
-        setResults([]);
+    // Search SRD compendium + homebrew in parallel, merge results
+    Promise.all([
+      fetch(`/api/compendium/search?${params}`).then(r => r.json()).catch(() => ({ results: [] })),
+      // Also search custom content matching the query
+      ...(cat === 'all' || cat === 'monsters' ? [
+        fetch(`/api/custom/monsters?sessionId=${sid}`).then(r => r.ok ? r.json() : [])
+          .then((items: any[]) => items.filter(i => i.name.toLowerCase().includes(q.trim().toLowerCase())).slice(0, 5)
+            .map(m => ({ slug: m.slug, name: m.name, category: 'monsters' as const, snippet: `Homebrew · ${m.size} ${m.type}`, cr: m.challengeRating })))
+      ] : []),
+      ...(cat === 'all' || cat === 'spells' ? [
+        fetch(`/api/custom/spells?sessionId=${sid}`).then(r => r.ok ? r.json() : [])
+          .then((items: any[]) => items.filter(i => i.name.toLowerCase().includes(q.trim().toLowerCase())).slice(0, 5)
+            .map(s => ({ slug: s.slug, name: s.name, category: 'spells' as const, snippet: `Homebrew · ${s.school}`, level: s.level })))
+      ] : []),
+      ...(cat === 'all' || cat === 'items' ? [
+        fetch(`/api/custom/items?sessionId=${sid}`).then(r => r.ok ? r.json() : [])
+          .then((items: any[]) => items.filter(i => i.name.toLowerCase().includes(q.trim().toLowerCase())).slice(0, 5)
+            .map(i => ({ slug: i.id || i.slug, name: i.name, category: 'items' as const, snippet: `Homebrew · ${i.type}`, rarity: i.rarity })))
+      ] : []),
+    ]).then(([srdData, ...customArrays]) => {
+      const customResults = customArrays.flat();
+      // Homebrew first, then SRD
+      setResults([...customResults, ...(srdData.results ?? [])]);
+      setLoading(false);
+    }).catch(() => {
+      setResults([]);
         setLoading(false);
       });
   }, []);
