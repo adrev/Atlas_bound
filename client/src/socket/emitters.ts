@@ -124,6 +124,15 @@ export function emitPing(x: number, y: number) {
   getSocket().emit('map:ping', { x, y });
 }
 
+// --- Ready Check ---
+export function emitReadyCheck(tokenIds: string[]) {
+  getSocket().emit('combat:ready-check', { tokenIds });
+}
+
+export function emitReadyResponse(ready: boolean) {
+  getSocket().emit('combat:ready-response', { ready });
+}
+
 // --- Combat ---
 export function emitStartCombat(tokenIds: string[]) {
   getSocket().emit('combat:start', { tokenIds });
@@ -317,6 +326,20 @@ export function emitCharacterUpdate(
 
 export function emitCharacterSyncRequest(characterId: string) {
   getSocket().emit('character:sync-request', { characterId });
+}
+
+// --- Typing indicator ---
+let _lastTypingEmit = 0;
+export function emitTyping() {
+  const now = Date.now();
+  if (now - _lastTypingEmit < 2000) return;
+  _lastTypingEmit = now;
+  getSocket().emit('chat:typing', {});
+}
+
+// --- Presence ---
+export function emitViewing(tab: string) {
+  getSocket().emit('session:viewing', { tab });
 }
 
 // --- Chat ---

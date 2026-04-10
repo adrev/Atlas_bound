@@ -603,6 +603,82 @@ function MovementPreview() {
   );
 }
 
+/**
+ * Ghost token rendered for each staged hero during DM map preview.
+ * Semi-transparent with a gold dashed border to distinguish from real tokens.
+ * Draggable so the DM can reposition heroes before activating the map.
+ */
+function StagedHeroGhost({
+  hero,
+  gridSize,
+}: {
+  hero: { characterId: string; name: string; portraitUrl: string | null; x: number; y: number };
+  gridSize: number;
+}) {
+  const tokenSize = gridSize; // size = 1
+
+  // Snap helper: round to nearest grid center
+  const snapToGrid = (val: number) =>
+    Math.round((val - gridSize / 2) / gridSize) * gridSize + gridSize / 2;
+
+  const labelWidth = Math.max(tokenSize + 20, Math.min(hero.name.length * 6.5 + 16, 160));
+
+  return (
+    <Group
+      x={hero.x}
+      y={hero.y}
+      opacity={0.5}
+      draggable
+      onDragEnd={(e) => {
+        const node = e.target;
+        const newX = snapToGrid(node.x());
+        const newY = snapToGrid(node.y());
+        node.x(newX);
+        node.y(newY);
+        useMapStore.getState().moveStagedHero(hero.characterId, newX, newY);
+      }}
+    >
+      {/* Gold dashed border */}
+      <Circle
+        radius={tokenSize / 2 + 3}
+        stroke={theme.gold.primary}
+        strokeWidth={2}
+        dash={[8, 4]}
+        fill="transparent"
+      />
+      {/* Portrait */}
+      {hero.portraitUrl ? (
+        <TokenImage url={hero.portraitUrl} size={tokenSize} />
+      ) : (
+        <Circle radius={tokenSize / 2} fill="#555" />
+      )}
+      {/* Name label below */}
+      <Rect
+        x={-labelWidth / 2}
+        y={tokenSize / 2 + 2}
+        width={labelWidth}
+        height={16}
+        fill="rgba(0,0,0,0.75)"
+        cornerRadius={4}
+      />
+      <Text
+        text={hero.name}
+        y={tokenSize / 2 + 3}
+        x={-labelWidth / 2}
+        width={labelWidth}
+        align="center"
+        fontSize={10}
+        fontStyle="bold"
+        fill={theme.gold.primary}
+        shadowColor="black"
+        shadowBlur={3}
+        shadowOffset={{ x: 0, y: 1 }}
+        shadowEnabled
+      />
+    </Group>
+  );
+}
+
 export function TokenLayer() {
   const tokens = useMapStore((s) => s.tokens);
   const selectedTokenId = useMapStore((s) => s.selectedTokenId);
@@ -613,6 +689,7 @@ export function TokenLayer() {
   const userId = useSessionStore((s) => s.userId);
   const enableFog = useSessionStore((s) => s.settings.enableFogOfWar);
   const gridSize = useMapStore((s) => s.currentMap?.gridSize ?? 70);
+  const stagedHeroes = useMapStore((s) => s.stagedHeroes);
 
   const currentTurnTokenId = combatActive
     ? combatants[currentTurnIndex]?.tokenId ?? null
@@ -665,6 +742,11 @@ export function TokenLayer() {
           Mounts only while a drag is in progress; renders after the
           token sprites so it draws on top. */}
       <MovementPreview />
+      {/* Staged hero ghosts — DM-only, shown during map preview before activation */}
+      {isDM &&
+        stagedHeroes.map((hero) => (
+          <StagedHeroGhost key={hero.characterId} hero={hero} gridSize={gridSize} />
+        ))}
     </Layer>
   );
 }

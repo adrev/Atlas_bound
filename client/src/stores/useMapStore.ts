@@ -66,6 +66,19 @@ interface MapState {
   targetingData: { spell?: any; weapon?: any; action?: any; casterTokenId: string; casterName: string } | null;
   dragPreview: DragPreview | null;
   /**
+   * Ghost hero tokens staged by the DM on a preview map before
+   * activating it. Each entry represents a PC that will be placed
+   * as a real token when the DM clicks "Move Players Here".
+   */
+  stagedHeroes: Array<{
+    characterId: string;
+    name: string;
+    portraitUrl: string | null;
+    x: number;
+    y: number;
+    ownerUserId: string;
+  }>;
+  /**
    * The id of the map the PLAYERS are currently on ("yellow ribbon").
    * For players this is always equal to `currentMap?.id`. For DMs it
    * may differ when they're previewing a different map. Drives the
@@ -104,6 +117,12 @@ interface MapActions {
   beginDragPreview: (preview: DragPreview) => void;
   updateDragPreview: (currentX: number, currentY: number) => void;
   endDragPreview: () => void;
+  /** Replace the staged heroes array wholesale. */
+  stageHeroes: (heroes: MapState['stagedHeroes']) => void;
+  /** Update a single staged hero's position (after drag). */
+  moveStagedHero: (characterId: string, x: number, y: number) => void;
+  /** Clear all staged heroes. */
+  clearStagedHeroes: () => void;
   /**
    * Update the id of the "player ribbon" map. Called whenever the
    * server tells us the ribbon has moved (via `map:player-map-changed`
@@ -139,6 +158,7 @@ const initialState: MapState = {
   activePings: [],
   copiedToken: null,
   lockedTokenIds: new Set(),
+  stagedHeroes: [],
   isTargeting: false,
   targetingData: null,
   dragPreview: null,
@@ -263,6 +283,15 @@ export const useMapStore = create<MapState & MapActions>((set) => ({
         : state,
     ),
   endDragPreview: () => set({ dragPreview: null }),
+
+  stageHeroes: (heroes) => set({ stagedHeroes: heroes }),
+  moveStagedHero: (characterId, x, y) =>
+    set((state) => ({
+      stagedHeroes: state.stagedHeroes.map((h) =>
+        h.characterId === characterId ? { ...h, x, y } : h,
+      ),
+    })),
+  clearStagedHeroes: () => set({ stagedHeroes: [] }),
 
   toggleLockToken: (id) =>
     set((state) => {

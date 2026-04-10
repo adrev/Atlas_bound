@@ -14,13 +14,14 @@ import { InitiativeTracker } from '../combat/InitiativeTracker';
 import { TokenActionPanel } from '../canvas/TokenActionPanel';
 import { CharacterImport } from '../character/CharacterImport';
 import { useCharacterStore } from '../../stores/useCharacterStore';
-import { emitTokenAdd, emitCharacterUpdate } from '../../socket/emitters';
+import { emitTokenAdd, emitCharacterUpdate, emitViewing } from '../../socket/emitters';
 import { Upload, MapPin, RefreshCw } from 'lucide-react';
 import { ChatPanel } from '../chat/ChatPanel';
 import { PlayerList } from '../session/PlayerList';
 import { DMToolbar } from '../dm/DMToolbar';
 import { CompendiumPanel } from '../compendium/CompendiumPanel';
-import { emitStartCombat, emitEndCombat } from '../../socket/emitters';
+import { emitStartCombat, emitEndCombat, emitReadyCheck } from '../../socket/emitters';
+import { Check, Circle } from 'lucide-react';
 import { theme } from '../../styles/theme';
 import { Button } from '../ui';
 
@@ -48,6 +49,11 @@ const TABS: TabDef[] = [
 export function Sidebar() {
   const [activeTab, setActiveTab] = useState<TabId>('chat');
   const isDM = useSessionStore((s) => s.isDM);
+
+  // Broadcast which tab we're viewing to other players
+  useEffect(() => {
+    emitViewing(activeTab);
+  }, [activeTab]);
 
   // Listen for token click to switch to character tab
   useEffect(() => {
@@ -530,7 +536,9 @@ function HeroTab() {
 
 function CombatPanel() {
   const combatActive = useCombatStore((s) => s.active);
+  const readyCheck = useCombatStore((s) => s.readyCheck);
   const isDM = useSessionStore((s) => s.isDM);
+  const players = useSessionStore((s) => s.players);
   const tokens = useMapStore((s) => s.tokens);
   // Only count tokens that would actually enter initiative — light
   // markers / loot drops are excluded so the button label and the
@@ -553,32 +561,86 @@ function CombatPanel() {
         End Combat
       </Button>
     ) : (
-      <Button
-        variant="danger"
-        size="lg"
-        fullWidth
-        disabled={tokenCount === 0}
-        onClick={() => {
-          const tokenIds = combatantTokens.map((t) => t.id);
-          if (tokenIds.length === 0) return;
-          emitStartCombat(tokenIds);
-        }}
-      >
-        Start Combat
-      </Button>
+      <div style={{ display: 'flex', gap: 8 }}>
+        <Button
+          variant="danger"
+          size="lg"
+          fullWidth
+          disabled={tokenCount === 0 || !!readyCheck?.active}
+          onClick={() => {
+            const tokenIds = combatantTokens.map((t) => t.id);
+            if (tokenIds.length === 0) return;
+            emitStartCombat(tokenIds);
+          }}
+        >
+          Start Combat
+        </Button>
+        <Button
+          variant="ghost"
+          size="lg"
+          disabled={tokenCount === 0 || !!readyCheck?.active}
+          onClick={() => {
+            const tokenIds = combatantTokens.map((t) => t.id);
+            if (tokenIds.length === 0) return;
+            emitReadyCheck(tokenIds);
+          }}
+          title="Send a ready check to all players before starting combat"
+          style={{ whiteSpace: 'nowrap', flexShrink: 0 }}
+        >
+          Ready Check
+        </Button>
+      </div>
     )
+  );
+
+  // Ready check player status list (DM view)
+  const readyCheckStatus = isDM && readyCheck?.active && (
+    <div style={{
+      display: 'flex', flexDirection: 'column', gap: 6,
+      padding: '10px 0',
+      borderTop: `1px solid ${theme.border.default}`,
+    }}>
+      <div style={{
+        fontSize: 11, fontWeight: 700, color: theme.gold.dim,
+        textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 2,
+      }}>
+        Ready Check
+      </div>
+      {readyCheck.playerIds.map((pid) => {
+        const player = players.find((p: any) => p.userId === pid);
+        const isReady = readyCheck.responses[pid] === true;
+        return (
+          <div key={pid} style={{
+            display: 'flex', alignItems: 'center', gap: 8,
+            padding: '4px 6px',
+            fontSize: 12,
+            color: isReady ? theme.state.success : theme.text.secondary,
+          }}>
+            {isReady ? (
+              <Check size={14} color={theme.state.success} />
+            ) : (
+              <Circle size={14} color={theme.text.muted} />
+            )}
+            <span style={{ fontWeight: isReady ? 700 : 400 }}>
+              {player?.displayName ?? pid}
+            </span>
+          </div>
+        );
+      })}
+    </div>
   );
 
   if (!combatActive) {
     return (
       <div style={styles.combatPanel}>
         {combatButton}
+        {readyCheckStatus}
         <div style={styles.emptyState}>
           <Swords size={32} color={theme.text.muted} />
           <p style={{ color: theme.text.secondary, margin: 0 }}>
             No combat active
           </p>
-          {isDM && (
+          {isDM && !readyCheck?.active && (
             <p style={{ color: theme.text.muted, fontSize: 12, margin: 0, textAlign: 'center' }}>
               {tokenCount === 0
                 ? 'Place tokens on the map first.'

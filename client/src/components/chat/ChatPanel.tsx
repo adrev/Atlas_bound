@@ -1,6 +1,7 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
 import { useChatStore } from '../../stores/useChatStore';
 import { useSessionStore } from '../../stores/useSessionStore';
+import { getSocket } from '../../socket/client';
 import { ChatInput } from './ChatInput';
 import type { ChatMessage } from '@dnd-vtt/shared';
 import { theme } from '../../styles/theme';
@@ -116,12 +117,45 @@ function MessageBubble({ message }: { message: ChatMessage }) {
 export function ChatPanel() {
   const messages = useChatStore((s) => s.messages);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const [typingUsers, setTypingUsers] = useState<Map<string, { displayName: string; timeout: ReturnType<typeof setTimeout> }>>(new Map());
 
   useEffect(() => {
     if (scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
   }, [messages.length]);
+
+  // Listen for typing indicators
+  useEffect(() => {
+    const socket = getSocket();
+    const handler = (data: { userId: string; displayName: string }) => {
+      setTypingUsers((prev) => {
+        const next = new Map(prev);
+        // Clear existing timeout for this user
+        const existing = next.get(data.userId);
+        if (existing) clearTimeout(existing.timeout);
+        // Set new timeout to auto-clear after 3s
+        const timeout = setTimeout(() => {
+          setTypingUsers((p) => {
+            const updated = new Map(p);
+            updated.delete(data.userId);
+            return updated;
+          });
+        }, 3000);
+        next.set(data.userId, { displayName: data.displayName, timeout });
+        return next;
+      });
+    };
+    socket.on('chat:typing', handler);
+    return () => {
+      socket.off('chat:typing', handler);
+      // Clean up all timeouts
+      typingUsers.forEach((v) => clearTimeout(v.timeout));
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const typingNames = Array.from(typingUsers.values()).map((v) => v.displayName);
 
   return (
     <div style={styles.container}>
@@ -135,6 +169,13 @@ export function ChatPanel() {
           <MessageBubble key={msg.id} message={msg} />
         ))}
       </div>
+      {typingNames.length > 0 && (
+        <div style={styles.typingIndicator}>
+          {typingNames.length === 1
+            ? `${typingNames[0]} is typing...`
+            : `${typingNames.join(', ')} are typing...`}
+        </div>
+      )}
       <ChatInput />
     </div>
   );
@@ -153,6 +194,12 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'flex',
     flexDirection: 'column',
     gap: 8,
+  },
+  typingIndicator: {
+    padding: '4px 12px',
+    fontSize: 11,
+    color: theme.text.muted,
+    fontStyle: 'italic',
   },
   empty: {
     color: theme.text.muted,

@@ -42,6 +42,16 @@ export interface RoomState {
   players: Map<string, RoomPlayer>;
   gameMode: 'free-roam' | 'combat';
   /**
+   * Active ready check state. Non-null while a DM-initiated ready
+   * check is in progress. Cleared once all players respond or the
+   * 15-second timeout fires.
+   */
+  readyCheck: {
+    tokenIds: string[];
+    responses: Map<string, boolean>; // userId -> ready
+    timeout: ReturnType<typeof setTimeout> | null;
+  } | null;
+  /**
    * The map the players are currently rendering ("yellow ribbon").
    * This is what gets hydrated from `sessions.player_map_id` and is
    * the canonical source of truth for "where the party is".
@@ -87,6 +97,21 @@ export interface RoomState {
   drawings: Map<string, Drawing>;
 }
 
+// ── Rate limiting ──────────────────────────────────────────
+const _rateLimitCounters = new Map<string, { count: number; windowStart: number }>();
+
+export function checkRateLimit(socketId: string, event: string, maxPerWindow: number, windowMs: number = 1000): boolean {
+  const key = `${socketId}:${event}`;
+  const now = Date.now();
+  const entry = _rateLimitCounters.get(key);
+  if (!entry || now - entry.windowStart >= windowMs) {
+    _rateLimitCounters.set(key, { count: 1, windowStart: now });
+    return true;
+  }
+  entry.count++;
+  return entry.count <= maxPerWindow;
+}
+
 const rooms = new Map<string, RoomState>();
 const roomCodeIndex = new Map<string, string>();
 
@@ -101,6 +126,7 @@ export function createRoom(
     dmUserId,
     players: new Map(),
     gameMode: 'free-roam',
+    readyCheck: null,
     playerMapId: null,
     dmViewingMap: new Map(),
     currentMapId: null,

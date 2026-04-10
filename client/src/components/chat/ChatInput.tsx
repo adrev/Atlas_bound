@@ -1,6 +1,6 @@
 import { useState, useRef } from 'react';
 import { Send, MessageSquare, MessageCircle } from 'lucide-react';
-import { emitChatMessage, emitWhisper, emitRoll } from '../../socket/emitters';
+import { emitChatMessage, emitWhisper, emitRoll, emitTyping } from '../../socket/emitters';
 import { useSessionStore } from '../../stores/useSessionStore';
 import { useCharacterStore } from '../../stores/useCharacterStore';
 import { theme } from '../../styles/theme';
@@ -132,7 +132,7 @@ export function ChatInput() {
               : 'Type a message or /roll 1d20...'
           }
           value={text}
-          onChange={(e) => setText(e.target.value)}
+          onChange={(e) => { setText(e.target.value); emitTyping(); }}
           onKeyDown={handleKeyDown}
         />
         <button

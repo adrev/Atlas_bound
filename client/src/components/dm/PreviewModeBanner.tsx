@@ -4,9 +4,10 @@ import { theme } from '../../styles/theme';
 import { EMOJI } from '../../styles/emoji';
 import { useMapStore } from '../../stores/useMapStore';
 import { useSessionStore } from '../../stores/useSessionStore';
+import { useCharacterStore } from '../../stores/useCharacterStore';
 import { useSceneStore } from '../../stores/useSceneStore';
 import {
-  emitPreviewLoadMap, emitActivateMapForPlayers,
+  emitPreviewLoadMap, emitActivateMapForPlayers, emitTokenAdd,
 } from '../../socket/emitters';
 import { Button } from '../ui';
 
@@ -25,6 +26,7 @@ export function PreviewModeBanner() {
   const isPreviewing = useMapStore((s) => s.isDmPreviewingDifferentMap);
   const currentMap = useMapStore((s) => s.currentMap);
   const playerMapId = useMapStore((s) => s.playerMapId);
+  const stagedHeroes = useMapStore((s) => s.stagedHeroes);
   const maps = useSceneStore((s) => s.maps);
 
   const playerMapSummary = useMemo(
@@ -46,11 +48,83 @@ export function PreviewModeBanner() {
   if (!currentMap) return null;
   if (dismissedForMapId === currentMap.id) return null;
 
+  const hasStaged = stagedHeroes.length > 0;
+
   const handleJumpToPlayers = () => {
     if (playerMapId) emitPreviewLoadMap(playerMapId);
   };
 
+  /** Build a characterId -> ownerUserId lookup from the session players. */
+  const buildOwnerMap = () => {
+    const players = useSessionStore.getState().players;
+    const map: Record<string, string> = {};
+    for (const p of players) {
+      if (p.characterId) map[p.characterId] = p.userId;
+    }
+    return map;
+  };
+
+  const handleStageHeroes = () => {
+    if (hasStaged) {
+      useMapStore.getState().clearStagedHeroes();
+      return;
+    }
+
+    const players = useSessionStore.getState().players.filter(
+      (p) => p.role === 'player' && p.characterId,
+    );
+    const allChars = useCharacterStore.getState().allCharacters;
+    const mapWidth = currentMap.width;
+    const mapHeight = currentMap.height;
+    const gridSize = currentMap.gridSize;
+
+    // Place heroes in a centered horizontal line
+    const count = players.length;
+    const totalWidth = count * gridSize;
+    const startX = Math.round((mapWidth - totalWidth) / 2) + gridSize / 2;
+    const centerY = Math.round(mapHeight / 2);
+
+    const heroes = players.map((p, i) => {
+      const char = allChars[p.characterId!];
+      return {
+        characterId: p.characterId!,
+        name: char?.name ?? p.displayName,
+        portraitUrl: char?.portraitUrl ?? null,
+        x: startX + i * gridSize,
+        y: centerY,
+        ownerUserId: p.userId,
+      };
+    });
+
+    useMapStore.getState().stageHeroes(heroes);
+  };
+
   const handleMovePlayersHere = () => {
+    // If heroes have been staged, create real tokens for each before activating.
+    if (hasStaged) {
+      const ownerMap = buildOwnerMap();
+      for (const hero of stagedHeroes) {
+        emitTokenAdd({
+          mapId: currentMap.id,
+          characterId: hero.characterId,
+          name: hero.name,
+          x: hero.x,
+          y: hero.y,
+          size: 1,
+          imageUrl: hero.portraitUrl,
+          color: '#666',
+          layer: 'token',
+          visible: true,
+          hasLight: false,
+          lightRadius: 0,
+          lightDimRadius: 0,
+          lightColor: '#ffffff',
+          conditions: [],
+          ownerUserId: ownerMap[hero.characterId] ?? hero.ownerUserId,
+        });
+      }
+      useMapStore.getState().clearStagedHeroes();
+    }
     emitActivateMapForPlayers(currentMap.id);
   };
 
@@ -130,6 +204,9 @@ export function PreviewModeBanner() {
             Jump to Players
           </Button>
         )}
+        <Button variant="ghost" size="sm" onClick={handleStageHeroes}>
+          {hasStaged ? 'Clear Staging' : 'Stage Heroes'}
+        </Button>
         <Button variant="primary" size="sm" onClick={handleMovePlayersHere}>
           Move Players Here
         </Button>

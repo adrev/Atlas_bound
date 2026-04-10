@@ -387,6 +387,15 @@ export function registerSessionEvents(io: Server, socket: Socket): void {
     io.to(ctx.room.sessionId).emit('session:settings-updated', newSettings);
   });
 
+  socket.on('session:viewing', (data: { tab: string }) => {
+    const ctx = getPlayerBySocketId(socket.id);
+    if (!ctx) return;
+    socket.to(ctx.room.sessionId).emit('session:player-viewing', {
+      userId: ctx.player.userId,
+      tab: data.tab,
+    });
+  });
+
   // Handle disconnect
   socket.on('disconnect', () => {
     handleDisconnect(io, socket);

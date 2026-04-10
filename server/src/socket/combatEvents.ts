@@ -100,6 +100,171 @@ export function registerCombatEvents(io: Server, socket: Socket): void {
     }
   });
 
+  // ------------------------------------------------------------------
+  // Ready Check — DM sends a ready check before starting combat.
+  // Players respond, and once all are ready (or 15s timeout) combat
+  // starts automatically with the stored tokenIds.
+  // ------------------------------------------------------------------
+
+  socket.on('combat:ready-check', (data: { tokenIds: string[] }) => {
+    const ctx = getPlayerBySocketId(socket.id);
+    if (!ctx || ctx.player.role !== 'dm') return;
+
+    // Gather player userIds who need to respond
+    const playerIds: string[] = [];
+    for (const [, p] of ctx.room.players) {
+      if (p.role === 'player') playerIds.push(p.userId);
+    }
+
+    // Clear any existing ready check
+    if (ctx.room.readyCheck?.timeout) {
+      clearTimeout(ctx.room.readyCheck.timeout);
+    }
+
+    const deadline = Date.now() + 15000;
+    const tokenIds = data.tokenIds;
+
+    ctx.room.readyCheck = {
+      tokenIds,
+      responses: new Map(),
+      timeout: setTimeout(() => {
+        // Auto-start after 15 seconds
+        if (!ctx.room.readyCheck) return;
+        ctx.room.readyCheck = null;
+
+        io.to(ctx.room.sessionId).emit('combat:ready-check-complete', {});
+
+        // Start combat with the stored tokenIds (mirrors combat:start logic)
+        try {
+          const combatState = CombatService.startCombat(ctx.room.sessionId, tokenIds);
+          io.to(ctx.room.sessionId).emit('combat:started', {
+            combatants: combatState.combatants,
+            roundNumber: combatState.roundNumber,
+          });
+
+          const lines: string[] = ['⚔️ Combat begins! Initiative order:'];
+          combatState.combatants.forEach((c, idx) => {
+            const marker = idx === 0 ? '▶' : ' ';
+            const tag = c.isNPC ? '' : ' (PC)';
+            lines.push(`   ${marker} ${idx + 1}. ${c.name}${tag} — ${c.initiative}`);
+          });
+          lines.push(`   Round 1 — ${combatState.combatants[0]?.name ?? '?'}'s turn`);
+
+          io.to(ctx.room.sessionId).emit('chat:new-message', {
+            id: (Math.random() + 1).toString(36).substring(2),
+            sessionId: ctx.room.sessionId,
+            userId: 'system',
+            displayName: 'System',
+            type: 'system',
+            content: lines.join('\n'),
+            characterName: null,
+            whisperTo: null,
+            rollData: null,
+            createdAt: new Date().toISOString(),
+          });
+
+          for (const combatant of combatState.combatants) {
+            if (combatant.initiative === 0) continue;
+            io.to(ctx.room.sessionId).emit('combat:initiative-set', {
+              tokenId: combatant.tokenId,
+              roll: combatant.initiative - combatant.initiativeBonus,
+              bonus: combatant.initiativeBonus,
+              total: combatant.initiative,
+            });
+          }
+
+          if (CombatService.allInitiativesRolled(ctx.room.sessionId)) {
+            const sorted = CombatService.sortInitiative(ctx.room.sessionId);
+            io.to(ctx.room.sessionId).emit('combat:all-initiatives-ready', { combatants: sorted });
+          }
+        } catch (err) {
+          console.error('[READY CHECK] auto-start combat error:', err);
+        }
+      }, 15000),
+    };
+
+    io.to(ctx.room.sessionId).emit('combat:ready-check-started', {
+      playerIds,
+      deadline,
+    });
+  });
+
+  socket.on('combat:ready-response', (data: { ready: boolean }) => {
+    const ctx = getPlayerBySocketId(socket.id);
+    if (!ctx || !ctx.room.readyCheck) return;
+
+    ctx.room.readyCheck.responses.set(ctx.player.userId, data.ready);
+
+    // Broadcast update
+    const responses: Record<string, boolean> = {};
+    for (const [k, v] of ctx.room.readyCheck.responses) responses[k] = v;
+    io.to(ctx.room.sessionId).emit('combat:ready-update', { responses });
+
+    // Check if all players responded
+    let allReady = true;
+    for (const [, p] of ctx.room.players) {
+      if (p.role === 'player' && !ctx.room.readyCheck.responses.get(p.userId)) {
+        allReady = false;
+        break;
+      }
+    }
+
+    if (allReady) {
+      clearTimeout(ctx.room.readyCheck.timeout!);
+      const tokenIds = ctx.room.readyCheck.tokenIds;
+      ctx.room.readyCheck = null;
+
+      io.to(ctx.room.sessionId).emit('combat:ready-check-complete', {});
+
+      // Start combat (mirrors combat:start logic)
+      try {
+        const combatState = CombatService.startCombat(ctx.room.sessionId, tokenIds);
+        io.to(ctx.room.sessionId).emit('combat:started', {
+          combatants: combatState.combatants,
+          roundNumber: combatState.roundNumber,
+        });
+
+        const lines: string[] = ['⚔️ Combat begins! Initiative order:'];
+        combatState.combatants.forEach((c, idx) => {
+          const marker = idx === 0 ? '▶' : ' ';
+          const tag = c.isNPC ? '' : ' (PC)';
+          lines.push(`   ${marker} ${idx + 1}. ${c.name}${tag} — ${c.initiative}`);
+        });
+        lines.push(`   Round 1 — ${combatState.combatants[0]?.name ?? '?'}'s turn`);
+
+        io.to(ctx.room.sessionId).emit('chat:new-message', {
+          id: (Math.random() + 1).toString(36).substring(2),
+          sessionId: ctx.room.sessionId,
+          userId: 'system',
+          displayName: 'System',
+          type: 'system',
+          content: lines.join('\n'),
+          characterName: null,
+          whisperTo: null,
+          rollData: null,
+          createdAt: new Date().toISOString(),
+        });
+
+        for (const combatant of combatState.combatants) {
+          if (combatant.initiative === 0) continue;
+          io.to(ctx.room.sessionId).emit('combat:initiative-set', {
+            tokenId: combatant.tokenId,
+            roll: combatant.initiative - combatant.initiativeBonus,
+            bonus: combatant.initiativeBonus,
+            total: combatant.initiative,
+          });
+        }
+
+        if (CombatService.allInitiativesRolled(ctx.room.sessionId)) {
+          const sorted = CombatService.sortInitiative(ctx.room.sessionId);
+          io.to(ctx.room.sessionId).emit('combat:all-initiatives-ready', { combatants: sorted });
+        }
+      } catch (err) {
+        console.error('[READY CHECK] all-ready combat start error:', err);
+      }
+    }
+  });
+
   socket.on('combat:end', () => {
     const ctx = getPlayerBySocketId(socket.id);
     if (!ctx || ctx.player.role !== 'dm') return;

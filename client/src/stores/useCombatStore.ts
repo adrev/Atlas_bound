@@ -6,6 +6,13 @@ interface InitiativePrompt {
   bonus: number;
 }
 
+interface ReadyCheckState {
+  active: boolean;
+  playerIds: string[];
+  responses: Record<string, boolean>;
+  deadline: number;
+}
+
 interface CombatState {
   active: boolean;
   roundNumber: number;
@@ -14,6 +21,7 @@ interface CombatState {
   actionEconomy: ActionEconomy;
   initiativeRolls: Map<string, number>;
   initiativePrompts: InitiativePrompt[];
+  readyCheck: ReadyCheckState | null;
 }
 
 interface CombatActions {
@@ -36,6 +44,9 @@ interface CombatActions {
   updateActionEconomy: (economy: ActionEconomy) => void;
   updateMovement: (tokenId: string, remaining: number) => void;
   setDeathSaves: (tokenId: string, deathSaves: { successes: number; failures: number }) => void;
+  setReadyCheck: (data: ReadyCheckState) => void;
+  updateReadyResponses: (responses: Record<string, boolean>) => void;
+  clearReadyCheck: () => void;
 }
 
 const defaultActionEconomy: ActionEconomy = {
@@ -54,6 +65,7 @@ const initialState: CombatState = {
   actionEconomy: defaultActionEconomy,
   initiativeRolls: new Map(),
   initiativePrompts: [],
+  readyCheck: null,
 };
 
 export const useCombatStore = create<CombatState & CombatActions>((set) => ({
@@ -68,6 +80,7 @@ export const useCombatStore = create<CombatState & CombatActions>((set) => ({
       actionEconomy: defaultActionEconomy,
       initiativeRolls: new Map(),
       initiativePrompts: [],
+      readyCheck: null,
     }),
 
   syncCombatState: ({ combatants, roundNumber, currentTurnIndex, actionEconomy }) =>
@@ -90,6 +103,7 @@ export const useCombatStore = create<CombatState & CombatActions>((set) => ({
       actionEconomy: defaultActionEconomy,
       initiativeRolls: new Map(),
       initiativePrompts: [],
+      readyCheck: null,
     }),
 
   setCombatants: (combatants) => set({ combatants }),
@@ -158,4 +172,15 @@ export const useCombatStore = create<CombatState & CombatActions>((set) => ({
         c.tokenId === tokenId ? { ...c, deathSaves } : c
       ),
     })),
+
+  setReadyCheck: (data) => set({ readyCheck: data }),
+
+  updateReadyResponses: (responses) =>
+    set((state) => ({
+      readyCheck: state.readyCheck
+        ? { ...state.readyCheck, responses }
+        : null,
+    })),
+
+  clearReadyCheck: () => set({ readyCheck: null }),
 }));

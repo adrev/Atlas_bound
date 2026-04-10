@@ -2,7 +2,7 @@ import type { Server, Socket } from 'socket.io';
 import type { ChatMessage } from '@dnd-vtt/shared';
 import { v4 as uuidv4 } from 'uuid';
 import db from '../db/connection.js';
-import { getPlayerBySocketId } from '../utils/roomState.js';
+import { getPlayerBySocketId, checkRateLimit } from '../utils/roomState.js';
 import * as DiceService from '../services/DiceService.js';
 import { chatMessageSchema, chatWhisperSchema, chatRollSchema } from '../utils/validation.js';
 
@@ -14,6 +14,8 @@ export function registerChatEvents(io: Server, socket: Socket): void {
 
     const ctx = getPlayerBySocketId(socket.id);
     if (!ctx) return;
+
+    if (!checkRateLimit(socket.id, 'chat:message', 5, 5000)) return;
 
     const { type, content, characterName } = parsed.data;
     const messageId = uuidv4();
@@ -85,6 +87,15 @@ export function registerChatEvents(io: Server, socket: Socket): void {
     if (dmPlayer && dmPlayer.userId !== ctx.player.userId && dmPlayer.userId !== targetUserId) {
       io.to(dmPlayer.socketId).emit('chat:new-message', message);
     }
+  });
+
+  socket.on('chat:typing', () => {
+    const ctx = getPlayerBySocketId(socket.id);
+    if (!ctx) return;
+    socket.to(ctx.room.sessionId).emit('chat:typing', {
+      userId: ctx.player.userId,
+      displayName: ctx.player.displayName,
+    });
   });
 
   socket.on('chat:roll', (data) => {

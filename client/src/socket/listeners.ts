@@ -311,6 +311,24 @@ export function registerListeners(socket: Socket): () => void {
     // Spell animation handling could go here
   });
 
+  // --- Ready Check ---
+  socket.on('combat:ready-check-started', (data: { playerIds: string[]; deadline: number }) => {
+    useCombatStore.getState().setReadyCheck({
+      active: true,
+      playerIds: data.playerIds,
+      responses: {},
+      deadline: data.deadline,
+    });
+  });
+
+  socket.on('combat:ready-update', (data: { responses: Record<string, boolean> }) => {
+    useCombatStore.getState().updateReadyResponses(data.responses);
+  });
+
+  socket.on('combat:ready-check-complete', () => {
+    useCombatStore.getState().clearReadyCheck();
+  });
+
   // --- Character ---
   socket.on('character:updated', ({ characterId, changes }) => {
     useCharacterStore.getState().applyRemoteUpdate(characterId, changes);
@@ -394,6 +412,9 @@ export function registerListeners(socket: Socket): () => void {
     socket.off('combat:shield-cast');
     socket.off('combat:movement-used');
     socket.off('combat:spell-cast');
+    socket.off('combat:ready-check-started');
+    socket.off('combat:ready-update');
+    socket.off('combat:ready-check-complete');
     socket.off('character:updated');
     socket.off('character:synced');
     socket.off('chat:new-message');

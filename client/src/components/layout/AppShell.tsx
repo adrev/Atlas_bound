@@ -12,6 +12,7 @@ import { InitiativeModal } from '../combat/InitiativeModal';
 import { OpportunityAttackModal } from '../combat/OpportunityAttackModal';
 import { CounterspellModal } from '../combat/CounterspellModal';
 import { ShieldModal } from '../combat/ShieldModal';
+import { ReadyCheckModal } from '../combat/ReadyCheckModal';
 import { Sidebar } from './Sidebar';
 import { BottomBar } from './BottomBar';
 import { MapBrowser } from '../mapbrowser/MapBrowser';
@@ -350,6 +351,8 @@ export function AppShell() {
       <CounterspellModal />
       {/* Shield reaction prompt — same pattern. */}
       <ShieldModal />
+      {/* Ready Check prompt — shown to players when DM initiates. */}
+      <ReadyCheckModal />
       {/* Character Sheet Full overlay - from token click */}
       {fullSheetCharacter && (
         <div style={styles.fullSheetOverlay}>

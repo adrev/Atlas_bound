@@ -1,6 +1,8 @@
+import { useState, useEffect } from 'react';
 import { Crown, User, Wifi, WifiOff } from 'lucide-react';
 import { useSessionStore } from '../../stores/useSessionStore';
 import { useCharacterStore } from '../../stores/useCharacterStore';
+import { getSocket } from '../../socket/client';
 import { theme } from '../../styles/theme';
 import { HPBar } from '../ui';
 
@@ -8,6 +10,16 @@ export function PlayerList() {
   const players = useSessionStore((s) => s.players);
   const isDM = useSessionStore((s) => s.isDM);
   const allCharacters = useCharacterStore((s) => s.allCharacters);
+  const [viewingTabs, setViewingTabs] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    const socket = getSocket();
+    const handler = (data: { userId: string; tab: string }) => {
+      setViewingTabs((prev) => ({ ...prev, [data.userId]: data.tab }));
+    };
+    socket.on('session:player-viewing', handler);
+    return () => { socket.off('session:player-viewing', handler); };
+  }, []);
 
   return (
     <div style={styles.container}>
@@ -76,7 +88,7 @@ export function PlayerList() {
                   </div>
                 )}
 
-                {/* Row 4: connection status */}
+                {/* Row 4: connection status + viewing tab */}
                 <div style={styles.status}>
                   {player.connected ? (
                     <Wifi size={11} color={theme.state.success} />
@@ -93,6 +105,11 @@ export function PlayerList() {
                   >
                     {player.connected ? 'Online' : 'Offline'}
                   </span>
+                  {viewingTabs[player.userId] && player.connected && (
+                    <span style={styles.viewingBadge}>
+                      {viewingTabs[player.userId].charAt(0).toUpperCase() + viewingTabs[player.userId].slice(1)}
+                    </span>
+                  )}
                 </div>
               </div>
             </div>
@@ -211,6 +228,16 @@ const styles: Record<string, React.CSSProperties> = {
     alignItems: 'center',
     gap: 4,
     marginTop: 1,
+  },
+  viewingBadge: {
+    fontSize: 9,
+    fontWeight: 600,
+    color: theme.text.muted,
+    background: theme.bg.elevated,
+    border: `1px solid ${theme.border.default}`,
+    borderRadius: theme.radius.sm,
+    padding: '1px 5px',
+    marginLeft: 4,
   },
   hint: {
     fontSize: 12,

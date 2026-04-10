@@ -3,7 +3,7 @@ import type { Token, WallSegment, FogPolygon } from '@dnd-vtt/shared';
 import { v4 as uuidv4 } from 'uuid';
 import db from '../db/connection.js';
 import {
-  getPlayerBySocketId, resolveViewingMapId, socketsOnMap,
+  getPlayerBySocketId, resolveViewingMapId, socketsOnMap, checkRateLimit,
 } from '../utils/roomState.js';
 import * as OpportunityAttackService from '../services/OpportunityAttackService.js';
 import { loadDrawingsForMap, filterDrawingsForPlayer } from './drawingEvents.js';
@@ -113,6 +113,8 @@ export function registerMapEvents(io: Server, socket: Socket): void {
 
     const ctx = getPlayerBySocketId(socket.id);
     if (!ctx) return;
+
+    if (!checkRateLimit(socket.id, 'map:token-move', 30)) return;
 
     const { tokenId, x, y } = parsed.data;
     // First try the canonical in-memory map (ribbon tokens). If not
