@@ -638,13 +638,18 @@ function StagedHeroGhost({
         useMapStore.getState().moveStagedHero(hero.characterId, newX, newY);
       }}
     >
+      {/* Hit area — invisible but hittable so the Group drag works */}
+      <Circle
+        radius={tokenSize / 2 + 6}
+        fill="rgba(0,0,0,0.01)"
+      />
       {/* Gold dashed border */}
       <Circle
         radius={tokenSize / 2 + 3}
         stroke={theme.gold.primary}
         strokeWidth={2}
         dash={[8, 4]}
-        fill="transparent"
+        listening={false}
       />
       {/* Portrait */}
       {hero.portraitUrl ? (
