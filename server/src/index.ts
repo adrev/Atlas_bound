@@ -19,6 +19,11 @@ import { seedEquipment, isEquipmentSeeded } from './services/seedEquipment.js';
 import { registerSocketHandler } from './socket/handler.js';
 import { setupStaticServing } from './static.js';
 import { tokenUpload, portraitUpload } from './routes/uploads.js';
+import authRouter from './auth/routes.js';
+import discordAuth from './auth/oauth/discord.js';
+import googleAuth from './auth/oauth/google.js';
+import appleAuth from './auth/oauth/apple.js';
+import { requireAuth } from './auth/middleware.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -58,14 +63,22 @@ app.use(express.json({ limit: '10mb' }));
 // Static file serving for uploads
 app.use('/uploads', express.static(UPLOAD_DIR));
 
-// API Routes
-app.use('/api/sessions', sessionsRouter);
-app.use('/api', mapsRouter);
-app.use('/api/characters', charactersRouter);
-app.use('/api/dndbeyond', dndbeyondRouter);
+// Auth routes (unauthenticated)
+app.use('/api/auth', authRouter);
+app.use('/api/auth', discordAuth);
+app.use('/api/auth', googleAuth);
+app.use('/api/auth', appleAuth);
+
+// Public API routes
 app.use('/api/compendium', compendiumRouter);
-app.use('/api', lootRouter);
-app.use('/api/custom', customContentRouter);
+
+// Protected API routes
+app.use('/api/sessions', requireAuth, sessionsRouter);
+app.use('/api', requireAuth, mapsRouter);
+app.use('/api/characters', requireAuth, charactersRouter);
+app.use('/api/dndbeyond', requireAuth, dndbeyondRouter);
+app.use('/api', requireAuth, lootRouter);
+app.use('/api/custom', requireAuth, customContentRouter);
 
 // Upload endpoints
 app.post('/api/uploads/token-image', tokenUpload.single('image'), (req, res) => {

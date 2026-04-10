@@ -1,9 +1,11 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Swords, Users, History, Trash2 } from 'lucide-react';
+import { Swords, Users, History, Trash2, LogOut } from 'lucide-react';
 import { createSession, joinSession } from '../../services/api';
 import { useSessionStore } from '../../stores/useSessionStore';
+import { useAuthStore } from '../../stores/useAuthStore';
 import { theme } from '../../styles/theme';
+import { Button } from '../ui';
 
 interface SavedSession {
   roomCode: string;
@@ -33,15 +35,11 @@ function removeSavedSession(roomCode: string) {
 export function SessionLobby() {
   const navigate = useNavigate();
   const setDisplayName = useSessionStore((s) => s.setDisplayName);
+  const authUser = useAuthStore((s) => s.user);
+  const authLogout = useAuthStore((s) => s.logout);
 
   const [createName, setCreateName] = useState('');
-  const [createDisplayName, setCreateDisplayName] = useState(() =>
-    localStorage.getItem('dnd-vtt-displayName') || ''
-  );
   const [joinCode, setJoinCode] = useState('');
-  const [joinDisplayName, setJoinDisplayName] = useState(() =>
-    localStorage.getItem('dnd-vtt-displayName') || ''
-  );
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [savedSessions, setSavedSessions] = useState<SavedSession[]>([]);
@@ -51,17 +49,16 @@ export function SessionLobby() {
   }, []);
 
   const handleCreate = async () => {
-    if (!createName.trim() || !createDisplayName.trim()) return;
+    if (!createName.trim() || !authUser) return;
     setLoading(true);
     setError(null);
     try {
-      const result = await createSession(createName.trim(), createDisplayName.trim());
-      setDisplayName(createDisplayName.trim());
-      localStorage.setItem('dnd-vtt-displayName', createDisplayName.trim());
+      const result = await createSession(createName.trim(), authUser.displayName);
+      setDisplayName(authUser.displayName);
       saveSession({
         roomCode: result.roomCode,
         name: createName.trim(),
-        displayName: createDisplayName.trim(),
+        displayName: authUser.displayName,
         role: 'dm',
         joinedAt: new Date().toISOString(),
       });
@@ -74,17 +71,16 @@ export function SessionLobby() {
   };
 
   const handleJoin = async () => {
-    if (!joinCode.trim() || !joinDisplayName.trim()) return;
+    if (!joinCode.trim() || !authUser) return;
     setLoading(true);
     setError(null);
     try {
-      const result = await joinSession(joinCode.trim().toUpperCase(), joinDisplayName.trim());
-      setDisplayName(joinDisplayName.trim());
-      localStorage.setItem('dnd-vtt-displayName', joinDisplayName.trim());
+      const result = await joinSession(joinCode.trim().toUpperCase(), authUser.displayName);
+      setDisplayName(authUser.displayName);
       saveSession({
         roomCode: joinCode.trim().toUpperCase(),
         name: (result as any).sessionName || joinCode.trim().toUpperCase(),
-        displayName: joinDisplayName.trim(),
+        displayName: authUser.displayName,
         role: 'player',
         joinedAt: new Date().toISOString(),
       });
@@ -118,6 +114,32 @@ export function SessionLobby() {
           <div style={styles.divider} />
         </div>
 
+        {/* User Info Bar */}
+        {authUser && (
+          <div style={styles.userBar}>
+            {authUser.avatarUrl ? (
+              <img
+                src={authUser.avatarUrl}
+                alt={authUser.displayName}
+                style={styles.avatar}
+              />
+            ) : (
+              <div style={styles.avatarPlaceholder}>
+                {authUser.displayName.charAt(0).toUpperCase()}
+              </div>
+            )}
+            <span style={styles.userName}>{authUser.displayName}</span>
+            <Button
+              variant="ghost"
+              size="sm"
+              leadingIcon={<LogOut size={14} />}
+              onClick={authLogout}
+            >
+              Log out
+            </Button>
+          </div>
+        )}
+
         {error && <div style={styles.error}>{error}</div>}
 
         {/* Cards */}
@@ -139,16 +161,10 @@ export function SessionLobby() {
                 onChange={(e) => setCreateName(e.target.value)}
                 onKeyDown={(e) => e.key === 'Enter' && handleCreate()}
               />
-              <input
-                placeholder="Your Display Name"
-                value={createDisplayName}
-                onChange={(e) => setCreateDisplayName(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && handleCreate()}
-              />
               <button
                 className="btn-primary"
                 onClick={handleCreate}
-                disabled={loading || !createName.trim() || !createDisplayName.trim()}
+                disabled={loading || !createName.trim()}
                 style={{ width: '100%' }}
               >
                 <Swords size={16} />
@@ -175,16 +191,10 @@ export function SessionLobby() {
                 maxLength={8}
                 style={{ textTransform: 'uppercase', letterSpacing: '2px' }}
               />
-              <input
-                placeholder="Your Display Name"
-                value={joinDisplayName}
-                onChange={(e) => setJoinDisplayName(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && handleJoin()}
-              />
               <button
                 className="btn-primary"
                 onClick={handleJoin}
-                disabled={loading || !joinCode.trim() || !joinDisplayName.trim()}
+                disabled={loading || !joinCode.trim()}
                 style={{ width: '100%' }}
               >
                 <Users size={16} />
@@ -435,5 +445,41 @@ const styles: Record<string, React.CSSProperties> = {
     cursor: 'pointer',
     display: 'flex',
     alignItems: 'center',
+  },
+  userBar: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 12,
+    padding: '10px 16px',
+    background: theme.bg.card,
+    border: `1px solid ${theme.border.default}`,
+    borderRadius: theme.radius.md,
+    width: '100%',
+    maxWidth: 600,
+  },
+  avatar: {
+    width: 32,
+    height: 32,
+    borderRadius: '50%',
+    objectFit: 'cover' as const,
+  },
+  avatarPlaceholder: {
+    width: 32,
+    height: 32,
+    borderRadius: '50%',
+    background: theme.gold.bg,
+    border: `1px solid ${theme.gold.border}`,
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    fontSize: 14,
+    fontWeight: 700,
+    color: theme.gold.primary,
+  },
+  userName: {
+    flex: 1,
+    fontSize: 14,
+    fontWeight: 600,
+    color: theme.text.primary,
   },
 };

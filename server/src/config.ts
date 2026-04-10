@@ -15,3 +15,14 @@ export const CORS_ORIGINS = process.env.CORS_ORIGINS
   : ['http://localhost:5173', 'http://localhost:3000', 'http://localhost:3001'];
 
 export const IS_PRODUCTION = process.env.NODE_ENV === 'production';
+
+// OAuth configuration
+export const DISCORD_CLIENT_ID = process.env.DISCORD_CLIENT_ID || '';
+export const DISCORD_CLIENT_SECRET = process.env.DISCORD_CLIENT_SECRET || '';
+export const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || '';
+export const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET || '';
+export const APPLE_CLIENT_ID = process.env.APPLE_CLIENT_ID || '';
+export const APPLE_TEAM_ID = process.env.APPLE_TEAM_ID || '';
+export const APPLE_KEY_ID = process.env.APPLE_KEY_ID || '';
+export const APPLE_PRIVATE_KEY = process.env.APPLE_PRIVATE_KEY || '';
+export const BASE_URL = process.env.BASE_URL || 'http://localhost:5173';

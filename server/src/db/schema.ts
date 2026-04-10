@@ -253,11 +253,44 @@ export function initDatabase(): void {
     CREATE INDEX IF NOT EXISTS idx_custom_items_session ON custom_items(session_id);
     CREATE INDEX IF NOT EXISTS idx_loot_entries_character ON loot_entries(character_id);
 
+    -- Auth tables
+    CREATE TABLE IF NOT EXISTS auth_users (
+      id TEXT PRIMARY KEY,
+      email TEXT UNIQUE,
+      email_verified INTEGER DEFAULT 0,
+      hashed_password TEXT,
+      display_name TEXT NOT NULL,
+      avatar_url TEXT,
+      created_at TEXT DEFAULT (datetime('now')),
+      updated_at TEXT DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS auth_sessions (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES auth_users(id) ON DELETE CASCADE,
+      expires_at INTEGER NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS oauth_accounts (
+      provider TEXT NOT NULL,
+      provider_user_id TEXT NOT NULL,
+      user_id TEXT NOT NULL REFERENCES auth_users(id) ON DELETE CASCADE,
+      provider_email TEXT,
+      provider_username TEXT,
+      provider_avatar_url TEXT,
+      created_at TEXT DEFAULT (datetime('now')),
+      PRIMARY KEY (provider, provider_user_id)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_oauth_accounts_user ON oauth_accounts(user_id);
+    CREATE INDEX IF NOT EXISTS idx_auth_sessions_user ON auth_sessions(user_id);
+
     -- Create a system NPC user for creature character records
     INSERT OR IGNORE INTO users (id, display_name) VALUES ('npc', 'NPC/Creature');
   `);
 
   // Safe migrations — add columns if they don't exist
+  try { db.exec(`ALTER TABLE users ADD COLUMN auth_user_id TEXT`); } catch { /* exists */ }
   try { db.exec(`ALTER TABLE compendium_monsters ADD COLUMN token_image_source TEXT DEFAULT 'generated'`); } catch { /* exists */ }
   try { db.exec(`ALTER TABLE compendium_items ADD COLUMN token_image_source TEXT DEFAULT 'none'`); } catch { /* exists */ }
   try { db.exec(`ALTER TABLE chat_messages ADD COLUMN hidden INTEGER DEFAULT 0`); } catch { /* exists */ }

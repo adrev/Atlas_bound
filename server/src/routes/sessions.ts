@@ -35,16 +35,14 @@ router.post('/', (req: Request, res: Response) => {
     return;
   }
 
-  const { name, displayName } = parsed.data;
+  const { name } = parsed.data;
 
-  const userId = uuidv4();
+  // Use authenticated user's ID (requireAuth guarantees req.user exists)
+  const userId = req.user!.id;
   const sessionId = uuidv4();
   const roomCode = getUniqueRoomCode();
   const settings = JSON.stringify(DEFAULT_SESSION_SETTINGS);
 
-  const createUser = db.prepare(
-    'INSERT INTO users (id, display_name) VALUES (?, ?)'
-  );
   const createSession = db.prepare(
     'INSERT INTO sessions (id, name, room_code, dm_user_id, settings) VALUES (?, ?, ?, ?, ?)'
   );
@@ -53,7 +51,6 @@ router.post('/', (req: Request, res: Response) => {
   );
 
   const transaction = db.transaction(() => {
-    createUser.run(userId, displayName);
     createSession.run(sessionId, name, roomCode, userId, settings);
     addPlayer.run(sessionId, userId, 'dm');
   });
@@ -75,7 +72,7 @@ router.post('/join', (req: Request, res: Response) => {
     return;
   }
 
-  const { roomCode, displayName } = parsed.data;
+  const { roomCode } = parsed.data;
 
   const session = db.prepare(
     'SELECT id, name, room_code, dm_user_id FROM sessions WHERE room_code = ?'
@@ -86,33 +83,22 @@ router.post('/join', (req: Request, res: Response) => {
     return;
   }
 
-  // Check if this display name already exists in this session (reconnect)
+  // Use authenticated user's ID
+  const userId = req.user!.id;
+
+  // Check if this user is already in this session (reconnect)
   const existingPlayer = db.prepare(`
-    SELECT sp.user_id, sp.role, u.display_name
+    SELECT sp.user_id, sp.role
     FROM session_players sp
-    JOIN users u ON u.id = sp.user_id
-    WHERE sp.session_id = ? AND u.display_name = ?
-  `).get(session.id, displayName) as { user_id: string; role: string; display_name: string } | undefined;
+    WHERE sp.session_id = ? AND sp.user_id = ?
+  `).get(session.id, userId) as { user_id: string; role: string } | undefined;
 
-  let userId: string;
-
-  if (existingPlayer) {
-    // Reconnect as the same user
-    userId = existingPlayer.user_id;
-  } else {
+  if (!existingPlayer) {
     // New user joining
-    userId = uuidv4();
-    const createUser = db.prepare(
-      'INSERT INTO users (id, display_name) VALUES (?, ?)'
-    );
     const addPlayer = db.prepare(
       'INSERT OR IGNORE INTO session_players (session_id, user_id, role) VALUES (?, ?, ?)'
     );
-    const transaction = db.transaction(() => {
-      createUser.run(userId, displayName);
-      addPlayer.run(session.id, userId, 'player');
-    });
-    transaction();
+    addPlayer.run(session.id, userId, 'player');
   }
 
   res.json({
