@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from 'react';
-import { X } from 'lucide-react';
+import { useEffect, useMemo, useState, useRef } from 'react';
+import { X, UserPlus } from 'lucide-react';
 import { theme } from '../../styles/theme';
 import { EMOJI } from '../../styles/emoji';
 import { useMapStore } from '../../stores/useMapStore';
@@ -64,39 +64,63 @@ export function PreviewModeBanner() {
     return map;
   };
 
-  const handleStageHeroes = () => {
-    if (hasStaged) {
-      useMapStore.getState().clearStagedHeroes();
-      return;
-    }
+  const [showHeroPicker, setShowHeroPicker] = useState(false);
+  const pickerRef = useRef<HTMLDivElement>(null);
 
-    const players = useSessionStore.getState().players.filter(
-      (p) => p.role === 'player' && p.characterId && p.connected,
-    );
+  // Close picker on outside click
+  useEffect(() => {
+    if (!showHeroPicker) return;
+    const handler = (e: MouseEvent) => {
+      if (pickerRef.current && !pickerRef.current.contains(e.target as Node)) {
+        setShowHeroPicker(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [showHeroPicker]);
+
+  /** Stage a single hero at the center of the preview map. */
+  const stageHero = (player: { userId: string; characterId: string; displayName: string }) => {
     const allChars = useCharacterStore.getState().allCharacters;
-    const mapWidth = currentMap.width;
-    const mapHeight = currentMap.height;
-    const gridSize = currentMap.gridSize;
+    const char = allChars[player.characterId];
+    const gridSize = currentMap.gridSize ?? 70;
+    const existing = useMapStore.getState().stagedHeroes;
+    // Offset each new hero so they don't stack on top of each other
+    const offset = existing.length * gridSize;
+    const x = Math.round(currentMap.width / 2) + offset - (existing.length * gridSize / 2);
+    const y = Math.round(currentMap.height / 2);
 
-    // Place heroes in a centered horizontal line
-    const count = players.length;
-    const totalWidth = count * gridSize;
-    const startX = Math.round((mapWidth - totalWidth) / 2) + gridSize / 2;
-    const centerY = Math.round(mapHeight / 2);
-
-    const heroes = players.map((p, i) => {
-      const char = allChars[p.characterId!];
-      return {
-        characterId: p.characterId!,
-        name: char?.name ?? p.displayName,
+    useMapStore.getState().stageHeroes([
+      ...existing,
+      {
+        characterId: player.characterId,
+        name: char?.name ?? player.displayName,
         portraitUrl: char?.portraitUrl ?? null,
-        x: startX + i * gridSize,
-        y: centerY,
-        ownerUserId: p.userId,
-      };
-    });
+        x, y,
+        ownerUserId: player.userId,
+      },
+    ]);
+    setShowHeroPicker(false);
+  };
 
-    useMapStore.getState().stageHeroes(heroes);
+  /** Get players whose heroes are NOT already staged. */
+  const getStageable = () => {
+    const players = useSessionStore.getState().players;
+    const allChars = useCharacterStore.getState().allCharacters;
+    const stagedIds = new Set(stagedHeroes.map((h) => h.characterId));
+    return players
+      .filter((p) => p.characterId && !stagedIds.has(p.characterId))
+      .map((p) => {
+        const char = allChars[p.characterId!];
+        return {
+          userId: p.userId,
+          characterId: p.characterId!,
+          displayName: p.displayName,
+          characterName: char?.name ?? p.displayName,
+          portraitUrl: char?.portraitUrl ?? null,
+          connected: p.connected,
+        };
+      });
   };
 
   const handleMovePlayersHere = () => {
@@ -190,15 +214,133 @@ export function PreviewModeBanner() {
       </span>
 
       {/* Actions */}
-      <div style={{ display: 'flex', gap: theme.space.sm, flexShrink: 0, marginLeft: theme.space.sm }}>
+      <div style={{ display: 'flex', gap: theme.space.sm, flexShrink: 0, marginLeft: theme.space.sm, position: 'relative' }}>
         {playerMapId && (
           <Button variant="ghost" size="sm" onClick={handleJumpToPlayers}>
             Jump to Players
           </Button>
         )}
-        <Button variant="ghost" size="sm" onClick={handleStageHeroes}>
-          {hasStaged ? 'Clear Staging' : 'Stage Heroes'}
-        </Button>
+
+        {/* Hero staging: dropdown picker for individual heroes */}
+        <div style={{ position: 'relative' }}>
+          <Button
+            variant="ghost"
+            size="sm"
+            leadingIcon={<UserPlus size={12} />}
+            onClick={() => {
+              if (hasStaged && !showHeroPicker) {
+                // If heroes are staged and picker isn't open, clear them
+                useMapStore.getState().clearStagedHeroes();
+              } else {
+                setShowHeroPicker(!showHeroPicker);
+              }
+            }}
+          >
+            {hasStaged ? `Staged (${stagedHeroes.length})` : 'Stage Heroes'}
+          </Button>
+
+          {showHeroPicker && (() => {
+            const stageable = getStageable();
+            return (
+              <div
+                ref={pickerRef}
+                style={{
+                  position: 'absolute',
+                  top: '100%',
+                  right: 0,
+                  marginTop: 6,
+                  background: theme.bg.card,
+                  border: `1px solid ${theme.gold.border}`,
+                  borderRadius: theme.radius.md,
+                  boxShadow: theme.shadow.lg,
+                  minWidth: 220,
+                  zIndex: 100,
+                  overflow: 'hidden',
+                  whiteSpace: 'normal',
+                }}
+              >
+                <div style={{
+                  padding: '8px 12px',
+                  borderBottom: `1px solid ${theme.border.default}`,
+                  fontSize: 10,
+                  fontWeight: 700,
+                  color: theme.gold.dim,
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.1em',
+                }}>
+                  Place a hero on this map
+                </div>
+                {stageable.length === 0 ? (
+                  <div style={{ padding: '12px', fontSize: 11, color: theme.text.muted, textAlign: 'center' }}>
+                    All heroes are already staged
+                  </div>
+                ) : (
+                  stageable.map((p) => (
+                    <button
+                      key={p.characterId}
+                      onClick={() => stageHero(p)}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 10,
+                        width: '100%',
+                        padding: '8px 12px',
+                        background: 'transparent',
+                        border: 'none',
+                        borderBottom: `1px solid ${theme.border.default}`,
+                        color: theme.text.primary,
+                        cursor: 'pointer',
+                        textAlign: 'left',
+                        fontFamily: theme.font.body,
+                        fontSize: 12,
+                      }}
+                      onMouseEnter={(e) => { e.currentTarget.style.background = theme.bg.hover; }}
+                      onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
+                    >
+                      {p.portraitUrl ? (
+                        <img src={p.portraitUrl} alt="" style={{
+                          width: 28, height: 28, borderRadius: '50%', objectFit: 'cover',
+                          border: `1px solid ${p.connected ? theme.state.success : theme.border.default}`,
+                          flexShrink: 0,
+                        }} />
+                      ) : (
+                        <div style={{
+                          width: 28, height: 28, borderRadius: '50%',
+                          background: theme.bg.elevated,
+                          border: `1px solid ${theme.border.default}`,
+                          display: 'flex', alignItems: 'center', justifyContent: 'center',
+                          fontSize: 12, fontWeight: 700, flexShrink: 0,
+                        }}>{p.characterName[0]}</div>
+                      )}
+                      <div style={{ flex: 1 }}>
+                        <div style={{ fontWeight: 600 }}>{p.characterName}</div>
+                        <div style={{ fontSize: 9, color: p.connected ? theme.state.success : theme.text.muted }}>
+                          {p.connected ? 'Online' : 'Offline'} · {p.displayName}
+                        </div>
+                      </div>
+                    </button>
+                  ))
+                )}
+                {hasStaged && (
+                  <button
+                    onClick={() => { useMapStore.getState().clearStagedHeroes(); setShowHeroPicker(false); }}
+                    style={{
+                      width: '100%', padding: '8px 12px',
+                      background: theme.state.dangerBg,
+                      border: 'none', borderTop: `1px solid ${theme.border.default}`,
+                      color: theme.state.danger,
+                      fontSize: 11, fontWeight: 600, cursor: 'pointer',
+                      fontFamily: theme.font.body, textAlign: 'center',
+                    }}
+                  >
+                    Clear All Staged
+                  </button>
+                )}
+              </div>
+            );
+          })()}
+        </div>
+
         <Button variant="primary" size="sm" onClick={handleMovePlayersHere}>
           Move Players Here
         </Button>
