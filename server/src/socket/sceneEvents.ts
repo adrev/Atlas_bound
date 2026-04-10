@@ -161,6 +161,14 @@ export function registerSceneEvents(io: Server, socket: Socket): void {
     }
 
     const { mapId } = parsed.data;
+    // Staged hero positions sent by the DM's PreviewModeBanner so we
+    // can place heroes atomically instead of racing separate events.
+    const stagedPositions: Array<{
+      characterId: string; name: string; x: number; y: number;
+      imageUrl: string | null; ownerUserId: string;
+    }> = Array.isArray((data as any).stagedPositions)
+      ? (data as any).stagedPositions : [];
+
     const mapRow = db.prepare('SELECT * FROM maps WHERE id = ? AND session_id = ?')
       .get(mapId, ctx.room.sessionId) as Record<string, unknown> | undefined;
     if (!mapRow) {
@@ -169,6 +177,32 @@ export function registerSceneEvents(io: Server, socket: Socket): void {
       return;
     }
     console.log(`[SCENE] activating map ${mapRow.name} (${mapId}) for ${ctx.room.players.size} players`);
+
+    // ── Create tokens for staged heroes BEFORE migration ──────────
+    // The DM positioned ghost tokens on the preview map. We insert
+    // real tokens so the migration logic below sees them in
+    // existingCharacterIds and skips the center-line fallback.
+    for (const staged of stagedPositions) {
+      // Skip if a token for this character already exists on the map
+      const exists = db.prepare(
+        'SELECT id FROM tokens WHERE map_id = ? AND character_id = ?'
+      ).get(mapId, staged.characterId);
+      if (exists) continue;
+
+      const tokenId = require('crypto').randomUUID();
+      const gridSize = (mapRow.grid_size as number) ?? 70;
+      db.prepare(`INSERT INTO tokens (
+        id, map_id, character_id, name, x, y, size, color, layer, visible,
+        image_url, has_light, light_radius, light_dim_radius, light_color,
+        conditions, owner_user_id
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+        tokenId, mapId, staged.characterId, staged.name,
+        staged.x, staged.y, 1, '#666', 'token', 1,
+        staged.imageUrl, 0, gridSize * 4, gridSize * 8, '#ffcc66',
+        '[]', staged.ownerUserId,
+      );
+      console.log(`[SCENE] staged hero ${staged.name} at (${staged.x}, ${staged.y})`);
+    }
 
     // Capture the old ribbon map so we can migrate player character
     // tokens from it to the new map. Without this, the PC tokens get

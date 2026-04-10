@@ -71,7 +71,7 @@ export function PreviewModeBanner() {
     }
 
     const players = useSessionStore.getState().players.filter(
-      (p) => p.role === 'player' && p.characterId,
+      (p) => p.role === 'player' && p.characterId && p.connected,
     );
     const allChars = useCharacterStore.getState().allCharacters;
     const mapWidth = currentMap.width;
@@ -100,32 +100,24 @@ export function PreviewModeBanner() {
   };
 
   const handleMovePlayersHere = () => {
-    // If heroes have been staged, create real tokens for each before activating.
+    // Pass staged positions directly with the activate event so the
+    // server can place tokens atomically instead of racing separate
+    // token-add events against the migration logic.
     if (hasStaged) {
       const ownerMap = buildOwnerMap();
-      for (const hero of stagedHeroes) {
-        emitTokenAdd({
-          mapId: currentMap.id,
-          characterId: hero.characterId,
-          name: hero.name,
-          x: hero.x,
-          y: hero.y,
-          size: 1,
-          imageUrl: hero.portraitUrl,
-          color: '#666',
-          layer: 'token',
-          visible: true,
-          hasLight: false,
-          lightRadius: 0,
-          lightDimRadius: 0,
-          lightColor: '#ffffff',
-          conditions: [],
-          ownerUserId: ownerMap[hero.characterId] ?? hero.ownerUserId,
-        });
-      }
+      const positions = stagedHeroes.map((hero) => ({
+        characterId: hero.characterId,
+        name: hero.name,
+        x: hero.x,
+        y: hero.y,
+        imageUrl: hero.portraitUrl,
+        ownerUserId: ownerMap[hero.characterId] ?? hero.ownerUserId,
+      }));
       useMapStore.getState().clearStagedHeroes();
+      emitActivateMapForPlayers(currentMap.id, positions);
+    } else {
+      emitActivateMapForPlayers(currentMap.id);
     }
-    emitActivateMapForPlayers(currentMap.id);
   };
 
   return (

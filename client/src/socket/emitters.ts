@@ -60,8 +60,11 @@ export function emitPreviewLoadMap(mapId: string) {
  * also gets a lightweight `map:player-map-changed` so scene manager
  * sidebars update the ribbon indicator.
  */
-export function emitActivateMapForPlayers(mapId: string) {
-  getSocket().emit('map:activate-for-players', { mapId });
+export function emitActivateMapForPlayers(
+  mapId: string,
+  stagedPositions?: Array<{ characterId: string; name: string; x: number; y: number; imageUrl: string | null; ownerUserId: string }>,
+) {
+  getSocket().emit('map:activate-for-players', { mapId, stagedPositions });
 }
 
 /**
