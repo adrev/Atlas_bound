@@ -14,7 +14,7 @@ import { InitiativeTracker } from '../combat/InitiativeTracker';
 import { TokenActionPanel } from '../canvas/TokenActionPanel';
 import { CharacterImport } from '../character/CharacterImport';
 import { useCharacterStore } from '../../stores/useCharacterStore';
-import { emitTokenAdd } from '../../socket/emitters';
+import { emitTokenAdd, emitCharacterUpdate } from '../../socket/emitters';
 import { Upload, MapPin, RefreshCw } from 'lucide-react';
 import { ChatPanel } from '../chat/ChatPanel';
 import { PlayerList } from '../session/PlayerList';
@@ -229,6 +229,14 @@ function HeroTab() {
       }
       const updated = await resp.json();
       useCharacterStore.getState().setCharacter(updated);
+      // Broadcast to other clients so they see the level-up in real-time
+      emitCharacterUpdate(myCharacter.id, {
+        level: updated.level, class: updated.class,
+        armorClass: updated.armorClass, speed: updated.speed,
+        maxHitPoints: updated.maxHitPoints,
+        abilityScores: updated.abilityScores,
+        proficiencyBonus: updated.proficiencyBonus,
+      });
       setSyncMessage({ text: `Synced from D&D Beyond — now Level ${updated.level}`, isError: false });
       reloadList();
       // Auto-dismiss success message after a few seconds

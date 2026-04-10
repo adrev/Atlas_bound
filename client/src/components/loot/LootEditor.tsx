@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { theme } from '../../styles/theme';
 import { useSessionStore } from '../../stores/useSessionStore';
 import { useMapStore } from '../../stores/useMapStore';
-import { emitTokenAdd, emitSystemMessage } from '../../socket/emitters';
+import { emitTokenAdd, emitSystemMessage, emitCharacterUpdate } from '../../socket/emitters';
 
 const RARITY_COLORS: Record<string, string> = {
   common: '#9d9d9d', uncommon: '#1eff00', rare: '#0070dd',
@@ -147,6 +147,9 @@ export function LootEditor({ characterId, tokenName, onClose }: LootEditorProps)
 
       // Emit system chat message announcing the transfer
       emitSystemMessage(`DM sent ${data.itemName} to ${data.targetCharacterName}`);
+      // Broadcast to other clients so their loot panels refresh
+      emitCharacterUpdate(characterId, { _lootUpdated: Date.now() });
+      emitCharacterUpdate(data.targetCharacterId, { _lootUpdated: Date.now() });
 
       fetchLoot();
       notifyLootChange();
