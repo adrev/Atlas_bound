@@ -104,24 +104,61 @@ export function PreviewModeBanner() {
     setShowHeroPicker(false);
   };
 
-  /** Get players whose heroes are NOT already staged. */
+  /** Get all player characters that can be staged.
+   *  Uses two sources to be comprehensive:
+   *    1. Session players with linked characterIds (shows online status)
+   *    2. All non-NPC characters from the store (catches heroes whose
+   *       players disconnected or aren't in the session yet)
+   */
   const getStageable = () => {
     const players = useSessionStore.getState().players;
     const allChars = useCharacterStore.getState().allCharacters;
     const stagedIds = new Set(stagedHeroes.map((h) => h.characterId));
-    return players
-      .filter((p) => p.characterId && !stagedIds.has(p.characterId))
-      .map((p) => {
-        const char = allChars[p.characterId!];
-        return {
-          userId: p.userId,
-          characterId: p.characterId!,
-          displayName: p.displayName,
-          characterName: char?.name ?? p.displayName,
-          portraitUrl: char?.portraitUrl ?? null,
-          connected: p.connected,
-        };
+
+    // Build a characterId -> player lookup for online status
+    const charToPlayer: Record<string, { userId: string; displayName: string; connected: boolean }> = {};
+    for (const p of players) {
+      if (p.characterId) charToPlayer[p.characterId] = { userId: p.userId, displayName: p.displayName, connected: p.connected };
+    }
+
+    // Collect from both sources, dedup by characterId
+    const seen = new Set<string>();
+    const result: Array<{
+      userId: string; characterId: string; displayName: string;
+      characterName: string; portraitUrl: string | null; connected: boolean;
+    }> = [];
+
+    // Source 1: session players with characters
+    for (const p of players) {
+      if (!p.characterId || stagedIds.has(p.characterId) || seen.has(p.characterId)) continue;
+      seen.add(p.characterId);
+      const char = allChars[p.characterId];
+      result.push({
+        userId: p.userId,
+        characterId: p.characterId,
+        displayName: p.displayName,
+        characterName: char?.name ?? p.displayName,
+        portraitUrl: char?.portraitUrl ?? null,
+        connected: p.connected,
       });
+    }
+
+    // Source 2: all non-NPC characters in the store not already covered
+    for (const [id, char] of Object.entries(allChars)) {
+      if (!char || (char as any).userId === 'npc' || stagedIds.has(id) || seen.has(id)) continue;
+      seen.add(id);
+      const player = charToPlayer[id];
+      result.push({
+        userId: player?.userId ?? 'unknown',
+        characterId: id,
+        displayName: player?.displayName ?? char.name,
+        characterName: char.name,
+        portraitUrl: char.portraitUrl ?? null,
+        connected: player?.connected ?? false,
+      });
+    }
+
+    return result;
   };
 
   const handleMovePlayersHere = () => {
