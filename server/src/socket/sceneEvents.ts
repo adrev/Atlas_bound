@@ -225,15 +225,16 @@ export function registerSceneEvents(io: Server, socket: Socket): void {
     // token on the new map (the DM may have pre-placed it there
     // manually, and we don't want to stomp that).
     //
-    // IMPORTANT: If the DM used hero staging (stagedPositions is not
-    // empty), the DM has explicitly chosen which heroes to bring and
-    // where. Skip the automatic migration entirely so we don't get
-    // duplicates or unwanted tokens (like "Test!").
+    // When the DM staged some heroes, those are already placed above.
+    // Un-staged heroes still get auto-migrated to center-line so
+    // nobody gets left behind. The existingCharacterIds check (below)
+    // prevents duplicates: staged heroes are already on the new map
+    // so the migration skips them automatically.
     //
     // NPCs, monsters, effects, and loot drops are NOT migrated —
     // those are scene-specific. This mirrors Roll20's behavior: the
     // party travels, the encounter doesn't.
-    if (oldPlayerMapId && oldPlayerMapId !== mapId && stagedPositions.length === 0) {
+    if (oldPlayerMapId && oldPlayerMapId !== mapId) {
       const pcTokens = db.prepare(`
         SELECT id, character_id FROM tokens
         WHERE map_id = ?

@@ -101,10 +101,10 @@ export function PreviewModeBanner() {
         ownerUserId: player.userId,
       },
     ]);
-    setShowHeroPicker(false);
+    // Keep picker open so DM can stage multiple heroes one by one
   };
 
-  /** Get all player characters that can be staged.
+  /** Get ALL player characters (staged + un-staged).
    *  Uses two sources to be comprehensive:
    *    1. Session players with linked characterIds (shows online status)
    *    2. All non-NPC characters from the store (catches heroes whose
@@ -113,7 +113,6 @@ export function PreviewModeBanner() {
   const getStageable = () => {
     const players = useSessionStore.getState().players;
     const allChars = useCharacterStore.getState().allCharacters;
-    const stagedIds = new Set(stagedHeroes.map((h) => h.characterId));
 
     // Build a characterId -> player lookup for online status
     const charToPlayer: Record<string, { userId: string; displayName: string; connected: boolean }> = {};
@@ -130,7 +129,7 @@ export function PreviewModeBanner() {
 
     // Source 1: session players with characters
     for (const p of players) {
-      if (!p.characterId || stagedIds.has(p.characterId) || seen.has(p.characterId)) continue;
+      if (!p.characterId || seen.has(p.characterId)) continue;
       seen.add(p.characterId);
       const char = allChars[p.characterId];
       result.push({
@@ -145,7 +144,7 @@ export function PreviewModeBanner() {
 
     // Source 2: all non-NPC characters in the store not already covered
     for (const [id, char] of Object.entries(allChars)) {
-      if (!char || (char as any).userId === 'npc' || stagedIds.has(id) || seen.has(id)) continue;
+      if (!char || (char as any).userId === 'npc' || seen.has(id)) continue;
       seen.add(id);
       const player = charToPlayer[id];
       result.push({
@@ -265,20 +264,19 @@ export function PreviewModeBanner() {
             variant="ghost"
             size="sm"
             leadingIcon={<UserPlus size={12} />}
-            onClick={() => {
-              if (hasStaged && !showHeroPicker) {
-                // If heroes are staged and picker isn't open, clear them
-                useMapStore.getState().clearStagedHeroes();
-              } else {
-                setShowHeroPicker(!showHeroPicker);
-              }
-            }}
+            onClick={() => setShowHeroPicker(!showHeroPicker)}
           >
             {hasStaged ? `Staged (${stagedHeroes.length})` : 'Stage Heroes'}
           </Button>
 
           {showHeroPicker && (() => {
-            const stageable = getStageable();
+            const allHeroes = getStageable();
+            const stagedIds = new Set(stagedHeroes.map((h) => h.characterId));
+            // Show staged heroes first, then un-staged
+            const sorted = [
+              ...allHeroes.filter((h) => stagedIds.has(h.characterId)),
+              ...allHeroes.filter((h) => !stagedIds.has(h.characterId)),
+            ];
             return (
               <div
                 ref={pickerRef}
@@ -291,7 +289,7 @@ export function PreviewModeBanner() {
                   border: `1px solid ${theme.gold.border}`,
                   borderRadius: theme.radius.md,
                   boxShadow: theme.shadow.lg,
-                  minWidth: 220,
+                  minWidth: 240,
                   zIndex: 100,
                   overflow: 'hidden',
                   whiteSpace: 'normal',
@@ -306,24 +304,29 @@ export function PreviewModeBanner() {
                   textTransform: 'uppercase',
                   letterSpacing: '0.1em',
                 }}>
-                  Place a hero on this map
+                  Click to stage / un-stage heroes
                 </div>
-                {stageable.length === 0 ? (
-                  <div style={{ padding: '12px', fontSize: 11, color: theme.text.muted, textAlign: 'center' }}>
-                    All heroes are already staged
-                  </div>
-                ) : (
-                  stageable.map((p) => (
+                {sorted.map((p) => {
+                  const isStaged = stagedIds.has(p.characterId);
+                  return (
                     <button
                       key={p.characterId}
-                      onClick={() => stageHero(p)}
+                      onClick={() => {
+                        if (isStaged) {
+                          // Un-stage: remove from stagedHeroes
+                          const remaining = stagedHeroes.filter((h) => h.characterId !== p.characterId);
+                          useMapStore.getState().stageHeroes(remaining);
+                        } else {
+                          stageHero(p);
+                        }
+                      }}
                       style={{
                         display: 'flex',
                         alignItems: 'center',
                         gap: 10,
                         width: '100%',
                         padding: '8px 12px',
-                        background: 'transparent',
+                        background: isStaged ? 'rgba(232,196,85,0.08)' : 'transparent',
                         border: 'none',
                         borderBottom: `1px solid ${theme.border.default}`,
                         color: theme.text.primary,
@@ -332,14 +335,25 @@ export function PreviewModeBanner() {
                         fontFamily: theme.font.body,
                         fontSize: 12,
                       }}
-                      onMouseEnter={(e) => { e.currentTarget.style.background = theme.bg.hover; }}
-                      onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
+                      onMouseEnter={(e) => { e.currentTarget.style.background = isStaged ? 'rgba(232,196,85,0.15)' : theme.bg.hover; }}
+                      onMouseLeave={(e) => { e.currentTarget.style.background = isStaged ? 'rgba(232,196,85,0.08)' : 'transparent'; }}
                     >
+                      {/* Staged indicator */}
+                      <span style={{
+                        width: 18, height: 18, borderRadius: '50%',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        fontSize: 11, flexShrink: 0,
+                        background: isStaged ? theme.gold.bg : theme.bg.elevated,
+                        border: `1px solid ${isStaged ? theme.gold.primary : theme.border.default}`,
+                        color: isStaged ? theme.gold.primary : theme.text.muted,
+                      }}>
+                        {isStaged ? '✓' : ''}
+                      </span>
                       {p.portraitUrl ? (
                         <img src={p.portraitUrl} alt="" style={{
                           width: 28, height: 28, borderRadius: '50%', objectFit: 'cover',
                           border: `1px solid ${p.connected ? theme.state.success : theme.border.default}`,
-                          flexShrink: 0,
+                          flexShrink: 0, opacity: isStaged ? 1 : 0.6,
                         }} />
                       ) : (
                         <div style={{
@@ -347,21 +361,25 @@ export function PreviewModeBanner() {
                           background: theme.bg.elevated,
                           border: `1px solid ${theme.border.default}`,
                           display: 'flex', alignItems: 'center', justifyContent: 'center',
-                          fontSize: 12, fontWeight: 700, flexShrink: 0,
+                          fontSize: 12, fontWeight: 700, flexShrink: 0, opacity: isStaged ? 1 : 0.6,
                         }}>{p.characterName[0]}</div>
                       )}
                       <div style={{ flex: 1 }}>
-                        <div style={{ fontWeight: 600 }}>{p.characterName}</div>
+                        <div style={{ fontWeight: 600, color: isStaged ? theme.gold.primary : theme.text.primary }}>
+                          {p.characterName}
+                          {isStaged && <span style={{ fontSize: 9, color: theme.state.success, marginLeft: 6 }}>STAGED</span>}
+                        </div>
                         <div style={{ fontSize: 9, color: p.connected ? theme.state.success : theme.text.muted }}>
                           {p.connected ? 'Online' : 'Offline'} · {p.displayName}
+                          {!isStaged && ' · will land at center'}
                         </div>
                       </div>
                     </button>
-                  ))
-                )}
+                  );
+                })}
                 {hasStaged && (
                   <button
-                    onClick={() => { useMapStore.getState().clearStagedHeroes(); setShowHeroPicker(false); }}
+                    onClick={() => { useMapStore.getState().clearStagedHeroes(); }}
                     style={{
                       width: '100%', padding: '8px 12px',
                       background: theme.state.dangerBg,
