@@ -38,11 +38,27 @@ export function PreviewModeBanner() {
   // for. Reset whenever the DM switches to a different preview map so
   // the banner re-appears naturally.
   const [dismissedForMapId, setDismissedForMapId] = useState<string | null>(null);
+  const [showHeroPicker, setShowHeroPicker] = useState(false);
+  const pickerRef = useRef<HTMLDivElement>(null);
+
   useEffect(() => {
     if (currentMap?.id !== dismissedForMapId) setDismissedForMapId(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentMap?.id]);
 
+  // Close picker on outside click
+  useEffect(() => {
+    if (!showHeroPicker) return;
+    const handler = (e: MouseEvent) => {
+      if (pickerRef.current && !pickerRef.current.contains(e.target as Node)) {
+        setShowHeroPicker(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [showHeroPicker]);
+
+  // All hooks above — early returns below
   if (!isDM) return null;
   if (!isPreviewing) return null;
   if (!currentMap) return null;
@@ -63,21 +79,6 @@ export function PreviewModeBanner() {
     }
     return map;
   };
-
-  const [showHeroPicker, setShowHeroPicker] = useState(false);
-  const pickerRef = useRef<HTMLDivElement>(null);
-
-  // Close picker on outside click
-  useEffect(() => {
-    if (!showHeroPicker) return;
-    const handler = (e: MouseEvent) => {
-      if (pickerRef.current && !pickerRef.current.contains(e.target as Node)) {
-        setShowHeroPicker(false);
-      }
-    };
-    document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
-  }, [showHeroPicker]);
 
   /** Stage a single hero at the center of the preview map. */
   const stageHero = (player: { userId: string; characterId: string; displayName: string }) => {
