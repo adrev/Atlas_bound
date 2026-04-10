@@ -1,5 +1,6 @@
 import type { Server, Socket } from 'socket.io';
 import type { Token, WallSegment, FogPolygon, MapSummary } from '@dnd-vtt/shared';
+import { v4 as uuidv4 } from 'uuid';
 import db from '../db/connection.js';
 import { getPlayerBySocketId } from '../utils/roomState.js';
 import {
@@ -189,7 +190,7 @@ export function registerSceneEvents(io: Server, socket: Socket): void {
       ).get(mapId, staged.characterId);
       if (exists) continue;
 
-      const tokenId = require('crypto').randomUUID();
+      const tokenId = uuidv4();
       const gridSize = (mapRow.grid_size as number) ?? 70;
       db.prepare(`INSERT INTO tokens (
         id, map_id, character_id, name, x, y, size, color, layer, visible,
