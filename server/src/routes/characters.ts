@@ -113,6 +113,20 @@ router.post('/', (req: Request, res: Response) => {
   res.status(201).json(dbRowToCharacter(row));
 });
 
+// GET /api/characters/mine - List characters owned by the authenticated user
+router.get('/mine', (req: Request, res: Response) => {
+  const userId = (req as any).user?.id;
+  if (!userId) { res.json([]); return; }
+
+  const rows = db.prepare(`
+    SELECT * FROM characters
+    WHERE user_id = ? AND user_id != 'npc'
+    ORDER BY updated_at DESC
+  `).all(userId) as Record<string, unknown>[];
+
+  res.json(rows.map(dbRowToCharacter));
+});
+
 // GET /api/characters/:id - Get a character
 router.get('/:id', (req: Request, res: Response) => {
   const row = db.prepare('SELECT * FROM characters WHERE id = ?').get(req.params.id) as Record<string, unknown> | undefined;
@@ -194,11 +208,16 @@ router.put('/:id', (req: Request, res: Response) => {
   res.json(dbRowToCharacter(row));
 });
 
-// DELETE /api/characters/:id - Delete a character
+// DELETE /api/characters/:id - Delete a character (with ownership check)
 router.delete('/:id', (req: Request, res: Response) => {
-  const existing = db.prepare('SELECT id FROM characters WHERE id = ?').get(req.params.id);
-  if (!existing) {
+  const userId = (req as any).user?.id;
+  const char = db.prepare('SELECT user_id FROM characters WHERE id = ?').get(req.params.id) as { user_id: string } | undefined;
+  if (!char) {
     res.status(404).json({ error: 'Character not found' });
+    return;
+  }
+  if (char.user_id !== userId && char.user_id !== 'npc') {
+    res.status(403).json({ error: 'Not authorized' });
     return;
   }
 

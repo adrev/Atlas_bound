@@ -130,36 +130,76 @@ router.post('/import', (req: Request, res: Response) => {
 
   try {
     const character = parseCharacterJSON(characterJson);
-    const id = uuidv4();
 
-    db.prepare(`
-      INSERT INTO characters (
-        id, user_id, name, race, class, level, hit_points, max_hit_points,
-        temp_hit_points, armor_class, speed, proficiency_bonus,
-        ability_scores, saving_throws, skills, spell_slots, spells,
-        features, inventory, death_saves, portrait_url,
-        dndbeyond_id, dndbeyond_json, source
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      id, userId, character.name, character.race, character.class,
-      character.level, character.hitPoints, character.maxHitPoints,
-      character.tempHitPoints, character.armorClass, character.speed,
-      character.proficiencyBonus,
-      JSON.stringify(character.abilityScores),
-      JSON.stringify(character.savingThrows),
-      JSON.stringify(character.skills),
-      JSON.stringify(character.spellSlots),
-      JSON.stringify(character.spells),
-      JSON.stringify(character.features),
-      JSON.stringify(character.inventory),
-      JSON.stringify(character.deathSaves),
-      character.portraitUrl,
-      character.dndbeyondId,
-      JSON.stringify(characterJson),
-      'dndbeyond_import',
-    );
+    // Check for existing character with the same dndbeyond_id for this user (deduplication)
+    const existing = character.dndbeyondId
+      ? db.prepare('SELECT id FROM characters WHERE dndbeyond_id = ? AND user_id = ?')
+          .get(character.dndbeyondId, userId) as { id: string } | undefined
+      : undefined;
 
-    res.status(201).json({ id, name: character.name });
+    if (existing) {
+      // UPDATE existing record instead of creating a duplicate
+      db.prepare(`
+        UPDATE characters SET
+          name = ?, race = ?, class = ?, level = ?, hit_points = ?, max_hit_points = ?,
+          temp_hit_points = ?, armor_class = ?, speed = ?, proficiency_bonus = ?,
+          ability_scores = ?, saving_throws = ?, skills = ?, spell_slots = ?, spells = ?,
+          features = ?, inventory = ?, death_saves = ?, portrait_url = ?,
+          dndbeyond_json = ?, source = ?, updated_at = datetime('now')
+        WHERE id = ?
+      `).run(
+        character.name, character.race, character.class,
+        character.level, character.hitPoints, character.maxHitPoints,
+        character.tempHitPoints, character.armorClass, character.speed,
+        character.proficiencyBonus,
+        JSON.stringify(character.abilityScores),
+        JSON.stringify(character.savingThrows),
+        JSON.stringify(character.skills),
+        JSON.stringify(character.spellSlots),
+        JSON.stringify(character.spells),
+        JSON.stringify(character.features),
+        JSON.stringify(character.inventory),
+        JSON.stringify(character.deathSaves),
+        character.portraitUrl,
+        JSON.stringify(characterJson),
+        'dndbeyond_import',
+        existing.id,
+      );
+
+      res.json({ id: existing.id, name: character.name, updated: true });
+    } else {
+      // No existing record — INSERT new
+      const id = uuidv4();
+
+      db.prepare(`
+        INSERT INTO characters (
+          id, user_id, name, race, class, level, hit_points, max_hit_points,
+          temp_hit_points, armor_class, speed, proficiency_bonus,
+          ability_scores, saving_throws, skills, spell_slots, spells,
+          features, inventory, death_saves, portrait_url,
+          dndbeyond_id, dndbeyond_json, source
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        id, userId, character.name, character.race, character.class,
+        character.level, character.hitPoints, character.maxHitPoints,
+        character.tempHitPoints, character.armorClass, character.speed,
+        character.proficiencyBonus,
+        JSON.stringify(character.abilityScores),
+        JSON.stringify(character.savingThrows),
+        JSON.stringify(character.skills),
+        JSON.stringify(character.spellSlots),
+        JSON.stringify(character.spells),
+        JSON.stringify(character.features),
+        JSON.stringify(character.inventory),
+        JSON.stringify(character.deathSaves),
+        character.portraitUrl,
+        character.dndbeyondId,
+        JSON.stringify(characterJson),
+        'dndbeyond_import',
+      );
+
+      res.status(201).json({ id, name: character.name });
+    }
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Failed to parse character JSON';
     res.status(400).json({ error: message });

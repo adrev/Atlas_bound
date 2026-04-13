@@ -165,4 +165,21 @@ router.get('/me', optionalAuth, (req: Request, res: Response) => {
   });
 });
 
+// PUT /api/auth/profile - Update display name and avatar
+router.put('/profile', optionalAuth, async (req: Request, res: Response) => {
+  const user = (req as any).user;
+  if (!user) { res.status(401).json({ error: 'Not authenticated' }); return; }
+
+  const { displayName, avatarUrl } = req.body;
+  if (!displayName?.trim()) { res.status(400).json({ error: 'Display name required' }); return; }
+
+  // Update both auth_users and users tables
+  db.prepare('UPDATE auth_users SET display_name = ?, avatar_url = ?, updated_at = datetime("now") WHERE id = ?')
+    .run(displayName.trim(), avatarUrl || null, user.id);
+  db.prepare('UPDATE users SET display_name = ?, avatar_url = ? WHERE id = ? OR auth_user_id = ?')
+    .run(displayName.trim(), avatarUrl || null, user.id, user.id);
+
+  res.json({ id: user.id, email: user.email, displayName: displayName.trim(), avatarUrl: avatarUrl || null });
+});
+
 export default router;
