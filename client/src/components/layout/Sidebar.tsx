@@ -481,7 +481,17 @@ function HeroTab() {
         >
           Show Character List
         </Button>
-        {hasDdbId ? (
+        <Button
+          variant="ghost"
+          size="sm"
+          fullWidth
+          leadingIcon={<Upload size={13} />}
+          onClick={() => setShowImport(true)}
+          style={{ color: theme.gold.primary, borderColor: theme.gold.border }}
+        >
+          Import Character
+        </Button>
+        {hasDdbId && (
           <Button
             variant="ghost"
             size="sm"
@@ -497,17 +507,6 @@ function HeroTab() {
             style={{ color: theme.gold.primary, borderColor: theme.gold.border }}
           >
             {syncing ? 'Syncing...' : 'Sync from DDB'}
-          </Button>
-        ) : (
-          <Button
-            variant="ghost"
-            size="sm"
-            fullWidth
-            leadingIcon={<Upload size={13} />}
-            onClick={() => setShowImport(true)}
-            style={{ color: theme.gold.primary, borderColor: theme.gold.border }}
-          >
-            Import Character
           </Button>
         )}
       </div>

@@ -313,6 +313,12 @@ export function registerListeners(socket: Socket): () => void {
 
   // --- Ready Check ---
   socket.on('combat:ready-check-started', (data: { playerIds: string[]; deadline: number }) => {
+    console.log('[READY CHECK] ready-check-started received', {
+      playerIds: data.playerIds,
+      deadline: data.deadline,
+      myUserId: useSessionStore.getState().userId,
+      isDM: useSessionStore.getState().isDM,
+    });
     useCombatStore.getState().setReadyCheck({
       active: true,
       playerIds: data.playerIds,
@@ -322,10 +328,12 @@ export function registerListeners(socket: Socket): () => void {
   });
 
   socket.on('combat:ready-update', (data: { responses: Record<string, boolean> }) => {
+    console.log('[READY CHECK] ready-update received', data.responses);
     useCombatStore.getState().updateReadyResponses(data.responses);
   });
 
   socket.on('combat:ready-check-complete', () => {
+    console.log('[READY CHECK] ready-check-complete received');
     useCombatStore.getState().clearReadyCheck();
   });
 
