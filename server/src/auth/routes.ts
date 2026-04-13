@@ -13,12 +13,14 @@ const loginLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, max: 5,
   message: { error: 'Too many login attempts. Please try again later.' },
   standardHeaders: true, legacyHeaders: false,
+  validate: false, // Cloud Run proxies set X-Forwarded-For
 });
 
 const registerLimiter = rateLimit({
   windowMs: 60 * 60 * 1000, max: 3,
   message: { error: 'Too many registration attempts. Please try again later.' },
   standardHeaders: true, legacyHeaders: false,
+  validate: false,
 });
 
 const registerSchema = z.object({

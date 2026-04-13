@@ -46,12 +46,6 @@ export function ReadyCheckModal() {
   }, []);
 
   // Don't show for DM or when no ready check is active
-  console.log('[READY CHECK MODAL] render check', {
-    active: readyCheck?.active,
-    isDM,
-    userId,
-    willRender: !!readyCheck?.active && !isDM,
-  });
   if (!readyCheck?.active || isDM) return null;
 
   const alreadyReady = responded || (userId ? readyCheck.responses[userId] === true : false);
