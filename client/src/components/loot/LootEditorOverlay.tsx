@@ -1,5 +1,7 @@
 import { useState, useEffect } from 'react';
 import { LootEditor } from './LootEditor';
+import { useSessionStore } from '../../stores/useSessionStore';
+import { useMapStore } from '../../stores/useMapStore';
 
 /**
  * Global overlay that listens for 'open-loot-editor' events and shows the LootEditor modal.
@@ -7,6 +9,8 @@ import { LootEditor } from './LootEditor';
  */
 export function LootEditorOverlay() {
   const [state, setState] = useState<{ characterId: string; tokenName: string } | null>(null);
+  const isDM = useSessionStore((s) => s.isDM);
+  const userId = useSessionStore((s) => s.userId);
 
   useEffect(() => {
     const handler = (e: Event) => {
@@ -21,11 +25,20 @@ export function LootEditorOverlay() {
 
   if (!state) return null;
 
+  // Determine if the current user can edit this character's inventory.
+  // DM can always edit. Players can only edit their own characters.
+  const tokens = useMapStore.getState().tokens;
+  const ownerToken = Object.values(tokens).find(
+    (t: any) => t.characterId === state.characterId,
+  );
+  const canEdit = isDM || (ownerToken && (ownerToken as any).ownerUserId === userId);
+
   return (
     <LootEditor
       characterId={state.characterId}
       tokenName={state.tokenName}
       onClose={() => setState(null)}
+      canEdit={!!canEdit}
     />
   );
 }

@@ -128,8 +128,10 @@ function TokenSprite({ token, isSelected, isCurrentTurn }: TokenSpriteProps) {
 
   const isDM = useSessionStore.getState().isDM;
 
-  // Death state
-  const isDead = (charHp !== null && charHp <= 0) || (combatant && combatant.hp <= 0);
+  // Loot bag tokens (race === 'loot' or item image) should never show as dead
+  const isLootBag = charData?.race === 'loot' || (token.imageUrl?.includes('/uploads/items/'));
+  // Death state — skip for loot bags which naturally have 0 HP
+  const isDead = !isLootBag && ((charHp !== null && charHp <= 0) || (combatant && combatant.hp <= 0));
   const isNPC = !token.ownerUserId;
 
   // Visibility state — DM sees invisible tokens dimmed so they can still

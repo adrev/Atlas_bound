@@ -41,9 +41,13 @@ interface LootEditorProps {
   characterId: string;
   tokenName?: string;
   onClose?: () => void;
+  /** When false the editor is read-only (item list visible but no
+   *  add / drop / delete / transfer / quantity controls). Computed
+   *  by the caller based on isDM or character ownership. */
+  canEdit?: boolean;
 }
 
-export function LootEditor({ characterId, tokenName, onClose }: LootEditorProps) {
+export function LootEditor({ characterId, tokenName, onClose, canEdit = true }: LootEditorProps) {
   const [loot, setLoot] = useState<LootEntry[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
@@ -194,6 +198,7 @@ export function LootEditor({ characterId, tokenName, onClose }: LootEditorProps)
     });
     fetchLoot();
     notifyLootChange();
+    emitCharacterUpdate(characterId, { _lootUpdated: Date.now() });
     setSearchQuery('');
     setSearchResults([]);
   };
@@ -241,6 +246,7 @@ export function LootEditor({ characterId, tokenName, onClose }: LootEditorProps)
 
       fetchLoot();
       notifyLootChange();
+      emitCharacterUpdate(characterId, { _lootUpdated: Date.now() });
       resetCustomForm();
     } catch { /* ignore */ }
   };
@@ -249,6 +255,7 @@ export function LootEditor({ characterId, tokenName, onClose }: LootEditorProps)
     await fetch(`/api/characters/${characterId}/loot/${entryId}`, { method: 'DELETE' });
     fetchLoot();
     notifyLootChange();
+    emitCharacterUpdate(characterId, { _lootUpdated: Date.now() });
   };
 
   const updateQuantity = async (entryId: string, quantity: number) => {
@@ -260,6 +267,7 @@ export function LootEditor({ characterId, tokenName, onClose }: LootEditorProps)
     });
     fetchLoot();
     notifyLootChange();
+    emitCharacterUpdate(characterId, { _lootUpdated: Date.now() });
   };
 
   const dropItem = async (entry: LootEntry) => {
@@ -309,6 +317,7 @@ export function LootEditor({ characterId, tokenName, onClose }: LootEditorProps)
 
       fetchLoot();
       notifyLootChange();
+      emitCharacterUpdate(characterId, { _lootUpdated: Date.now() });
     } catch (err) { console.error('Drop failed:', err); }
   };
 
@@ -320,6 +329,7 @@ export function LootEditor({ characterId, tokenName, onClose }: LootEditorProps)
     });
     fetchLoot();
     notifyLootChange();
+    emitCharacterUpdate(characterId, { _lootUpdated: Date.now() });
   };
 
   return (
@@ -347,8 +357,8 @@ export function LootEditor({ characterId, tokenName, onClose }: LootEditorProps)
           )}
         </div>
 
-        {/* Search Section */}
-        <div style={S.searchSection}>
+        {/* Search Section — only shown when user can edit */}
+        {canEdit && <div style={S.searchSection}>
           <div style={{ display: 'flex', gap: 6 }}>
             <input
               type="text"
@@ -621,7 +631,7 @@ export function LootEditor({ characterId, tokenName, onClose }: LootEditorProps)
               >Add to Loot</button>
             </div>
           )}
-        </div>
+        </div>}
 
         {/* Loot List */}
         <div style={S.lootList}>
@@ -634,20 +644,36 @@ export function LootEditor({ characterId, tokenName, onClose }: LootEditorProps)
           ) : (
             loot.map(entry => (
               <div key={entry.id} style={S.lootItem}>
-                <button
-                  onClick={() => toggleEquipped(entry.id, entry.equipped)}
-                  title={entry.equipped ? 'Equipped — click to unequip' : 'Not equipped — click to equip'}
-                  style={{
-                    width: 20, height: 20, borderRadius: 4, flexShrink: 0, cursor: 'pointer',
-                    border: entry.equipped ? `2px solid ${theme.gold.primary}` : `2px solid ${theme.border.default}`,
-                    background: entry.equipped ? theme.gold.bg : 'transparent',
-                    display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    fontSize: 10, color: entry.equipped ? theme.gold.primary : theme.text.muted,
-                    padding: 0, transition: 'all 0.15s',
-                  }}
-                >
-                  {entry.equipped ? 'E' : ''}
-                </button>
+                {canEdit ? (
+                  <button
+                    onClick={() => toggleEquipped(entry.id, entry.equipped)}
+                    title={entry.equipped ? 'Equipped — click to unequip' : 'Not equipped — click to equip'}
+                    style={{
+                      width: 20, height: 20, borderRadius: 4, flexShrink: 0, cursor: 'pointer',
+                      border: entry.equipped ? `2px solid ${theme.gold.primary}` : `2px solid ${theme.border.default}`,
+                      background: entry.equipped ? theme.gold.bg : 'transparent',
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      fontSize: 10, color: entry.equipped ? theme.gold.primary : theme.text.muted,
+                      padding: 0, transition: 'all 0.15s',
+                    }}
+                  >
+                    {entry.equipped ? 'E' : ''}
+                  </button>
+                ) : (
+                  <div
+                    title={entry.equipped ? 'Equipped' : 'Not equipped'}
+                    style={{
+                      width: 20, height: 20, borderRadius: 4, flexShrink: 0,
+                      border: entry.equipped ? `2px solid ${theme.gold.primary}` : `2px solid ${theme.border.default}`,
+                      background: entry.equipped ? theme.gold.bg : 'transparent',
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      fontSize: 10, color: entry.equipped ? theme.gold.primary : theme.text.muted,
+                      padding: 0,
+                    }}
+                  >
+                    {entry.equipped ? 'E' : ''}
+                  </div>
+                )}
                 <img src={`/uploads/items/${entry.item_slug || ''}.png`} alt="" loading="lazy"
                   style={S.lootItemImg}
                   onError={e => { (e.currentTarget).src = '/uploads/items/default-item.svg'; }}
@@ -670,18 +696,25 @@ export function LootEditor({ characterId, tokenName, onClose }: LootEditorProps)
                     {entry.item_rarity}{entry.equipped ? ' \u2022 Equipped' : ''}
                   </div>
                 </div>
-                <div style={S.qtyControls}>
-                  <button onClick={() => updateQuantity(entry.id, entry.quantity - 1)} style={S.qtyBtn}>-</button>
-                  <span style={S.qtyValue}>{entry.quantity}</span>
-                  <button onClick={() => updateQuantity(entry.id, entry.quantity + 1)} style={S.qtyBtn}>+</button>
-                </div>
-                <button onClick={() => dropItem(entry)} title="Drop on map"
-                  style={{ ...S.removeBtn, background: theme.gold.bg, border: `1px solid ${theme.gold.border}`, color: theme.gold.primary }}>
-                  <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                    <path d="M12 5v14M5 12l7 7 7-7"/>
-                  </svg>
-                </button>
-                {/* Send to player button */}
+                {canEdit ? (
+                  <div style={S.qtyControls}>
+                    <button onClick={() => updateQuantity(entry.id, entry.quantity - 1)} style={S.qtyBtn}>-</button>
+                    <span style={S.qtyValue}>{entry.quantity}</span>
+                    <button onClick={() => updateQuantity(entry.id, entry.quantity + 1)} style={S.qtyBtn}>+</button>
+                  </div>
+                ) : (
+                  <span style={{ ...S.qtyValue, marginLeft: 4, marginRight: 4 }}>x{entry.quantity}</span>
+                )}
+                {canEdit && (
+                  <button onClick={() => dropItem(entry)} title="Drop on map"
+                    style={{ ...S.removeBtn, background: theme.gold.bg, border: `1px solid ${theme.gold.border}`, color: theme.gold.primary }}>
+                    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                      <path d="M12 5v14M5 12l7 7 7-7"/>
+                    </svg>
+                  </button>
+                )}
+                {/* Send to player button — DM/owner only */}
+                {canEdit && (
                 <div style={{ position: 'relative' }}>
                   <button
                     onClick={() => setTransferEntryId(transferEntryId === entry.id ? null : entry.id)}
@@ -742,11 +775,14 @@ export function LootEditor({ characterId, tokenName, onClose }: LootEditorProps)
                     </div>
                   )}
                 </div>
+                )}
+                {canEdit && (
                 <button onClick={() => removeItem(entry.id)} title="Delete" style={S.removeBtn}>
                   <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
                     <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
                   </svg>
                 </button>
+                )}
               </div>
             ))
           )}
