@@ -1,6 +1,6 @@
 import { Router, type Request, type Response } from 'express';
 import { v4 as uuidv4 } from 'uuid';
-import db from '../db/connection.js';
+import pool from '../db/connection.js';
 import { createCharacterSchema, updateCharacterSchema } from '../utils/validation.js';
 import { proficiencyBonusForLevel } from '@dnd-vtt/shared';
 import { parseCharacterJSON } from '../services/DndBeyondService.js';
@@ -60,21 +60,17 @@ function dbRowToCharacter(row: Record<string, unknown>) {
   };
 }
 
-// GET /api/characters?userId=XXX - List characters owned by a user.
-// Used by the Hero sidebar tab so the player can pick which imported
-// character to activate. Excludes NPC records (userId === 'npc') and
-// loot bag placeholders.
-router.get('/', (req: Request, res: Response) => {
+// GET /api/characters?userId=XXX
+router.get('/', async (req: Request, res: Response) => {
   const userId = typeof req.query.userId === 'string' ? req.query.userId : null;
-  const rows = (userId
-    ? db.prepare('SELECT * FROM characters WHERE user_id = ? ORDER BY updated_at DESC').all(userId)
-    : db.prepare("SELECT * FROM characters WHERE user_id != 'npc' ORDER BY updated_at DESC").all()
-  ) as Record<string, unknown>[];
+  const { rows } = userId
+    ? await pool.query('SELECT * FROM characters WHERE user_id = $1 ORDER BY updated_at DESC', [userId])
+    : await pool.query("SELECT * FROM characters WHERE user_id != 'npc' ORDER BY updated_at DESC");
   res.json(rows.map(dbRowToCharacter));
 });
 
 // POST /api/characters - Create a new character
-router.post('/', (req: Request, res: Response) => {
+router.post('/', async (req: Request, res: Response) => {
   const parsed = createCharacterSchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: 'Invalid request', details: parsed.error.issues });
@@ -93,13 +89,13 @@ router.post('/', (req: Request, res: Response) => {
     stealth: 'none', survival: 'none',
   };
 
-  db.prepare(`
+  await pool.query(`
     INSERT INTO characters (
       id, user_id, name, race, class, level, hit_points, max_hit_points,
       armor_class, speed, proficiency_bonus, ability_scores, saving_throws,
       skills, portrait_url, compendium_slug
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+  `, [
     id, data.userId, data.name, data.race, data.class, data.level,
     data.hitPoints, data.maxHitPoints, data.armorClass, data.speed,
     profBonus, JSON.stringify(abilityScores),
@@ -107,46 +103,46 @@ router.post('/', (req: Request, res: Response) => {
     JSON.stringify(defaultSkills),
     data.portraitUrl ?? null,
     data.compendiumSlug ?? null,
-  );
+  ]);
 
-  const row = db.prepare('SELECT * FROM characters WHERE id = ?').get(id) as Record<string, unknown>;
-  res.status(201).json(dbRowToCharacter(row));
+  const { rows } = await pool.query('SELECT * FROM characters WHERE id = $1', [id]);
+  res.status(201).json(dbRowToCharacter(rows[0]));
 });
 
-// GET /api/characters/mine - List characters owned by the authenticated user
-router.get('/mine', (req: Request, res: Response) => {
+// GET /api/characters/mine
+router.get('/mine', async (req: Request, res: Response) => {
   const userId = (req as any).user?.id;
   if (!userId) { res.json([]); return; }
 
-  const rows = db.prepare(`
+  const { rows } = await pool.query(`
     SELECT * FROM characters
-    WHERE user_id = ? AND user_id != 'npc'
+    WHERE user_id = $1 AND user_id != 'npc'
     ORDER BY updated_at DESC
-  `).all(userId) as Record<string, unknown>[];
+  `, [userId]);
 
   res.json(rows.map(dbRowToCharacter));
 });
 
-// GET /api/characters/:id - Get a character
-router.get('/:id', (req: Request, res: Response) => {
-  const row = db.prepare('SELECT * FROM characters WHERE id = ?').get(req.params.id) as Record<string, unknown> | undefined;
-  if (!row) {
+// GET /api/characters/:id
+router.get('/:id', async (req: Request, res: Response) => {
+  const { rows } = await pool.query('SELECT * FROM characters WHERE id = $1', [req.params.id]);
+  if (rows.length === 0) {
     res.status(404).json({ error: 'Character not found' });
     return;
   }
-  res.json(dbRowToCharacter(row));
+  res.json(dbRowToCharacter(rows[0]));
 });
 
 // PUT /api/characters/:id - Update a character
-router.put('/:id', (req: Request, res: Response) => {
+router.put('/:id', async (req: Request, res: Response) => {
   const parsed = updateCharacterSchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: 'Invalid request', details: parsed.error.issues });
     return;
   }
 
-  const existing = db.prepare('SELECT id FROM characters WHERE id = ?').get(req.params.id);
-  if (!existing) {
+  const { rows: existingRows } = await pool.query('SELECT id FROM characters WHERE id = $1', [req.params.id]);
+  if (existingRows.length === 0) {
     res.status(404).json({ error: 'Character not found' });
     return;
   }
@@ -154,79 +150,80 @@ router.put('/:id', (req: Request, res: Response) => {
   const updates = parsed.data;
   const setClauses: string[] = [];
   const params: unknown[] = [];
+  let paramIdx = 1;
 
-  if (updates.name !== undefined) { setClauses.push('name = ?'); params.push(updates.name); }
-  if (updates.race !== undefined) { setClauses.push('race = ?'); params.push(updates.race); }
-  if (updates.class !== undefined) { setClauses.push('class = ?'); params.push(updates.class); }
+  if (updates.name !== undefined) { setClauses.push(`name = $${paramIdx++}`); params.push(updates.name); }
+  if (updates.race !== undefined) { setClauses.push(`race = $${paramIdx++}`); params.push(updates.race); }
+  if (updates.class !== undefined) { setClauses.push(`class = $${paramIdx++}`); params.push(updates.class); }
   if (updates.level !== undefined) {
-    setClauses.push('level = ?', 'proficiency_bonus = ?');
+    setClauses.push(`level = $${paramIdx++}`, `proficiency_bonus = $${paramIdx++}`);
     params.push(updates.level, proficiencyBonusForLevel(updates.level));
   }
-  if (updates.hitPoints !== undefined) { setClauses.push('hit_points = ?'); params.push(updates.hitPoints); }
-  if (updates.maxHitPoints !== undefined) { setClauses.push('max_hit_points = ?'); params.push(updates.maxHitPoints); }
-  if (updates.armorClass !== undefined) { setClauses.push('armor_class = ?'); params.push(updates.armorClass); }
-  if (updates.speed !== undefined) { setClauses.push('speed = ?'); params.push(updates.speed); }
-  if (updates.abilityScores !== undefined) { setClauses.push('ability_scores = ?'); params.push(JSON.stringify(updates.abilityScores)); }
-  if (updates.savingThrows !== undefined) { setClauses.push('saving_throws = ?'); params.push(JSON.stringify(updates.savingThrows)); }
-  if (updates.portraitUrl !== undefined) { setClauses.push('portrait_url = ?'); params.push(updates.portraitUrl); }
-  if (updates.background !== undefined) { setClauses.push('background = ?'); params.push(JSON.stringify(updates.background)); }
-  if (updates.characteristics !== undefined) { setClauses.push('characteristics = ?'); params.push(JSON.stringify(updates.characteristics)); }
-  if (updates.personality !== undefined) { setClauses.push('personality = ?'); params.push(JSON.stringify(updates.personality)); }
-  if (updates.notes !== undefined) { setClauses.push('notes_data = ?'); params.push(JSON.stringify(updates.notes)); }
-  if (updates.proficiencies !== undefined) { setClauses.push('proficiencies_data = ?'); params.push(JSON.stringify(updates.proficiencies)); }
-  if (updates.senses !== undefined) { setClauses.push('senses = ?'); params.push(JSON.stringify(updates.senses)); }
-  if (updates.defenses !== undefined) { setClauses.push('defenses = ?'); params.push(JSON.stringify(updates.defenses)); }
-  if (updates.conditions !== undefined) { setClauses.push('conditions = ?'); params.push(JSON.stringify(updates.conditions)); }
-  if (updates.currency !== undefined) { setClauses.push('currency = ?'); params.push(JSON.stringify(updates.currency)); }
-  if (updates.extras !== undefined) { setClauses.push('extras = ?'); params.push(JSON.stringify(updates.extras)); }
-  if (updates.spellcastingAbility !== undefined) { setClauses.push('spellcasting_ability = ?'); params.push(updates.spellcastingAbility); }
-  if (updates.spellAttackBonus !== undefined) { setClauses.push('spell_attack_bonus = ?'); params.push(updates.spellAttackBonus); }
-  if (updates.spellSaveDC !== undefined) { setClauses.push('spell_save_dc = ?'); params.push(updates.spellSaveDC); }
-  if (updates.initiative !== undefined) { setClauses.push('initiative = ?'); params.push(updates.initiative); }
-  if (updates.skills !== undefined) { setClauses.push('skills = ?'); params.push(JSON.stringify(updates.skills)); }
-  if (updates.spellSlots !== undefined) { setClauses.push('spell_slots = ?'); params.push(JSON.stringify(updates.spellSlots)); }
-  if (updates.spells !== undefined) { setClauses.push('spells = ?'); params.push(JSON.stringify(updates.spells)); }
-  if (updates.features !== undefined) { setClauses.push('features = ?'); params.push(JSON.stringify(updates.features)); }
-  if (updates.inventory !== undefined) { setClauses.push('inventory = ?'); params.push(JSON.stringify(updates.inventory)); }
-  if (updates.deathSaves !== undefined) { setClauses.push('death_saves = ?'); params.push(JSON.stringify(updates.deathSaves)); }
-  if (updates.tempHitPoints !== undefined) { setClauses.push('temp_hit_points = ?'); params.push(updates.tempHitPoints); }
-  if (updates.hitDice !== undefined) { setClauses.push('hit_dice = ?'); params.push(JSON.stringify(updates.hitDice)); }
-  if (updates.concentratingOn !== undefined) { setClauses.push('concentrating_on = ?'); params.push(updates.concentratingOn); }
+  if (updates.hitPoints !== undefined) { setClauses.push(`hit_points = $${paramIdx++}`); params.push(updates.hitPoints); }
+  if (updates.maxHitPoints !== undefined) { setClauses.push(`max_hit_points = $${paramIdx++}`); params.push(updates.maxHitPoints); }
+  if (updates.armorClass !== undefined) { setClauses.push(`armor_class = $${paramIdx++}`); params.push(updates.armorClass); }
+  if (updates.speed !== undefined) { setClauses.push(`speed = $${paramIdx++}`); params.push(updates.speed); }
+  if (updates.abilityScores !== undefined) { setClauses.push(`ability_scores = $${paramIdx++}`); params.push(JSON.stringify(updates.abilityScores)); }
+  if (updates.savingThrows !== undefined) { setClauses.push(`saving_throws = $${paramIdx++}`); params.push(JSON.stringify(updates.savingThrows)); }
+  if (updates.portraitUrl !== undefined) { setClauses.push(`portrait_url = $${paramIdx++}`); params.push(updates.portraitUrl); }
+  if (updates.background !== undefined) { setClauses.push(`background = $${paramIdx++}`); params.push(JSON.stringify(updates.background)); }
+  if (updates.characteristics !== undefined) { setClauses.push(`characteristics = $${paramIdx++}`); params.push(JSON.stringify(updates.characteristics)); }
+  if (updates.personality !== undefined) { setClauses.push(`personality = $${paramIdx++}`); params.push(JSON.stringify(updates.personality)); }
+  if (updates.notes !== undefined) { setClauses.push(`notes_data = $${paramIdx++}`); params.push(JSON.stringify(updates.notes)); }
+  if (updates.proficiencies !== undefined) { setClauses.push(`proficiencies_data = $${paramIdx++}`); params.push(JSON.stringify(updates.proficiencies)); }
+  if (updates.senses !== undefined) { setClauses.push(`senses = $${paramIdx++}`); params.push(JSON.stringify(updates.senses)); }
+  if (updates.defenses !== undefined) { setClauses.push(`defenses = $${paramIdx++}`); params.push(JSON.stringify(updates.defenses)); }
+  if (updates.conditions !== undefined) { setClauses.push(`conditions = $${paramIdx++}`); params.push(JSON.stringify(updates.conditions)); }
+  if (updates.currency !== undefined) { setClauses.push(`currency = $${paramIdx++}`); params.push(JSON.stringify(updates.currency)); }
+  if (updates.extras !== undefined) { setClauses.push(`extras = $${paramIdx++}`); params.push(JSON.stringify(updates.extras)); }
+  if (updates.spellcastingAbility !== undefined) { setClauses.push(`spellcasting_ability = $${paramIdx++}`); params.push(updates.spellcastingAbility); }
+  if (updates.spellAttackBonus !== undefined) { setClauses.push(`spell_attack_bonus = $${paramIdx++}`); params.push(updates.spellAttackBonus); }
+  if (updates.spellSaveDC !== undefined) { setClauses.push(`spell_save_dc = $${paramIdx++}`); params.push(updates.spellSaveDC); }
+  if (updates.initiative !== undefined) { setClauses.push(`initiative = $${paramIdx++}`); params.push(updates.initiative); }
+  if (updates.skills !== undefined) { setClauses.push(`skills = $${paramIdx++}`); params.push(JSON.stringify(updates.skills)); }
+  if (updates.spellSlots !== undefined) { setClauses.push(`spell_slots = $${paramIdx++}`); params.push(JSON.stringify(updates.spellSlots)); }
+  if (updates.spells !== undefined) { setClauses.push(`spells = $${paramIdx++}`); params.push(JSON.stringify(updates.spells)); }
+  if (updates.features !== undefined) { setClauses.push(`features = $${paramIdx++}`); params.push(JSON.stringify(updates.features)); }
+  if (updates.inventory !== undefined) { setClauses.push(`inventory = $${paramIdx++}`); params.push(JSON.stringify(updates.inventory)); }
+  if (updates.deathSaves !== undefined) { setClauses.push(`death_saves = $${paramIdx++}`); params.push(JSON.stringify(updates.deathSaves)); }
+  if (updates.tempHitPoints !== undefined) { setClauses.push(`temp_hit_points = $${paramIdx++}`); params.push(updates.tempHitPoints); }
+  if (updates.hitDice !== undefined) { setClauses.push(`hit_dice = $${paramIdx++}`); params.push(JSON.stringify(updates.hitDice)); }
+  if (updates.concentratingOn !== undefined) { setClauses.push(`concentrating_on = $${paramIdx++}`); params.push(updates.concentratingOn); }
 
   if (setClauses.length === 0) {
-    const row = db.prepare('SELECT * FROM characters WHERE id = ?').get(req.params.id) as Record<string, unknown>;
-    res.json(dbRowToCharacter(row));
+    const { rows } = await pool.query('SELECT * FROM characters WHERE id = $1', [req.params.id]);
+    res.json(dbRowToCharacter(rows[0]));
     return;
   }
 
-  setClauses.push("updated_at = datetime('now')");
+  setClauses.push(`updated_at = NOW()::text`);
   params.push(req.params.id);
 
-  db.prepare(`UPDATE characters SET ${setClauses.join(', ')} WHERE id = ?`).run(...params);
+  await pool.query(`UPDATE characters SET ${setClauses.join(', ')} WHERE id = $${paramIdx}`, params);
 
-  const row = db.prepare('SELECT * FROM characters WHERE id = ?').get(req.params.id) as Record<string, unknown>;
-  res.json(dbRowToCharacter(row));
+  const { rows } = await pool.query('SELECT * FROM characters WHERE id = $1', [req.params.id]);
+  res.json(dbRowToCharacter(rows[0]));
 });
 
-// DELETE /api/characters/:id - Delete a character (with ownership check)
-router.delete('/:id', (req: Request, res: Response) => {
+// DELETE /api/characters/:id
+router.delete('/:id', async (req: Request, res: Response) => {
   const userId = (req as any).user?.id;
-  const char = db.prepare('SELECT user_id FROM characters WHERE id = ?').get(req.params.id) as { user_id: string } | undefined;
-  if (!char) {
+  const { rows } = await pool.query('SELECT user_id FROM characters WHERE id = $1', [req.params.id]);
+  if (rows.length === 0) {
     res.status(404).json({ error: 'Character not found' });
     return;
   }
-  if (char.user_id !== userId && char.user_id !== 'npc') {
+  if (rows[0].user_id !== userId && rows[0].user_id !== 'npc') {
     res.status(403).json({ error: 'Not authorized' });
     return;
   }
 
-  db.prepare('DELETE FROM characters WHERE id = ?').run(req.params.id);
+  await pool.query('DELETE FROM characters WHERE id = $1', [req.params.id]);
   res.json({ success: true });
 });
 
-// POST /api/characters/import-json - Import from D&D Beyond JSON
-router.post('/import-json', (req: Request, res: Response) => {
+// POST /api/characters/import-json
+router.post('/import-json', async (req: Request, res: Response) => {
   const { userId, characterJson } = req.body;
   if (!userId || !characterJson) {
     res.status(400).json({ error: 'userId and characterJson are required' });
@@ -237,7 +234,7 @@ router.post('/import-json', (req: Request, res: Response) => {
     const character = parseCharacterJSON(characterJson);
     const id = uuidv4();
 
-    db.prepare(`
+    await pool.query(`
       INSERT INTO characters (
         id, user_id, name, race, class, level, hit_points, max_hit_points,
         temp_hit_points, armor_class, speed, proficiency_bonus,
@@ -248,8 +245,8 @@ router.post('/import-json', (req: Request, res: Response) => {
         proficiencies_data, senses, defenses, conditions, currency, extras,
         spellcasting_ability, spell_attack_bonus, spell_save_dc, initiative,
         hit_dice
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39)
+    `, [
       id, userId, character.name, character.race, character.class,
       character.level, character.hitPoints, character.maxHitPoints,
       character.tempHitPoints, character.armorClass, character.speed,
@@ -281,10 +278,10 @@ router.post('/import-json', (req: Request, res: Response) => {
       character.spellSaveDC,
       character.initiative,
       JSON.stringify(character.hitDice ?? []),
-    );
+    ]);
 
-    const row = db.prepare('SELECT * FROM characters WHERE id = ?').get(id) as Record<string, unknown>;
-    res.status(201).json(dbRowToCharacter(row));
+    const { rows } = await pool.query('SELECT * FROM characters WHERE id = $1', [id]);
+    res.status(201).json(dbRowToCharacter(rows[0]));
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Failed to parse character JSON';
     res.status(400).json({ error: message });

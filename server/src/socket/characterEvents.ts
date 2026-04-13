@@ -1,6 +1,6 @@
 import type { Server, Socket } from 'socket.io';
 import { z } from 'zod';
-import db from '../db/connection.js';
+import pool from '../db/connection.js';
 import { getPlayerBySocketId, playerIsDM } from '../utils/roomState.js';
 
 const characterUpdateSchema = z.object({
@@ -12,7 +12,6 @@ const characterSyncRequestSchema = z.object({
   characterId: z.string().min(1),
 });
 
-// Map from camelCase field names to DB column names and whether the value needs JSON.stringify
 const FIELD_TO_COLUMN: Record<string, { col: string; json: boolean }> = {
   name: { col: 'name', json: false },
   race: { col: 'race', json: false },
@@ -58,18 +57,10 @@ function safeJsonParse(value: unknown, fallback: unknown = null): unknown {
 
 function dbRowToCharacter(row: Record<string, unknown>): Record<string, unknown> {
   return {
-    id: row.id,
-    userId: row.user_id,
-    name: row.name,
-    race: row.race,
-    class: row.class,
-    level: row.level,
-    hitPoints: row.hit_points,
-    maxHitPoints: row.max_hit_points,
-    tempHitPoints: row.temp_hit_points,
-    armorClass: row.armor_class,
-    speed: row.speed,
-    proficiencyBonus: row.proficiency_bonus,
+    id: row.id, userId: row.user_id, name: row.name, race: row.race, class: row.class,
+    level: row.level, hitPoints: row.hit_points, maxHitPoints: row.max_hit_points,
+    tempHitPoints: row.temp_hit_points, armorClass: row.armor_class,
+    speed: row.speed, proficiencyBonus: row.proficiency_bonus,
     abilityScores: safeJsonParse(row.ability_scores, { str: 10, dex: 10, con: 10, int: 10, wis: 10, cha: 10 }),
     savingThrows: safeJsonParse(row.saving_throws, []),
     skills: safeJsonParse(row.skills, {}),
@@ -94,17 +85,14 @@ function dbRowToCharacter(row: Record<string, unknown>): Record<string, unknown>
     spellAttackBonus: row.spell_attack_bonus ?? 0,
     spellSaveDC: row.spell_save_dc ?? 10,
     initiative: row.initiative ?? 0,
-    portraitUrl: row.portrait_url,
-    dndbeyondId: row.dndbeyond_id,
-    source: row.source,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
+    portraitUrl: row.portrait_url, dndbeyondId: row.dndbeyond_id,
+    source: row.source, createdAt: row.created_at, updatedAt: row.updated_at,
   };
 }
 
 export function registerCharacterEvents(io: Server, socket: Socket): void {
 
-  socket.on('character:update', (data) => {
+  socket.on('character:update', async (data) => {
     const parsed = characterUpdateSchema.safeParse(data);
     if (!parsed.success) return;
 
@@ -113,12 +101,10 @@ export function registerCharacterEvents(io: Server, socket: Socket): void {
 
     const { characterId, changes } = parsed.data;
 
-    // Verify the character exists
-    const existing = db.prepare('SELECT id, user_id FROM characters WHERE id = ?').get(characterId) as Record<string, unknown> | undefined;
-    if (!existing) return;
+    const { rows: existingRows } = await pool.query('SELECT id, user_id FROM characters WHERE id = $1', [characterId]);
+    if (existingRows.length === 0) return;
+    const existing = existingRows[0];
 
-    // Permission: only the character's owner or the DM can update.
-    // NPC characters (user_id = 'npc') can be updated by the DM only.
     const charUserId = existing.user_id as string;
     if (charUserId === 'npc') {
       if (!playerIsDM(ctx)) return;
@@ -126,28 +112,27 @@ export function registerCharacterEvents(io: Server, socket: Socket): void {
       if (charUserId !== ctx.player.userId && !playerIsDM(ctx)) return;
     }
 
-    // Build the DB update
     const setClauses: string[] = [];
     const params: unknown[] = [];
+    let paramIdx = 1;
 
     for (const [key, value] of Object.entries(changes)) {
       const mapping = FIELD_TO_COLUMN[key];
-      if (!mapping) continue; // Skip unknown fields
-      setClauses.push(`${mapping.col} = ?`);
+      if (!mapping) continue;
+      setClauses.push(`${mapping.col} = $${paramIdx++}`);
       params.push(mapping.json ? JSON.stringify(value) : value);
     }
 
     if (setClauses.length > 0) {
-      setClauses.push("updated_at = datetime('now')");
+      setClauses.push(`updated_at = NOW()::text`);
       params.push(characterId);
-      db.prepare(`UPDATE characters SET ${setClauses.join(', ')} WHERE id = ?`).run(...params);
+      await pool.query(`UPDATE characters SET ${setClauses.join(', ')} WHERE id = $${paramIdx}`, params);
     }
 
-    // Broadcast to all players in the room (except the sender)
     socket.to(ctx.room.sessionId).emit('character:updated', { characterId, changes });
   });
 
-  socket.on('character:sync-request', (data) => {
+  socket.on('character:sync-request', async (data) => {
     const parsed = characterSyncRequestSchema.safeParse(data);
     if (!parsed.success) return;
 
@@ -156,9 +141,9 @@ export function registerCharacterEvents(io: Server, socket: Socket): void {
 
     const { characterId } = parsed.data;
 
-    const row = db.prepare('SELECT * FROM characters WHERE id = ?').get(characterId) as Record<string, unknown> | undefined;
-    if (!row) return;
+    const { rows } = await pool.query('SELECT * FROM characters WHERE id = $1', [characterId]);
+    if (rows.length === 0) return;
 
-    socket.emit('character:synced', { character: dbRowToCharacter(row) });
+    socket.emit('character:synced', { character: dbRowToCharacter(rows[0]) });
   });
 }

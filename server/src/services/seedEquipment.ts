@@ -5,7 +5,7 @@
  *
  * Safe to re-run: uses INSERT OR IGNORE so existing rows are not overwritten.
  */
-import db from '../db/connection.js';
+import pool from '../db/connection.js';
 
 interface EquipmentEntry {
   slug: string;
@@ -326,32 +326,31 @@ const ALL_EQUIPMENT: EquipmentEntry[] = [
   ...TREASURE,
 ];
 
-export function seedEquipment(): void {
-  const insertStmt = db.prepare(`
-    INSERT OR IGNORE INTO compendium_items (slug, name, type, rarity, requires_attunement, description, source, raw_json)
-    VALUES (?, ?, ?, ?, 0, ?, 'PHB Equipment', ?)
-  `);
-
-  const transaction = db.transaction(() => {
+export async function seedEquipment(): Promise<void> {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
     for (const item of ALL_EQUIPMENT) {
-      insertStmt.run(
-        item.slug,
-        item.name,
-        item.type,
-        item.rarity,
-        item.description,
-        JSON.stringify(item.rawJson),
+      await client.query(
+        `INSERT INTO compendium_items (slug, name, type, rarity, requires_attunement, description, source, raw_json)
+         VALUES ($1, $2, $3, $4, 0, $5, 'PHB Equipment', $6)
+         ON CONFLICT (slug) DO NOTHING`,
+        [item.slug, item.name, item.type, item.rarity, item.description, JSON.stringify(item.rawJson)],
       );
     }
-  });
-
-  transaction();
+    await client.query('COMMIT');
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
   console.log(`Seeded ${ALL_EQUIPMENT.length} PHB equipment items`);
 }
 
-export function isEquipmentSeeded(): boolean {
-  const count = db.prepare(
-    "SELECT COUNT(*) as cnt FROM compendium_items WHERE source = 'PHB Equipment'"
-  ).get() as { cnt: number };
-  return count.cnt >= ALL_EQUIPMENT.length;
+export async function isEquipmentSeeded(): Promise<boolean> {
+  const { rows } = await pool.query(
+    "SELECT COUNT(*) as cnt FROM compendium_items WHERE source = 'PHB Equipment'",
+  );
+  return Number(rows[0].cnt) >= ALL_EQUIPMENT.length;
 }

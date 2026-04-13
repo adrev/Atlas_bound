@@ -29,8 +29,8 @@ import { requireAuth } from './auth/middleware.js';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Initialize database
-initDatabase();
+// Initialize database (async for Postgres)
+await initDatabase();
 console.log('Database initialized');
 
 // Seed compendium in the background (don't block startup)
@@ -44,9 +44,10 @@ isCompendiumSeeded().then(seeded => {
 });
 
 // Seed PHB equipment (mundane weapons, armor, gear)
-if (!isEquipmentSeeded()) {
+const equipmentSeeded = await isEquipmentSeeded();
+if (!equipmentSeeded) {
   console.log('Seeding PHB equipment...');
-  seedEquipment();
+  await seedEquipment();
 } else {
   console.log('PHB equipment already seeded');
 }

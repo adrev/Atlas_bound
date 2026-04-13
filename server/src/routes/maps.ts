@@ -1,13 +1,12 @@
 import { Router, type Request, type Response, type NextFunction } from 'express';
 import { v4 as uuidv4 } from 'uuid';
-import db from '../db/connection.js';
+import pool from '../db/connection.js';
 import { mapUpload } from './uploads.js';
 import { createMapSchema } from '../utils/validation.js';
 
 const router = Router();
 
-// POST /api/sessions/:sessionId/maps - Create a new map
-// Supports both JSON body (for prebuilt maps) and multipart form (for image uploads)
+// POST /api/sessions/:sessionId/maps
 router.post(
   '/sessions/:sessionId/maps',
   (req: Request, res: Response, next: NextFunction) => {
@@ -18,11 +17,11 @@ router.post(
       next();
     }
   },
-  (req: Request, res: Response) => {
+  async (req: Request, res: Response) => {
     const sessionId = String(req.params.sessionId);
 
-    const session = db.prepare('SELECT id FROM sessions WHERE id = ?').get(sessionId);
-    if (!session) {
+    const { rows: sessionRows } = await pool.query('SELECT id FROM sessions WHERE id = $1', [sessionId]);
+    if (sessionRows.length === 0) {
       res.status(404).json({ error: 'Session not found' });
       return;
     }
@@ -35,16 +34,12 @@ router.post(
 
     const { name, width, height, gridSize, gridType, prebuiltKey } = parsed.data;
 
-    // ── Prebuilt dedup ────────────────────────────────────────────
-    // When the client passes a prebuiltKey it's saying "this is a
-    // reload of the same template, reuse if it exists". Dedup by
-    // exact name match within the same session. This lets the DM
-    // click "Load Goblin Camp" twice without losing any walls / fog /
-    // tokens they already set up on the first instance.
     if (prebuiltKey) {
-      const existing = db.prepare(
-        'SELECT * FROM maps WHERE session_id = ? AND name = ? LIMIT 1',
-      ).get(sessionId, name) as Record<string, unknown> | undefined;
+      const { rows: existingRows } = await pool.query(
+        'SELECT * FROM maps WHERE session_id = $1 AND name = $2 LIMIT 1',
+        [sessionId, name],
+      );
+      const existing = existingRows[0] as Record<string, unknown> | undefined;
       if (existing) {
         res.status(200).json({
           id: existing.id,
@@ -69,12 +64,13 @@ router.post(
     const mapId = uuidv4();
     const imageUrl = req.file ? `/uploads/maps/${req.file.filename}` : null;
 
-    db.prepare(`
+    await pool.query(`
       INSERT INTO maps (id, session_id, name, image_url, width, height, grid_size, grid_type)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(mapId, sessionId, name, imageUrl, width, height, gridSize, gridType);
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+    `, [mapId, sessionId, name, imageUrl, width, height, gridSize, gridType]);
 
-    const map = db.prepare('SELECT * FROM maps WHERE id = ?').get(mapId) as Record<string, unknown>;
+    const { rows: mapRows } = await pool.query('SELECT * FROM maps WHERE id = $1', [mapId]);
+    const map = mapRows[0] as Record<string, unknown>;
 
     res.status(201).json({
       id: map.id,
@@ -95,15 +91,15 @@ router.post(
   },
 );
 
-// GET /api/sessions/:sessionId/maps - List maps for a session
-router.get('/sessions/:sessionId/maps', (req: Request, res: Response) => {
+// GET /api/sessions/:sessionId/maps
+router.get('/sessions/:sessionId/maps', async (req: Request, res: Response) => {
   const { sessionId } = req.params;
 
-  const maps = db.prepare(`
+  const { rows: maps } = await pool.query(`
     SELECT id, session_id, name, image_url, width, height, grid_size, grid_type, created_at
-    FROM maps WHERE session_id = ?
+    FROM maps WHERE session_id = $1
     ORDER BY created_at DESC
-  `).all(sessionId) as Array<Record<string, unknown>>;
+  `, [sessionId]);
 
   res.json(
     maps.map(m => ({
@@ -120,17 +116,18 @@ router.get('/sessions/:sessionId/maps', (req: Request, res: Response) => {
   );
 });
 
-// GET /api/maps/:id - Get a single map with tokens
-router.get('/maps/:id', (req: Request, res: Response) => {
+// GET /api/maps/:id
+router.get('/maps/:id', async (req: Request, res: Response) => {
   const { id } = req.params;
 
-  const map = db.prepare('SELECT * FROM maps WHERE id = ?').get(id) as Record<string, unknown> | undefined;
-  if (!map) {
+  const { rows: mapRows } = await pool.query('SELECT * FROM maps WHERE id = $1', [id]);
+  if (mapRows.length === 0) {
     res.status(404).json({ error: 'Map not found' });
     return;
   }
+  const map = mapRows[0] as Record<string, unknown>;
 
-  const tokens = db.prepare('SELECT * FROM tokens WHERE map_id = ?').all(id) as Array<Record<string, unknown>>;
+  const { rows: tokens } = await pool.query('SELECT * FROM tokens WHERE map_id = $1', [id]);
 
   res.json({
     id: map.id,
@@ -169,18 +166,18 @@ router.get('/maps/:id', (req: Request, res: Response) => {
   });
 });
 
-// DELETE /api/maps/:id - Delete a map
-router.delete('/maps/:id', (req: Request, res: Response) => {
+// DELETE /api/maps/:id
+router.delete('/maps/:id', async (req: Request, res: Response) => {
   const { id } = req.params;
 
-  const map = db.prepare('SELECT id FROM maps WHERE id = ?').get(id);
-  if (!map) {
+  const { rows } = await pool.query('SELECT id FROM maps WHERE id = $1', [id]);
+  if (rows.length === 0) {
     res.status(404).json({ error: 'Map not found' });
     return;
   }
 
-  db.prepare('DELETE FROM tokens WHERE map_id = ?').run(id);
-  db.prepare('DELETE FROM maps WHERE id = ?').run(id);
+  await pool.query('DELETE FROM tokens WHERE map_id = $1', [id]);
+  await pool.query('DELETE FROM maps WHERE id = $1', [id]);
 
   res.json({ success: true });
 });

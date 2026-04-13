@@ -1,35 +1,36 @@
 import { Router, type Request, type Response } from 'express';
 import { v4 as uuidv4 } from 'uuid';
-import db from '../db/connection.js';
+import pool from '../db/connection.js';
 
 const router = Router();
 
-// GET /api/characters/:id/loot - Get loot for a creature
-router.get('/characters/:id/loot', (req: Request, res: Response) => {
+// GET /api/characters/:id/loot
+router.get('/characters/:id/loot', async (req: Request, res: Response) => {
   const charId = String(req.params.id);
-  const entries = db.prepare('SELECT * FROM loot_entries WHERE character_id = ? ORDER BY sort_order').all(charId);
+  const { rows: entries } = await pool.query('SELECT * FROM loot_entries WHERE character_id = $1 ORDER BY sort_order', [charId]);
   res.json(entries);
 });
 
-// POST /api/characters/:id/loot - Add item to loot
-router.post('/characters/:id/loot', (req: Request, res: Response) => {
+// POST /api/characters/:id/loot
+router.post('/characters/:id/loot', async (req: Request, res: Response) => {
   const charId = String(req.params.id);
   const { itemName, itemSlug, customItemId, itemRarity, quantity } = req.body;
   const id = uuidv4();
-  db.prepare(
-    'INSERT INTO loot_entries (id, character_id, item_slug, custom_item_id, item_name, item_rarity, quantity) VALUES (?, ?, ?, ?, ?, ?, ?)'
-  ).run(id, charId, itemSlug || null, customItemId || null, itemName, itemRarity || 'common', quantity || 1);
+  await pool.query(
+    'INSERT INTO loot_entries (id, character_id, item_slug, custom_item_id, item_name, item_rarity, quantity) VALUES ($1, $2, $3, $4, $5, $6, $7)',
+    [id, charId, itemSlug || null, customItemId || null, itemName, itemRarity || 'common', quantity || 1],
+  );
   res.status(201).json({ id, characterId: charId, itemName, itemRarity: itemRarity || 'common', quantity: quantity || 1 });
 });
 
-// DELETE /api/characters/:id/loot/:entryId - Remove loot entry
-router.delete('/characters/:id/loot/:entryId', (req: Request, res: Response) => {
-  db.prepare('DELETE FROM loot_entries WHERE id = ? AND character_id = ?').run(req.params.entryId, String(req.params.id));
+// DELETE /api/characters/:id/loot/:entryId
+router.delete('/characters/:id/loot/:entryId', async (req: Request, res: Response) => {
+  await pool.query('DELETE FROM loot_entries WHERE id = $1 AND character_id = $2', [req.params.entryId, String(req.params.id)]);
   res.json({ success: true });
 });
 
-// PATCH /api/characters/:id/loot/:entryId - Update quantity or equipped
-router.patch('/characters/:id/loot/:entryId', (req: Request, res: Response) => {
+// PATCH /api/characters/:id/loot/:entryId
+router.patch('/characters/:id/loot/:entryId', async (req: Request, res: Response) => {
   const { quantity, equipped } = req.body;
   const entryId = req.params.entryId;
   const charId = String(req.params.id);
@@ -40,33 +41,34 @@ router.patch('/characters/:id/loot/:entryId', (req: Request, res: Response) => {
       return;
     }
     if (quantity === 0) {
-      db.prepare('DELETE FROM loot_entries WHERE id = ? AND character_id = ?').run(entryId, charId);
+      await pool.query('DELETE FROM loot_entries WHERE id = $1 AND character_id = $2', [entryId, charId]);
     } else {
-      db.prepare('UPDATE loot_entries SET quantity = ? WHERE id = ? AND character_id = ?').run(quantity, entryId, charId);
+      await pool.query('UPDATE loot_entries SET quantity = $1 WHERE id = $2 AND character_id = $3', [quantity, entryId, charId]);
     }
   }
 
   if (equipped !== undefined) {
-    db.prepare('UPDATE loot_entries SET equipped = ? WHERE id = ? AND character_id = ?').run(equipped ? 1 : 0, entryId, charId);
+    await pool.query('UPDATE loot_entries SET equipped = $1 WHERE id = $2 AND character_id = $3', [equipped ? 1 : 0, entryId, charId]);
   }
 
   res.json({ success: true });
 });
 
-// POST /api/characters/:id/loot/take - Player takes item from loot
-router.post('/characters/:id/loot/take', (req: Request, res: Response) => {
+// POST /api/characters/:id/loot/take
+router.post('/characters/:id/loot/take', async (req: Request, res: Response) => {
   const creatureCharId = String(req.params.id);
   const { entryId, targetCharacterId } = req.body;
 
-  const entry = db.prepare('SELECT * FROM loot_entries WHERE id = ? AND character_id = ?').get(entryId, creatureCharId) as any;
+  const { rows: entryRows } = await pool.query('SELECT * FROM loot_entries WHERE id = $1 AND character_id = $2', [entryId, creatureCharId]);
+  const entry = entryRows[0] as any;
   if (!entry) { res.status(404).json({ error: 'Loot entry not found' }); return; }
 
-  const targetChar = db.prepare('SELECT id, inventory FROM characters WHERE id = ?').get(targetCharacterId) as any;
+  const { rows: targetRows } = await pool.query('SELECT id, inventory FROM characters WHERE id = $1', [targetCharacterId]);
+  const targetChar = targetRows[0] as any;
   if (!targetChar) { res.status(404).json({ error: 'Target character not found' }); return; }
 
   const inventory = JSON.parse(targetChar.inventory || '[]');
 
-  // Build a rich inventory item from compendium data if available
   let itemType: string = 'gear';
   let weight = 0;
   let description = '';
@@ -79,10 +81,8 @@ router.post('/characters/:id/loot/take', (req: Request, res: Response) => {
   let attunement = false;
   let acBonus: number | undefined;
   const slug = entry.item_slug || null;
-
   const customItemId = entry.custom_item_id || null;
 
-  // Helper to map type string to inventory type
   const mapType = (t: string): string => {
     const lower = t.toLowerCase();
     if (lower.includes('weapon')) return 'weapon';
@@ -94,15 +94,14 @@ router.post('/characters/:id/loot/take', (req: Request, res: Response) => {
     return 'gear';
   };
 
-  // Enrich from compendium item
   if (slug) {
-    const compItem = db.prepare('SELECT * FROM compendium_items WHERE slug = ?').get(slug) as any;
+    const { rows: compRows } = await pool.query('SELECT * FROM compendium_items WHERE slug = $1', [slug]);
+    const compItem = compRows[0] as any;
     if (compItem) {
       description = compItem.description || '';
       rarity = compItem.rarity || rarity;
       attunement = compItem.requires_attunement === 1;
       itemType = mapType(compItem.type || '');
-
       try {
         const raw = JSON.parse(compItem.raw_json || '{}');
         weight = raw.weight ?? 0;
@@ -114,8 +113,6 @@ router.post('/characters/:id/loot/take', (req: Request, res: Response) => {
         if (raw.acBonus) acBonus = raw.acBonus;
         if (raw.ac && itemType === 'armor') acBonus = raw.ac;
       } catch { /* ignore */ }
-
-      // Fallback: parse damage from description for magic weapons
       if (!damage && itemType === 'weapon' && description) {
         const m = description.match(/(\d+d\d+(?:\s*\+\s*\d+)?)\s+(slashing|piercing|bludgeoning|fire|cold|lightning|thunder|acid|poison|necrotic|radiant|force|psychic)/i);
         if (m) { damage = m[1].replace(/\s/g, ''); damageType = m[2].toLowerCase(); }
@@ -123,9 +120,9 @@ router.post('/characters/:id/loot/take', (req: Request, res: Response) => {
     }
   }
 
-  // Enrich from custom item
   if (customItemId) {
-    const ci = db.prepare('SELECT * FROM custom_items WHERE id = ?').get(customItemId) as any;
+    const { rows: ciRows } = await pool.query('SELECT * FROM custom_items WHERE id = $1', [customItemId]);
+    const ci = ciRows[0] as any;
     if (ci) {
       description = ci.description || '';
       rarity = ci.rarity || rarity;
@@ -139,27 +136,16 @@ router.post('/characters/:id/loot/take', (req: Request, res: Response) => {
     }
   }
 
-  // Check if this item already exists in inventory (stack by slug or name)
   const existingIdx = inventory.findIndex((i: any) =>
     (slug && i.slug === slug) || (!slug && i.name === entry.item_name && i.type === itemType)
   );
 
   if (existingIdx >= 0) {
-    // Stack: increment quantity
     inventory[existingIdx].quantity = (inventory[existingIdx].quantity || 1) + 1;
   } else {
-    // New item
     const newItem: Record<string, unknown> = {
-      name: entry.item_name,
-      quantity: 1,
-      weight,
-      description,
-      equipped: false,
-      type: itemType,
-      cost,
-      rarity,
-      slug,
-      imageUrl: slug ? `/uploads/items/${slug}.png` : null,
+      name: entry.item_name, quantity: 1, weight, description, equipped: false,
+      type: itemType, cost, rarity, slug, imageUrl: slug ? `/uploads/items/${slug}.png` : null,
     };
     if (attunement) newItem.attunement = true;
     if (damage) newItem.damage = damage;
@@ -170,7 +156,6 @@ router.post('/characters/:id/loot/take', (req: Request, res: Response) => {
     inventory.push(newItem);
   }
 
-  // Also store custom_item_id on inventory item for future lookups
   if (customItemId) {
     const lastItem = inventory[inventory.length - 1];
     if (lastItem && !lastItem.slug) lastItem.customItemId = customItemId;
@@ -178,30 +163,36 @@ router.post('/characters/:id/loot/take', (req: Request, res: Response) => {
 
   const inventoryJson = JSON.stringify(inventory);
 
-  // Update inventory and remove/decrement loot entry
-  const tx = db.transaction(() => {
-    db.prepare('UPDATE characters SET inventory = ? WHERE id = ?').run(inventoryJson, targetCharacterId);
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query('UPDATE characters SET inventory = $1 WHERE id = $2', [inventoryJson, targetCharacterId]);
     if (entry.quantity <= 1) {
-      db.prepare('DELETE FROM loot_entries WHERE id = ?').run(entryId);
+      await client.query('DELETE FROM loot_entries WHERE id = $1', [entryId]);
     } else {
-      db.prepare('UPDATE loot_entries SET quantity = quantity - 1 WHERE id = ?').run(entryId);
+      await client.query('UPDATE loot_entries SET quantity = quantity - 1 WHERE id = $1', [entryId]);
     }
-  });
-  tx();
+    await client.query('COMMIT');
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
 
   res.json({ success: true, itemName: entry.item_name, inventory, targetCharacterId });
 });
 
-// POST /api/characters/:id/inventory/enrich - Match inventory items to compendium and add slugs/images
-router.post('/characters/:id/inventory/enrich', (req: Request, res: Response) => {
+// POST /api/characters/:id/inventory/enrich
+router.post('/characters/:id/inventory/enrich', async (req: Request, res: Response) => {
   const charId = String(req.params.id);
-  const char = db.prepare('SELECT id, inventory FROM characters WHERE id = ?').get(charId) as any;
+  const { rows: charRows } = await pool.query('SELECT id, inventory FROM characters WHERE id = $1', [charId]);
+  const char = charRows[0] as any;
   if (!char) { res.status(404).json({ error: 'Character not found' }); return; }
 
   const inventory = JSON.parse(char.inventory || '[]');
   let updated = false;
 
-  // DDB name aliases → compendium name
   const aliases: Record<string, string> = {
     'leather': 'leather-armor', 'studded leather': 'studded-leather-armor',
     'chain shirt': 'chain-shirt', 'chain mail': 'chain-mail',
@@ -216,28 +207,27 @@ router.post('/characters/:id/inventory/enrich', (req: Request, res: Response) =>
   };
 
   for (const item of inventory) {
-    if (item.slug) continue; // Already matched
-
+    if (item.slug) continue;
     const nameLower = item.name.toLowerCase().trim();
 
-    // Try direct name match
-    let match = db.prepare('SELECT slug, type, rarity, raw_json FROM compendium_items WHERE LOWER(name) = ? LIMIT 1').get(nameLower) as any;
+    let match: any = null;
+    const { rows: r1 } = await pool.query('SELECT slug, type, rarity, raw_json FROM compendium_items WHERE LOWER(name) = $1 LIMIT 1', [nameLower]);
+    match = r1[0];
 
-    // Try alias
     if (!match && aliases[nameLower]) {
-      match = db.prepare('SELECT slug, type, rarity, raw_json FROM compendium_items WHERE slug = ? LIMIT 1').get(aliases[nameLower]) as any;
+      const { rows: r2 } = await pool.query('SELECT slug, type, rarity, raw_json FROM compendium_items WHERE slug = $1 LIMIT 1', [aliases[nameLower]]);
+      match = r2[0];
     }
 
-    // Try fuzzy match (name contains)
     if (!match) {
-      match = db.prepare('SELECT slug, type, rarity, raw_json FROM compendium_items WHERE LOWER(name) LIKE ? AND source = \'PHB Equipment\' LIMIT 1').get(`${nameLower}%`) as any;
+      const { rows: r3 } = await pool.query("SELECT slug, type, rarity, raw_json FROM compendium_items WHERE LOWER(name) LIKE $1 AND source = 'PHB Equipment' LIMIT 1", [`${nameLower}%`]);
+      match = r3[0];
     }
 
     if (match) {
       item.slug = match.slug;
       item.imageUrl = `/uploads/items/${match.slug}.png`;
       item.rarity = item.rarity || match.rarity || 'common';
-      // Enrich with compendium stats if missing
       try {
         const raw = JSON.parse(match.raw_json || '{}');
         if (!item.damage && raw.damage) { item.damage = raw.damage; item.damageType = raw.damageType || ''; }
@@ -246,7 +236,6 @@ router.post('/characters/:id/inventory/enrich', (req: Request, res: Response) =>
         if (!item.weight && raw.weight) item.weight = raw.weight;
         if (!item.cost && raw.costGp) item.cost = raw.costGp;
       } catch { /* ignore */ }
-      // Map type
       const cType = (match.type || '').toLowerCase();
       if (cType.includes('weapon') && item.type === 'gear') item.type = 'weapon';
       else if ((cType.includes('armor') || cType.includes('shield')) && item.type === 'gear') item.type = 'armor';
@@ -255,14 +244,14 @@ router.post('/characters/:id/inventory/enrich', (req: Request, res: Response) =>
   }
 
   if (updated) {
-    db.prepare('UPDATE characters SET inventory = ? WHERE id = ?').run(JSON.stringify(inventory), charId);
+    await pool.query('UPDATE characters SET inventory = $1 WHERE id = $2', [JSON.stringify(inventory), charId]);
   }
 
   res.json({ success: true, updated, inventory });
 });
 
-// POST /api/loot/transfer - Transfer a loot entry from one character to another
-router.post('/loot/transfer', (req: Request, res: Response) => {
+// POST /api/loot/transfer
+router.post('/loot/transfer', async (req: Request, res: Response) => {
   const { fromCharacterId, toCharacterId, lootEntryId } = req.body;
 
   if (!fromCharacterId || !toCharacterId || !lootEntryId) {
@@ -270,27 +259,16 @@ router.post('/loot/transfer', (req: Request, res: Response) => {
     return;
   }
 
-  // Fetch the loot entry
-  const entry = db.prepare('SELECT * FROM loot_entries WHERE id = ? AND character_id = ?')
-    .get(lootEntryId, String(fromCharacterId)) as any;
-  if (!entry) {
-    res.status(404).json({ error: 'Loot entry not found' });
-    return;
-  }
+  const { rows: entryRows } = await pool.query('SELECT * FROM loot_entries WHERE id = $1 AND character_id = $2', [lootEntryId, String(fromCharacterId)]);
+  const entry = entryRows[0] as any;
+  if (!entry) { res.status(404).json({ error: 'Loot entry not found' }); return; }
 
-  // Verify the target character exists
-  const targetChar = db.prepare('SELECT id, name FROM characters WHERE id = ?')
-    .get(String(toCharacterId)) as any;
-  if (!targetChar) {
-    res.status(404).json({ error: 'Target character not found' });
-    return;
-  }
+  const { rows: targetRows } = await pool.query('SELECT id, name FROM characters WHERE id = $1', [String(toCharacterId)]);
+  const targetChar = targetRows[0] as any;
+  if (!targetChar) { res.status(404).json({ error: 'Target character not found' }); return; }
 
-  // Update the entry's character_id to the target
-  db.prepare('UPDATE loot_entries SET character_id = ? WHERE id = ?')
-    .run(String(toCharacterId), lootEntryId);
+  await pool.query('UPDATE loot_entries SET character_id = $1 WHERE id = $2', [String(toCharacterId), lootEntryId]);
 
-  // Return the updated entry with target info for chat announcement
   res.json({
     success: true,
     entry: { ...entry, character_id: String(toCharacterId) },
@@ -300,13 +278,13 @@ router.post('/loot/transfer', (req: Request, res: Response) => {
   });
 });
 
-// POST /api/characters/:id/loot/drop - Drop an item from inventory onto the map as a loot token
-router.post('/characters/:id/loot/drop', (req: Request, res: Response) => {
+// POST /api/characters/:id/loot/drop
+router.post('/characters/:id/loot/drop', async (req: Request, res: Response) => {
   const charId = String(req.params.id);
   const { itemIndex, mapId, x, y } = req.body;
 
-  // Get character inventory
-  const char = db.prepare('SELECT id, inventory FROM characters WHERE id = ?').get(charId) as any;
+  const { rows: charRows } = await pool.query('SELECT id, inventory FROM characters WHERE id = $1', [charId]);
+  const char = charRows[0] as any;
   if (!char) { res.status(404).json({ error: 'Character not found' }); return; }
 
   const inventory = JSON.parse(char.inventory || '[]');
@@ -314,49 +292,38 @@ router.post('/characters/:id/loot/drop', (req: Request, res: Response) => {
 
   const item = inventory[itemIndex];
 
-  // Create a loot bag character
   const lootCharId = uuidv4();
-  db.prepare(`INSERT INTO characters (id, user_id, name, race, class, level, hit_points, max_hit_points, armor_class)
-    VALUES (?, 'npc', ?, 'loot', 'bag', 1, 0, 1, 0)`)
-    .run(lootCharId, `Dropped: ${item.name}`);
+  await pool.query(
+    `INSERT INTO characters (id, user_id, name, race, class, level, hit_points, max_hit_points, armor_class)
+     VALUES ($1, 'npc', $2, 'loot', 'bag', 1, 0, 1, 0)`,
+    [lootCharId, `Dropped: ${item.name}`],
+  );
 
-  // Add item to loot_entries
   const lootEntryId = uuidv4();
-  db.prepare(`INSERT INTO loot_entries (id, character_id, item_slug, custom_item_id, item_name, item_rarity, quantity)
-    VALUES (?, ?, ?, ?, ?, ?, 1)`)
-    .run(lootEntryId, lootCharId, item.slug || null, item.customItemId || null, item.name, item.rarity || 'common');
+  await pool.query(
+    `INSERT INTO loot_entries (id, character_id, item_slug, custom_item_id, item_name, item_rarity, quantity)
+     VALUES ($1, $2, $3, $4, $5, $6, 1)`,
+    [lootEntryId, lootCharId, item.slug || null, item.customItemId || null, item.name, item.rarity || 'common'],
+  );
 
-  // Remove item from inventory (or decrement quantity)
   if (item.quantity > 1) {
     inventory[itemIndex] = { ...item, quantity: item.quantity - 1 };
   } else {
     inventory.splice(itemIndex, 1);
   }
-  db.prepare('UPDATE characters SET inventory = ? WHERE id = ?').run(JSON.stringify(inventory), charId);
+  await pool.query('UPDATE characters SET inventory = $1 WHERE id = $2', [JSON.stringify(inventory), charId]);
 
-  // Build token data for the caller to emit via socket
   const imgUrl = item.imageUrl || (item.slug ? `/uploads/items/${item.slug}.png` : '/uploads/items/default-item.svg');
 
   res.json({
     success: true,
-    inventory, // updated inventory for the character
+    inventory,
     token: {
-      mapId,
-      characterId: lootCharId,
-      name: item.name,
-      x: x || 0,
-      y: y || 0,
-      size: 0.5,
-      imageUrl: imgUrl,
-      color: '#d4a843',
-      layer: 'token',
-      visible: true,
-      hasLight: false,
-      lightRadius: 0,
-      lightDimRadius: 0,
-      lightColor: '#ffcc44',
-      conditions: [],
-      ownerUserId: null,
+      mapId, characterId: lootCharId, name: item.name,
+      x: x || 0, y: y || 0, size: 0.5, imageUrl: imgUrl,
+      color: '#d4a843', layer: 'token', visible: true,
+      hasLight: false, lightRadius: 0, lightDimRadius: 0, lightColor: '#ffcc44',
+      conditions: [], ownerUserId: null,
     },
   });
 });

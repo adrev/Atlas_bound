@@ -83,7 +83,7 @@ router.get('/google/callback', async (req: Request, res: Response) => {
       picture?: string;
     };
 
-    const userId = findOrCreateOAuthUser({
+    const userId = await findOrCreateOAuthUser({
       provider: 'google',
       providerUserId: googleUser.sub,
       email: googleUser.email ?? null,

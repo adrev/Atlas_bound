@@ -1,7 +1,7 @@
-import db from './connection.js';
+import pool from './connection.js';
 
-export function initDatabase(): void {
-  db.exec(`
+export async function initDatabase(): Promise<void> {
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS sessions (
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
@@ -11,8 +11,8 @@ export function initDatabase(): void {
       player_map_id TEXT,
       combat_active INTEGER DEFAULT 0,
       game_mode TEXT DEFAULT 'free-roam',
-      created_at TEXT NOT NULL DEFAULT (datetime('now')),
-      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+      created_at TEXT NOT NULL DEFAULT (NOW()::text),
+      updated_at TEXT NOT NULL DEFAULT (NOW()::text),
       settings TEXT DEFAULT '{}'
     );
 
@@ -20,7 +20,8 @@ export function initDatabase(): void {
       id TEXT PRIMARY KEY,
       display_name TEXT NOT NULL,
       avatar_url TEXT,
-      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      auth_user_id TEXT,
+      created_at TEXT NOT NULL DEFAULT (NOW()::text)
     );
 
     CREATE TABLE IF NOT EXISTS session_players (
@@ -70,8 +71,11 @@ export function initDatabase(): void {
       spell_attack_bonus INTEGER DEFAULT 0,
       spell_save_dc INTEGER DEFAULT 10,
       initiative INTEGER DEFAULT 0,
-      created_at TEXT NOT NULL DEFAULT (datetime('now')),
-      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+      hit_dice TEXT DEFAULT '[]',
+      concentrating_on TEXT,
+      compendium_slug TEXT DEFAULT NULL,
+      created_at TEXT NOT NULL DEFAULT (NOW()::text),
+      updated_at TEXT NOT NULL DEFAULT (NOW()::text)
     );
 
     CREATE TABLE IF NOT EXISTS maps (
@@ -87,7 +91,7 @@ export function initDatabase(): void {
       grid_offset_y INTEGER DEFAULT 0,
       walls TEXT DEFAULT '[]',
       fog_state TEXT DEFAULT '[]',
-      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      created_at TEXT NOT NULL DEFAULT (NOW()::text)
     );
 
     CREATE TABLE IF NOT EXISTS tokens (
@@ -95,20 +99,20 @@ export function initDatabase(): void {
       map_id TEXT NOT NULL REFERENCES maps(id) ON DELETE CASCADE,
       character_id TEXT,
       name TEXT NOT NULL DEFAULT 'Token',
-      x REAL NOT NULL DEFAULT 0,
-      y REAL NOT NULL DEFAULT 0,
-      size REAL DEFAULT 1,
+      x DOUBLE PRECISION NOT NULL DEFAULT 0,
+      y DOUBLE PRECISION NOT NULL DEFAULT 0,
+      size DOUBLE PRECISION DEFAULT 1,
       image_url TEXT,
       color TEXT DEFAULT '#666666',
       layer TEXT DEFAULT 'token',
       visible INTEGER DEFAULT 1,
       has_light INTEGER DEFAULT 0,
-      light_radius REAL DEFAULT 0,
-      light_dim_radius REAL DEFAULT 0,
+      light_radius DOUBLE PRECISION DEFAULT 0,
+      light_dim_radius DOUBLE PRECISION DEFAULT 0,
       light_color TEXT DEFAULT '#ffcc44',
       conditions TEXT DEFAULT '[]',
       owner_user_id TEXT,
-      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      created_at TEXT NOT NULL DEFAULT (NOW()::text)
     );
 
     CREATE TABLE IF NOT EXISTS combat_state (
@@ -117,7 +121,7 @@ export function initDatabase(): void {
       current_turn_index INTEGER DEFAULT 0,
       combatants TEXT NOT NULL DEFAULT '[]',
       action_economy TEXT DEFAULT '{}',
-      started_at TEXT NOT NULL DEFAULT (datetime('now'))
+      started_at TEXT NOT NULL DEFAULT (NOW()::text)
     );
 
     CREATE TABLE IF NOT EXISTS chat_messages (
@@ -130,7 +134,8 @@ export function initDatabase(): void {
       character_name TEXT,
       whisper_to TEXT,
       roll_data TEXT,
-      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      hidden INTEGER DEFAULT 0,
+      created_at TEXT NOT NULL DEFAULT (NOW()::text)
     );
 
     CREATE INDEX IF NOT EXISTS idx_chat_messages_session
@@ -145,8 +150,6 @@ export function initDatabase(): void {
     CREATE INDEX IF NOT EXISTS idx_session_players_user
       ON session_players(user_id);
 
-    -- DM / player drawings. One row per committed (non-ephemeral)
-    -- drawing. Geometry is a JSON blob whose shape depends on kind.
     CREATE TABLE IF NOT EXISTS drawings (
       id TEXT PRIMARY KEY,
       map_id TEXT NOT NULL REFERENCES maps(id) ON DELETE CASCADE,
@@ -155,17 +158,16 @@ export function initDatabase(): void {
       kind TEXT NOT NULL,
       visibility TEXT NOT NULL,
       color TEXT NOT NULL,
-      stroke_width REAL NOT NULL,
+      stroke_width DOUBLE PRECISION NOT NULL,
       geometry TEXT NOT NULL,
       grid_snapped INTEGER NOT NULL DEFAULT 0,
-      created_at INTEGER NOT NULL,
+      created_at BIGINT NOT NULL,
       fade_after_ms INTEGER
     );
 
     CREATE INDEX IF NOT EXISTS idx_drawings_map
       ON drawings(map_id);
 
-    -- Compendium tables
     CREATE TABLE IF NOT EXISTS compendium_monsters (
       slug TEXT PRIMARY KEY,
       name TEXT NOT NULL,
@@ -173,7 +175,7 @@ export function initDatabase(): void {
       armor_class INTEGER, hit_points INTEGER, hit_dice TEXT,
       speed TEXT DEFAULT '{}',
       ability_scores TEXT DEFAULT '{}',
-      challenge_rating TEXT, cr_numeric REAL DEFAULT 0,
+      challenge_rating TEXT, cr_numeric DOUBLE PRECISION DEFAULT 0,
       actions TEXT DEFAULT '[]',
       special_abilities TEXT DEFAULT '[]',
       legendary_actions TEXT DEFAULT '[]',
@@ -184,7 +186,8 @@ export function initDatabase(): void {
       condition_immunities TEXT DEFAULT '',
       source TEXT DEFAULT 'SRD',
       raw_json TEXT DEFAULT '{}',
-      cached_at TEXT DEFAULT (datetime('now'))
+      token_image_source TEXT DEFAULT 'generated',
+      cached_at TEXT DEFAULT (NOW()::text)
     );
 
     CREATE TABLE IF NOT EXISTS compendium_spells (
@@ -203,7 +206,7 @@ export function initDatabase(): void {
       classes TEXT DEFAULT '[]',
       source TEXT DEFAULT 'SRD',
       raw_json TEXT DEFAULT '{}',
-      cached_at TEXT DEFAULT (datetime('now'))
+      cached_at TEXT DEFAULT (NOW()::text)
     );
 
     CREATE TABLE IF NOT EXISTS compendium_items (
@@ -215,9 +218,9 @@ export function initDatabase(): void {
       description TEXT DEFAULT '',
       source TEXT DEFAULT 'SRD',
       raw_json TEXT DEFAULT '{}',
-      cached_at TEXT DEFAULT (datetime('now'))
+      token_image_source TEXT DEFAULT 'none',
+      cached_at TEXT DEFAULT (NOW()::text)
     );
-
 
     CREATE TABLE IF NOT EXISTS custom_items (
       id TEXT PRIMARY KEY,
@@ -227,15 +230,19 @@ export function initDatabase(): void {
       rarity TEXT DEFAULT 'common',
       description TEXT DEFAULT '',
       image_url TEXT,
-      weight REAL DEFAULT 0,
-      value_gp REAL DEFAULT 0,
+      weight DOUBLE PRECISION DEFAULT 0,
+      value_gp DOUBLE PRECISION DEFAULT 0,
       requires_attunement INTEGER DEFAULT 0,
       stat_effects TEXT DEFAULT '{}',
       properties TEXT DEFAULT '[]',
       damage TEXT DEFAULT '',
       damage_type TEXT DEFAULT '',
       history TEXT DEFAULT '',
-      created_at TEXT DEFAULT (datetime('now'))
+      range TEXT DEFAULT '',
+      ac INTEGER DEFAULT 0,
+      ac_type TEXT DEFAULT '',
+      magic_bonus INTEGER DEFAULT 0,
+      created_at TEXT DEFAULT (NOW()::text)
     );
 
     CREATE TABLE IF NOT EXISTS loot_entries (
@@ -253,7 +260,6 @@ export function initDatabase(): void {
     CREATE INDEX IF NOT EXISTS idx_custom_items_session ON custom_items(session_id);
     CREATE INDEX IF NOT EXISTS idx_loot_entries_character ON loot_entries(character_id);
 
-    -- Auth tables
     CREATE TABLE IF NOT EXISTS auth_users (
       id TEXT PRIMARY KEY,
       email TEXT UNIQUE,
@@ -261,8 +267,8 @@ export function initDatabase(): void {
       hashed_password TEXT,
       display_name TEXT NOT NULL,
       avatar_url TEXT,
-      created_at TEXT DEFAULT (datetime('now')),
-      updated_at TEXT DEFAULT (datetime('now'))
+      created_at TEXT DEFAULT (NOW()::text),
+      updated_at TEXT DEFAULT (NOW()::text)
     );
 
     CREATE TABLE IF NOT EXISTS auth_sessions (
@@ -278,64 +284,13 @@ export function initDatabase(): void {
       provider_email TEXT,
       provider_username TEXT,
       provider_avatar_url TEXT,
-      created_at TEXT DEFAULT (datetime('now')),
+      created_at TEXT DEFAULT (NOW()::text),
       PRIMARY KEY (provider, provider_user_id)
     );
 
     CREATE INDEX IF NOT EXISTS idx_oauth_accounts_user ON oauth_accounts(user_id);
     CREATE INDEX IF NOT EXISTS idx_auth_sessions_user ON auth_sessions(user_id);
 
-    -- Create a system NPC user for creature character records
-    INSERT OR IGNORE INTO users (id, display_name) VALUES ('npc', 'NPC/Creature');
-  `);
-
-  // Safe migrations — add columns if they don't exist
-  try { db.exec(`ALTER TABLE users ADD COLUMN auth_user_id TEXT`); } catch { /* exists */ }
-  try { db.exec(`ALTER TABLE compendium_monsters ADD COLUMN token_image_source TEXT DEFAULT 'generated'`); } catch { /* exists */ }
-  try { db.exec(`ALTER TABLE compendium_items ADD COLUMN token_image_source TEXT DEFAULT 'none'`); } catch { /* exists */ }
-  try { db.exec(`ALTER TABLE chat_messages ADD COLUMN hidden INTEGER DEFAULT 0`); } catch { /* exists */ }
-  try { db.exec(`ALTER TABLE characters ADD COLUMN hit_dice TEXT DEFAULT '[]'`); } catch { /* exists */ }
-  try { db.exec(`ALTER TABLE characters ADD COLUMN concentrating_on TEXT`); } catch { /* exists */ }
-
-  // Map Builder / Player Ribbon — add player_map_id to sessions so we can
-  // decouple "where the DM is viewing" from "where the players are on the
-  // map". Backfill from existing current_map_id so existing sessions keep
-  // working. current_map_id stays as the DM's ephemeral viewing pointer
-  // (used for DM reconnect rehydration).
-  try {
-    db.exec(`ALTER TABLE sessions ADD COLUMN player_map_id TEXT`);
-    db.exec(`UPDATE sessions SET player_map_id = current_map_id WHERE player_map_id IS NULL AND current_map_id IS NOT NULL`);
-  } catch { /* exists */ }
-  // Spell-related fields. These exist in the CREATE TABLE definition but
-  // weren't there originally, so existing databases need them backfilled
-  // via ALTER TABLE. Without these the spell save DC defaults to 10 and
-  // every save against a player's spell looks artificially easy.
-  try { db.exec(`ALTER TABLE characters ADD COLUMN spellcasting_ability TEXT DEFAULT ''`); } catch { /* exists */ }
-  try { db.exec(`ALTER TABLE characters ADD COLUMN spell_attack_bonus INTEGER DEFAULT 0`); } catch { /* exists */ }
-  try { db.exec(`ALTER TABLE characters ADD COLUMN spell_save_dc INTEGER DEFAULT 10`); } catch { /* exists */ }
-  try { db.exec(`ALTER TABLE characters ADD COLUMN initiative INTEGER DEFAULT 0`); } catch { /* exists */ }
-  try { db.exec(`ALTER TABLE characters ADD COLUMN background TEXT DEFAULT '{"name":"","description":"","feature":""}'`); } catch { /* exists */ }
-  try { db.exec(`ALTER TABLE characters ADD COLUMN characteristics TEXT DEFAULT '{}'`); } catch { /* exists */ }
-  try { db.exec(`ALTER TABLE characters ADD COLUMN personality TEXT DEFAULT '{}'`); } catch { /* exists */ }
-  try { db.exec(`ALTER TABLE characters ADD COLUMN notes_data TEXT DEFAULT '{}'`); } catch { /* exists */ }
-  try { db.exec(`ALTER TABLE characters ADD COLUMN proficiencies_data TEXT DEFAULT '{"armor":[],"weapons":[],"tools":[],"languages":[]}'`); } catch { /* exists */ }
-  try { db.exec(`ALTER TABLE characters ADD COLUMN senses TEXT DEFAULT '{}'`); } catch { /* exists */ }
-  try { db.exec(`ALTER TABLE characters ADD COLUMN defenses TEXT DEFAULT '{}'`); } catch { /* exists */ }
-  try { db.exec(`ALTER TABLE characters ADD COLUMN conditions TEXT DEFAULT '[]'`); } catch { /* exists */ }
-  try { db.exec(`ALTER TABLE characters ADD COLUMN currency TEXT DEFAULT '{"cp":0,"sp":0,"ep":0,"gp":0,"pp":0}'`); } catch { /* exists */ }
-  try { db.exec(`ALTER TABLE characters ADD COLUMN extras TEXT DEFAULT '[]'`); } catch { /* exists */ }
-  try { db.exec(`ALTER TABLE characters ADD COLUMN compendium_slug TEXT DEFAULT NULL`); } catch { /* exists */ }
-
-  // Backfill spellcasting fields for existing DDB-imported characters that
-  // were created before these columns existed. Computes spell_save_dc and
-  // spell_attack_bonus from the character's class, level, and primary
-  // ability score whenever those fields are still 0/empty.
-  try { backfillSpellcastingFromExistingChars(db as any); } catch (err) {
-    console.warn('[migration] Failed to backfill spellcasting fields:', err);
-  }
-
-  // Custom content tables
-  db.exec(`
     CREATE TABLE IF NOT EXISTS custom_monsters (
       slug TEXT PRIMARY KEY,
       session_id TEXT NOT NULL,
@@ -349,7 +304,7 @@ export function initDatabase(): void {
       speed TEXT DEFAULT '{"walk":30}',
       ability_scores TEXT DEFAULT '{"str":10,"dex":10,"con":10,"int":10,"wis":10,"cha":10}',
       challenge_rating TEXT DEFAULT '0',
-      cr_numeric REAL DEFAULT 0,
+      cr_numeric DOUBLE PRECISION DEFAULT 0,
       actions TEXT DEFAULT '[]',
       special_abilities TEXT DEFAULT '[]',
       legendary_actions TEXT DEFAULT '[]',
@@ -361,7 +316,7 @@ export function initDatabase(): void {
       condition_immunities TEXT DEFAULT '',
       source TEXT DEFAULT 'Custom',
       image_url TEXT,
-      created_at TEXT DEFAULT (datetime('now'))
+      created_at TEXT DEFAULT (NOW()::text)
     );
 
     CREATE TABLE IF NOT EXISTS custom_spells (
@@ -381,70 +336,62 @@ export function initDatabase(): void {
       classes TEXT DEFAULT '[]',
       source TEXT DEFAULT 'Custom',
       image_url TEXT,
-      created_at TEXT DEFAULT (datetime('now'))
+      damage TEXT DEFAULT NULL,
+      damage_type TEXT DEFAULT NULL,
+      saving_throw TEXT DEFAULT NULL,
+      attack_type TEXT DEFAULT NULL,
+      aoe_type TEXT DEFAULT NULL,
+      aoe_size INTEGER DEFAULT 0,
+      half_on_save INTEGER DEFAULT 0,
+      push_distance INTEGER DEFAULT 0,
+      applies_condition TEXT DEFAULT NULL,
+      animation_type TEXT DEFAULT NULL,
+      animation_color TEXT DEFAULT NULL,
+      created_at TEXT DEFAULT (NOW()::text)
     );
 
     CREATE INDEX IF NOT EXISTS idx_custom_monsters_session ON custom_monsters(session_id);
     CREATE INDEX IF NOT EXISTS idx_custom_spells_session ON custom_spells(session_id);
   `);
 
-  // Spell combat resolution columns — added after initial schema.
-  const spellCombatCols: [string, string][] = [
-    ['damage', 'TEXT DEFAULT NULL'],
-    ['damage_type', 'TEXT DEFAULT NULL'],
-    ['saving_throw', 'TEXT DEFAULT NULL'],
-    ['attack_type', 'TEXT DEFAULT NULL'],
-    ['aoe_type', 'TEXT DEFAULT NULL'],
-    ['aoe_size', 'INTEGER DEFAULT 0'],
-    ['half_on_save', 'INTEGER DEFAULT 0'],
-    ['push_distance', 'INTEGER DEFAULT 0'],
-    ['applies_condition', 'TEXT DEFAULT NULL'],
-    ['animation_type', 'TEXT DEFAULT NULL'],
-    ['animation_color', 'TEXT DEFAULT NULL'],
-  ];
-  for (const [col, def] of spellCombatCols) {
-    try { db.exec(`ALTER TABLE custom_spells ADD COLUMN ${col} ${def}`); } catch { /* exists */ }
+  // Create system NPC user if it doesn't exist
+  await pool.query(`
+    INSERT INTO users (id, display_name) VALUES ('npc', 'NPC/Creature')
+    ON CONFLICT (id) DO NOTHING
+  `);
+
+  // Backfill spellcasting fields for existing DDB-imported characters
+  try { await backfillSpellcastingFromExistingChars(); } catch (err) {
+    console.warn('[migration] Failed to backfill spellcasting fields:', err);
   }
 }
 
 /**
  * One-time backfill for characters that were created before the
  * spell_save_dc / spell_attack_bonus / spellcasting_ability columns
- * existed. Computes the values from the character's class, level, and
- * ability scores. Only touches rows where the values are still default
- * (0 / empty), so re-running is idempotent.
+ * existed.
  */
-function backfillSpellcastingFromExistingChars(db: any): void {
-  // Class → primary spellcasting ability. Half-casters and unusual cases
-  // fall back to a sensible default; this is a backfill for testing, not
-  // perfect canonical data.
+async function backfillSpellcastingFromExistingChars(): Promise<void> {
   const CLASS_ABILITY: Record<string, string> = {
     bard: 'cha', cleric: 'wis', druid: 'wis', paladin: 'cha',
     ranger: 'wis', sorcerer: 'cha', warlock: 'cha', wizard: 'int',
     artificer: 'int',
   };
 
-  const rows = db.prepare(`
+  const { rows } = await pool.query(`
     SELECT id, class, level, ability_scores, proficiency_bonus,
            spell_save_dc, spell_attack_bonus, spellcasting_ability
     FROM characters
     WHERE (spell_save_dc IS NULL OR spell_save_dc = 0 OR spell_save_dc = 10)
       AND class != ''
-  `).all() as Array<Record<string, unknown>>;
+  `);
 
   if (rows.length === 0) return;
-
-  const update = db.prepare(`
-    UPDATE characters
-    SET spellcasting_ability = ?, spell_attack_bonus = ?, spell_save_dc = ?
-    WHERE id = ?
-  `);
 
   let updated = 0;
   for (const row of rows) {
     const classStr = (row.class as string) || '';
     const lowerClass = classStr.toLowerCase();
-    // Pick the first matching class word
     let ability: string | null = null;
     for (const [key, val] of Object.entries(CLASS_ABILITY)) {
       if (lowerClass.includes(key)) { ability = val; break; }
@@ -459,7 +406,10 @@ function backfillSpellcastingFromExistingChars(db: any): void {
     const dc = 8 + profBonus + mod;
     const atkBonus = profBonus + mod;
 
-    update.run(ability, atkBonus, dc, row.id);
+    await pool.query(
+      'UPDATE characters SET spellcasting_ability = $1, spell_attack_bonus = $2, spell_save_dc = $3 WHERE id = $4',
+      [ability, atkBonus, dc, row.id],
+    );
     updated++;
   }
 

@@ -105,7 +105,7 @@ router.post(
       const email = appleUserEmail ?? payload.email ?? null;
       const displayName = appleUserName ?? (email ? email.split('@')[0] : 'Apple User');
 
-      const userId = findOrCreateOAuthUser({
+      const userId = await findOrCreateOAuthUser({
         provider: 'apple',
         providerUserId: appleUserId,
         email,

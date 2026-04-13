@@ -1,6 +1,6 @@
 import { Router, type Request, type Response } from 'express';
 import { v4 as uuidv4 } from 'uuid';
-import db from '../db/connection.js';
+import pool from '../db/connection.js';
 import { createSessionSchema, joinSessionSchema } from '../utils/validation.js';
 import { DEFAULT_SESSION_SETTINGS } from '@dnd-vtt/shared';
 
@@ -15,20 +15,20 @@ function generateRoomCode(): string {
   return code;
 }
 
-function getUniqueRoomCode(): string {
-  const checkStmt = db.prepare('SELECT 1 FROM sessions WHERE room_code = ?');
+async function getUniqueRoomCode(): Promise<string> {
   let code: string;
   let attempts = 0;
   do {
     code = generateRoomCode();
     attempts++;
     if (attempts > 100) throw new Error('Failed to generate unique room code');
-  } while (checkStmt.get(code));
-  return code;
+    const { rows } = await pool.query('SELECT 1 FROM sessions WHERE room_code = $1', [code]);
+    if (rows.length === 0) return code;
+  } while (true);
 }
 
 // POST /api/sessions - Create a new session
-router.post('/', (req: Request, res: Response) => {
+router.post('/', async (req: Request, res: Response) => {
   const parsed = createSessionSchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: 'Invalid request', details: parsed.error.issues });
@@ -36,26 +36,29 @@ router.post('/', (req: Request, res: Response) => {
   }
 
   const { name } = parsed.data;
-
-  // Use authenticated user's ID (requireAuth guarantees req.user exists)
   const userId = req.user!.id;
   const sessionId = uuidv4();
-  const roomCode = getUniqueRoomCode();
+  const roomCode = await getUniqueRoomCode();
   const settings = JSON.stringify(DEFAULT_SESSION_SETTINGS);
 
-  const createSession = db.prepare(
-    'INSERT INTO sessions (id, name, room_code, dm_user_id, settings) VALUES (?, ?, ?, ?, ?)'
-  );
-  const addPlayer = db.prepare(
-    'INSERT INTO session_players (session_id, user_id, role) VALUES (?, ?, ?)'
-  );
-
-  const transaction = db.transaction(() => {
-    createSession.run(sessionId, name, roomCode, userId, settings);
-    addPlayer.run(sessionId, userId, 'dm');
-  });
-
-  transaction();
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query(
+      'INSERT INTO sessions (id, name, room_code, dm_user_id, settings) VALUES ($1, $2, $3, $4, $5)',
+      [sessionId, name, roomCode, userId, settings],
+    );
+    await client.query(
+      'INSERT INTO session_players (session_id, user_id, role) VALUES ($1, $2, $3)',
+      [sessionId, userId, 'dm'],
+    );
+    await client.query('COMMIT');
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
 
   res.status(201).json({
     sessionId,
@@ -65,7 +68,7 @@ router.post('/', (req: Request, res: Response) => {
 });
 
 // POST /api/sessions/join - Join a session by room code
-router.post('/join', (req: Request, res: Response) => {
+router.post('/join', async (req: Request, res: Response) => {
   const parsed = joinSessionSchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: 'Invalid request', details: parsed.error.issues });
@@ -74,31 +77,29 @@ router.post('/join', (req: Request, res: Response) => {
 
   const { roomCode } = parsed.data;
 
-  const session = db.prepare(
-    'SELECT id, name, room_code, dm_user_id FROM sessions WHERE room_code = ?'
-  ).get(roomCode) as { id: string; name: string; room_code: string; dm_user_id: string } | undefined;
+  const { rows: sessionRows } = await pool.query(
+    'SELECT id, name, room_code, dm_user_id FROM sessions WHERE room_code = $1',
+    [roomCode],
+  );
+  const session = sessionRows[0] as { id: string; name: string; room_code: string; dm_user_id: string } | undefined;
 
   if (!session) {
     res.status(404).json({ error: 'Session not found with that room code' });
     return;
   }
 
-  // Use authenticated user's ID
   const userId = req.user!.id;
 
-  // Check if this user is already in this session (reconnect)
-  const existingPlayer = db.prepare(`
-    SELECT sp.user_id, sp.role
-    FROM session_players sp
-    WHERE sp.session_id = ? AND sp.user_id = ?
-  `).get(session.id, userId) as { user_id: string; role: string } | undefined;
+  const { rows: existingRows } = await pool.query(
+    'SELECT sp.user_id, sp.role FROM session_players sp WHERE sp.session_id = $1 AND sp.user_id = $2',
+    [session.id, userId],
+  );
 
-  if (!existingPlayer) {
-    // New user joining
-    const addPlayer = db.prepare(
-      'INSERT OR IGNORE INTO session_players (session_id, user_id, role) VALUES (?, ?, ?)'
+  if (existingRows.length === 0) {
+    await pool.query(
+      'INSERT INTO session_players (session_id, user_id, role) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING',
+      [session.id, userId, 'player'],
     );
-    addPlayer.run(session.id, userId, 'player');
   }
 
   res.json({
@@ -110,19 +111,19 @@ router.post('/join', (req: Request, res: Response) => {
 });
 
 // GET /api/sessions/mine - List sessions the current user belongs to
-router.get('/mine', (req: Request, res: Response) => {
+router.get('/mine', async (req: Request, res: Response) => {
   const userId = (req as any).user?.id;
   if (!userId) { res.json([]); return; }
 
-  const rows = db.prepare(`
+  const { rows } = await pool.query(`
     SELECT s.id, s.name, s.room_code, sp.role,
            (SELECT COUNT(*) FROM session_players WHERE session_id = s.id) as player_count,
            s.created_at
     FROM session_players sp
     JOIN sessions s ON sp.session_id = s.id
-    WHERE sp.user_id = ?
+    WHERE sp.user_id = $1
     ORDER BY s.created_at DESC
-  `).all(userId) as Array<Record<string, unknown>>;
+  `, [userId]);
 
   res.json(rows.map(r => ({
     id: r.id, name: r.name, roomCode: r.room_code,
@@ -131,89 +132,54 @@ router.get('/mine', (req: Request, res: Response) => {
 });
 
 // DELETE /api/sessions/:id/leave - Leave a session
-router.delete('/:id/leave', (req: Request, res: Response) => {
+router.delete('/:id/leave', async (req: Request, res: Response) => {
   const userId = (req as any).user?.id;
   if (!userId) { res.status(401).json({ error: 'Not authenticated' }); return; }
-  db.prepare('DELETE FROM session_players WHERE session_id = ? AND user_id = ?')
-    .run(req.params.id, userId);
-  res.json({ success: true });
-});
-
-// GET /api/sessions/mine - List sessions the current user belongs to
-router.get('/mine', (req: Request, res: Response) => {
-  const userId = (req as any).user?.id;
-  if (!userId) { res.json([]); return; }
-
-  const rows = db.prepare(`
-    SELECT s.id, s.name, s.room_code, sp.role,
-           (SELECT COUNT(*) FROM session_players WHERE session_id = s.id) as player_count,
-           s.created_at
-    FROM session_players sp
-    JOIN sessions s ON sp.session_id = s.id
-    WHERE sp.user_id = ?
-    ORDER BY s.created_at DESC
-  `).all(userId) as Array<Record<string, unknown>>;
-
-  res.json(rows.map(r => ({
-    id: r.id, name: r.name, roomCode: r.room_code,
-    role: r.role, playerCount: r.player_count, createdAt: r.created_at,
-  })));
-});
-
-// DELETE /api/sessions/:id/leave - Leave a session
-router.delete('/:id/leave', (req: Request, res: Response) => {
-  const userId = (req as any).user?.id;
-  if (!userId) { res.status(401).json({ error: 'Not authenticated' }); return; }
-  db.prepare('DELETE FROM session_players WHERE session_id = ? AND user_id = ?')
-    .run(req.params.id, userId);
+  await pool.query('DELETE FROM session_players WHERE session_id = $1 AND user_id = $2',
+    [req.params.id, userId]);
   res.json({ success: true });
 });
 
 // POST /api/sessions/:id/link-character - Link a character to a player in this session
-router.post('/:id/link-character', (req: Request, res: Response) => {
+router.post('/:id/link-character', async (req: Request, res: Response) => {
   const sessionId = String(req.params.id);
   const { userId, characterId } = req.body || {};
   if (!userId || !characterId) {
     res.status(400).json({ error: 'userId and characterId required' });
     return;
   }
-  db.prepare('UPDATE session_players SET character_id = ? WHERE session_id = ? AND user_id = ?')
-    .run(characterId, sessionId, userId);
+  await pool.query('UPDATE session_players SET character_id = $1 WHERE session_id = $2 AND user_id = $3',
+    [characterId, sessionId, userId]);
   res.json({ success: true });
 });
 
 // GET /api/sessions/:id - Get session details
-router.get('/:id', (req: Request, res: Response) => {
+router.get('/:id', async (req: Request, res: Response) => {
   const { id } = req.params;
 
-  const session = db.prepare(`
+  const { rows: sessionRows } = await pool.query(`
     SELECT id, name, room_code, dm_user_id, current_map_id, combat_active, game_mode, settings, created_at, updated_at
-    FROM sessions WHERE id = ?
-  `).get(id) as Record<string, unknown> | undefined;
+    FROM sessions WHERE id = $1
+  `, [id]);
+  const session = sessionRows[0] as Record<string, unknown> | undefined;
 
   if (!session) {
     res.status(404).json({ error: 'Session not found' });
     return;
   }
 
-  const players = db.prepare(`
+  const { rows: players } = await pool.query(`
     SELECT sp.user_id, sp.role, sp.character_id, u.display_name, u.avatar_url
     FROM session_players sp
     JOIN users u ON u.id = sp.user_id
-    WHERE sp.session_id = ?
-  `).all(id) as Array<{
-    user_id: string;
-    role: string;
-    character_id: string | null;
-    display_name: string;
-    avatar_url: string | null;
-  }>;
+    WHERE sp.session_id = $1
+  `, [id]);
 
-  const maps = db.prepare(`
+  const { rows: maps } = await pool.query(`
     SELECT id, name, image_url, width, height, grid_size, created_at
-    FROM maps WHERE session_id = ?
+    FROM maps WHERE session_id = $1
     ORDER BY created_at DESC
-  `).all(id);
+  `, [id]);
 
   res.json({
     id: session.id,

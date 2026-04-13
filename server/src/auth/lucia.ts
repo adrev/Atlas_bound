@@ -1,8 +1,8 @@
 import { Lucia } from 'lucia';
-import { BetterSqlite3Adapter } from '@lucia-auth/adapter-sqlite';
-import db from '../db/connection.js';
+import { NodePostgresAdapter } from '@lucia-auth/adapter-postgresql';
+import pool from '../db/connection.js';
 
-const adapter = new BetterSqlite3Adapter(db as any, {
+const adapter = new NodePostgresAdapter(pool, {
   user: 'auth_users',
   session: 'auth_sessions',
 });

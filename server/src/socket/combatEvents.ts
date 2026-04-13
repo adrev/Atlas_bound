@@ -17,7 +17,7 @@ import {
 
 export function registerCombatEvents(io: Server, socket: Socket): void {
 
-  socket.on('combat:start', (data) => {
+  socket.on('combat:start', async (data) => {
     console.log('[COMBAT START] received from socket', socket.id, 'data:', data);
     const parsed = combatStartSchema.safeParse(data);
     if (!parsed.success) {
@@ -37,7 +37,7 @@ export function registerCombatEvents(io: Server, socket: Socket): void {
     console.log('[COMBAT START] DM', ctx.player.userId, 'starting with', parsed.data.tokenIds.length, 'tokens');
 
     try {
-      const combatState = CombatService.startCombat(ctx.room.sessionId, parsed.data.tokenIds);
+      const combatState = await CombatService.startCombatAsync(ctx.room.sessionId, parsed.data.tokenIds);
       console.log('[COMBAT START] combat state created with', combatState.combatants.length, 'combatants');
       io.to(ctx.room.sessionId).emit('combat:started', {
         combatants: combatState.combatants,
@@ -127,7 +127,7 @@ export function registerCombatEvents(io: Server, socket: Socket): void {
     ctx.room.readyCheck = {
       tokenIds,
       responses: new Map(),
-      timeout: setTimeout(() => {
+      timeout: setTimeout(async () => {
         // Auto-start after 15 seconds
         if (!ctx.room.readyCheck) return;
         ctx.room.readyCheck = null;
@@ -136,7 +136,7 @@ export function registerCombatEvents(io: Server, socket: Socket): void {
 
         // Start combat with the stored tokenIds (mirrors combat:start logic)
         try {
-          const combatState = CombatService.startCombat(ctx.room.sessionId, tokenIds);
+          const combatState = await CombatService.startCombatAsync(ctx.room.sessionId, tokenIds);
           io.to(ctx.room.sessionId).emit('combat:started', {
             combatants: combatState.combatants,
             roundNumber: combatState.roundNumber,
@@ -189,7 +189,7 @@ export function registerCombatEvents(io: Server, socket: Socket): void {
     });
   });
 
-  socket.on('combat:ready-response', (data: { ready: boolean }) => {
+  socket.on('combat:ready-response', async (data: { ready: boolean }) => {
     const ctx = getPlayerBySocketId(socket.id);
     if (!ctx || !ctx.room.readyCheck) return;
 
@@ -218,7 +218,7 @@ export function registerCombatEvents(io: Server, socket: Socket): void {
 
       // Start combat (mirrors combat:start logic)
       try {
-        const combatState = CombatService.startCombat(ctx.room.sessionId, tokenIds);
+        const combatState = await CombatService.startCombatAsync(ctx.room.sessionId, tokenIds);
         io.to(ctx.room.sessionId).emit('combat:started', {
           combatants: combatState.combatants,
           roundNumber: combatState.roundNumber,
@@ -265,12 +265,12 @@ export function registerCombatEvents(io: Server, socket: Socket): void {
     }
   });
 
-  socket.on('combat:end', () => {
+  socket.on('combat:end', async () => {
     const ctx = getPlayerBySocketId(socket.id);
     if (!ctx || ctx.player.role !== 'dm') return;
 
     try {
-      CombatService.endCombat(ctx.room.sessionId);
+      await CombatService.endCombat(ctx.room.sessionId);
       io.to(ctx.room.sessionId).emit('combat:ended', {});
     } catch (err) {
       socket.emit('session:error', {
@@ -334,7 +334,7 @@ export function registerCombatEvents(io: Server, socket: Socket): void {
     }
   });
 
-  socket.on('combat:next-turn', () => {
+  socket.on('combat:next-turn', async () => {
     const ctx = getPlayerBySocketId(socket.id);
     if (!ctx) return;
     if (!isCurrentTurnOwnerOrDM(ctx)) return;
@@ -358,7 +358,7 @@ export function registerCombatEvents(io: Server, socket: Socket): void {
       // end of each of its turns").
       const endingCombatant = state.combatants[state.currentTurnIndex];
       const endTickResult = endingCombatant
-        ? ConditionService.tickEndOfTurnConditions(
+        ? await ConditionService.tickEndOfTurnConditions(
             ctx.room.sessionId,
             endingCombatant.tokenId,
           )
@@ -461,7 +461,7 @@ export function registerCombatEvents(io: Server, socket: Socket): void {
     }
   });
 
-  socket.on('combat:damage', (data) => {
+  socket.on('combat:damage', async (data) => {
     const parsed = combatDamageSchema.safeParse(data);
     if (!parsed.success) return;
 
@@ -470,7 +470,7 @@ export function registerCombatEvents(io: Server, socket: Socket): void {
     if (!canTargetToken(ctx, parsed.data.tokenId)) return;
 
     try {
-      const result = CombatService.applyDamage(ctx.room.sessionId, parsed.data.tokenId, parsed.data.amount);
+      const result = await CombatService.applyDamage(ctx.room.sessionId, parsed.data.tokenId, parsed.data.amount);
       io.to(ctx.room.sessionId).emit('combat:hp-changed', {
         tokenId: parsed.data.tokenId,
         hp: result.hp,
@@ -485,7 +485,7 @@ export function registerCombatEvents(io: Server, socket: Socket): void {
     }
   });
 
-  socket.on('combat:heal', (data) => {
+  socket.on('combat:heal', async (data) => {
     const parsed = combatHealSchema.safeParse(data);
     if (!parsed.success) return;
 
@@ -494,7 +494,7 @@ export function registerCombatEvents(io: Server, socket: Socket): void {
     if (!isTokenOwnerOrDM(ctx, parsed.data.tokenId)) return;
 
     try {
-      const result = CombatService.applyHeal(ctx.room.sessionId, parsed.data.tokenId, parsed.data.amount);
+      const result = await CombatService.applyHeal(ctx.room.sessionId, parsed.data.tokenId, parsed.data.amount);
       io.to(ctx.room.sessionId).emit('combat:hp-changed', {
         tokenId: parsed.data.tokenId,
         hp: result.hp,
@@ -555,7 +555,7 @@ export function registerCombatEvents(io: Server, socket: Socket): void {
     }
   });
 
-  socket.on('combat:death-save', (data) => {
+  socket.on('combat:death-save', async (data) => {
     const parsed = combatDeathSaveSchema.safeParse(data);
     if (!parsed.success) return;
 
@@ -572,7 +572,7 @@ export function registerCombatEvents(io: Server, socket: Socket): void {
     // Apply death save result
     if (result.isCritSuccess) {
       // Nat 20: regain 1 HP
-      CombatService.applyHeal(ctx.room.sessionId, tokenId, 1);
+      await CombatService.applyHeal(ctx.room.sessionId, tokenId, 1);
       combatant.deathSaves = { successes: 0, failures: 0 };
     } else if (result.isCritFail) {
       // Nat 1: two failures
@@ -684,7 +684,7 @@ export function registerCombatEvents(io: Server, socket: Socket): void {
   // it silently. (Present for symmetry — the client can emit it so
   // the server can audit-log in the future.)
   // ----------------------------------------------------------------------
-  socket.on('combat:oa-execute', (data: { attackerTokenId?: string; moverTokenId?: string }) => {
+  socket.on('combat:oa-execute', async (data: { attackerTokenId?: string; moverTokenId?: string }) => {
     if (!data?.attackerTokenId || !data?.moverTokenId) return;
     const ctx = getPlayerBySocketId(socket.id);
     if (!ctx) return;
@@ -696,7 +696,7 @@ export function registerCombatEvents(io: Server, socket: Socket): void {
     const isOwner = attacker.ownerUserId === ctx.player.userId;
     if (!isDM && !isOwner) return;
 
-    const result = OpportunityAttackService.executeOpportunityAttack(
+    const result = await OpportunityAttackService.executeOpportunityAttack(
       ctx.room.sessionId,
       data.attackerTokenId,
       data.moverTokenId,
@@ -884,12 +884,12 @@ export function registerCombatEvents(io: Server, socket: Socket): void {
   //   3. Re-roll save with advantage for saveOnDamage spells (Hideous Laughter)
   // The caller (cast resolver) provides tokenId + final damage amount.
   // ----------------------------------------------------------------------
-  socket.on('damage:side-effects', (data: { tokenId?: string; damageAmount?: number }) => {
+  socket.on('damage:side-effects', async (data: { tokenId?: string; damageAmount?: number }) => {
     if (!data?.tokenId || typeof data.damageAmount !== 'number') return;
     const ctx = getPlayerBySocketId(socket.id);
     if (!ctx) return;
 
-    const result = ConditionService.processDamageSideEffects(
+    const result = await ConditionService.processDamageSideEffects(
       ctx.room.sessionId, data.tokenId, data.damageAmount,
     );
 
