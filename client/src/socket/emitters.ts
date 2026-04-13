@@ -13,8 +13,8 @@ import type {
 } from '@dnd-vtt/shared';
 
 // --- Session ---
-export function emitJoinSession(roomCode: string, displayName: string) {
-  getSocket().emit('session:join', { roomCode, displayName });
+export function emitJoinSession(roomCode: string) {
+  getSocket().emit('session:join', { roomCode });
 }
 
 export function emitLeaveSession() {

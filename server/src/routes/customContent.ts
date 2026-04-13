@@ -5,6 +5,7 @@ import fs from 'fs';
 import { v4 as uuidv4 } from 'uuid';
 import pool from '../db/connection.js';
 import { UPLOAD_DIR } from '../config.js';
+import { getAuthUserId, assertSessionDM } from '../utils/authorization.js';
 
 const router = Router();
 
@@ -17,12 +18,14 @@ function slugify(name: string): string {
 // ============================================================
 
 router.post('/monsters', async (req: Request, res: Response) => {
+  const userId = getAuthUserId(req);
   const { sessionId, name, size, type, alignment, armorClass, hitPoints, hitDice,
     speed, abilityScores, challengeRating, crNumeric, actions, specialAbilities,
     legendaryActions, description, senses, languages, damageResistances,
     damageImmunities, conditionImmunities, imageUrl } = req.body;
 
   if (!sessionId || !name) { res.status(400).json({ error: 'sessionId and name required' }); return; }
+  await assertSessionDM(sessionId, userId);
 
   const slug = slugify(name);
   try {
@@ -63,8 +66,10 @@ router.get('/monsters/:slug', async (req: Request, res: Response) => {
 });
 
 router.put('/monsters/:slug', async (req: Request, res: Response) => {
-  const { rows: existingRows } = await pool.query('SELECT slug FROM custom_monsters WHERE slug = $1', [req.params.slug]);
+  const userId = getAuthUserId(req);
+  const { rows: existingRows } = await pool.query('SELECT slug, session_id FROM custom_monsters WHERE slug = $1', [req.params.slug]);
   if (existingRows.length === 0) { res.status(404).json({ error: 'Not found' }); return; }
+  await assertSessionDM(existingRows[0].session_id, userId);
 
   const { name, size, type, alignment, armorClass, hitPoints, hitDice,
     speed, abilityScores, challengeRating, crNumeric, actions, specialAbilities,
@@ -98,6 +103,10 @@ router.put('/monsters/:slug', async (req: Request, res: Response) => {
 });
 
 router.delete('/monsters/:slug', async (req: Request, res: Response) => {
+  const userId = getAuthUserId(req);
+  const { rows } = await pool.query('SELECT session_id FROM custom_monsters WHERE slug = $1', [req.params.slug]);
+  if (rows.length === 0) { res.status(404).json({ error: 'Not found' }); return; }
+  await assertSessionDM(rows[0].session_id, userId);
   await pool.query('DELETE FROM custom_monsters WHERE slug = $1', [req.params.slug]);
   res.json({ success: true });
 });
@@ -126,6 +135,7 @@ function mapMonsterRow(row: Record<string, unknown>) {
 // ============================================================
 
 router.post('/spells', async (req: Request, res: Response) => {
+  const userId = getAuthUserId(req);
   const { sessionId, name, level, school, castingTime, range, components, duration,
     description, higherLevels, concentration, ritual, classes, imageUrl,
     damage, damageType, savingThrow, attackType,
@@ -134,6 +144,7 @@ router.post('/spells', async (req: Request, res: Response) => {
   } = req.body;
 
   if (!sessionId || !name) { res.status(400).json({ error: 'sessionId and name required' }); return; }
+  await assertSessionDM(sessionId, userId);
 
   const slug = slugify(name);
   try {
@@ -173,8 +184,10 @@ router.get('/spells/:slug', async (req: Request, res: Response) => {
 });
 
 router.put('/spells/:slug', async (req: Request, res: Response) => {
-  const { rows: existingRows } = await pool.query('SELECT slug FROM custom_spells WHERE slug = $1', [req.params.slug]);
+  const userId = getAuthUserId(req);
+  const { rows: existingRows } = await pool.query('SELECT slug, session_id FROM custom_spells WHERE slug = $1', [req.params.slug]);
   if (existingRows.length === 0) { res.status(404).json({ error: 'Not found' }); return; }
+  await assertSessionDM(existingRows[0].session_id, userId);
 
   const { name, level, school, castingTime, range, components, duration,
     description, higherLevels, concentration, ritual, classes, imageUrl } = req.body;
@@ -198,6 +211,10 @@ router.put('/spells/:slug', async (req: Request, res: Response) => {
 });
 
 router.delete('/spells/:slug', async (req: Request, res: Response) => {
+  const userId = getAuthUserId(req);
+  const { rows } = await pool.query('SELECT session_id FROM custom_spells WHERE slug = $1', [req.params.slug]);
+  if (rows.length === 0) { res.status(404).json({ error: 'Not found' }); return; }
+  await assertSessionDM(rows[0].session_id, userId);
   await pool.query('DELETE FROM custom_spells WHERE slug = $1', [req.params.slug]);
   res.json({ success: true });
 });
@@ -227,10 +244,12 @@ function mapSpellRow(row: Record<string, unknown>) {
 // ============================================================
 
 router.post('/items', async (req: Request, res: Response) => {
+  const userId = getAuthUserId(req);
   const { sessionId, name, type, rarity, requiresAttunement, description,
     weight, valueGp, damage, damageType, properties, imageUrl, range, ac, acType, magicBonus } = req.body;
 
   if (!sessionId || !name) { res.status(400).json({ error: 'sessionId and name required' }); return; }
+  await assertSessionDM(sessionId, userId);
 
   const id = uuidv4();
   try {
@@ -265,8 +284,10 @@ router.get('/items/:id', async (req: Request, res: Response) => {
 });
 
 router.put('/items/:id', async (req: Request, res: Response) => {
-  const { rows: existingRows } = await pool.query('SELECT id FROM custom_items WHERE id = $1', [req.params.id]);
+  const userId = getAuthUserId(req);
+  const { rows: existingRows } = await pool.query('SELECT id, session_id FROM custom_items WHERE id = $1', [req.params.id]);
   if (existingRows.length === 0) { res.status(404).json({ error: 'Not found' }); return; }
+  await assertSessionDM(existingRows[0].session_id, userId);
 
   const { name, type, rarity, description, weight, valueGp, damage, damageType, properties,
     requiresAttunement, imageUrl, range, ac, acType, magicBonus } = req.body;
@@ -297,11 +318,13 @@ router.put('/items/:id', async (req: Request, res: Response) => {
 
 const itemImageUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
 router.post('/items/:id/image', itemImageUpload.single('image'), async (req: Request, res: Response) => {
+  const userId = getAuthUserId(req);
   if (!req.file) { res.status(400).json({ error: 'No image file' }); return; }
   const itemId = req.params.id;
 
-  const { rows } = await pool.query('SELECT id, name FROM custom_items WHERE id = $1', [itemId]);
+  const { rows } = await pool.query('SELECT id, name, session_id FROM custom_items WHERE id = $1', [itemId]);
   if (rows.length === 0) { res.status(404).json({ error: 'Item not found' }); return; }
+  await assertSessionDM(rows[0].session_id, userId);
 
   const itemsDir = path.join(UPLOAD_DIR, 'items');
   if (!fs.existsSync(itemsDir)) fs.mkdirSync(itemsDir, { recursive: true });
@@ -317,6 +340,10 @@ router.post('/items/:id/image', itemImageUpload.single('image'), async (req: Req
 });
 
 router.delete('/items/:id', async (req: Request, res: Response) => {
+  const userId = getAuthUserId(req);
+  const { rows } = await pool.query('SELECT session_id FROM custom_items WHERE id = $1', [req.params.id]);
+  if (rows.length === 0) { res.status(404).json({ error: 'Not found' }); return; }
+  await assertSessionDM(rows[0].session_id, userId);
   await pool.query('DELETE FROM custom_items WHERE id = $1', [req.params.id]);
   res.json({ success: true });
 });

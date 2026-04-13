@@ -2,6 +2,7 @@ import { Router, type Request, type Response } from 'express';
 import { v4 as uuidv4 } from 'uuid';
 import pool from '../db/connection.js';
 import { parseCharacterJSON } from '../services/DndBeyondService.js';
+import { getAuthUserId, assertCharacterOwnerOrDM } from '../utils/authorization.js';
 
 const router = Router();
 
@@ -55,18 +56,80 @@ router.get('/character/:characterId', async (req: Request, res: Response) => {
   }
 });
 
+/** Validate that a URL is a safe dndbeyond.com image URL (prevents SSRF). */
+function validateDndbeyondUrl(raw: string): URL | null {
+  let parsed: URL;
+  try {
+    parsed = new URL(raw);
+  } catch {
+    return null;
+  }
+
+  // Only allow HTTPS
+  if (parsed.protocol !== 'https:') return null;
+
+  // Reject URLs with userinfo (e.g. https://dndbeyond.com@evil.com)
+  if (parsed.username || parsed.password) return null;
+
+  // Hostname must be exactly dndbeyond.com or a subdomain of it
+  const host = parsed.hostname.toLowerCase();
+  if (host !== 'dndbeyond.com' && !host.endsWith('.dndbeyond.com')) return null;
+
+  // Reject hostnames that look like IPs or localhost
+  if (/^(localhost|127\.|10\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.|0\.|::1|\[::1\])/i.test(host)) return null;
+
+  return parsed;
+}
+
+const ALLOWED_IMAGE_CONTENT_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/svg+xml'];
+
 router.get('/proxy-image', async (req: Request, res: Response) => {
   const imageUrl = String(req.query.url || '');
-  if (!imageUrl || !imageUrl.includes('dndbeyond.com')) {
-    res.status(400).json({ error: 'Invalid image URL' });
+  const parsed = validateDndbeyondUrl(imageUrl);
+  if (!parsed) {
+    res.status(400).json({ error: 'Invalid image URL. Must be an HTTPS dndbeyond.com URL.' });
     return;
   }
+
   try {
-    const resp = await fetch(imageUrl);
+    // Don't follow redirects automatically — they could point to internal hosts
+    const resp = await fetch(parsed.href, { redirect: 'manual' });
+
+    // If redirected, validate the redirect target
+    if (resp.status >= 300 && resp.status < 400) {
+      const location = resp.headers.get('location');
+      if (!location || !validateDndbeyondUrl(location)) {
+        res.status(403).json({ error: 'Redirect to disallowed host' });
+        return;
+      }
+      // Fetch the validated redirect target (still no auto-follow)
+      const redirectResp = await fetch(location, { redirect: 'manual' });
+      if (!redirectResp.ok) { res.status(redirectResp.status).end(); return; }
+      const redirectCt = (redirectResp.headers.get('content-type') || '').split(';')[0].trim().toLowerCase();
+      if (!ALLOWED_IMAGE_CONTENT_TYPES.includes(redirectCt)) {
+        res.status(403).json({ error: 'Response is not an image' });
+        return;
+      }
+      res.set('Content-Type', redirectCt);
+      res.set('Cache-Control', 'public, max-age=86400');
+      res.set('X-Content-Type-Options', 'nosniff');
+      const buf = Buffer.from(await redirectResp.arrayBuffer());
+      res.send(buf);
+      return;
+    }
+
     if (!resp.ok) { res.status(resp.status).end(); return; }
-    const contentType = resp.headers.get('content-type') || 'image/jpeg';
+
+    // Validate content type is an image
+    const contentType = (resp.headers.get('content-type') || '').split(';')[0].trim().toLowerCase();
+    if (!ALLOWED_IMAGE_CONTENT_TYPES.includes(contentType)) {
+      res.status(403).json({ error: 'Response is not an image' });
+      return;
+    }
+
     res.set('Content-Type', contentType);
     res.set('Cache-Control', 'public, max-age=86400');
+    res.set('X-Content-Type-Options', 'nosniff');
     const buffer = Buffer.from(await resp.arrayBuffer());
     res.send(buffer);
   } catch {
@@ -75,9 +138,9 @@ router.get('/proxy-image', async (req: Request, res: Response) => {
 });
 
 router.post('/import', async (req: Request, res: Response) => {
-  const { characterJson, userId } = req.body;
+  const userId = getAuthUserId(req);
+  const { characterJson } = req.body;
   if (!characterJson) { res.status(400).json({ error: 'characterJson is required' }); return; }
-  if (!userId) { res.status(400).json({ error: 'userId is required' }); return; }
 
   try {
     const character = parseCharacterJSON(characterJson);
@@ -141,7 +204,10 @@ router.post('/import', async (req: Request, res: Response) => {
 });
 
 router.post('/sync/:characterId', async (req: Request, res: Response) => {
+  const userId = getAuthUserId(req);
   const characterId = String(req.params.characterId);
+
+  await assertCharacterOwnerOrDM(characterId, userId);
 
   const { rows: rowArr } = await pool.query('SELECT * FROM characters WHERE id = $1', [characterId]);
   const row = rowArr[0] as Record<string, unknown> | undefined;

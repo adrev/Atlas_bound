@@ -3,7 +3,6 @@ import { z } from 'zod';
 // --- Session event schemas ---
 export const sessionJoinSchema = z.object({
   roomCode: z.string().min(1).max(20),
-  displayName: z.string().min(1).max(50),
 });
 
 export const sessionKickSchema = z.object({
@@ -339,7 +338,6 @@ const currencySchema = z.object({
 }).optional();
 
 export const createCharacterSchema = z.object({
-  userId: z.string().min(1),
   name: z.string().min(1).max(100),
   race: z.string().max(50).default(''),
   class: z.string().max(50).default(''),
@@ -388,7 +386,7 @@ export const createCharacterSchema = z.object({
   compendiumSlug: z.string().nullable().optional(),
 });
 
-export const updateCharacterSchema = createCharacterSchema.partial().omit({ userId: true });
+export const updateCharacterSchema = createCharacterSchema.partial();
 
 export const createMapSchema = z.object({
   name: z.string().min(1).max(100),

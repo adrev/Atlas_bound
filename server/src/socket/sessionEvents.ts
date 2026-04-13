@@ -18,7 +18,15 @@ export function registerSessionEvents(io: Server, socket: Socket): void {
       return;
     }
 
-    const { roomCode, displayName } = parsed.data;
+    const { roomCode } = parsed.data;
+    // Identity comes from the authenticated session, never from client data
+    const userId = socket.data.userId as string;
+    const displayName = socket.data.displayName as string;
+
+    if (!userId) {
+      socket.emit('session:error', { message: 'Authentication required' });
+      return;
+    }
 
     const { rows: sessionRows } = await pool.query(`
       SELECT id, name, room_code, dm_user_id, current_map_id, player_map_id, game_mode, settings
@@ -42,17 +50,13 @@ export function registerSessionEvents(io: Server, socket: Socket): void {
       WHERE sp.session_id = $1
     `, [session.id]);
 
-    let currentPlayer = playerRows.find(p => p.display_name === displayName);
-    if (!currentPlayer) {
-      currentPlayer = playerRows[playerRows.length - 1];
-    }
+    const currentPlayer = playerRows.find(p => p.user_id === userId);
 
     if (!currentPlayer) {
-      socket.emit('session:error', { message: 'Player not found in session' });
+      socket.emit('session:error', { message: 'You are not a member of this session' });
       return;
     }
 
-    const userId = currentPlayer.user_id;
     const isDM = currentPlayer.role === 'dm';
 
     let room = getRoom(session.id);

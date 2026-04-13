@@ -7,17 +7,24 @@ const CLOUD_SQL_SOCKET = process.env.CLOUD_SQL_CONNECTION_NAME
   ? `/cloudsql/${process.env.CLOUD_SQL_CONNECTION_NAME}`
   : undefined;
 
+if (CLOUD_SQL_SOCKET && !process.env.PGPASSWORD) {
+  throw new Error('[DB] PGPASSWORD env var is required when connecting via Cloud SQL socket');
+}
+if (!CLOUD_SQL_SOCKET && !process.env.DATABASE_URL) {
+  throw new Error('[DB] DATABASE_URL env var is required for local/dev database connections');
+}
+
 const pool = CLOUD_SQL_SOCKET
   ? new Pool({
       user: 'postgres',
-      password: process.env.PGPASSWORD || 'AtlasBound2026!',
+      password: process.env.PGPASSWORD,
       database: 'atlas_bound',
       host: CLOUD_SQL_SOCKET,
       max: 20,
       idleTimeoutMillis: 30000,
     })
   : new Pool({
-      connectionString: process.env.DATABASE_URL || 'postgresql://postgres:AtlasBound2026!@localhost:5432/atlas_bound',
+      connectionString: process.env.DATABASE_URL,
       max: 20,
       idleTimeoutMillis: 30000,
     });

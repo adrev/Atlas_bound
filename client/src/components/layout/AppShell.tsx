@@ -87,7 +87,7 @@ export function AppShell() {
     setShowNamePrompt(false);
   };
 
-  useSocket(roomCode, displayName);
+  useSocket(roomCode);
 
   // Show the InitiativeModal whenever combat transitions from
   // inactive → active. We deliberately use a hook subscription +

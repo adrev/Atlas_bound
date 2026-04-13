@@ -16,47 +16,80 @@ for (const dir of [mapUploadsDir, tokenUploadsDir, portraitUploadsDir]) {
 }
 
 const ALLOWED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
-const MAX_FILE_SIZE = 20 * 1024 * 1024; // 20MB
+const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5MB
 
-function createStorage(subDir: string) {
-  return multer.diskStorage({
-    destination(_req, _file, cb) {
-      const dir = path.join(UPLOAD_DIR, subDir);
-      cb(null, dir);
+// Magic byte signatures for allowed image types
+const IMAGE_SIGNATURES: Array<{ bytes: number[]; offset?: number; ext: string }> = [
+  { bytes: [0x89, 0x50, 0x4e, 0x47], ext: '.png' },           // PNG
+  { bytes: [0xff, 0xd8, 0xff], ext: '.jpg' },                   // JPEG
+  { bytes: [0x47, 0x49, 0x46], ext: '.gif' },                   // GIF
+  // WebP: starts with RIFF....WEBP
+  { bytes: [0x52, 0x49, 0x46, 0x46], ext: '.webp' },            // WebP (first 4 bytes)
+];
+
+/** Check first bytes of a buffer to detect the real image type. Returns extension or null. */
+function detectImageType(buffer: Buffer): string | null {
+  if (buffer.length < 12) return null;
+
+  for (const sig of IMAGE_SIGNATURES) {
+    const offset = sig.offset ?? 0;
+    const match = sig.bytes.every((b, i) => buffer[offset + i] === b);
+    if (match) {
+      // Extra check for WebP: bytes 8-11 must be "WEBP"
+      if (sig.ext === '.webp') {
+        if (
+          buffer[8] === 0x57 && // W
+          buffer[9] === 0x45 && // E
+          buffer[10] === 0x42 && // B
+          buffer[11] === 0x50   // P
+        ) {
+          return '.webp';
+        }
+        // RIFF header but not WebP — reject
+        continue;
+      }
+      return sig.ext;
+    }
+  }
+  return null;
+}
+
+// Use memory storage so we can validate magic bytes before writing to disk
+function createMemoryUpload() {
+  return multer({
+    storage: multer.memoryStorage(),
+    fileFilter(_req, file, cb) {
+      // Preliminary client-mimetype check (will also validate bytes after upload)
+      if (ALLOWED_IMAGE_TYPES.includes(file.mimetype)) {
+        cb(null, true);
+      } else {
+        cb(new Error(`Invalid file type: ${file.mimetype}. Allowed: ${ALLOWED_IMAGE_TYPES.join(', ')}`));
+      }
     },
-    filename(_req, file, cb) {
-      const ext = path.extname(file.originalname).toLowerCase() || '.png';
-      cb(null, `${uuidv4()}${ext}`);
-    },
+    limits: { fileSize: MAX_FILE_SIZE },
   });
 }
 
-function fileFilter(
-  _req: Express.Request,
+/** Validate magic bytes, write to the target dir with a server-chosen filename, and return the filename. */
+export function validateAndSaveUpload(
   file: Express.Multer.File,
-  cb: multer.FileFilterCallback,
-) {
-  if (ALLOWED_IMAGE_TYPES.includes(file.mimetype)) {
-    cb(null, true);
-  } else {
-    cb(new Error(`Invalid file type: ${file.mimetype}. Allowed: ${ALLOWED_IMAGE_TYPES.join(', ')}`));
+  subDir: string,
+): string {
+  const detectedExt = detectImageType(file.buffer);
+  if (!detectedExt) {
+    throw new Error('File does not appear to be a valid image (PNG, JPEG, GIF, or WebP).');
   }
+
+  const filename = `${uuidv4()}${detectedExt}`;
+  const destDir = path.join(UPLOAD_DIR, subDir);
+  const destPath = path.join(destDir, filename);
+
+  fs.writeFileSync(destPath, file.buffer);
+  return filename;
 }
 
-export const mapUpload = multer({
-  storage: createStorage('maps'),
-  fileFilter,
-  limits: { fileSize: MAX_FILE_SIZE },
-});
+export const mapUpload = createMemoryUpload();
+export const tokenUpload = createMemoryUpload();
+export const portraitUpload = createMemoryUpload();
 
-export const tokenUpload = multer({
-  storage: createStorage('tokens'),
-  fileFilter,
-  limits: { fileSize: MAX_FILE_SIZE },
-});
-
-export const portraitUpload = multer({
-  storage: createStorage('portraits'),
-  fileFilter,
-  limits: { fileSize: MAX_FILE_SIZE },
-});
+export { detectImageType };

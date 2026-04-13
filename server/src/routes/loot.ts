@@ -1,6 +1,7 @@
 import { Router, type Request, type Response } from 'express';
 import { v4 as uuidv4 } from 'uuid';
 import pool from '../db/connection.js';
+import { getAuthUserId, assertCharacterOwnerOrDM } from '../utils/authorization.js';
 
 const router = Router();
 
@@ -13,7 +14,9 @@ router.get('/characters/:id/loot', async (req: Request, res: Response) => {
 
 // POST /api/characters/:id/loot
 router.post('/characters/:id/loot', async (req: Request, res: Response) => {
+  const userId = getAuthUserId(req);
   const charId = String(req.params.id);
+  await assertCharacterOwnerOrDM(charId, userId);
   const { itemName, itemSlug, customItemId, itemRarity, quantity } = req.body;
   const id = uuidv4();
   await pool.query(
@@ -25,15 +28,19 @@ router.post('/characters/:id/loot', async (req: Request, res: Response) => {
 
 // DELETE /api/characters/:id/loot/:entryId
 router.delete('/characters/:id/loot/:entryId', async (req: Request, res: Response) => {
+  const userId = getAuthUserId(req);
+  await assertCharacterOwnerOrDM(String(req.params.id), userId);
   await pool.query('DELETE FROM loot_entries WHERE id = $1 AND character_id = $2', [req.params.entryId, String(req.params.id)]);
   res.json({ success: true });
 });
 
 // PATCH /api/characters/:id/loot/:entryId
 router.patch('/characters/:id/loot/:entryId', async (req: Request, res: Response) => {
+  const userId = getAuthUserId(req);
+  const charId = String(req.params.id);
+  await assertCharacterOwnerOrDM(charId, userId);
   const { quantity, equipped } = req.body;
   const entryId = req.params.entryId;
-  const charId = String(req.params.id);
 
   if (quantity !== undefined) {
     if (typeof quantity !== 'number' || quantity < 0) {
@@ -56,8 +63,14 @@ router.patch('/characters/:id/loot/:entryId', async (req: Request, res: Response
 
 // POST /api/characters/:id/loot/take
 router.post('/characters/:id/loot/take', async (req: Request, res: Response) => {
+  const userId = getAuthUserId(req);
   const creatureCharId = String(req.params.id);
   const { entryId, targetCharacterId } = req.body;
+
+  // Verify user owns the target character (the one receiving the loot)
+  if (targetCharacterId) {
+    await assertCharacterOwnerOrDM(targetCharacterId, userId);
+  }
 
   const { rows: entryRows } = await pool.query('SELECT * FROM loot_entries WHERE id = $1 AND character_id = $2', [entryId, creatureCharId]);
   const entry = entryRows[0] as any;
@@ -185,7 +198,9 @@ router.post('/characters/:id/loot/take', async (req: Request, res: Response) => 
 
 // POST /api/characters/:id/inventory/enrich
 router.post('/characters/:id/inventory/enrich', async (req: Request, res: Response) => {
+  const userId = getAuthUserId(req);
   const charId = String(req.params.id);
+  await assertCharacterOwnerOrDM(charId, userId);
   const { rows: charRows } = await pool.query('SELECT id, inventory FROM characters WHERE id = $1', [charId]);
   const char = charRows[0] as any;
   if (!char) { res.status(404).json({ error: 'Character not found' }); return; }
@@ -252,12 +267,16 @@ router.post('/characters/:id/inventory/enrich', async (req: Request, res: Respon
 
 // POST /api/loot/transfer
 router.post('/loot/transfer', async (req: Request, res: Response) => {
+  const userId = getAuthUserId(req);
   const { fromCharacterId, toCharacterId, lootEntryId } = req.body;
 
   if (!fromCharacterId || !toCharacterId || !lootEntryId) {
     res.status(400).json({ error: 'Missing required fields: fromCharacterId, toCharacterId, lootEntryId' });
     return;
   }
+
+  // Must own the source character or be DM
+  await assertCharacterOwnerOrDM(String(fromCharacterId), userId);
 
   const { rows: entryRows } = await pool.query('SELECT * FROM loot_entries WHERE id = $1 AND character_id = $2', [lootEntryId, String(fromCharacterId)]);
   const entry = entryRows[0] as any;
@@ -280,7 +299,9 @@ router.post('/loot/transfer', async (req: Request, res: Response) => {
 
 // POST /api/characters/:id/loot/drop
 router.post('/characters/:id/loot/drop', async (req: Request, res: Response) => {
+  const authUserId = getAuthUserId(req);
   const charId = String(req.params.id);
+  await assertCharacterOwnerOrDM(charId, authUserId);
   const { itemIndex, mapId, x, y } = req.body;
 
   const { rows: charRows } = await pool.query('SELECT id, inventory FROM characters WHERE id = $1', [charId]);

@@ -4,6 +4,7 @@ import pool from '../db/connection.js';
 import { createCharacterSchema, updateCharacterSchema } from '../utils/validation.js';
 import { proficiencyBonusForLevel } from '@dnd-vtt/shared';
 import { parseCharacterJSON } from '../services/DndBeyondService.js';
+import { getAuthUserId, assertCharacterOwnerOrDM } from '../utils/authorization.js';
 
 const router = Router();
 
@@ -60,17 +61,19 @@ function dbRowToCharacter(row: Record<string, unknown>) {
   };
 }
 
-// GET /api/characters?userId=XXX
+// GET /api/characters - List the authenticated user's characters
 router.get('/', async (req: Request, res: Response) => {
-  const userId = typeof req.query.userId === 'string' ? req.query.userId : null;
-  const { rows } = userId
-    ? await pool.query('SELECT * FROM characters WHERE user_id = $1 ORDER BY updated_at DESC', [userId])
-    : await pool.query("SELECT * FROM characters WHERE user_id != 'npc' ORDER BY updated_at DESC");
+  const userId = getAuthUserId(req);
+  const { rows } = await pool.query(
+    "SELECT * FROM characters WHERE user_id = $1 AND user_id != 'npc' ORDER BY updated_at DESC",
+    [userId],
+  );
   res.json(rows.map(dbRowToCharacter));
 });
 
 // POST /api/characters - Create a new character
 router.post('/', async (req: Request, res: Response) => {
+  const userId = getAuthUserId(req);
   const parsed = createCharacterSchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: 'Invalid request', details: parsed.error.issues });
@@ -96,7 +99,7 @@ router.post('/', async (req: Request, res: Response) => {
       skills, portrait_url, compendium_slug
     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
   `, [
-    id, data.userId, data.name, data.race, data.class, data.level,
+    id, userId, data.name, data.race, data.class, data.level,
     data.hitPoints, data.maxHitPoints, data.armorClass, data.speed,
     profBonus, JSON.stringify(abilityScores),
     JSON.stringify(data.savingThrows ?? []),
@@ -135,17 +138,14 @@ router.get('/:id', async (req: Request, res: Response) => {
 
 // PUT /api/characters/:id - Update a character
 router.put('/:id', async (req: Request, res: Response) => {
+  const userId = getAuthUserId(req);
   const parsed = updateCharacterSchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: 'Invalid request', details: parsed.error.issues });
     return;
   }
 
-  const { rows: existingRows } = await pool.query('SELECT id FROM characters WHERE id = $1', [req.params.id]);
-  if (existingRows.length === 0) {
-    res.status(404).json({ error: 'Character not found' });
-    return;
-  }
+  await assertCharacterOwnerOrDM(String(req.params.id), userId);
 
   const updates = parsed.data;
   const setClauses: string[] = [];
@@ -224,9 +224,10 @@ router.delete('/:id', async (req: Request, res: Response) => {
 
 // POST /api/characters/import-json
 router.post('/import-json', async (req: Request, res: Response) => {
-  const { userId, characterJson } = req.body;
-  if (!userId || !characterJson) {
-    res.status(400).json({ error: 'userId and characterJson are required' });
+  const userId = getAuthUserId(req);
+  const { characterJson } = req.body;
+  if (!characterJson) {
+    res.status(400).json({ error: 'characterJson is required' });
     return;
   }
 

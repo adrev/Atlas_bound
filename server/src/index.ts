@@ -1,6 +1,7 @@
 import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
+import helmet from 'helmet';
 import { createServer } from 'http';
 import { Server } from 'socket.io';
 import path from 'path';
@@ -19,7 +20,7 @@ import { seedCompendium, isCompendiumSeeded } from './services/Open5eService.js'
 import { seedEquipment, isEquipmentSeeded } from './services/seedEquipment.js';
 import { registerSocketHandler } from './socket/handler.js';
 import { setupStaticServing } from './static.js';
-import { tokenUpload, portraitUpload } from './routes/uploads.js';
+import { tokenUpload, portraitUpload, validateAndSaveUpload } from './routes/uploads.js';
 import authRouter from './auth/routes.js';
 import discordAuth from './auth/oauth/discord.js';
 import googleAuth from './auth/oauth/google.js';
@@ -59,6 +60,23 @@ const app = express();
 // behind the HTTPS load balancer (app sees HTTP internally)
 app.set('trust proxy', 1);
 
+// Security headers
+app.disable('x-powered-by');
+app.use(helmet({
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      scriptSrc: ["'self'"],
+      styleSrc: ["'self'", "'unsafe-inline'"],
+      imgSrc: ["'self'", 'data:', 'blob:', '*.dndbeyond.com'],
+      connectSrc: ["'self'", 'wss:', 'ws:'],
+    },
+  },
+  hsts: IS_PRODUCTION,
+  noSniff: true,
+  referrerPolicy: { policy: 'strict-origin-when-cross-origin' },
+}));
+
 // Middleware
 app.use(cors({
   origin: CORS_ORIGINS,
@@ -66,8 +84,11 @@ app.use(cors({
 }));
 app.use(express.json({ limit: '10mb' }));
 
-// Static file serving for uploads
-app.use('/uploads', express.static(UPLOAD_DIR));
+// Static file serving for uploads (with nosniff to prevent MIME-sniffing attacks)
+app.use('/uploads', (_req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  next();
+}, express.static(UPLOAD_DIR));
 
 // Auth routes (unauthenticated)
 app.use('/api/auth', authRouter);
@@ -86,14 +107,26 @@ app.use('/api/dndbeyond', requireAuth, dndbeyondRouter);
 app.use('/api', requireAuth, lootRouter);
 app.use('/api/custom', requireAuth, customContentRouter);
 
-// Upload endpoints
-app.post('/api/uploads/token-image', tokenUpload.single('image'), (req, res) => {
+// Upload endpoints (authenticated, with magic-byte validation)
+app.post('/api/uploads/token-image', requireAuth, tokenUpload.single('image'), (req, res) => {
   if (!req.file) { res.status(400).json({ error: 'No image file' }); return; }
-  res.json({ url: `/uploads/tokens/${req.file.filename}` });
+  try {
+    const filename = validateAndSaveUpload(req.file, 'tokens');
+    res.json({ url: `/uploads/tokens/${filename}` });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : 'Invalid image file';
+    res.status(400).json({ error: msg });
+  }
 });
-app.post('/api/uploads/portrait', portraitUpload.single('image'), (req, res) => {
+app.post('/api/uploads/portrait', requireAuth, portraitUpload.single('image'), (req, res) => {
   if (!req.file) { res.status(400).json({ error: 'No image file' }); return; }
-  res.json({ url: `/uploads/portraits/${req.file.filename}` });
+  try {
+    const filename = validateAndSaveUpload(req.file, 'portraits');
+    res.json({ url: `/uploads/portraits/${filename}` });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : 'Invalid image file';
+    res.status(400).json({ error: msg });
+  }
 });
 
 // Health check

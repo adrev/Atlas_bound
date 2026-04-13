@@ -1,8 +1,9 @@
 import { Router, type Request, type Response, type NextFunction } from 'express';
 import { v4 as uuidv4 } from 'uuid';
 import pool from '../db/connection.js';
-import { mapUpload } from './uploads.js';
+import { mapUpload, validateAndSaveUpload } from './uploads.js';
 import { createMapSchema } from '../utils/validation.js';
+import { getAuthUserId, assertSessionDM, assertSessionMember } from '../utils/authorization.js';
 
 const router = Router();
 
@@ -18,6 +19,7 @@ router.post(
     }
   },
   async (req: Request, res: Response) => {
+    const userId = getAuthUserId(req);
     const sessionId = String(req.params.sessionId);
 
     const { rows: sessionRows } = await pool.query('SELECT id FROM sessions WHERE id = $1', [sessionId]);
@@ -25,6 +27,8 @@ router.post(
       res.status(404).json({ error: 'Session not found' });
       return;
     }
+
+    await assertSessionDM(sessionId, userId);
 
     const parsed = createMapSchema.safeParse(req.body);
     if (!parsed.success) {
@@ -62,7 +66,17 @@ router.post(
     }
 
     const mapId = uuidv4();
-    const imageUrl = req.file ? `/uploads/maps/${req.file.filename}` : null;
+    let imageUrl: string | null = null;
+    if (req.file) {
+      try {
+        const filename = validateAndSaveUpload(req.file, 'maps');
+        imageUrl = `/uploads/maps/${filename}`;
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : 'Invalid image file';
+        res.status(400).json({ error: msg });
+        return;
+      }
+    }
 
     await pool.query(`
       INSERT INTO maps (id, session_id, name, image_url, width, height, grid_size, grid_type)
@@ -93,7 +107,10 @@ router.post(
 
 // GET /api/sessions/:sessionId/maps
 router.get('/sessions/:sessionId/maps', async (req: Request, res: Response) => {
-  const { sessionId } = req.params;
+  const userId = getAuthUserId(req);
+  const sessionId = String(req.params.sessionId);
+
+  await assertSessionMember(sessionId, userId);
 
   const { rows: maps } = await pool.query(`
     SELECT id, session_id, name, image_url, width, height, grid_size, grid_type, created_at
@@ -168,13 +185,16 @@ router.get('/maps/:id', async (req: Request, res: Response) => {
 
 // DELETE /api/maps/:id
 router.delete('/maps/:id', async (req: Request, res: Response) => {
+  const userId = getAuthUserId(req);
   const { id } = req.params;
 
-  const { rows } = await pool.query('SELECT id FROM maps WHERE id = $1', [id]);
+  const { rows } = await pool.query('SELECT id, session_id FROM maps WHERE id = $1', [id]);
   if (rows.length === 0) {
     res.status(404).json({ error: 'Map not found' });
     return;
   }
+
+  await assertSessionDM(rows[0].session_id, userId);
 
   await pool.query('DELETE FROM tokens WHERE map_id = $1', [id]);
   await pool.query('DELETE FROM maps WHERE id = $1', [id]);

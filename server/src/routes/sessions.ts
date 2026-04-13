@@ -3,6 +3,7 @@ import { v4 as uuidv4 } from 'uuid';
 import pool from '../db/connection.js';
 import { createSessionSchema, joinSessionSchema } from '../utils/validation.js';
 import { DEFAULT_SESSION_SETTINGS } from '@dnd-vtt/shared';
+import { getAuthUserId, assertSessionMember, assertSessionDM } from '../utils/authorization.js';
 
 const router = Router();
 
@@ -142,12 +143,22 @@ router.delete('/:id/leave', async (req: Request, res: Response) => {
 
 // POST /api/sessions/:id/link-character - Link a character to a player in this session
 router.post('/:id/link-character', async (req: Request, res: Response) => {
+  const authUserId = getAuthUserId(req);
   const sessionId = String(req.params.id);
   const { userId, characterId } = req.body || {};
   if (!userId || !characterId) {
     res.status(400).json({ error: 'userId and characterId required' });
     return;
   }
+
+  // Must be a member of the session
+  await assertSessionMember(sessionId, authUserId);
+
+  // Players can only link characters to themselves; DM can link for anyone
+  if (userId !== authUserId) {
+    await assertSessionDM(sessionId, authUserId);
+  }
+
   await pool.query('UPDATE session_players SET character_id = $1 WHERE session_id = $2 AND user_id = $3',
     [characterId, sessionId, userId]);
   res.json({ success: true });
@@ -155,7 +166,10 @@ router.post('/:id/link-character', async (req: Request, res: Response) => {
 
 // GET /api/sessions/:id - Get session details
 router.get('/:id', async (req: Request, res: Response) => {
+  const userId = getAuthUserId(req);
   const { id } = req.params;
+
+  await assertSessionMember(String(id), userId);
 
   const { rows: sessionRows } = await pool.query(`
     SELECT id, name, room_code, dm_user_id, current_map_id, combat_active, game_mode, settings, created_at, updated_at
