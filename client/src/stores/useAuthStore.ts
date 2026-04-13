@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { disconnectSocket } from '../socket/client';
 
 export interface AuthUser {
   id: string;
@@ -88,6 +89,8 @@ export const useAuthStore = create<AuthState & AuthActions>((set) => ({
   },
 
   logout: async () => {
+    // Disconnect the WebSocket before clearing state
+    disconnectSocket();
     try {
       await fetch('/api/auth/logout', {
         method: 'POST',

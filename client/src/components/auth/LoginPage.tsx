@@ -42,12 +42,10 @@ export function LoginPage() {
         {/* Header */}
         <div style={styles.header}>
           <img
-            src="/atlas-bound-logo.png"
-            alt="Atlas Bound"
-            style={{ width: 120, height: 120, borderRadius: '50%', marginBottom: 12 }}
+            src="/kbrt-logo.svg"
+            alt="KBRT.AI"
+            style={{ width: 220, height: 220, marginBottom: 4 }}
           />
-          <h1 style={styles.title}>ATLAS BOUND</h1>
-          <p style={styles.subtitle}>Online D&D Platform</p>
           <div style={styles.divider} />
         </div>
 

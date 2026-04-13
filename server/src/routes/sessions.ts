@@ -109,6 +109,36 @@ router.post('/join', (req: Request, res: Response) => {
   });
 });
 
+// GET /api/sessions/mine - List sessions the current user belongs to
+router.get('/mine', (req: Request, res: Response) => {
+  const userId = (req as any).user?.id;
+  if (!userId) { res.json([]); return; }
+
+  const rows = db.prepare(`
+    SELECT s.id, s.name, s.room_code, sp.role,
+           (SELECT COUNT(*) FROM session_players WHERE session_id = s.id) as player_count,
+           s.created_at
+    FROM session_players sp
+    JOIN sessions s ON sp.session_id = s.id
+    WHERE sp.user_id = ?
+    ORDER BY s.created_at DESC
+  `).all(userId) as Array<Record<string, unknown>>;
+
+  res.json(rows.map(r => ({
+    id: r.id, name: r.name, roomCode: r.room_code,
+    role: r.role, playerCount: r.player_count, createdAt: r.created_at,
+  })));
+});
+
+// DELETE /api/sessions/:id/leave - Leave a session
+router.delete('/:id/leave', (req: Request, res: Response) => {
+  const userId = (req as any).user?.id;
+  if (!userId) { res.status(401).json({ error: 'Not authenticated' }); return; }
+  db.prepare('DELETE FROM session_players WHERE session_id = ? AND user_id = ?')
+    .run(req.params.id, userId);
+  res.json({ success: true });
+});
+
 // POST /api/sessions/:id/link-character - Link a character to a player in this session
 router.post('/:id/link-character', (req: Request, res: Response) => {
   const sessionId = String(req.params.id);

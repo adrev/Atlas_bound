@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Swords, Users, History, Trash2, LogOut } from 'lucide-react';
+import { Swords, Users, History, Trash2, LogOut, Shield, User, AlertTriangle } from 'lucide-react';
 import { createSession, joinSession } from '../../services/api';
 import { useSessionStore } from '../../stores/useSessionStore';
 import { useAuthStore } from '../../stores/useAuthStore';
@@ -13,6 +13,23 @@ interface SavedSession {
   displayName: string;
   role: 'dm' | 'player';
   joinedAt: string;
+}
+
+interface ServerGame {
+  id: string;
+  roomCode: string;
+  name: string;
+  role: 'dm' | 'player';
+  playerCount: number;
+}
+
+interface MyCharacter {
+  id: string;
+  name: string;
+  class?: string;
+  level?: number;
+  portraitUrl?: string;
+  dndbeyondId?: string;
 }
 
 function getSavedSessions(): SavedSession[] {
@@ -44,9 +61,86 @@ export function SessionLobby() {
   const [loading, setLoading] = useState(false);
   const [savedSessions, setSavedSessions] = useState<SavedSession[]>([]);
 
+  // Server-backed data
+  const [myGames, setMyGames] = useState<ServerGame[]>([]);
+  const [myGamesLoading, setMyGamesLoading] = useState(false);
+  const [myCharacters, setMyCharacters] = useState<MyCharacter[]>([]);
+  const [myCharsLoading, setMyCharsLoading] = useState(false);
+
   useEffect(() => {
     setSavedSessions(getSavedSessions());
   }, []);
+
+  // Fetch server-backed games
+  const fetchMyGames = async () => {
+    setMyGamesLoading(true);
+    try {
+      const res = await fetch('/api/sessions/mine', { credentials: 'include' });
+      if (res.ok) {
+        const data = await res.json();
+        setMyGames(Array.isArray(data) ? data : data.sessions || []);
+      }
+    } catch {
+      // silently fail — the section just stays empty
+    } finally {
+      setMyGamesLoading(false);
+    }
+  };
+
+  // Fetch server-backed characters
+  const fetchMyCharacters = async () => {
+    setMyCharsLoading(true);
+    try {
+      const res = await fetch('/api/characters/mine', { credentials: 'include' });
+      if (res.ok) {
+        const data = await res.json();
+        setMyCharacters(Array.isArray(data) ? data : data.characters || []);
+      }
+    } catch {
+      // silently fail
+    } finally {
+      setMyCharsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (authUser) {
+      fetchMyGames();
+      fetchMyCharacters();
+    }
+  }, [authUser]);
+
+  const handleLeaveGame = async (gameId: string) => {
+    try {
+      await fetch(`/api/sessions/${gameId}/leave`, {
+        method: 'DELETE',
+        credentials: 'include',
+      });
+      fetchMyGames();
+    } catch {
+      setError('Failed to leave game');
+    }
+  };
+
+  const handleDeleteCharacter = async (charId: string) => {
+    try {
+      await fetch(`/api/characters/${charId}`, {
+        method: 'DELETE',
+        credentials: 'include',
+      });
+      fetchMyCharacters();
+    } catch {
+      setError('Failed to delete character');
+    }
+  };
+
+  // Find duplicate dndbeyondIds
+  const dndbeyondIdCounts: Record<string, number> = {};
+  myCharacters.forEach((c) => {
+    if (c.dndbeyondId) {
+      dndbeyondIdCounts[c.dndbeyondId] = (dndbeyondIdCounts[c.dndbeyondId] || 0) + 1;
+    }
+  });
 
   const handleCreate = async () => {
     if (!createName.trim() || !authUser) return;
@@ -142,6 +236,128 @@ export function SessionLobby() {
 
         {error && <div style={styles.error}>{error}</div>}
 
+        {/* My Games Section */}
+        {authUser && (
+          <div style={styles.sectionContainer}>
+            <div style={styles.sectionHeader}>
+              <Swords size={18} color={theme.gold.primary} />
+              <h3 style={styles.sectionTitle}>My Games</h3>
+            </div>
+            {myGamesLoading ? (
+              <p style={styles.emptyState}>Loading games...</p>
+            ) : myGames.length === 0 ? (
+              <p style={styles.emptyState}>No games yet. Create or join one below.</p>
+            ) : (
+              <div style={styles.gamesList}>
+                {myGames.map((game) => (
+                  <div key={game.id} style={styles.gameCard}>
+                    <div style={styles.gameInfo}>
+                      <div style={styles.gameName}>{game.name}</div>
+                      <div style={styles.gameMeta}>
+                        <span style={{
+                          ...styles.roleBadge,
+                          background: game.role === 'dm' ? 'rgba(212,168,67,0.2)' : 'rgba(52,152,219,0.2)',
+                          color: game.role === 'dm' ? theme.gold.primary : theme.blue,
+                          border: `1px solid ${game.role === 'dm' ? theme.gold.border : 'rgba(52,152,219,0.3)'}`,
+                        }}>
+                          {game.role === 'dm' ? (
+                            <><Shield size={9} /> DM</>
+                          ) : (
+                            <><User size={9} /> Player</>
+                          )}
+                        </span>
+                        <span style={{ color: theme.text.muted, fontSize: 11 }}>
+                          <Users size={10} style={{ verticalAlign: 'middle', marginRight: 3 }} />
+                          {game.playerCount}
+                        </span>
+                        <span style={{
+                          fontFamily: 'monospace', fontSize: 11, letterSpacing: '1px',
+                          color: theme.text.secondary,
+                        }}>
+                          {game.roomCode}
+                        </span>
+                      </div>
+                    </div>
+                    <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => navigate(`/session/${game.roomCode}`)}
+                      >
+                        Enter
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => handleLeaveGame(game.id)}
+                        style={{ color: theme.danger }}
+                      >
+                        Leave
+                      </Button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* My Characters Section */}
+        {authUser && (
+          <div style={styles.sectionContainer}>
+            <div style={styles.sectionHeader}>
+              <User size={18} color={theme.gold.primary} />
+              <h3 style={styles.sectionTitle}>My Characters</h3>
+            </div>
+            {myCharsLoading ? (
+              <p style={styles.emptyState}>Loading characters...</p>
+            ) : myCharacters.length === 0 ? (
+              <p style={styles.emptyState}>No characters imported yet.</p>
+            ) : (
+              <div style={styles.charsList}>
+                {myCharacters.map((char) => {
+                  const isDuplicate = char.dndbeyondId && dndbeyondIdCounts[char.dndbeyondId] > 1;
+                  return (
+                    <div key={char.id} style={styles.charCard}>
+                      {char.portraitUrl ? (
+                        <img src={char.portraitUrl} alt={char.name} style={styles.charPortrait} />
+                      ) : (
+                        <div style={styles.charPortraitPlaceholder}>
+                          {char.name.charAt(0).toUpperCase()}
+                        </div>
+                      )}
+                      <div style={styles.charInfo}>
+                        <div style={styles.charNameRow}>
+                          <span style={styles.charName}>{char.name}</span>
+                          {isDuplicate && (
+                            <span style={styles.duplicateBadge}>
+                              <AlertTriangle size={10} /> Duplicate
+                            </span>
+                          )}
+                        </div>
+                        <div style={styles.charMeta}>
+                          {char.class && <span>{char.class}</span>}
+                          {char.level != null && <span>Lv {char.level}</span>}
+                        </div>
+                      </div>
+                      {isDuplicate && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => handleDeleteCharacter(char.id)}
+                          style={{ color: theme.danger }}
+                        >
+                          <Trash2 size={12} /> Delete
+                        </Button>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
+
         {/* Cards */}
         <div style={styles.cards}>
           {/* Create Game Card */}
@@ -209,7 +425,7 @@ export function SessionLobby() {
           <div style={styles.savedSection}>
             <div style={styles.savedHeader}>
               <History size={18} color={theme.gold.primary} />
-              <h3 style={styles.savedTitle}>Your Games</h3>
+              <h3 style={styles.savedTitle}>Recent Sessions (Local)</h3>
             </div>
             <div style={styles.savedList}>
               {savedSessions.map((s) => (
@@ -261,14 +477,6 @@ export function SessionLobby() {
 
 const styles: Record<string, React.CSSProperties> = {
   container: {
-    // The global `#root { overflow: hidden }` rule in globals.css
-    // prevents normal page scrolling, so we own our own scroll
-    // context by fixing the container to the viewport and applying
-    // `overflowY: auto` here. Without this the "Your Games" list
-    // below the fold is unreachable because it gets clipped by #root.
-    // We use `position: fixed` (not absolute) so the scroll context
-    // doesn't depend on the parent's position rules — fixed is
-    // always relative to the viewport.
     position: 'fixed',
     inset: 0,
     display: 'flex',
@@ -287,7 +495,7 @@ const styles: Record<string, React.CSSProperties> = {
     flexDirection: 'column',
     alignItems: 'center',
     gap: 32,
-    margin: 'auto 0', // vertically center when there's room, allow scroll when there isn't
+    margin: 'auto 0',
     animation: 'fadeIn 0.5s ease',
   },
   header: {
@@ -330,6 +538,146 @@ const styles: Record<string, React.CSSProperties> = {
     maxWidth: 600,
     textAlign: 'center' as const,
   },
+  // My Games / My Characters sections
+  sectionContainer: {
+    width: '100%',
+    maxWidth: 700,
+    margin: '0 auto',
+  },
+  sectionHeader: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 12,
+  },
+  sectionTitle: {
+    fontSize: 16,
+    fontWeight: 700,
+    color: theme.gold.primary,
+    fontFamily: theme.font.display,
+    margin: 0,
+  },
+  emptyState: {
+    fontSize: 13,
+    color: theme.text.muted,
+    fontStyle: 'italic',
+    margin: 0,
+    padding: '12px 16px',
+    background: theme.bg.card,
+    borderRadius: theme.radius.md,
+    border: `1px solid ${theme.border.default}`,
+    textAlign: 'center' as const,
+  },
+  gamesList: {
+    display: 'flex',
+    flexDirection: 'column' as const,
+    gap: 6,
+  },
+  gameCard: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: '10px 14px',
+    background: theme.bg.card,
+    borderRadius: theme.radius.md,
+    border: `1px solid ${theme.border.default}`,
+    transition: `border-color ${theme.motion.fast}`,
+  },
+  gameInfo: {
+    flex: 1,
+    minWidth: 0,
+  },
+  gameName: {
+    fontSize: 14,
+    fontWeight: 600,
+    color: theme.text.primary,
+    marginBottom: 4,
+  },
+  gameMeta: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 8,
+    fontSize: 11,
+  },
+  roleBadge: {
+    padding: '1px 6px',
+    fontSize: 9,
+    fontWeight: 700,
+    borderRadius: 3,
+    textTransform: 'uppercase' as const,
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: 3,
+  },
+  charsList: {
+    display: 'flex',
+    flexDirection: 'column' as const,
+    gap: 6,
+  },
+  charCard: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 12,
+    padding: '10px 14px',
+    background: theme.bg.card,
+    borderRadius: theme.radius.md,
+    border: `1px solid ${theme.border.default}`,
+  },
+  charPortrait: {
+    width: 40,
+    height: 40,
+    borderRadius: '50%',
+    objectFit: 'cover' as const,
+    border: `2px solid ${theme.border.default}`,
+  },
+  charPortraitPlaceholder: {
+    width: 40,
+    height: 40,
+    borderRadius: '50%',
+    background: theme.bg.elevated,
+    border: `2px solid ${theme.border.default}`,
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    fontSize: 16,
+    fontWeight: 700,
+    color: theme.text.secondary,
+  },
+  charInfo: {
+    flex: 1,
+    minWidth: 0,
+  },
+  charNameRow: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 8,
+  },
+  charName: {
+    fontSize: 14,
+    fontWeight: 600,
+    color: theme.text.primary,
+  },
+  charMeta: {
+    display: 'flex',
+    gap: 8,
+    fontSize: 11,
+    color: theme.text.secondary,
+    marginTop: 2,
+  },
+  duplicateBadge: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: 3,
+    padding: '1px 6px',
+    fontSize: 9,
+    fontWeight: 700,
+    borderRadius: 3,
+    textTransform: 'uppercase' as const,
+    background: theme.state.warningBg,
+    color: theme.state.warning,
+    border: `1px solid rgba(243, 156, 18, 0.3)`,
+  },
+  // Create / Join cards
   cards: {
     display: 'flex',
     gap: 24,

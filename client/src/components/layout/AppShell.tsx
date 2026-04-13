@@ -1,11 +1,13 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { useParams } from 'react-router-dom';
-import { Copy, PanelRightClose, PanelRightOpen, X } from 'lucide-react';
+import { useParams, useNavigate } from 'react-router-dom';
+import { Copy, PanelRightClose, PanelRightOpen, X, LogOut, Home, UserCog, ChevronDown } from 'lucide-react';
 import { useSocket } from '../../hooks/useSocket';
 import { useSessionStore } from '../../stores/useSessionStore';
+import { useAuthStore } from '../../stores/useAuthStore';
 import { useMapStore } from '../../stores/useMapStore';
 import { useCharacterStore } from '../../stores/useCharacterStore';
 import { useCombatStore } from '../../stores/useCombatStore';
+import { disconnectSocket } from '../../socket/client';
 import { BattleMap } from '../canvas/BattleMap';
 import { PreviewModeBanner } from '../dm/PreviewModeBanner';
 import { InitiativeModal } from '../combat/InitiativeModal';
@@ -13,6 +15,7 @@ import { OpportunityAttackModal } from '../combat/OpportunityAttackModal';
 import { CounterspellModal } from '../combat/CounterspellModal';
 import { ShieldModal } from '../combat/ShieldModal';
 import { ReadyCheckModal } from '../combat/ReadyCheckModal';
+import { ProfileModal } from '../auth/ProfileModal';
 import { Sidebar } from './Sidebar';
 import { BottomBar } from './BottomBar';
 import { MapBrowser } from '../mapbrowser/MapBrowser';
@@ -21,12 +24,18 @@ import { theme } from '../../styles/theme';
 
 export function AppShell() {
   const { roomCode } = useParams<{ roomCode: string }>();
+  const navigate = useNavigate();
   const storeDisplayName = useSessionStore((s) => s.displayName);
   const gameMode = useSessionStore((s) => s.gameMode);
   const storedRoomCode = useSessionStore((s) => s.roomCode);
+  const authUser = useAuthStore((s) => s.user);
+  const authLogout = useAuthStore((s) => s.logout);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [copied, setCopied] = useState(false);
   const [showMapBrowser, setShowMapBrowser] = useState(false);
+  const [showUserMenu, setShowUserMenu] = useState(false);
+  const [showProfileModal, setShowProfileModal] = useState(false);
+  const userMenuRef = useRef<HTMLDivElement>(null);
   // Hold only the character ID — the actual character object is read live
   // from useCharacterStore so updates (e.g. adding a spell, healing) appear
   // immediately without needing to re-open the sheet.
@@ -189,6 +198,25 @@ export function AppShell() {
     return () => window.removeEventListener('open-character-sheet', handleOpenCharacterSheet);
   }, []);
 
+  // Close user menu on click outside
+  useEffect(() => {
+    if (!showUserMenu) return;
+    const handler = (e: MouseEvent) => {
+      if (userMenuRef.current && !userMenuRef.current.contains(e.target as Node)) {
+        setShowUserMenu(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [showUserMenu]);
+
+  const handleLogout = async () => {
+    setShowUserMenu(false);
+    disconnectSocket();
+    await authLogout();
+    navigate('/');
+  };
+
   const handleCopyCode = () => {
     const code = storedRoomCode || roomCode || '';
     // Copy just the room code, not the full URL
@@ -297,13 +325,68 @@ export function AppShell() {
             {gameMode === 'combat' ? 'Combat' : 'Free Roam'}
           </div>
         </div>
-        <button
-          className="btn-icon"
-          onClick={() => setSidebarOpen(!sidebarOpen)}
-          title={sidebarOpen ? 'Close sidebar' : 'Open sidebar'}
-        >
-          {sidebarOpen ? <PanelRightClose size={18} /> : <PanelRightOpen size={18} />}
-        </button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          {/* User Menu */}
+          {authUser && (
+            <div ref={userMenuRef} style={{ position: 'relative' }}>
+              <button
+                style={styles.userMenuButton}
+                onClick={() => setShowUserMenu(!showUserMenu)}
+              >
+                {authUser.avatarUrl ? (
+                  <img
+                    src={authUser.avatarUrl}
+                    alt={authUser.displayName}
+                    style={styles.userMenuAvatar}
+                  />
+                ) : (
+                  <div style={styles.userMenuAvatarPlaceholder}>
+                    {authUser.displayName.charAt(0).toUpperCase()}
+                  </div>
+                )}
+                <span style={styles.userMenuName}>{authUser.displayName}</span>
+                <ChevronDown size={12} style={{
+                  color: theme.text.muted,
+                  transition: `transform ${theme.motion.fast}`,
+                  transform: showUserMenu ? 'rotate(180deg)' : 'rotate(0deg)',
+                }} />
+              </button>
+              {showUserMenu && (
+                <div style={styles.userDropdown}>
+                  <button
+                    style={styles.dropdownItem}
+                    onClick={() => { setShowUserMenu(false); setShowProfileModal(true); }}
+                  >
+                    <UserCog size={14} />
+                    Profile
+                  </button>
+                  <button
+                    style={styles.dropdownItem}
+                    onClick={() => { setShowUserMenu(false); navigate('/'); }}
+                  >
+                    <Home size={14} />
+                    Back to Lobby
+                  </button>
+                  <div style={styles.dropdownDivider} />
+                  <button
+                    style={{ ...styles.dropdownItem, color: theme.danger }}
+                    onClick={handleLogout}
+                  >
+                    <LogOut size={14} />
+                    Log Out
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+          <button
+            className="btn-icon"
+            onClick={() => setSidebarOpen(!sidebarOpen)}
+            title={sidebarOpen ? 'Close sidebar' : 'Open sidebar'}
+          >
+            {sidebarOpen ? <PanelRightClose size={18} /> : <PanelRightOpen size={18} />}
+          </button>
+        </div>
       </div>
 
       {/* Main content */}
@@ -353,6 +436,8 @@ export function AppShell() {
       <ShieldModal />
       {/* Ready Check prompt — shown to players when DM initiates. */}
       <ReadyCheckModal />
+      {/* Profile Modal */}
+      <ProfileModal open={showProfileModal} onClose={() => setShowProfileModal(false)} />
       {/* Character Sheet Full overlay - from token click */}
       {fullSheetCharacter && (
         <div style={styles.fullSheetOverlay}>
@@ -538,5 +623,80 @@ const styles: Record<string, React.CSSProperties> = {
     border: `1px solid ${theme.border.default}`,
     color: theme.text.secondary,
     cursor: 'pointer',
+  },
+  // User menu styles
+  userMenuButton: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 6,
+    padding: '4px 8px',
+    background: 'transparent',
+    border: `1px solid transparent`,
+    borderRadius: theme.radius.sm,
+    color: theme.text.secondary,
+    fontSize: 12,
+    cursor: 'pointer',
+    transition: `all ${theme.motion.fast}`,
+  },
+  userMenuAvatar: {
+    width: 24,
+    height: 24,
+    borderRadius: '50%',
+    objectFit: 'cover' as const,
+  },
+  userMenuAvatarPlaceholder: {
+    width: 24,
+    height: 24,
+    borderRadius: '50%',
+    background: theme.gold.bg,
+    border: `1px solid ${theme.gold.border}`,
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    fontSize: 11,
+    fontWeight: 700,
+    color: theme.gold.primary,
+  },
+  userMenuName: {
+    fontSize: 12,
+    fontWeight: 600,
+    color: theme.text.primary,
+    maxWidth: 100,
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap' as const,
+  },
+  userDropdown: {
+    position: 'absolute' as const,
+    top: '100%',
+    right: 0,
+    marginTop: 4,
+    minWidth: 160,
+    background: theme.bg.card,
+    border: `1px solid ${theme.border.default}`,
+    borderRadius: theme.radius.md,
+    boxShadow: theme.shadow.lg,
+    padding: '4px 0',
+    zIndex: 50,
+    animation: 'fadeIn 0.12s ease',
+  },
+  dropdownItem: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 8,
+    width: '100%',
+    padding: '8px 12px',
+    background: 'transparent',
+    border: 'none',
+    color: theme.text.secondary,
+    fontSize: 13,
+    cursor: 'pointer',
+    textAlign: 'left' as const,
+    transition: `background ${theme.motion.fast}`,
+  },
+  dropdownDivider: {
+    height: 1,
+    background: theme.border.default,
+    margin: '4px 0',
   },
 };
