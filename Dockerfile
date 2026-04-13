@@ -1,6 +1,9 @@
 # ── Build stage ─────────────────────────────────────────────
 FROM node:20-alpine AS builder
 
+# Native deps for libsql + bcrypt compilation
+RUN apk add --no-cache python3 make g++
+
 WORKDIR /app
 
 # Copy package files for all workspaces
@@ -22,6 +25,9 @@ RUN npm run build --workspace=server
 
 # ── Production stage ───────────────────────────────────────
 FROM node:20-alpine
+
+# Native deps needed at runtime for libsql + bcrypt
+RUN apk add --no-cache python3 make g++
 
 WORKDIR /app
 
