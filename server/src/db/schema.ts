@@ -414,7 +414,7 @@ export function initDatabase(): void {
  * ability scores. Only touches rows where the values are still default
  * (0 / empty), so re-running is idempotent.
  */
-function backfillSpellcastingFromExistingChars(db: import('better-sqlite3').Database): void {
+function backfillSpellcastingFromExistingChars(db: any): void {
   // Class → primary spellcasting ability. Half-casters and unusual cases
   // fall back to a sensible default; this is a backfill for testing, not
   // perfect canonical data.
