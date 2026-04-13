@@ -635,7 +635,8 @@ function StagedHeroGhost({
         const newY = snapToGrid(node.y());
         node.x(newX);
         node.y(newY);
-        useMapStore.getState().moveStagedHero(hero.characterId, newX, newY);
+        const mapId = useMapStore.getState().currentMap?.id;
+        if (mapId) useMapStore.getState().moveStagedHero(mapId, hero.characterId, newX, newY);
       }}
     >
       {/* Hit area — invisible but hittable so the Group drag works */}
@@ -694,7 +695,10 @@ export function TokenLayer() {
   const userId = useSessionStore((s) => s.userId);
   const enableFog = useSessionStore((s) => s.settings.enableFogOfWar);
   const gridSize = useMapStore((s) => s.currentMap?.gridSize ?? 70);
-  const stagedHeroes = useMapStore((s) => s.stagedHeroes);
+  const currentMapId = useMapStore((s) => s.currentMap?.id ?? null);
+  const stagedHeroes = useMapStore((s) =>
+    currentMapId ? s.stagedHeroes[currentMapId] ?? [] : [],
+  );
 
   const currentTurnTokenId = combatActive
     ? combatants[currentTurnIndex]?.tokenId ?? null

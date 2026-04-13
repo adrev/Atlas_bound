@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useMemo, useRef } from 'react';
 import { Layer, Rect, Shape } from 'react-konva';
 import { useMapStore } from '../../../stores/useMapStore';
 import { useSessionStore } from '../../../stores/useSessionStore';
@@ -17,6 +17,11 @@ interface FogLayerProps {
  * - Lit objects also reveal the fog around them so players can see
  *   what a torch or Light spell illuminates
  * - No manual fog painting needed
+ *
+ * DM Vision Preview:
+ * - When fogPreviewCharacterId is set, the DM sees a gold ring
+ *   overlay on the map showing that character's vision radius.
+ *   The DM still has full visibility — this is just an overlay hint.
  */
 export function FogLayer({ mapWidth, mapHeight }: FogLayerProps) {
   const isDM = useSessionStore((s) => s.isDM);
@@ -24,6 +29,7 @@ export function FogLayer({ mapWidth, mapHeight }: FogLayerProps) {
   const tokens = useMapStore((s) => s.tokens);
   const userId = useSessionStore((s) => s.userId);
   const gridSize = useMapStore((s) => s.currentMap?.gridSize ?? 70);
+  const fogPreviewCharacterId = useMapStore((s) => s.fogPreviewCharacterId);
 
   // Find all tokens owned by this player (heroes)
   const heroTokens = useMemo(() => {
@@ -40,12 +46,37 @@ export function FogLayer({ mapWidth, mapHeight }: FogLayerProps) {
     );
   }, [tokens]);
 
-  // GM never sees fog. (Hook calls above must still run to keep hook order
-  // stable between DM and player renders.)
-  if (isDM || !enableFog) return null;
+  // Find the token being previewed (DM-only feature)
+  const previewToken = useMemo(() => {
+    if (!fogPreviewCharacterId) return null;
+    return Object.values(tokens).find(
+      (t) => t.characterId === fogPreviewCharacterId && t.visible,
+    ) ?? null;
+  }, [tokens, fogPreviewCharacterId]);
 
   // Vision radius in pixels (8 grid cells = 40ft vision by default)
   const visionRadius = gridSize * 8;
+
+  // DM vision-preview overlay — rendered even when fog is off, because
+  // the DM might want to see what a player *would* see.
+  if (isDM) {
+    if (!previewToken) return null;
+    const cx = previewToken.x + (gridSize * previewToken.size) / 2;
+    const cy = previewToken.y + (gridSize * previewToken.size) / 2;
+    return (
+      <Layer listening={false}>
+        <VisionPreviewOverlay
+          cx={cx}
+          cy={cy}
+          radius={visionRadius}
+          mapWidth={mapWidth}
+          mapHeight={mapHeight}
+        />
+      </Layer>
+    );
+  }
+
+  if (!enableFog) return null;
 
   return (
     <Layer listening={false}>
@@ -122,5 +153,93 @@ function VisionCutout({ x, y, radius }: { x: number; y: number; radius: number }
       }}
       listening={false}
     />
+  );
+}
+
+// ── DM Vision Preview Overlay ──────────────────────────────────
+// Gold-tinted semi-transparent overlay showing what a specific
+// player character can see. The area outside the vision radius is
+// darkened; the vision circle has a pulsing gold border.
+
+const GOLD_RING = 'rgba(212, 168, 67, 0.7)';
+const GOLD_FILL = 'rgba(212, 168, 67, 0.06)';
+const DARK_OVERLAY = 'rgba(0, 0, 0, 0.45)';
+
+function VisionPreviewOverlay({
+  cx,
+  cy,
+  radius,
+  mapWidth,
+  mapHeight,
+}: {
+  cx: number;
+  cy: number;
+  radius: number;
+  mapWidth: number;
+  mapHeight: number;
+}) {
+  // Animate a pulsing ring using a simple frame counter.
+  // We track a Konva Shape ref and use Konva's built-in animation.
+  const shapeRef = useRef<any>(null);
+
+  return (
+    <>
+      {/* Dark overlay outside the vision circle */}
+      <Shape
+        sceneFunc={(ctx) => {
+          // Draw the full map rectangle, then subtract the vision circle.
+          ctx.beginPath();
+          ctx.rect(0, 0, mapWidth, mapHeight);
+          ctx.arc(cx, cy, radius, 0, Math.PI * 2, true); // counter-clockwise = subtract
+          ctx.closePath();
+          ctx.fillStyle = DARK_OVERLAY;
+          ctx.fill();
+        }}
+        listening={false}
+      />
+
+      {/* Soft gold fill inside the circle */}
+      <Shape
+        sceneFunc={(ctx) => {
+          const gradient = ctx.createRadialGradient(cx, cy, 0, cx, cy, radius);
+          gradient.addColorStop(0, GOLD_FILL);
+          gradient.addColorStop(0.85, GOLD_FILL);
+          gradient.addColorStop(1, 'rgba(212, 168, 67, 0)');
+          ctx.beginPath();
+          ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+          ctx.fillStyle = gradient;
+          ctx.fill();
+        }}
+        listening={false}
+      />
+
+      {/* Gold ring border — pulsing via Konva animation */}
+      <Shape
+        ref={shapeRef}
+        sceneFunc={(ctx, shape) => {
+          // Pulse the ring opacity between 0.4 and 0.9
+          const t = (Date.now() % 2000) / 2000; // 0..1 over 2 seconds
+          const pulse = 0.4 + 0.5 * (0.5 + 0.5 * Math.sin(t * Math.PI * 2));
+
+          // Outer ring
+          ctx.beginPath();
+          ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+          ctx.lineWidth = 3;
+          ctx.strokeStyle = `rgba(212, 168, 67, ${pulse})`;
+          ctx.stroke();
+
+          // Inner bright ring
+          ctx.beginPath();
+          ctx.arc(cx, cy, radius - 4, 0, Math.PI * 2);
+          ctx.lineWidth = 1;
+          ctx.strokeStyle = `rgba(232, 196, 85, ${pulse * 0.6})`;
+          ctx.stroke();
+
+          // Request next frame to keep the animation running
+          shape.getLayer()?.batchDraw();
+        }}
+        listening={false}
+      />
+    </>
   );
 }

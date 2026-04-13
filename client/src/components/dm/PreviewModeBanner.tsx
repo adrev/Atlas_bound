@@ -26,7 +26,10 @@ export function PreviewModeBanner() {
   const isPreviewing = useMapStore((s) => s.isDmPreviewingDifferentMap);
   const currentMap = useMapStore((s) => s.currentMap);
   const playerMapId = useMapStore((s) => s.playerMapId);
-  const stagedHeroes = useMapStore((s) => s.stagedHeroes);
+  const currentMapId = currentMap?.id ?? null;
+  const stagedHeroes = useMapStore((s) =>
+    currentMapId ? s.stagedHeroes[currentMapId] ?? [] : [],
+  );
   const maps = useSceneStore((s) => s.maps);
 
   const playerMapSummary = useMemo(
@@ -85,13 +88,14 @@ export function PreviewModeBanner() {
     const allChars = useCharacterStore.getState().allCharacters;
     const char = allChars[player.characterId];
     const gridSize = currentMap.gridSize ?? 70;
-    const existing = useMapStore.getState().stagedHeroes;
+    const mapId = currentMap.id;
+    const existing = useMapStore.getState().stagedHeroes[mapId] ?? [];
     // Offset each new hero so they don't stack on top of each other
     const offset = existing.length * gridSize;
     const x = Math.round(currentMap.width / 2) + offset - (existing.length * gridSize / 2);
     const y = Math.round(currentMap.height / 2);
 
-    useMapStore.getState().stageHeroes([
+    useMapStore.getState().stageHeroes(mapId, [
       ...existing,
       {
         characterId: player.characterId,
@@ -174,7 +178,7 @@ export function PreviewModeBanner() {
         imageUrl: hero.portraitUrl,
         ownerUserId: ownerMap[hero.characterId] ?? hero.ownerUserId,
       }));
-      useMapStore.getState().clearStagedHeroes();
+      useMapStore.getState().clearStagedHeroes(currentMap.id);
       emitActivateMapForPlayers(currentMap.id, positions);
     } else {
       emitActivateMapForPlayers(currentMap.id);
@@ -315,7 +319,7 @@ export function PreviewModeBanner() {
                         if (isStaged) {
                           // Un-stage: remove from stagedHeroes
                           const remaining = stagedHeroes.filter((h) => h.characterId !== p.characterId);
-                          useMapStore.getState().stageHeroes(remaining);
+                          useMapStore.getState().stageHeroes(currentMap.id, remaining);
                         } else {
                           stageHero(p);
                         }
@@ -379,7 +383,7 @@ export function PreviewModeBanner() {
                 })}
                 {hasStaged && (
                   <button
-                    onClick={() => { useMapStore.getState().clearStagedHeroes(); }}
+                    onClick={() => { useMapStore.getState().clearStagedHeroes(currentMap.id); }}
                     style={{
                       width: '100%', padding: '8px 12px',
                       background: theme.state.dangerBg,

@@ -69,15 +69,18 @@ interface MapState {
    * Ghost hero tokens staged by the DM on a preview map before
    * activating it. Each entry represents a PC that will be placed
    * as a real token when the DM clicks "Move Players Here".
+   *
+   * Keyed by mapId so staging tokens on one preview map doesn't
+   * bleed into other maps.
    */
-  stagedHeroes: Array<{
+  stagedHeroes: Record<string, Array<{
     characterId: string;
     name: string;
     portraitUrl: string | null;
     x: number;
     y: number;
     ownerUserId: string;
-  }>;
+  }>>;
   /**
    * The id of the map the PLAYERS are currently on ("yellow ribbon").
    * For players this is always equal to `currentMap?.id`. For DMs it
@@ -92,6 +95,12 @@ interface MapState {
    * creatures on a different map) and the PreviewModeBanner shows.
    */
   isDmPreviewingDifferentMap: boolean;
+  /**
+   * When set, the FogLayer draws a gold vision-radius circle on the
+   * map showing what the selected player character can see through
+   * the fog of war. DM-only feature — toggled from the Players tab.
+   */
+  fogPreviewCharacterId: string | null;
 }
 
 interface MapActions {
@@ -117,12 +126,12 @@ interface MapActions {
   beginDragPreview: (preview: DragPreview) => void;
   updateDragPreview: (currentX: number, currentY: number) => void;
   endDragPreview: () => void;
-  /** Replace the staged heroes array wholesale. */
-  stageHeroes: (heroes: MapState['stagedHeroes']) => void;
+  /** Replace the staged heroes array for a specific map. */
+  stageHeroes: (mapId: string, heroes: MapState['stagedHeroes'][string]) => void;
   /** Update a single staged hero's position (after drag). */
-  moveStagedHero: (characterId: string, x: number, y: number) => void;
-  /** Clear all staged heroes. */
-  clearStagedHeroes: () => void;
+  moveStagedHero: (mapId: string, characterId: string, x: number, y: number) => void;
+  /** Clear staged heroes. If mapId is given, clear only that map; otherwise clear all. */
+  clearStagedHeroes: (mapId?: string) => void;
   /**
    * Update the id of the "player ribbon" map. Called whenever the
    * server tells us the ribbon has moved (via `map:player-map-changed`
@@ -136,6 +145,8 @@ interface MapActions {
    * different map" case (distinguished by `isPreview`). Updates
    * `currentMap`, tokens, walls, fog, AND the derived preview flag.
    */
+  /** Set or clear the fog-of-war preview for a specific character. */
+  setFogPreview: (characterId: string | null) => void;
   applyMapLoad: (args: {
     map: MapData & { walls: WallSegment[]; fogState: FogPolygon[] };
     tokens: Token[];
@@ -158,12 +169,13 @@ const initialState: MapState = {
   activePings: [],
   copiedToken: null,
   lockedTokenIds: new Set(),
-  stagedHeroes: [],
+  stagedHeroes: {},
   isTargeting: false,
   targetingData: null,
   dragPreview: null,
   playerMapId: null,
   isDmPreviewingDifferentMap: false,
+  fogPreviewCharacterId: null,
 };
 
 export const useMapStore = create<MapState & MapActions>((set) => ({
@@ -284,14 +296,27 @@ export const useMapStore = create<MapState & MapActions>((set) => ({
     ),
   endDragPreview: () => set({ dragPreview: null }),
 
-  stageHeroes: (heroes) => set({ stagedHeroes: heroes }),
-  moveStagedHero: (characterId, x, y) =>
+  stageHeroes: (mapId, heroes) =>
     set((state) => ({
-      stagedHeroes: state.stagedHeroes.map((h) =>
-        h.characterId === characterId ? { ...h, x, y } : h,
-      ),
+      stagedHeroes: { ...state.stagedHeroes, [mapId]: heroes },
     })),
-  clearStagedHeroes: () => set({ stagedHeroes: [] }),
+  moveStagedHero: (mapId, characterId, x, y) =>
+    set((state) => ({
+      stagedHeroes: {
+        ...state.stagedHeroes,
+        [mapId]: (state.stagedHeroes[mapId] ?? []).map((h) =>
+          h.characterId === characterId ? { ...h, x, y } : h,
+        ),
+      },
+    })),
+  clearStagedHeroes: (mapId) =>
+    set((state) => {
+      if (mapId) {
+        const { [mapId]: _, ...rest } = state.stagedHeroes;
+        return { stagedHeroes: rest };
+      }
+      return { stagedHeroes: {} };
+    }),
 
   toggleLockToken: (id) =>
     set((state) => {
@@ -300,6 +325,8 @@ export const useMapStore = create<MapState & MapActions>((set) => ({
       else next.add(id);
       return { lockedTokenIds: next };
     }),
+
+  setFogPreview: (characterId) => set({ fogPreviewCharacterId: characterId }),
 
   setPlayerMapId: (mapId) =>
     set((state) => ({

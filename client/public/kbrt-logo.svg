@@ -1,0 +1,71 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 400" fill="none">
+  <defs>
+    <filter id="glow">
+      <feGaussianBlur stdDeviation="6" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    <filter id="softGlow">
+      <feGaussianBlur stdDeviation="12" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <!-- D20 Icosahedron wireframe -->
+  <g stroke="white" stroke-width="2.5" stroke-linejoin="round" fill="none" filter="url(#glow)">
+    <!-- Outer hexagon -->
+    <polygon points="200,42 320,112 320,252 200,322 80,252 80,112"/>
+
+    <!-- Top diamond/crown -->
+    <line x1="200" y1="42" x2="140" y2="112"/>
+    <line x1="200" y1="42" x2="260" y2="112"/>
+    <line x1="140" y1="112" x2="200" y2="142"/>
+    <line x1="260" y1="112" x2="200" y2="142"/>
+    <line x1="80" y1="112" x2="140" y2="112"/>
+    <line x1="320" y1="112" x2="260" y2="112"/>
+
+    <!-- Top face lines to peak -->
+    <line x1="200" y1="42" x2="200" y2="142"/>
+
+    <!-- Middle band -->
+    <line x1="80" y1="112" x2="140" y2="252"/>
+    <line x1="320" y1="112" x2="260" y2="252"/>
+    <line x1="140" y1="112" x2="80" y2="252"/>
+    <line x1="260" y1="112" x2="320" y2="252"/>
+
+    <!-- Bottom diamond -->
+    <line x1="200" y1="322" x2="140" y2="252"/>
+    <line x1="200" y1="322" x2="260" y2="252"/>
+    <line x1="140" y1="252" x2="200" y2="222"/>
+    <line x1="260" y1="252" x2="200" y2="222"/>
+    <line x1="80" y1="252" x2="140" y2="252"/>
+    <line x1="320" y1="252" x2="260" y2="252"/>
+
+    <!-- Bottom face line to point -->
+    <line x1="200" y1="322" x2="200" y2="222"/>
+  </g>
+
+  <!-- Small circle/dot at top (d20 "eye") -->
+  <circle cx="200" cy="105" r="6" fill="white" filter="url(#glow)"/>
+
+  <!-- KBRT text -->
+  <text x="200" y="210" text-anchor="middle"
+    font-family="'Inter', 'SF Pro Display', -apple-system, Helvetica, sans-serif"
+    font-size="72" font-weight="900" letter-spacing="4"
+    fill="white" filter="url(#softGlow)">
+    KBRT
+  </text>
+
+  <!-- .AI text -->
+  <text x="200" y="262" text-anchor="middle"
+    font-family="'Inter', 'SF Pro Display', -apple-system, Helvetica, sans-serif"
+    font-size="42" font-weight="700" letter-spacing="6"
+    fill="white" filter="url(#softGlow)">
+    .AI
+  </text>
+</svg>

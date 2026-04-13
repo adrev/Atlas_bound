@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react';
-import { Crown, User, Wifi, WifiOff } from 'lucide-react';
+import { Crown, Eye, EyeOff, User, Wifi, WifiOff } from 'lucide-react';
 import { useSessionStore } from '../../stores/useSessionStore';
 import { useCharacterStore } from '../../stores/useCharacterStore';
+import { useMapStore } from '../../stores/useMapStore';
 import { getSocket } from '../../socket/client';
 import { theme } from '../../styles/theme';
 import { HPBar } from '../ui';
@@ -10,6 +11,8 @@ export function PlayerList() {
   const players = useSessionStore((s) => s.players);
   const isDM = useSessionStore((s) => s.isDM);
   const allCharacters = useCharacterStore((s) => s.allCharacters);
+  const fogPreviewCharacterId = useMapStore((s) => s.fogPreviewCharacterId);
+  const setFogPreview = useMapStore((s) => s.setFogPreview);
   const [viewingTabs, setViewingTabs] = useState<Record<string, string>>({});
 
   useEffect(() => {
@@ -53,7 +56,7 @@ export function PlayerList() {
               </div>
 
               <div style={styles.info}>
-                {/* Row 1: player name + DM badge */}
+                {/* Row 1: player name + DM badge + vision preview toggle */}
                 <div style={styles.nameRow}>
                   <span style={styles.name}>
                     {char?.name ?? player.displayName}
@@ -63,6 +66,35 @@ export function PlayerList() {
                       <Crown size={10} />
                       DM
                     </span>
+                  )}
+                  {isDM && player.characterId && player.role !== 'dm' && (
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setFogPreview(
+                          fogPreviewCharacterId === player.characterId
+                            ? null
+                            : player.characterId,
+                        );
+                      }}
+                      title={
+                        fogPreviewCharacterId === player.characterId
+                          ? 'Hide vision preview'
+                          : 'Preview player vision'
+                      }
+                      style={{
+                        ...styles.visionBtn,
+                        ...(fogPreviewCharacterId === player.characterId
+                          ? styles.visionBtnActive
+                          : {}),
+                      }}
+                    >
+                      {fogPreviewCharacterId === player.characterId ? (
+                        <EyeOff size={12} />
+                      ) : (
+                        <Eye size={12} />
+                      )}
+                    </button>
                   )}
                 </div>
 
@@ -238,6 +270,28 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: theme.radius.sm,
     padding: '1px 5px',
     marginLeft: 4,
+  },
+  visionBtn: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: 22,
+    height: 22,
+    padding: 0,
+    marginLeft: 'auto',
+    border: `1px solid ${theme.border.default}`,
+    borderRadius: theme.radius.sm,
+    background: 'transparent',
+    color: theme.text.muted,
+    cursor: 'pointer',
+    flexShrink: 0,
+    transition: `all ${theme.motion.fast}`,
+  },
+  visionBtnActive: {
+    background: theme.gold.bg,
+    borderColor: theme.gold.border,
+    color: theme.gold.primary,
+    boxShadow: theme.goldGlow.soft,
   },
   hint: {
     fontSize: 12,
