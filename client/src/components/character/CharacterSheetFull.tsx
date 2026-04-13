@@ -678,7 +678,7 @@ export function CharacterSheetFull({ character, onClose, initialTab }: { charact
             overflow: 'hidden',
           }}>
             {/* Header */}
-            <HeaderBar character={character} />
+            <HeaderBar character={character} canEdit={isDM || isOwner} />
 
             {/* Stats row */}
             <StatsRow
@@ -780,6 +780,7 @@ export function CharacterSheetFull({ character, onClose, initialTab }: { charact
                   characterId={character.id}
                   strMod={getMod('str')}
                   dexMod={getMod('dex')}
+                  canEdit={isDM || isOwner}
                 />
               )}
               {activeTab === 'features' && (
@@ -929,7 +930,7 @@ function LeftColumn({ abilityScores, skills, savingThrows, profBonus, senses, pr
 /* ═══════════════════════════════════════════════════════════
    HEADER BAR
    ═══════════════════════════════════════════════════════════ */
-function HeaderBar({ character }: { character: Character }) {
+function HeaderBar({ character, canEdit = true }: { character: Character; canEdit?: boolean }) {
   const [showShortRest, setShowShortRest] = useState(false);
 
   return (
@@ -969,7 +970,8 @@ function HeaderBar({ character }: { character: Character }) {
         <ShortRestDialog character={character} onClose={() => setShowShortRest(false)} />
       )}
 
-      {/* Rest buttons */}
+      {/* Rest buttons — only shown to the character owner or the DM */}
+      {canEdit && <>
       <button
         onClick={() => setShowShortRest(true)}
         style={{
@@ -1063,6 +1065,7 @@ function HeaderBar({ character }: { character: Character }) {
       >
         Long Rest
       </button>
+      </>}
     </div>
   );
 }
@@ -2244,12 +2247,14 @@ function InventoryTab({
   characterId,
   strMod,
   dexMod,
+  canEdit = true,
 }: {
   inventory: InventoryItem[];
   currency: CharacterCurrency;
   characterId: string;
   strMod: number;
   dexMod: number;
+  canEdit?: boolean;
 }) {
   const [filter, setFilter] = useState<InvFilter>('all');
   const [expanded, setExpanded] = useState<Record<number, boolean>>({});
@@ -2309,18 +2314,19 @@ function InventoryTab({
               onMouseEnter={e => (e.currentTarget.style.background = C.bgHover)}
               onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
             >
-              {/* Equipped toggle */}
+              {/* Equipped toggle — only the character owner or the DM can change equip state */}
               <span
                 onClick={(e) => {
                   e.stopPropagation();
+                  if (!canEdit) return;
                   const updated = [...inventory];
                   updated[i] = { ...item, equipped: !item.equipped };
                   emitCharacterUpdate(characterId, { inventory: updated });
                   useCharacterStore.getState().applyRemoteUpdate(characterId, { inventory: updated });
                 }}
-                title={item.equipped ? 'Equipped — click to unequip' : 'Click to equip'}
+                title={canEdit ? (item.equipped ? 'Equipped — click to unequip' : 'Click to equip') : (item.equipped ? 'Equipped' : 'Not equipped')}
                 style={{
-                  width: 16, height: 16, borderRadius: 3, cursor: 'pointer',
+                  width: 16, height: 16, borderRadius: 3, cursor: canEdit ? 'pointer' : 'default',
                   border: `2px solid ${item.equipped ? C.red : C.textDim}`,
                   background: item.equipped ? C.red : 'transparent',
                   flexShrink: 0, transition: 'all 0.15s',
@@ -2402,7 +2408,7 @@ function InventoryTab({
                   {item.type === 'weapon' && item.damage && (
                     <RollButton notation={item.damage} reason={`${item.name} Damage`} label="Roll Damage" />
                   )}
-                  <button
+                  {canEdit && <button
                     onClick={async (e) => {
                       e.stopPropagation();
                       try {
@@ -2438,7 +2444,7 @@ function InventoryTab({
                       background: 'rgba(212,168,67,0.1)', border: '1px solid rgba(212,168,67,0.3)',
                       color: C.gold, cursor: 'pointer', fontFamily: 'inherit',
                     }}
-                  >Drop on Map</button>
+                  >Drop on Map</button>}
                 </div>
               </div>
             )}
