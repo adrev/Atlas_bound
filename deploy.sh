@@ -31,6 +31,6 @@ gcloud run deploy atlas-bound \
   --session-affinity \
   --timeout 3600 \
   --add-cloudsql-instances atlas-bound:us-central1:atlas-bound-db \
-  --set-env-vars "NODE_ENV=production,BASE_URL=https://kbrt.ai,CORS_ORIGINS=https://kbrt.ai,DISCORD_CLIENT_ID=${DISCORD_CLIENT_ID},DISCORD_CLIENT_SECRET=${DISCORD_CLIENT_SECRET},GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID},GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET},DATABASE_URL=${DATABASE_URL},CLOUD_SQL_CONNECTION_NAME=atlas-bound:us-central1:atlas-bound-db"
+  --set-env-vars "NODE_ENV=production,BASE_URL=https://kbrt.ai,CORS_ORIGINS=https://kbrt.ai,DISCORD_CLIENT_ID=${DISCORD_CLIENT_ID},DISCORD_CLIENT_SECRET=${DISCORD_CLIENT_SECRET},GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID},GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET},PGPASSWORD=${PGPASSWORD},CLOUD_SQL_CONNECTION_NAME=atlas-bound:us-central1:atlas-bound-db"
 
 echo "✅ Deployed! https://kbrt.ai"
