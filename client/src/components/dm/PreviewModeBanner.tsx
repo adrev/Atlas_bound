@@ -11,6 +11,8 @@ import {
 } from '../../socket/emitters';
 import { Button } from '../ui';
 
+const EMPTY_STAGED: never[] = [];
+
 /**
  * Docked banner shown above the canvas when a DM is previewing a
  * different map than the players. Reminds the DM "players aren't
@@ -27,9 +29,8 @@ export function PreviewModeBanner() {
   const currentMap = useMapStore((s) => s.currentMap);
   const playerMapId = useMapStore((s) => s.playerMapId);
   const currentMapId = currentMap?.id ?? null;
-  const stagedHeroes = useMapStore((s) =>
-    currentMapId ? s.stagedHeroes[currentMapId] ?? [] : [],
-  );
+  const stagedHeroesMap = useMapStore((s) => s.stagedHeroes);
+  const stagedHeroes = (currentMapId && stagedHeroesMap[currentMapId]) || EMPTY_STAGED;
   const maps = useSceneStore((s) => s.maps);
 
   const playerMapSummary = useMemo(

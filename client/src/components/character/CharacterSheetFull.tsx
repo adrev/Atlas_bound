@@ -971,7 +971,7 @@ function HeaderBar({ character, canEdit = true }: { character: Character; canEdi
       )}
 
       {/* Rest buttons — only shown to the character owner or the DM */}
-      {canEdit && <>
+      {canEdit && (<>
       <button
         onClick={() => setShowShortRest(true)}
         style={{
@@ -1065,7 +1065,7 @@ function HeaderBar({ character, canEdit = true }: { character: Character; canEdi
       >
         Long Rest
       </button>
-      </>}
+      </>)}
     </div>
   );
 }

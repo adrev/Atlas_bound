@@ -9,6 +9,10 @@ import { useDrawStore } from '../../../stores/useDrawStore';
 import { useDragToken } from '../../../hooks/useDragToken';
 import { theme } from '../../../styles/theme';
 
+// Stable empty array to avoid creating new [] on every render
+// (causes "getSnapshot should be cached" infinite loop in React)
+const EMPTY_STAGED: never[] = [];
+
 function TokenImage({ url, size }: { url: string; size: number }) {
   const [image, setImage] = useState<HTMLImageElement | null>(null);
   const urlRef = useRef(url);
@@ -698,9 +702,8 @@ export function TokenLayer() {
   const enableFog = useSessionStore((s) => s.settings.enableFogOfWar);
   const gridSize = useMapStore((s) => s.currentMap?.gridSize ?? 70);
   const currentMapId = useMapStore((s) => s.currentMap?.id ?? null);
-  const stagedHeroes = useMapStore((s) =>
-    currentMapId ? s.stagedHeroes[currentMapId] ?? [] : [],
-  );
+  const stagedHeroesMap = useMapStore((s) => s.stagedHeroes);
+  const stagedHeroes = (currentMapId && stagedHeroesMap[currentMapId]) || EMPTY_STAGED;
 
   const currentTurnTokenId = combatActive
     ? combatants[currentTurnIndex]?.tokenId ?? null

@@ -56,8 +56,9 @@ export const useAuthStore = create<AuthState & AuthActions>((set) => ({
         set({ user: data.user, error: null });
         return true;
       }
-      const err = await res.json().catch(() => ({ message: 'Login failed' }));
-      set({ error: err.message || 'Login failed' });
+      const err = await res.json().catch(() => ({ error: 'Login failed' }));
+      const msg = err.details?.[0]?.message || err.error || err.message || 'Login failed';
+      set({ error: msg });
       return false;
     } catch {
       set({ error: 'Network error — could not reach server' });
@@ -79,8 +80,9 @@ export const useAuthStore = create<AuthState & AuthActions>((set) => ({
         set({ user: data.user, error: null });
         return true;
       }
-      const err = await res.json().catch(() => ({ message: 'Registration failed' }));
-      set({ error: err.message || 'Registration failed' });
+      const err = await res.json().catch(() => ({ error: 'Registration failed' }));
+      const msg = err.details?.[0]?.message || err.error || err.message || 'Registration failed';
+      set({ error: msg });
       return false;
     } catch {
       set({ error: 'Network error — could not reach server' });
