@@ -11,7 +11,7 @@ import { proficiencyBonusForLevel, abilityModifier, SKILL_ABILITY_MAP } from '@d
  * Parse a D&D Beyond character JSON export into our Character type.
  * Handles the standard D&D Beyond character sheet JSON format.
  */
-export function parseCharacterJSON(json: Record<string, unknown>): Omit<Character, 'id' | 'userId' | 'createdAt' | 'updatedAt'> {
+export function parseCharacterJSON(json: Record<string, unknown>): Omit<Character, 'id' | 'userId' | 'createdAt' | 'updatedAt' | 'compendiumSlug'> & { compendiumSlug: string | null } {
   const data = json.data ? (json.data as Record<string, unknown>) : json;
 
   // Basic info
@@ -111,6 +111,7 @@ export function parseCharacterJSON(json: Record<string, unknown>): Omit<Characte
     initiative,
     portraitUrl,
     dndbeyondId,
+    compendiumSlug: null,
     source: 'dndbeyond_import',
   };
 }

@@ -2,7 +2,7 @@ import { Lucia } from 'lucia';
 import { BetterSqlite3Adapter } from '@lucia-auth/adapter-sqlite';
 import db from '../db/connection.js';
 
-const adapter = new BetterSqlite3Adapter(db, {
+const adapter = new BetterSqlite3Adapter(db as any, {
   user: 'auth_users',
   session: 'auth_sessions',
 });

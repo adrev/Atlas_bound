@@ -409,7 +409,7 @@ export function registerCombatEvents(io: Server, socket: Socket): void {
         if (startingToken) {
           const before = startingToken.conditions;
           const after = before.filter(
-            (c) => c !== 'dodging' && c !== 'disengaged' && c !== 'shield-spell',
+            (c) => !(['dodging', 'disengaged', 'shield-spell'] as string[]).includes(c),
           );
           const cleanupChanged = after.length !== before.length;
           if (cleanupChanged) startingToken.conditions = after;

@@ -330,7 +330,7 @@ export function initDatabase(): void {
   // were created before these columns existed. Computes spell_save_dc and
   // spell_attack_bonus from the character's class, level, and primary
   // ability score whenever those fields are still 0/empty.
-  try { backfillSpellcastingFromExistingChars(db); } catch (err) {
+  try { backfillSpellcastingFromExistingChars(db as any); } catch (err) {
     console.warn('[migration] Failed to backfill spellcasting fields:', err);
   }
 

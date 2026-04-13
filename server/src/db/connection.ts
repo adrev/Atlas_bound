@@ -26,7 +26,7 @@ if (TURSO_URL && TURSO_TOKEN) {
   console.log(`[DB] Local SQLite mode → ${DB_PATH}`);
 }
 
-const db = new Database(DB_PATH, dbOptions as any);
+const db: any = new Database(DB_PATH, dbOptions as any);
 
 // Enable WAL mode for better concurrent read performance
 db.pragma('journal_mode = WAL');
