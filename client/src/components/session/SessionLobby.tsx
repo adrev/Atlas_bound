@@ -202,9 +202,7 @@ export function SessionLobby() {
       <div style={styles.content}>
         {/* Header */}
         <div style={styles.header}>
-          <img src="/atlas-bound-logo.png" alt="Atlas Bound" style={{ width: 120, height: 120, borderRadius: '50%', marginBottom: 12 }} />
-          <h1 style={styles.title}>ATLAS BOUND</h1>
-          <p style={styles.subtitle}>Online D&D Platform</p>
+          <img src="/kbrt-logo.svg" alt="KBRT.AI" style={{ width: 160, height: 160, marginBottom: 8 }} />
           <div style={styles.divider} />
         </div>
 
@@ -468,7 +466,7 @@ export function SessionLobby() {
         )}
 
         <p style={styles.footer}>
-          Atlas Bound — Your adventure awaits.
+          KBRT.AI — Your adventure awaits.
         </p>
       </div>
     </div>

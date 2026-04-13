@@ -153,7 +153,7 @@ export function LoginPage() {
         </div>
 
         <p style={styles.footer}>
-          Atlas Bound — Your adventure awaits.
+          KBRT.AI — Your adventure awaits.
         </p>
       </div>
     </div>

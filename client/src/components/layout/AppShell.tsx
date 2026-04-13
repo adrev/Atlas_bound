@@ -264,7 +264,7 @@ export function AppShell() {
           borderRadius: theme.radius.lg, padding: '32px 40px', maxWidth: 400,
           textAlign: 'center',
         }}>
-          <img src="/atlas-bound-logo.png" alt="Atlas Bound" style={{ width: 64, height: 64, borderRadius: '50%', marginBottom: 8 }} />
+          <img src="/kbrt-logo.svg" alt="KBRT.AI" style={{ width: 80, height: 80, marginBottom: 8 }} />
           <h2 style={{ color: theme.gold.primary, fontFamily: theme.font.display, margin: '0 0 8px' }}>
             Join Session
           </h2>
