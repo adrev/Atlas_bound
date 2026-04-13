@@ -469,7 +469,7 @@ export const useDrawStore = create<DrawStore>((set, get) => ({
       set((s) => ({
         drawings: { ...s.drawings, [drawing.id]: drawing },
         drawingInProgress: null,
-        undoStack: [...s.undoStack, { type: 'create', drawing }].slice(-64),
+        undoStack: [...s.undoStack, { type: 'create' as const, drawing }].slice(-64),
         redoStack: [],
       }));
 
@@ -605,7 +605,7 @@ export const useDrawStore = create<DrawStore>((set, get) => ({
       return {
         drawings: rest,
         selectedDrawingId: null,
-        undoStack: [...s.undoStack, { type: 'delete', drawing }].slice(-64),
+        undoStack: [...s.undoStack, { type: 'delete' as const, drawing }].slice(-64),
         redoStack: [],
       };
     });

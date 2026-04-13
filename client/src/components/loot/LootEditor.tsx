@@ -85,6 +85,8 @@ export function LootEditor({ characterId, tokenName, onClose }: LootEditorProps)
 
   useEffect(() => { fetchLoot(); }, [fetchLoot]);
 
+  const sessionId = useSessionStore((s) => s.sessionId);
+
   useEffect(() => {
     if (searchQuery.length < 2) { setSearchResults([]); return; }
     setSearching(true);
@@ -121,7 +123,6 @@ export function LootEditor({ characterId, tokenName, onClose }: LootEditorProps)
   }, [searchQuery, sessionId]);
 
   const notifyLootChange = () => window.dispatchEvent(new Event('loot-updated'));
-  const sessionId = useSessionStore((s) => s.sessionId);
 
   // Fetch player characters for the "Send to..." dropdown
   const fetchPlayerCharacters = useCallback(() => {

@@ -2930,7 +2930,7 @@ async function castLightSpell(
     // non-DM.
     const { emitTokenAdd } = await import('../../socket/emitters');
     emitTokenAdd({
-      mapId: currentMap.id,
+      mapId: currentMap!.id,
       characterId: null,
       // Named with the caster so the dismiss path can find it after
       // refresh without a custom tag column.

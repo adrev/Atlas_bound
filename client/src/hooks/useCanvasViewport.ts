@@ -96,7 +96,7 @@ export function useCanvasViewport() {
     []
   );
 
-  const handleMouseUp = useCallback(() => {
+  const handleMouseUp = useCallback((_e?: any) => {
     isPanning.current = false;
   }, []);
 
