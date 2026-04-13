@@ -274,7 +274,7 @@ export async function initDatabase(): Promise<void> {
     CREATE TABLE IF NOT EXISTS auth_sessions (
       id TEXT PRIMARY KEY,
       user_id TEXT NOT NULL REFERENCES auth_users(id) ON DELETE CASCADE,
-      expires_at INTEGER NOT NULL
+      expires_at TIMESTAMPTZ NOT NULL
     );
 
     CREATE TABLE IF NOT EXISTS oauth_accounts (
