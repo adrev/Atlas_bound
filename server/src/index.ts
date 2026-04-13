@@ -54,6 +54,10 @@ if (!isEquipmentSeeded()) {
 // Create Express app
 const app = express();
 
+// Trust the Cloud Run proxy so cookies with Secure flag work
+// behind the HTTPS load balancer (app sees HTTP internally)
+app.set('trust proxy', 1);
+
 // Middleware
 app.use(cors({
   origin: CORS_ORIGINS,
