@@ -14,9 +14,11 @@ client/dist
 .env.*
 .DS_Store
 
-# Data / uploads (mounted as volumes)
+# Data (SQLite DB — created at runtime, synced to Turso)
 server/data
-server/uploads
+
+# User-uploaded content is included in the build
+# (prebuilt token/map images are in client/public/)
 
 # Editor config
 .vscode
