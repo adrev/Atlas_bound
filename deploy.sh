@@ -12,7 +12,7 @@ fi
 IMAGE="us-central1-docker.pkg.dev/atlas-bound/cloud-run-source-deploy/atlas-bound:latest"
 
 echo "🔨 Building Docker image locally..."
-docker build -t "$IMAGE" .
+docker build --platform linux/amd64 -t "$IMAGE" .
 
 echo "📤 Pushing image to Artifact Registry..."
 docker push "$IMAGE"
