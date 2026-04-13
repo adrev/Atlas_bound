@@ -25,7 +25,7 @@ export function setupStaticServing(app: Express): void {
 
   // SPA fallback: any GET request that doesn't match an API route
   // or a static file gets index.html
-  app.get('*', (req: Request, res: Response, next: NextFunction) => {
+  app.get('{*path}', (req: Request, res: Response, next: NextFunction) => {
     // Skip API routes
     if (req.path.startsWith('/api/') || req.path.startsWith('/uploads/') || req.path.startsWith('/socket.io/')) {
       next();
