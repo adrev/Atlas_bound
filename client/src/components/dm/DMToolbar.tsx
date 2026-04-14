@@ -531,7 +531,8 @@ const styles: Record<string, React.CSSProperties> = {
     padding: theme.space.xl,
     gap: theme.space.xs,
     overflowY: 'auto',
-    height: '100%',
+    flex: 1,
+    minHeight: 0,
   },
   title: {
     ...theme.type.display,
