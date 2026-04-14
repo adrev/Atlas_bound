@@ -1,0 +1,51 @@
+name: CI Quality Gates
+
+# Runs on every push to main and on PRs. Acts as a quality gate
+# (lint, types, tests, audit). Production deploys are done manually
+# via `./deploy.sh` from a developer machine — the automated deploy
+# was removed because it required WIF secrets that aren't configured,
+# and it also skipped the env-var injection that the manual deploy
+# does correctly.
+#
+# To re-enable automated deploys later:
+#   1. Configure Workload Identity Federation on GCP.
+#   2. Add WIF_PROVIDER + WIF_SERVICE_ACCOUNT as repo secrets.
+#   3. Add secrets for DISCORD_CLIENT_ID, DISCORD_CLIENT_SECRET,
+#      GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, PGPASSWORD,
+#      ADMIN_USER_IDS and pass them via --set-env-vars.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Type check (server)
+        run: npx tsc --noEmit --project server/tsconfig.json
+
+      - name: Type check (client)
+        run: npx tsc --noEmit --project client/tsconfig.json
+
+      - name: Test
+        run: npm test
+
+      - name: Security audit
+        run: npm audit --audit-level=moderate
