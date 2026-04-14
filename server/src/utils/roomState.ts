@@ -242,6 +242,23 @@ export function canTargetToken(ctx: PlayerContext, tokenId: string): boolean {
   return token.ownerUserId === ctx.player.userId;
 }
 
+/**
+ * True if the given token is alive and able to act in combat — HP > 0
+ * and no hard-incapacitating condition. Used by combat action handlers
+ * to block downed tokens from attacking, casting, moving, etc. DM
+ * override is applied by the callers, not here.
+ */
+export function isTokenActionable(ctx: PlayerContext, tokenId: string): boolean {
+  const token = ctx.room.tokens.get(tokenId);
+  if (!token) return false;
+  const conds = (token.conditions || []) as string[];
+  if (conds.includes('dead') || conds.includes('unconscious')) return false;
+  // In combat, the authoritative HP is on the combatant state.
+  const combatant = ctx.room.combatState?.combatants.find((c) => c.tokenId === tokenId);
+  if (combatant && combatant.hp <= 0) return false;
+  return true;
+}
+
 /** True if the player owns the current-turn combatant OR is DM. */
 export function isCurrentTurnOwnerOrDM(ctx: PlayerContext): boolean {
   if (ctx.player.role === 'dm') return true;

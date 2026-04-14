@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useRef } from 'react';
 import { Volume2, VolumeX } from 'lucide-react';
 import { QuickActions } from '../quickactions/QuickActions';
 import { DiceTray } from '../dice/DiceTray';
@@ -24,6 +24,7 @@ export function BottomBar() {
   const masterMuted = useAudioStore((s) => s.masterMuted);
   const toggleMasterMute = useAudioStore((s) => s.toggleMasterMute);
   const [showAudioPopover, setShowAudioPopover] = useState(false);
+  const audioButtonRef = useRef<HTMLButtonElement>(null);
   const myCharacter = useCharacterStore((s) => s.myCharacter);
   const currentTrack = useSessionStore((s) => s.currentTrack);
   const activeTrack = currentTrack ? TRACKS.find((t) => t.id === currentTrack) : null;
@@ -73,8 +74,9 @@ export function BottomBar() {
           <span style={{ fontWeight: 600 }}>{activeTrack.name}</span>
         </button>
       )}
-      <div style={{ position: 'relative', flexShrink: 0, marginLeft: theme.space.sm }}>
+      <div style={{ flexShrink: 0, marginLeft: theme.space.sm }}>
         <button
+          ref={audioButtonRef}
           onClick={() => setShowAudioPopover((v) => !v)}
           onContextMenu={(e) => { e.preventDefault(); toggleMasterMute(); }}
           title="Audio Controls (right-click to quick-mute)"
@@ -99,7 +101,10 @@ export function BottomBar() {
           <span style={{ fontSize: 8, fontWeight: 600, lineHeight: 1, letterSpacing: '0.04em' }}>Audio</span>
         </button>
         {showAudioPopover && (
-          <AudioPopover onClose={() => setShowAudioPopover(false)} />
+          <AudioPopover
+            onClose={() => setShowAudioPopover(false)}
+            anchorRef={audioButtonRef}
+          />
         )}
       </div>
     </div>

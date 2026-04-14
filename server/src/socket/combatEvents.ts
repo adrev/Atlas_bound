@@ -2,7 +2,7 @@ import { v4 as uuidv4 } from 'uuid';
 import type { Server, Socket } from 'socket.io';
 import {
   getPlayerBySocketId, playerIsDM, isTokenOwnerOrDM,
-  canTargetToken, isCurrentTurnOwnerOrDM,
+  canTargetToken, isCurrentTurnOwnerOrDM, isTokenActionable,
 } from '../utils/roomState.js';
 import * as CombatService from '../services/CombatService.js';
 import * as DiceService from '../services/DiceService.js';
@@ -410,7 +410,8 @@ export function registerCombatEvents(io: Server, socket: Socket): void {
     if (!canTargetToken(ctx, parsed.data.tokenId)) return;
 
     // Additional combat-turn restriction: during active combat, a player
-    // may only apply damage while their own token is the current turn.
+    // may only apply damage while their own token is the current turn,
+    // AND that token must be alive (HP > 0, not unconscious/dead).
     const isDM = ctx.player.role === 'dm';
     if (!isDM) {
       const combatState = ctx.room.combatState;
@@ -419,6 +420,7 @@ export function registerCombatEvents(io: Server, socket: Socket): void {
         if (!currentCombatant) return;
         const turnToken = ctx.room.tokens.get(currentCombatant.tokenId);
         if (!turnToken || turnToken.ownerUserId !== ctx.player.userId) return;
+        if (!isTokenActionable(ctx, currentCombatant.tokenId)) return;
       }
     }
 
@@ -566,6 +568,13 @@ export function registerCombatEvents(io: Server, socket: Socket): void {
     if (!ctx) return;
     if (!isCurrentTurnOwnerOrDM(ctx)) return;
 
+    // Block downed tokens from consuming action economy. DMs bypass —
+    // they may tick action/bonus on an NPC in edge cases.
+    if (ctx.player.role !== 'dm') {
+      const currentCombatant = ctx.room.combatState?.combatants[ctx.room.combatState.currentTurnIndex];
+      if (currentCombatant && !isTokenActionable(ctx, currentCombatant.tokenId)) return;
+    }
+
     const economy = CombatService.useAction(ctx.room.sessionId, parsed.data.actionType);
     if (!economy) return;
 
@@ -586,6 +595,11 @@ export function registerCombatEvents(io: Server, socket: Socket): void {
     const ctx = getPlayerBySocketId(socket.id);
     if (!ctx) return;
     if (!isCurrentTurnOwnerOrDM(ctx)) return;
+
+    if (ctx.player.role !== 'dm') {
+      const currentCombatant = ctx.room.combatState?.combatants[ctx.room.combatState.currentTurnIndex];
+      if (currentCombatant && !isTokenActionable(ctx, currentCombatant.tokenId)) return;
+    }
 
     const remaining = CombatService.useMovement(ctx.room.sessionId, parsed.data.feet);
 
@@ -608,6 +622,11 @@ export function registerCombatEvents(io: Server, socket: Socket): void {
     const ctx = getPlayerBySocketId(socket.id);
     if (!ctx) return;
     if (!isCurrentTurnOwnerOrDM(ctx)) return;
+
+    if (ctx.player.role !== 'dm') {
+      const currentCombatant = ctx.room.combatState?.combatants[ctx.room.combatState.currentTurnIndex];
+      if (currentCombatant && !isTokenActionable(ctx, currentCombatant.tokenId)) return;
+    }
 
     const economy = CombatService.useDash(ctx.room.sessionId);
     if (!economy) return;
@@ -732,8 +751,8 @@ export function registerCombatEvents(io: Server, socket: Socket): void {
     if (!ctx) return;
 
     // Ownership check: DM is always allowed. Players must own the
-    // caster token they claim to be casting from. (If no caster token
-    // id is supplied, only DMs may emit this.)
+    // caster token they claim to be casting from AND it must be alive.
+    // (If no caster token id is supplied, only DMs may emit this.)
     const isDM = ctx.player.role === 'dm';
     if (!isDM) {
       const casterTokenId = parsed.data.casterTokenId;
@@ -741,6 +760,7 @@ export function registerCombatEvents(io: Server, socket: Socket): void {
       const casterToken = ctx.room.tokens.get(casterTokenId);
       if (!casterToken) return;
       if (casterToken.ownerUserId !== ctx.player.userId) return;
+      if (!isTokenActionable(ctx, casterTokenId)) return;
     }
 
     io.to(ctx.room.sessionId).emit('combat:spell-cast-attempt', parsed.data);
@@ -796,8 +816,9 @@ export function registerCombatEvents(io: Server, socket: Socket): void {
 
     // Ownership check: DM is always allowed. Players must be the
     // current-turn combatant (i.e. own the attacker token making the
-    // attack). Prevents bystanders from spoofing fake "attack hit"
-    // events that would pop Shield prompts on other players.
+    // attack) and that token must be alive. Prevents bystanders from
+    // spoofing fake "attack hit" events that would pop Shield prompts
+    // on other players.
     const isDM = ctx.player.role === 'dm';
     if (!isDM) {
       const combatState = ctx.room.combatState;
@@ -806,6 +827,7 @@ export function registerCombatEvents(io: Server, socket: Socket): void {
       if (!currentCombatant) return;
       const turnToken = ctx.room.tokens.get(currentCombatant.tokenId);
       if (!turnToken || turnToken.ownerUserId !== ctx.player.userId) return;
+      if (!isTokenActionable(ctx, currentCombatant.tokenId)) return;
     }
 
     io.to(ctx.room.sessionId).emit('combat:attack-hit-attempt', parsed.data);
@@ -849,6 +871,16 @@ export function registerCombatEvents(io: Server, socket: Socket): void {
 
     const spellEvent = parsed.data;
 
+    // Ownership check for players: must own the caster token AND it
+    // must be alive. DMs may cast for any token (NPCs etc.).
+    const isDM = ctx.player.role === 'dm';
+    if (!isDM) {
+      const casterToken = ctx.room.tokens.get(spellEvent.casterId);
+      if (!casterToken) return;
+      if (casterToken.ownerUserId !== ctx.player.userId) return;
+      if (!isTokenActionable(ctx, spellEvent.casterId)) return;
+    }
+
     // Get animation config for the spell
     const animConfig = getSpellAnimation(spellEvent.spellName);
 
@@ -864,6 +896,32 @@ export function registerCombatEvents(io: Server, socket: Socket): void {
       aoeSize: spellEvent.aoeSize,
       aoeDirection: spellEvent.aoeDirection,
     });
+
+    // Bug fix: casting a spell in melee range of a hostile provokes an
+    // opportunity attack (same mechanism as movement-triggered OA).
+    // We don't filter by component type here — the DM can rule
+    // per-spell in chat. Future work: respect War Caster / Subtle Spell
+    // / component-less spells via a per-spell "triggers OA" flag.
+    if (ctx.room.combatState?.active) {
+      const opportunities = OpportunityAttackService.detectSpellCastingOA(
+        ctx.room.sessionId, spellEvent.casterId,
+      );
+      for (const opp of opportunities) {
+        const targetOwnerId = opp.attackerOwnerUserId;
+        const sentToSocketIds = new Set<string>();
+        for (const player of ctx.room.players.values()) {
+          const isRecipientDM = player.role === 'dm';
+          const isAttackerOwner = targetOwnerId && player.userId === targetOwnerId;
+          let shouldSend = false;
+          if (targetOwnerId) { if (isAttackerOwner || isRecipientDM) shouldSend = true; }
+          else { if (isRecipientDM) shouldSend = true; }
+          if (shouldSend && !sentToSocketIds.has(player.socketId)) {
+            io.to(player.socketId).emit('combat:oa-opportunity', opp);
+            sentToSocketIds.add(player.socketId);
+          }
+        }
+      }
+    }
   }));
 
   // ----------------------------------------------------------------------

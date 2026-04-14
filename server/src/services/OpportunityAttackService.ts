@@ -70,6 +70,77 @@ export function detectOpportunityAttacks(
   return opportunities;
 }
 
+/**
+ * Static-trigger opportunity attack detection. Unlike movement-based
+ * OAs, this fires when the caster performs an action that provokes
+ * (e.g. casting a spell while adjacent to a hostile melee combatant).
+ *
+ * A potential attacker is every token in the room that:
+ *   • Is on a different side (different ownerUserId bucket),
+ *   • Is visible,
+ *   • Has no OA-preventing condition,
+ *   • Has not already spent its reaction this round,
+ *   • Is within melee reach of the caster.
+ *
+ * Mirrors the filters in `detectOpportunityAttacks` but without the
+ * "was in reach, now isn't" distance delta — the caster hasn't moved.
+ */
+export function detectSpellCastingOA(
+  sessionId: string,
+  casterTokenId: string,
+): OAOpportunity[] {
+  const room = getRoom(sessionId);
+  if (!room) return [];
+  const caster = room.tokens.get(casterTokenId);
+  if (!caster) return [];
+  if (!room.combatState || !room.combatState.active) return [];
+
+  const casterConds = new Set((caster.conditions || []) as string[]);
+  if (casterConds.has('invisible') && !casterConds.has('outlined')) return [];
+
+  const gridSize = getGridSize(sessionId);
+  if (!gridSize) return [];
+
+  const opportunities: OAOpportunity[] = [];
+
+  for (const enemy of room.tokens.values()) {
+    if (enemy.id === casterTokenId) continue;
+    if (!enemy.visible) continue;
+    if (sameSide(enemy, caster)) continue;
+
+    const attackerConds = new Set((enemy.conditions || []) as string[]);
+    let prevented = false;
+    for (const cond of CONDITIONS_THAT_PREVENT_OA) {
+      if (attackerConds.has(cond)) { prevented = true; break; }
+    }
+    if (prevented) continue;
+
+    const economy = room.actionEconomies.get(enemy.id);
+    if (economy?.reaction) continue;
+
+    const meleeAttack = findBestMeleeAttackSync(enemy);
+    if (!meleeAttack) continue;
+
+    const reachCells = meleeReachCells(enemy);
+    const reachPx = reachCells * gridSize;
+
+    const dist = edgeDistance(
+      enemy.x, enemy.y, (enemy.size as number) || 1,
+      caster.x, caster.y, (caster.size as number) || 1,
+      gridSize,
+    );
+    if (dist <= reachPx + 0.5) {
+      opportunities.push({
+        attackerTokenId: enemy.id, attackerName: enemy.name,
+        attackerOwnerUserId: enemy.ownerUserId,
+        moverTokenId: casterTokenId, moverName: caster.name,
+      });
+    }
+  }
+
+  return opportunities;
+}
+
 export interface OAExecutionResult {
   success: boolean;
   messages: string[];

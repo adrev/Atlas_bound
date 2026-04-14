@@ -228,6 +228,8 @@ export function nextTurn(sessionId: string): {
 
   const state = room.combatState;
   const skippedTokenIds: string[] = [];
+  // Cap iterations at combatants.length to guarantee termination even
+  // if every participant is dead (avoids infinite loops).
   let safety = state.combatants.length + 1;
 
   while (safety-- > 0) {
@@ -236,15 +238,34 @@ export function nextTurn(sessionId: string): {
     const candidate = state.combatants[state.currentTurnIndex];
     if (!candidate) break;
 
+    // If the token no longer exists in the room (removed mid-combat)
+    // skip it entirely — nothing to take a turn.
+    const token = room.tokens.get(candidate.tokenId);
+    if (!token) { skippedTokenIds.push(candidate.tokenId); continue; }
+
+    const tokenConds = (token.conditions || []) as string[];
+    const isExplicitlyDead = tokenConds.includes('dead');
     const isDown = candidate.hp <= 0;
     const hasDeathSaves = candidate.deathSaves && (candidate.deathSaves.successes > 0 || candidate.deathSaves.failures > 0);
     const isPlayerCharacter = !candidate.isNPC;
 
+    // Explicit "dead" marker — skip regardless of PC/NPC.
+    if (isExplicitlyDead) { skippedTokenIds.push(candidate.tokenId); continue; }
+
+    // NPCs at 0 HP are simply dead and skipped.
     if (isDown && !isPlayerCharacter) { skippedTokenIds.push(candidate.tokenId); continue; }
+
+    // Dead PCs (3 death-save failures) stay in initiative but don't
+    // act. Stabilized PCs heal back to ≥1 HP so `isDown` is false and
+    // this branch doesn't trigger.
     if (isDown && isPlayerCharacter && hasDeathSaves &&
-        (candidate.deathSaves.failures >= 3 || candidate.deathSaves.successes >= 3)) {
+        candidate.deathSaves.failures >= 3) {
       skippedTokenIds.push(candidate.tokenId); continue;
     }
+
+    // Downed PC who still has death saves to roll — they get a turn
+    // (to roll the death save). The per-action handlers block other
+    // actions while HP is 0 so they can't attack/cast while unconscious.
     break;
   }
 
