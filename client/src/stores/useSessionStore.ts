@@ -23,6 +23,8 @@ interface SessionState {
    * their own setting; players never see the toggle and can't enable it.
    */
   dmIgnoreSpellSlots: boolean;
+  /** The currently-playing music track id, synced from the DM via socket. */
+  currentTrack: string | null;
 }
 
 interface SessionActions {
@@ -43,6 +45,7 @@ interface SessionActions {
   setGameMode: (mode: GameMode) => void;
   setCurrentMapId: (mapId: string | null) => void;
   setDmIgnoreSpellSlots: (val: boolean) => void;
+  setCurrentTrack: (track: string | null) => void;
   reset: () => void;
 }
 
@@ -63,6 +66,7 @@ const initialState: SessionState = {
   },
   currentMapId: null,
   dmIgnoreSpellSlots: false,
+  currentTrack: null,
 };
 
 export const useSessionStore = create<SessionState & SessionActions>((set) => ({
@@ -103,6 +107,8 @@ export const useSessionStore = create<SessionState & SessionActions>((set) => ({
   setCurrentMapId: (mapId) => set({ currentMapId: mapId }),
 
   setDmIgnoreSpellSlots: (val) => set({ dmIgnoreSpellSlots: val }),
+
+  setCurrentTrack: (track) => set({ currentTrack: track }),
 
   reset: () => set(initialState),
 }));

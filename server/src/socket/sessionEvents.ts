@@ -7,7 +7,7 @@ import {
   addPlayerToRoom, removePlayerFromRoom, getPlayerBySocketId,
   type RoomPlayer,
 } from '../utils/roomState.js';
-import { sessionJoinSchema, sessionKickSchema, sessionUpdateSettingsSchema, sessionViewingSchema } from '../utils/validation.js';
+import { sessionJoinSchema, sessionKickSchema, sessionUpdateSettingsSchema, sessionViewingSchema, musicChangeSchema } from '../utils/validation.js';
 import { safeHandler } from '../utils/socketHelpers.js';
 import { dbRowToCharacter } from '../utils/characterMapper.js';
 
@@ -253,6 +253,15 @@ export function registerSessionEvents(io: Server, socket: Socket): void {
     const ctx = getPlayerBySocketId(socket.id);
     if (!ctx) return;
     socket.to(ctx.room.sessionId).emit('session:player-viewing', { userId: ctx.player.userId, tab: parsed.data.tab });
+  }));
+
+  socket.on('session:music-change', safeHandler(socket, async (data) => {
+    const parsed = musicChangeSchema.safeParse(data);
+    if (!parsed.success) return;
+    const ctx = getPlayerBySocketId(socket.id);
+    if (!ctx || ctx.player.role !== 'dm') return;  // DM only
+    // Broadcast to all players in the session (including DM)
+    io.to(ctx.room.sessionId).emit('session:music-changed', { track: parsed.data.track });
   }));
 
   socket.on('disconnect', () => { handleDisconnect(io, socket); });

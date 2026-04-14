@@ -304,6 +304,11 @@ export function emitDamageSideEffects(tokenId: string, damageAmount: number) {
   getSocket().emit('damage:side-effects', { tokenId, damageAmount });
 }
 
+// --- Music ---
+export function emitMusicChange(track: string | null) {
+  getSocket().emit('session:music-change', { track });
+}
+
 // --- Character ---
 /**
  * Emit a character update to the server AND apply it locally so the UI

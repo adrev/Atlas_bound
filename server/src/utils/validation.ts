@@ -312,6 +312,11 @@ export const mapActivateSchema = z.object({
   stagedPositions: z.array(stagedPositionSchema).max(50).optional(),
 });
 
+// --- Music sync schema ---
+export const musicChangeSchema = z.object({
+  track: z.string().max(50).nullable(),  // null = stop
+});
+
 // --- Session viewing schema ---
 export const sessionViewingSchema = z.object({
   tab: z.string().min(1).max(50),

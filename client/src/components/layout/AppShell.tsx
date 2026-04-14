@@ -15,6 +15,7 @@ import { OpportunityAttackModal } from '../combat/OpportunityAttackModal';
 import { CounterspellModal } from '../combat/CounterspellModal';
 import { ShieldModal } from '../combat/ShieldModal';
 import { ReadyCheckModal } from '../combat/ReadyCheckModal';
+import { MusicEngine } from '../audio/MusicEngine';
 import { ProfileModal } from '../auth/ProfileModal';
 import { Sidebar } from './Sidebar';
 import { BottomBar } from './BottomBar';
@@ -436,6 +437,8 @@ export function AppShell() {
       <ShieldModal />
       {/* Ready Check prompt — shown to players when DM initiates. */}
       <ReadyCheckModal />
+      {/* Music engine — headless audio for all users (DM + players). */}
+      <MusicEngine />
       {/* Profile Modal */}
       <ProfileModal open={showProfileModal} onClose={() => setShowProfileModal(false)} />
       {/* Character Sheet Full overlay - from token click */}

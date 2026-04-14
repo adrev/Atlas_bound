@@ -71,6 +71,10 @@ export function registerListeners(socket: Socket): () => void {
     console.error('[Session Error]', message);
   });
 
+  socket.on('session:music-changed', (data: { track: string | null }) => {
+    useSessionStore.getState().setCurrentTrack(data.track);
+  });
+
   // --- Map ---
   socket.on('map:loaded', ({ map, tokens, drawings, isPreview }) => {
     // Preserve locally-set imageUrl (e.g. from prebuilt maps) if server returns null
@@ -396,6 +400,7 @@ export function registerListeners(socket: Socket): () => void {
     socket.off('session:kicked');
     socket.off('session:settings-updated');
     socket.off('session:error');
+    socket.off('session:music-changed');
     socket.off('map:loaded');
     socket.off('map:list-result');
     socket.off('map:player-map-changed');
