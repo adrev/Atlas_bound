@@ -7,7 +7,7 @@ import {
   addPlayerToRoom, removePlayerFromRoom, getPlayerBySocketId,
   type RoomPlayer,
 } from '../utils/roomState.js';
-import { sessionJoinSchema, sessionKickSchema, sessionUpdateSettingsSchema } from '../utils/validation.js';
+import { sessionJoinSchema, sessionKickSchema, sessionUpdateSettingsSchema, sessionViewingSchema } from '../utils/validation.js';
 import { safeHandler } from '../utils/socketHelpers.js';
 import { dbRowToCharacter } from '../utils/characterMapper.js';
 
@@ -248,10 +248,11 @@ export function registerSessionEvents(io: Server, socket: Socket): void {
   }));
 
   socket.on('session:viewing', safeHandler(socket, async (data: unknown) => {
-    const typedData = data as { tab: string };
+    const parsed = sessionViewingSchema.safeParse(data);
+    if (!parsed.success) return;
     const ctx = getPlayerBySocketId(socket.id);
     if (!ctx) return;
-    socket.to(ctx.room.sessionId).emit('session:player-viewing', { userId: ctx.player.userId, tab: typedData.tab });
+    socket.to(ctx.room.sessionId).emit('session:player-viewing', { userId: ctx.player.userId, tab: parsed.data.tab });
   }));
 
   socket.on('disconnect', () => { handleDisconnect(io, socket); });

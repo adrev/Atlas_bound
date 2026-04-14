@@ -246,6 +246,77 @@ export const combatCastSpellSchema = z.object({
   aoeDirection: z.number().optional(),
 });
 
+// --- Combat relay/unvalidated event schemas ---
+export const combatReadyCheckSchema = z.object({
+  tokenIds: z.array(z.string().min(1)),
+});
+
+export const combatReadyResponseSchema = z.object({
+  ready: z.boolean(),
+});
+
+export const combatOaExecuteSchema = z.object({
+  attackerTokenId: z.string().min(1),
+  moverTokenId: z.string().min(1),
+});
+
+export const combatSpellCastAttemptSchema = z.object({
+  castId: z.string().min(1),
+  casterTokenId: z.string().min(1).optional(),
+  casterName: z.string().max(200).optional(),
+  spellName: z.string().min(1).max(200),
+  spellLevel: z.number().int().min(0).max(9),
+});
+
+export const combatSpellCounterspelledSchema = z.object({
+  castId: z.string().min(1),
+  counterCasterName: z.string().max(200).optional(),
+  counterSlotLevel: z.number().int().min(1).max(9).optional(),
+});
+
+export const combatAttackHitAttemptSchema = z.object({
+  attackId: z.string().min(1),
+  targetTokenId: z.string().min(1),
+  attackerName: z.string().max(200).optional(),
+  attackTotal: z.number().optional(),
+  currentAC: z.number().optional(),
+});
+
+export const combatShieldCastSchema = z.object({
+  attackId: z.string().min(1),
+  defenderName: z.string().max(200).optional(),
+});
+
+export const damageSideEffectsSchema = z.object({
+  tokenId: z.string().min(1),
+  damageAmount: z.number(),
+});
+
+export const concentrationDroppedSchema = z.object({
+  casterTokenId: z.string().min(1),
+  spellName: z.string().min(1).max(200),
+});
+
+// --- Scene Manager staged positions schema ---
+export const stagedPositionSchema = z.object({
+  characterId: z.string().min(1),
+  name: z.string().min(1).max(200),
+  x: z.number(),
+  y: z.number(),
+  imageUrl: z.string().max(1000).nullable().optional(),
+  ownerUserId: z.string().nullable().optional(),
+});
+
+export const mapActivateSchema = z.object({
+  mapId: z.string().min(1),
+  stagedPositions: z.array(stagedPositionSchema).max(50).optional(),
+});
+
+// --- Session viewing schema ---
+export const sessionViewingSchema = z.object({
+  tab: z.string().min(1).max(50),
+});
+
 // --- Chat event schemas ---
 export const chatMessageSchema = z.object({
   type: z.enum(['ic', 'ooc', 'system']),
@@ -416,7 +487,14 @@ export const createCustomMonsterSchema = z.object({
   legendaryActions: z.string().max(10000).optional(),
   description: z.string().max(5000).optional(),
   imageUrl: z.string().url().max(500).nullable().optional(),
+  senses: z.string().max(500).optional(),
+  languages: z.string().max(500).optional(),
+  damageResistances: z.string().max(500).optional(),
+  damageImmunities: z.string().max(500).optional(),
+  conditionImmunities: z.string().max(500).optional(),
 });
+
+export const updateCustomMonsterSchema = createCustomMonsterSchema.partial().omit({ sessionId: true });
 
 export const createCustomSpellSchema = z.object({
   sessionId: z.string().min(1),
@@ -432,7 +510,21 @@ export const createCustomSpellSchema = z.object({
   ritual: z.boolean().optional(),
   classes: z.array(z.string().max(50)).max(20).optional(),
   imageUrl: z.string().url().max(500).nullable().optional(),
+  higherLevels: z.string().max(5000).optional(),
+  damage: z.string().max(100).optional(),
+  damageType: z.string().max(50).optional(),
+  savingThrow: z.string().max(50).optional(),
+  attackType: z.string().max(50).optional(),
+  aoeType: z.string().max(50).optional(),
+  aoeSize: z.number().min(0).max(999).optional(),
+  halfOnSave: z.boolean().optional(),
+  pushDistance: z.number().min(0).max(999).optional(),
+  appliesCondition: z.string().max(100).nullable().optional(),
+  animationType: z.string().max(100).nullable().optional(),
+  animationColor: z.string().max(50).nullable().optional(),
 });
+
+export const updateCustomSpellSchema = createCustomSpellSchema.partial().omit({ sessionId: true });
 
 export const createCustomItemSchema = z.object({
   sessionId: z.string().min(1),
@@ -447,7 +539,13 @@ export const createCustomItemSchema = z.object({
   damageType: z.string().max(50).optional(),
   properties: z.array(z.string().max(100)).max(20).optional(),
   imageUrl: z.string().url().max(500).nullable().optional(),
+  range: z.string().max(100).optional(),
+  ac: z.number().min(0).max(99).optional(),
+  acType: z.string().max(50).optional(),
+  magicBonus: z.number().min(0).max(10).optional(),
 });
+
+export const updateCustomItemSchema = createCustomItemSchema.partial().omit({ sessionId: true });
 
 export const createMapSchema = z.object({
   name: z.string().min(1).max(100),

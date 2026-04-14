@@ -1,8 +1,14 @@
 import { Router, type Request, type Response } from 'express';
 import { v4 as uuidv4 } from 'uuid';
+import { z } from 'zod';
 import pool from '../db/connection.js';
 import { getAuthUserId, assertCharacterOwnerOrDM } from '../utils/authorization.js';
 import { createLootSchema } from '../utils/validation.js';
+
+const updateLootSchema = z.object({
+  quantity: z.number().int().min(0).max(9999).optional(),
+  equipped: z.boolean().optional(),
+});
 
 const router = Router();
 
@@ -44,14 +50,12 @@ router.patch('/characters/:id/loot/:entryId', async (req: Request, res: Response
   const userId = getAuthUserId(req);
   const charId = String(req.params.id);
   await assertCharacterOwnerOrDM(charId, userId);
-  const { quantity, equipped } = req.body;
+  const parsed = updateLootSchema.safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: parsed.error.errors }); return; }
+  const { quantity, equipped } = parsed.data;
   const entryId = req.params.entryId;
 
   if (quantity !== undefined) {
-    if (typeof quantity !== 'number' || quantity < 0) {
-      res.status(400).json({ error: 'Invalid quantity' });
-      return;
-    }
     if (quantity === 0) {
       await pool.query('DELETE FROM loot_entries WHERE id = $1 AND character_id = $2', [entryId, charId]);
     } else {

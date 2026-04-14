@@ -4,13 +4,14 @@ import { v4 as uuidv4 } from 'uuid';
 import pool from '../db/connection.js';
 import { getPlayerBySocketId } from '../utils/roomState.js';
 import {
-  mapPreviewLoadSchema, mapActivateForPlayersSchema, mapDeleteSchema,
+  mapPreviewLoadSchema, mapDeleteSchema, mapActivateSchema,
 } from '../utils/validation.js';
+import { safeHandler } from '../utils/socketHelpers.js';
 import { loadDrawingsForMapAsync, filterDrawingsForPlayer } from './drawingEvents.js';
 
 export function registerSceneEvents(io: Server, socket: Socket): void {
 
-  socket.on('map:list', async () => {
+  socket.on('map:list', safeHandler(socket, async () => {
     const ctx = getPlayerBySocketId(socket.id);
     if (!ctx) return;
 
@@ -31,9 +32,9 @@ export function registerSceneEvents(io: Server, socket: Socket): void {
 
     console.log(`[SCENE] map:list → ${maps.length} maps, ribbon=${ctx.room.playerMapId ?? 'null'}`);
     socket.emit('map:list-result', { maps, playerMapId: ctx.room.playerMapId });
-  });
+  }));
 
-  socket.on('map:preview-load', async (data) => {
+  socket.on('map:preview-load', safeHandler(socket, async (data) => {
     const parsed = mapPreviewLoadSchema.safeParse(data);
     if (!parsed.success) return;
     const ctx = getPlayerBySocketId(socket.id);
@@ -72,11 +73,11 @@ export function registerSceneEvents(io: Server, socket: Socket): void {
     };
 
     socket.emit('map:loaded', { map: mapData, tokens, drawings: visibleDrawings, isPreview: true });
-  });
+  }));
 
-  socket.on('map:activate-for-players', async (data) => {
+  socket.on('map:activate-for-players', safeHandler(socket, async (data) => {
     console.log('[SCENE] map:activate-for-players received', data);
-    const parsed = mapActivateForPlayersSchema.safeParse(data);
+    const parsed = mapActivateSchema.safeParse(data);
     if (!parsed.success) { console.warn('[SCENE] validation failed', parsed.error.issues); return; }
 
     const ctx = getPlayerBySocketId(socket.id);
@@ -84,10 +85,7 @@ export function registerSceneEvents(io: Server, socket: Socket): void {
     if (ctx.player.role !== 'dm') { console.warn('[SCENE] non-DM tried to activate', ctx.player.userId); return; }
 
     const { mapId } = parsed.data;
-    const stagedPositions: Array<{
-      characterId: string; name: string; x: number; y: number;
-      imageUrl: string | null; ownerUserId: string;
-    }> = Array.isArray((data as any).stagedPositions) ? (data as any).stagedPositions : [];
+    const stagedPositions = parsed.data.stagedPositions ?? [];
 
     const { rows: mapRows } = await pool.query('SELECT * FROM maps WHERE id = $1 AND session_id = $2', [mapId, ctx.room.sessionId]);
     const mapRow = mapRows[0] as Record<string, unknown> | undefined;
@@ -198,9 +196,9 @@ export function registerSceneEvents(io: Server, socket: Socket): void {
     }
 
     io.to(ctx.room.sessionId).emit('map:player-map-changed', { mapId });
-  });
+  }));
 
-  socket.on('map:delete', async (data) => {
+  socket.on('map:delete', safeHandler(socket, async (data) => {
     const parsed = mapDeleteSchema.safeParse(data);
     if (!parsed.success) return;
     const ctx = getPlayerBySocketId(socket.id);
@@ -243,5 +241,5 @@ export function registerSceneEvents(io: Server, socket: Socket): void {
       if (player.role !== 'dm') continue;
       io.to(player.socketId).emit('map:list-result', { maps, playerMapId: ctx.room.playerMapId });
     }
-  });
+  }));
 }

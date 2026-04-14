@@ -21,6 +21,7 @@ export function registerMapEvents(io: Server, socket: Socket): void {
     if (!parsed.success) return;
     const ctx = getPlayerBySocketId(socket.id);
     if (!ctx) return;
+    if (ctx.player.role !== 'dm') return;
     const { mapId } = parsed.data;
 
     // Verify map belongs to this session

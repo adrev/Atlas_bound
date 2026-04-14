@@ -26,6 +26,8 @@ RUN npm run build --workspace=server
 # ── Production deps stage (clean install, no build tools) ──
 FROM node:20-alpine AS deps
 
+RUN apk add --no-cache python3 make g++
+
 WORKDIR /app
 COPY package*.json ./
 COPY shared/package*.json ./shared/

@@ -251,12 +251,19 @@ function showRestToast(restType: string, changes: string[]) {
   if (existing) existing.remove();
   const toast = document.createElement('div');
   toast.id = 'rest-toast';
-  toast.innerHTML = `
-    <div style="font-size:16px;font-weight:700;margin-bottom:6px;color:${theme.gold.primary}">${restType}</div>
-    <div style="font-size:12px;line-height:1.6">
-      ${changes.map(c => `<div style="padding:2px 0;border-bottom:1px solid ${theme.border.default}">\u2714 ${c}</div>`).join('')}
-    </div>
-  `;
+  const titleDiv = document.createElement('div');
+  titleDiv.style.cssText = `font-size:16px;font-weight:700;margin-bottom:6px;color:${theme.gold.primary}`;
+  titleDiv.textContent = restType;
+  const listDiv = document.createElement('div');
+  listDiv.style.cssText = 'font-size:12px;line-height:1.6';
+  changes.forEach(c => {
+    const row = document.createElement('div');
+    row.style.cssText = `padding:2px 0;border-bottom:1px solid ${theme.border.default}`;
+    row.textContent = `\u2714 ${c}`;
+    listDiv.appendChild(row);
+  });
+  toast.appendChild(titleDiv);
+  toast.appendChild(listDiv);
   Object.assign(toast.style, {
     position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%, -50%)',
     padding: '20px 28px', background: theme.bg.deep, color: theme.text.primary, borderRadius: `${theme.radius.lg}px`,
@@ -281,13 +288,21 @@ function showRollToast(notation: string, reason: string) {
   if (existing) existing.remove();
   const toast = document.createElement('div');
   toast.id = 'roll-toast';
-  toast.innerHTML = `
-    <div style="font-size:11px;opacity:0.8;margin-bottom:2px">${reason}</div>
-    <div style="display:flex;align-items:center;gap:8px">
-      <span style="font-size:28px;font-weight:800">${result.total}</span>
-      <span style="font-size:12px;opacity:0.7">${notation} = ${result.dice} = ${result.total}</span>
-    </div>
-  `;
+  const reasonDiv = document.createElement('div');
+  reasonDiv.style.cssText = 'font-size:11px;opacity:0.8;margin-bottom:2px';
+  reasonDiv.textContent = reason;
+  const rollDiv = document.createElement('div');
+  rollDiv.style.cssText = 'display:flex;align-items:center;gap:8px';
+  const totalSpan = document.createElement('span');
+  totalSpan.style.cssText = 'font-size:28px;font-weight:800';
+  totalSpan.textContent = String(result.total);
+  const detailSpan = document.createElement('span');
+  detailSpan.style.cssText = 'font-size:12px;opacity:0.7';
+  detailSpan.textContent = `${notation} = ${result.dice} = ${result.total}`;
+  rollDiv.appendChild(totalSpan);
+  rollDiv.appendChild(detailSpan);
+  toast.appendChild(reasonDiv);
+  toast.appendChild(rollDiv);
   const isNat20 = notation.includes('1d20') && result.total - (parseInt(notation.split(/[+-]/)[1] || '0')) === 20;
   const isNat1 = notation.includes('1d20') && result.total - (parseInt(notation.split(/[+-]/)[1] || '0')) === 1;
   Object.assign(toast.style, {

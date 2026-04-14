@@ -420,7 +420,11 @@ function CreatureCard({
                 el.style.display = 'none';
                 const color = getTokenColor(monster.type);
                 el.parentElement!.style.backgroundColor = color;
-                el.parentElement!.innerHTML = `<span style="font-size:16px;font-weight:700;color:#fff">${monster.name.charAt(0)}</span>`;
+                el.parentElement!.textContent = '';
+                const span = document.createElement('span');
+                span.style.cssText = 'font-size:16px;font-weight:700;color:#fff';
+                span.textContent = monster.name.charAt(0);
+                el.parentElement!.appendChild(span);
               }
             }}
           />

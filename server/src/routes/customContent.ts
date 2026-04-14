@@ -7,7 +7,7 @@ import pool from '../db/connection.js';
 import { UPLOAD_DIR } from '../config.js';
 import { getAuthUserId, assertSessionDM, assertSessionMember } from '../utils/authorization.js';
 import { validateAndSaveUpload } from './uploads.js';
-import { createCustomMonsterSchema, createCustomSpellSchema, createCustomItemSchema } from '../utils/validation.js';
+import { createCustomMonsterSchema, createCustomSpellSchema, createCustomItemSchema, updateCustomMonsterSchema, updateCustomSpellSchema, updateCustomItemSchema } from '../utils/validation.js';
 
 const router = Router();
 
@@ -25,9 +25,8 @@ router.post('/monsters', async (req: Request, res: Response) => {
   if (!parsed.success) { res.status(400).json({ error: parsed.error.errors }); return; }
   const { sessionId, name, size, type, alignment, armorClass, hitPoints, hitDice,
     speed, abilityScores, challengeRating, crNumeric, actions, specialAbilities,
-    legendaryActions, description, imageUrl } = parsed.data;
-  const { senses, languages, damageResistances,
-    damageImmunities, conditionImmunities } = req.body;
+    legendaryActions, description, imageUrl, senses, languages, damageResistances,
+    damageImmunities, conditionImmunities } = parsed.data;
   await assertSessionDM(sessionId, userId);
 
   const slug = slugify(name);
@@ -78,10 +77,12 @@ router.put('/monsters/:slug', async (req: Request, res: Response) => {
   if (existingRows.length === 0) { res.status(404).json({ error: 'Not found' }); return; }
   await assertSessionDM(existingRows[0].session_id, userId);
 
+  const parsed = updateCustomMonsterSchema.safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: parsed.error.errors }); return; }
   const { name, size, type, alignment, armorClass, hitPoints, hitDice,
     speed, abilityScores, challengeRating, crNumeric, actions, specialAbilities,
     legendaryActions, description, senses, languages, damageResistances,
-    damageImmunities, conditionImmunities, imageUrl } = req.body;
+    damageImmunities, conditionImmunities, imageUrl } = parsed.data;
 
   await pool.query(`UPDATE custom_monsters SET
     name=COALESCE($1,name), size=COALESCE($2,size), type=COALESCE($3,type),
@@ -146,11 +147,9 @@ router.post('/spells', async (req: Request, res: Response) => {
   const parsed = createCustomSpellSchema.safeParse(req.body);
   if (!parsed.success) { res.status(400).json({ error: parsed.error.errors }); return; }
   const { sessionId, name, level, school, castingTime, range, components, duration,
-    description, concentration, ritual, classes, imageUrl } = parsed.data;
-  const { higherLevels, damage, damageType, savingThrow, attackType,
-    aoeType, aoeSize, halfOnSave, pushDistance,
-    appliesCondition, animationType, animationColor,
-  } = req.body;
+    description, concentration, ritual, classes, imageUrl, higherLevels, damage,
+    damageType, savingThrow, attackType, aoeType, aoeSize, halfOnSave, pushDistance,
+    appliesCondition, animationType, animationColor } = parsed.data;
   await assertSessionDM(sessionId, userId);
 
   const slug = slugify(name);
@@ -200,8 +199,10 @@ router.put('/spells/:slug', async (req: Request, res: Response) => {
   if (existingRows.length === 0) { res.status(404).json({ error: 'Not found' }); return; }
   await assertSessionDM(existingRows[0].session_id, userId);
 
+  const parsed = updateCustomSpellSchema.safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: parsed.error.errors }); return; }
   const { name, level, school, castingTime, range, components, duration,
-    description, higherLevels, concentration, ritual, classes, imageUrl } = req.body;
+    description, higherLevels, concentration, ritual, classes, imageUrl } = parsed.data;
 
   await pool.query(`UPDATE custom_spells SET
     name=COALESCE($1,name), level=COALESCE($2,level), school=COALESCE($3,school),
@@ -259,8 +260,8 @@ router.post('/items', async (req: Request, res: Response) => {
   const parsed = createCustomItemSchema.safeParse(req.body);
   if (!parsed.success) { res.status(400).json({ error: parsed.error.errors }); return; }
   const { sessionId, name, type, rarity, requiresAttunement, description,
-    weight, valueGp, damage, damageType, properties, imageUrl } = parsed.data;
-  const { range, ac, acType, magicBonus } = req.body;
+    weight, valueGp, damage, damageType, properties, imageUrl, range, ac,
+    acType, magicBonus } = parsed.data;
   await assertSessionDM(sessionId, userId);
 
   const id = uuidv4();
@@ -305,8 +306,10 @@ router.put('/items/:id', async (req: Request, res: Response) => {
   if (existingRows.length === 0) { res.status(404).json({ error: 'Not found' }); return; }
   await assertSessionDM(existingRows[0].session_id, userId);
 
+  const parsed = updateCustomItemSchema.safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: parsed.error.errors }); return; }
   const { name, type, rarity, description, weight, valueGp, damage, damageType, properties,
-    requiresAttunement, imageUrl, range, ac, acType, magicBonus } = req.body;
+    requiresAttunement, imageUrl, range, ac, acType, magicBonus } = parsed.data;
 
   await pool.query(`UPDATE custom_items SET
     name=COALESCE($1,name), type=COALESCE($2,type), rarity=COALESCE($3,rarity),

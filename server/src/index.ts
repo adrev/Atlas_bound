@@ -86,11 +86,15 @@ app.use(cors({
 app.use(express.json({ limit: '10mb' }));
 
 // Static file serving for uploads (authenticated, with nosniff)
-app.use('/uploads', (req, res, next) => {
-  // Lightweight auth check — verify session cookie exists (no DB lookup)
+app.use('/uploads', async (req, res, next) => {
   const sessionCookie = lucia.readSessionCookie(req.headers.cookie ?? '');
   if (!sessionCookie) {
     res.status(401).json({ error: 'Authentication required' });
+    return;
+  }
+  const { session } = await lucia.validateSession(sessionCookie);
+  if (!session) {
+    res.status(401).json({ error: 'Invalid session' });
     return;
   }
   next();

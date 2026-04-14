@@ -60,15 +60,14 @@ function showActionDeniedToast(slot: ActionType, label: string) {
   if (existing) existing.remove();
   const toast = document.createElement('div');
   toast.id = 'action-denied-toast';
-  toast.innerHTML = `
-    <div style="font-size:13px;font-weight:700;color:#c53131;margin-bottom:4px">
-      ${slotName} already spent
-    </div>
-    <div style="font-size:11px;color:#ccc;line-height:1.5">
-      You've already used your ${slotName} this turn (${label}).<br/>
-      ${hint}
-    </div>
-  `;
+  const titleDiv = document.createElement('div');
+  titleDiv.style.cssText = 'font-size:13px;font-weight:700;color:#c53131;margin-bottom:4px';
+  titleDiv.textContent = `${slotName} already spent`;
+  const detailDiv = document.createElement('div');
+  detailDiv.style.cssText = 'font-size:11px;color:#ccc;line-height:1.5';
+  detailDiv.textContent = `You've already used your ${slotName} this turn (${label}). ${hint}`;
+  toast.appendChild(titleDiv);
+  toast.appendChild(detailDiv);
   Object.assign(toast.style, {
     position: 'fixed', top: '18%', left: '50%',
     transform: 'translateX(-50%)',
@@ -446,7 +445,14 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
         } else if (distFeet > maxRange) {
           // Show visible toast notification
           const toast = document.createElement('div');
-          toast.innerHTML = `<div style="font-size:14px;font-weight:700;margin-bottom:4px">Out of Range!</div><div style="font-size:12px;opacity:0.8">${targetToken.name} is ${distFeet}ft away. Max range: ${maxRange}ft.</div>`;
+          const titleDiv = document.createElement('div');
+          titleDiv.style.cssText = 'font-size:14px;font-weight:700;margin-bottom:4px';
+          titleDiv.textContent = 'Out of Range!';
+          const detailDiv = document.createElement('div');
+          detailDiv.style.cssText = 'font-size:12px;opacity:0.8';
+          detailDiv.textContent = `${targetToken.name} is ${distFeet}ft away. Max range: ${maxRange}ft.`;
+          toast.appendChild(titleDiv);
+          toast.appendChild(detailDiv);
           Object.assign(toast.style, {
             position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%, -50%)',
             padding: '16px 24px', background: theme.bg.deep, color: theme.text.primary, borderRadius: `${theme.radius.lg}px`,
