@@ -45,20 +45,6 @@ const PREBUILT_MAPS: PrebuiltMap[] = [
   { id: 'apothecary-shop', name: 'Apothecary Shop', description: 'Cluttered shop with potions and herbs', category: 'social', gridCols: 15, gridRows: 15, seed: 1313, imageFile: '/maps/apothecary-shop.png' },
   { id: 'camp-long-rest', name: 'Camp / Long Rest', description: 'Fireside campsite in the wilderness', category: 'combat', gridCols: 20, gridRows: 20, seed: 1414, imageFile: '/maps/camp-long-rest.png' },
   { id: 'merchant-quarter', name: 'Merchant Quarter', description: 'Town square with market stalls', category: 'social', gridCols: 35, gridRows: 35, seed: 1515, imageFile: '/maps/merchant-quarter.png' },
-  { id: 'dense-forest', name: 'Dense Forest', description: 'Deep woodland with heavy undergrowth and cover', category: 'combat', gridCols: 40, gridRows: 24, seed: 1616, imageFile: '/maps/dense-forest.png' },
-  { id: 'long-road', name: 'Long Road', description: 'Open travel road for ambushes and chases', category: 'combat', gridCols: 44, gridRows: 24, seed: 1717, imageFile: '/maps/long-road.png' },
-  { id: 'river-crossing', name: 'River Crossing', description: 'Forest ford with a wooden bridge and rocky cover', category: 'combat', gridCols: 44, gridRows: 24, seed: 1818, imageFile: '/maps/river-crossing.png' },
-  { id: 'ruined-watchtower', name: 'Ruined Watchtower', description: 'Broken roadside tower with rubble and sightlines', category: 'combat', gridCols: 44, gridRows: 24, seed: 1919, imageFile: '/maps/ruined-watchtower.png' },
-  { id: 'swamp-shrine', name: 'Swamp Shrine', description: 'Marsh boardwalk leading to an overgrown stone shrine', category: 'combat', gridCols: 44, gridRows: 24, seed: 2020, imageFile: '/maps/swamp-shrine.png' },
-  { id: 'frozen-pass', name: 'Frozen Pass', description: 'Snowy mountain pass split by ice and cliffs', category: 'combat', gridCols: 44, gridRows: 24, seed: 2121, imageFile: '/maps/frozen-pass.png' },
-  { id: 'desert-oasis', name: 'Desert Oasis', description: 'Sandstone ruins around a small oasis pool', category: 'combat', gridCols: 44, gridRows: 24, seed: 2222, imageFile: '/maps/desert-oasis.png' },
-  { id: 'sewer-junction', name: 'Sewer Junction', description: 'Crossing sewer channels with grates and side rooms', category: 'dungeon', gridCols: 44, gridRows: 24, seed: 2323, imageFile: '/maps/sewer-junction.png' },
-  { id: 'crypt-of-ash', name: 'Crypt of Ash', description: 'Stone catacomb chamber with sarcophagi and ash pit', category: 'dungeon', gridCols: 44, gridRows: 24, seed: 2424, imageFile: '/maps/crypt-of-ash.png' },
-  { id: 'skybridge-ruins', name: 'Skybridge Ruins', description: 'Floating platforms connected by broken bridges', category: 'dungeon', gridCols: 44, gridRows: 24, seed: 2525, imageFile: '/maps/skybridge-ruins.png' },
-  { id: 'pirate-cove', name: 'Pirate Cove', description: 'Hidden beach cove with dock, cave, and wreckage', category: 'combat', gridCols: 44, gridRows: 24, seed: 2626, imageFile: '/maps/pirate-cove.png' },
-  { id: 'wizard-laboratory', name: 'Wizard Laboratory', description: 'Arcane study with ritual circles and worktables', category: 'social', gridCols: 44, gridRows: 24, seed: 2727, imageFile: '/maps/wizard-laboratory.png' },
-  { id: 'noble-manor', name: 'Noble Manor', description: 'Elegant manor interior for intrigue or infiltration', category: 'social', gridCols: 44, gridRows: 24, seed: 2828, imageFile: '/maps/noble-manor.png' },
-  { id: 'infernal-gate', name: 'Infernal Gate', description: 'Obsidian chamber with lava channels and a portal', category: 'dungeon', gridCols: 44, gridRows: 24, seed: 2929, imageFile: '/maps/infernal-gate.png' },
 ];
 
 const CATEGORY_LABELS: Record<MapCategory, string> = {

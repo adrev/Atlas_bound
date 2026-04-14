@@ -32,18 +32,6 @@ export const PREBUILT_THUMBNAIL: Record<string, string> = {
   'Merchant Quarter': '/maps/merchant-quarter.png',
   'Dense Forest': '/maps/dense-forest.png',
   'Long Road': '/maps/long-road.png',
-  'River Crossing': '/maps/river-crossing.png',
-  'Ruined Watchtower': '/maps/ruined-watchtower.png',
-  'Swamp Shrine': '/maps/swamp-shrine.png',
-  'Frozen Pass': '/maps/frozen-pass.png',
-  'Desert Oasis': '/maps/desert-oasis.png',
-  'Sewer Junction': '/maps/sewer-junction.png',
-  'Crypt of Ash': '/maps/crypt-of-ash.png',
-  'Skybridge Ruins': '/maps/skybridge-ruins.png',
-  'Pirate Cove': '/maps/pirate-cove.png',
-  'Wizard Laboratory': '/maps/wizard-laboratory.png',
-  'Noble Manor': '/maps/noble-manor.png',
-  'Infernal Gate': '/maps/infernal-gate.png',
 };
 
 /**
