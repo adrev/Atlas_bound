@@ -26,6 +26,7 @@ import discordAuth from './auth/oauth/discord.js';
 import googleAuth from './auth/oauth/google.js';
 import appleAuth from './auth/oauth/apple.js';
 import { requireAuth } from './auth/middleware.js';
+import { lucia } from './auth/lucia.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -84,11 +85,21 @@ app.use(cors({
 }));
 app.use(express.json({ limit: '10mb' }));
 
-// Static file serving for uploads (with nosniff to prevent MIME-sniffing attacks)
-app.use('/uploads', (_req, res, next) => {
-  res.setHeader('X-Content-Type-Options', 'nosniff');
+// Static file serving for uploads (authenticated, with nosniff)
+app.use('/uploads', (req, res, next) => {
+  // Lightweight auth check — verify session cookie exists (no DB lookup)
+  const sessionCookie = lucia.readSessionCookie(req.headers.cookie ?? '');
+  if (!sessionCookie) {
+    res.status(401).json({ error: 'Authentication required' });
+    return;
+  }
   next();
-}, express.static(UPLOAD_DIR));
+}, express.static(UPLOAD_DIR, {
+  maxAge: '1h',
+  setHeaders: (res) => {
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+  },
+}));
 
 // Auth routes (unauthenticated)
 app.use('/api/auth', authRouter);

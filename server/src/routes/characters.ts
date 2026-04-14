@@ -60,20 +60,6 @@ router.post('/', async (req: Request, res: Response) => {
   res.status(201).json(dbRowToCharacter(rows[0]));
 });
 
-// GET /api/characters/mine
-router.get('/mine', async (req: Request, res: Response) => {
-  const userId = (req as any).user?.id;
-  if (!userId) { res.json([]); return; }
-
-  const { rows } = await pool.query(`
-    SELECT * FROM characters
-    WHERE user_id = $1 AND user_id != 'npc'
-    ORDER BY updated_at DESC
-  `, [userId]);
-
-  res.json(rows.map(dbRowToCharacter));
-});
-
 // GET /api/characters/:id
 router.get('/:id', async (req: Request, res: Response) => {
   const userId = getAuthUserId(req);

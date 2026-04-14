@@ -7,7 +7,14 @@ import { safeHandler } from '../utils/socketHelpers.js';
 
 const characterUpdateSchema = z.object({
   characterId: z.string().min(1),
-  changes: z.record(z.unknown()),
+  changes: z.record(z.string(), z.union([
+    z.string(),
+    z.number(),
+    z.boolean(),
+    z.null(),
+    z.array(z.unknown()),
+    z.record(z.string(), z.unknown()),
+  ])),
 });
 
 const characterSyncRequestSchema = z.object({

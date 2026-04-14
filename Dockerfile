@@ -23,11 +23,11 @@ RUN npm run build --workspace=shared
 RUN npm run build --workspace=client
 RUN npm run build --workspace=server
 
+# Prune dev dependencies so we can copy production-only node_modules
+RUN npm prune --omit=dev
+
 # ── Production stage ───────────────────────────────────────
 FROM node:20-alpine
-
-# Native deps needed at runtime for bcrypt
-RUN apk add --no-cache python3 make g++
 
 WORKDIR /app
 
@@ -36,8 +36,10 @@ COPY package*.json ./
 COPY shared/package*.json ./shared/
 COPY server/package*.json ./server/
 
-# Install production dependencies only
-RUN npm install --omit=dev --workspace=server --workspace=shared
+# Copy pre-built, pruned node_modules from builder (no build tools needed)
+COPY --from=builder /app/node_modules ./node_modules
+COPY --from=builder /app/server/node_modules ./server/node_modules
+COPY --from=builder /app/shared/node_modules ./shared/node_modules
 
 # Copy built artifacts from builder
 COPY --from=builder /app/shared/dist ./shared/dist

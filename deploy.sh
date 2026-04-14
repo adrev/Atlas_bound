@@ -18,6 +18,21 @@ echo "📤 Pushing image to Artifact Registry..."
 docker push "$IMAGE"
 
 echo "🚀 Deploying to Cloud Run..."
+
+# Write env vars to a temporary YAML file (avoids exposing secrets in shell history)
+ENV_FILE=$(mktemp)
+cat > "$ENV_FILE" <<ENVEOF
+NODE_ENV: production
+BASE_URL: https://kbrt.ai
+CORS_ORIGINS: https://kbrt.ai
+DISCORD_CLIENT_ID: ${DISCORD_CLIENT_ID}
+DISCORD_CLIENT_SECRET: ${DISCORD_CLIENT_SECRET}
+GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID}
+GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET}
+PGPASSWORD: ${PGPASSWORD}
+CLOUD_SQL_CONNECTION_NAME: atlas-bound:us-central1:atlas-bound-db
+ENVEOF
+
 gcloud run deploy atlas-bound \
   --image "$IMAGE" \
   --project atlas-bound \
@@ -31,6 +46,9 @@ gcloud run deploy atlas-bound \
   --session-affinity \
   --timeout 3600 \
   --add-cloudsql-instances atlas-bound:us-central1:atlas-bound-db \
-  --set-env-vars "NODE_ENV=production,BASE_URL=https://kbrt.ai,CORS_ORIGINS=https://kbrt.ai,DISCORD_CLIENT_ID=${DISCORD_CLIENT_ID},DISCORD_CLIENT_SECRET=${DISCORD_CLIENT_SECRET},GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID},GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET},PGPASSWORD=${PGPASSWORD},CLOUD_SQL_CONNECTION_NAME=atlas-bound:us-central1:atlas-bound-db"
+  --env-vars-file "$ENV_FILE"
+
+# Clean up temporary env file
+rm -f "$ENV_FILE"
 
 echo "✅ Deployed! https://kbrt.ai"

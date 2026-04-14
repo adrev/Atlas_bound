@@ -91,7 +91,7 @@ export function SessionLobby() {
   const fetchMyCharacters = async () => {
     setMyCharsLoading(true);
     try {
-      const res = await fetch('/api/characters/mine', { credentials: 'include' });
+      const res = await fetch('/api/characters', { credentials: 'include' });
       if (res.ok) {
         const data = await res.json();
         setMyCharacters(Array.isArray(data) ? data : data.characters || []);
