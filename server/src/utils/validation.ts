@@ -327,6 +327,10 @@ export const musicChangeSchema = z.object({
   fileIndex: z.number().int().min(0).max(20).optional(),
 });
 
+export const musicActionSchema = z.object({
+  action: z.enum(['pause', 'resume', 'next', 'prev']),
+});
+
 // --- Handout schema ---
 export const handoutSchema = z.object({
   title: z.string().min(1).max(200),

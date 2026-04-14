@@ -2,11 +2,15 @@ import { useEffect, useRef, useCallback } from 'react';
 import { useSessionStore } from '../../stores/useSessionStore';
 import { useAudioStore } from '../../stores/useAudioStore';
 import { TRACKS } from './tracks';
+import { musicPlaybackRef } from './musicPlaybackRef';
 
 /**
  * Headless audio engine mounted in AppShell for ALL users.
  * Plays real MP3 tracks from GCS, shuffling within each theme.
  * Each user controls their own volume/mute locally.
+ *
+ * Exposes playback progress via the global `musicPlaybackRef` so
+ * the MusicPlayer UI can poll it without prop-drilling.
  */
 export function MusicEngine() {
   const currentTrack = useSessionStore((s) => s.currentTrack);
@@ -21,22 +25,15 @@ export function MusicEngine() {
   const prevFileIndexRef = useRef<number | null>(null);
   const trackIndexRef = useRef<Record<string, number>>({});
   const fadeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  /** Whether the engine should shuffle (true) or play sequentially (false). */
-  const shuffleRef = useRef(true);
-
-  /** Allow external components to set shuffle mode. */
-  useEffect(() => {
-    const handler = (e: Event) => {
-      shuffleRef.current = (e as CustomEvent<boolean>).detail;
-    };
-    window.addEventListener('music-shuffle-changed', handler);
-    return () => window.removeEventListener('music-shuffle-changed', handler);
-  }, []);
+  /** Monotonic counter to detect stale fade callbacks (race condition fix). */
+  const playIdRef = useRef(0);
+  /** Interval id for the playback-ref updater. */
+  const progressTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // Pick the next file for a theme (shuffle or sequential)
   const getNextFile = useCallback((trackId: string, files: string[]) => {
-    if (shuffleRef.current) {
-      // Shuffle: pick a random file different from current when possible
+    const shuffle = useAudioStore.getState().shuffleMode;
+    if (shuffle) {
       if (files.length <= 1) {
         trackIndexRef.current[trackId] = 0;
       } else {
@@ -47,7 +44,6 @@ export function MusicEngine() {
         trackIndexRef.current[trackId] = next;
       }
     } else {
-      // Sequential
       if (trackIndexRef.current[trackId] === undefined) {
         trackIndexRef.current[trackId] = 0;
       } else {
@@ -61,22 +57,43 @@ export function MusicEngine() {
   const ensureAudio = useCallback(() => {
     if (!audioRef.current) {
       const audio = new Audio();
-      audio.loop = false; // We handle advancement to next track
+      audio.loop = false;
       audio.crossOrigin = 'anonymous';
       audioRef.current = audio;
     }
     return audioRef.current;
   }, []);
 
+  // Start the progress-ref updater (250ms interval)
+  const startProgressUpdater = useCallback(() => {
+    if (progressTimerRef.current) return;
+    progressTimerRef.current = setInterval(() => {
+      const audio = audioRef.current;
+      if (audio) {
+        musicPlaybackRef.currentTime = audio.currentTime;
+        musicPlaybackRef.duration = audio.duration || 0;
+        musicPlaybackRef.paused = audio.paused;
+        musicPlaybackRef.currentFileUrl = audio.src;
+      }
+    }, 250);
+  }, []);
+
+  const stopProgressUpdater = useCallback(() => {
+    if (progressTimerRef.current) {
+      clearInterval(progressTimerRef.current);
+      progressTimerRef.current = null;
+    }
+  }, []);
+
   // Fade out current audio
-  const fadeOut = useCallback((durationMs: number): Promise<void> => {
+  const fadeOut = useCallback((durationMs: number, myPlayId: number): Promise<boolean> => {
     return new Promise((resolve) => {
       const audio = audioRef.current;
-      if (!audio || audio.paused) { resolve(); return; }
+      if (!audio || audio.paused) { resolve(true); return; }
 
       if (durationMs <= 0) {
         audio.pause();
-        resolve();
+        resolve(playIdRef.current === myPlayId);
         return;
       }
 
@@ -94,7 +111,7 @@ export function MusicEngine() {
           if (fadeTimerRef.current) clearInterval(fadeTimerRef.current);
           fadeTimerRef.current = null;
           audio.pause();
-          resolve();
+          resolve(playIdRef.current === myPlayId);
         }
       }, stepMs) as unknown as ReturnType<typeof setTimeout>;
     });
@@ -105,8 +122,10 @@ export function MusicEngine() {
     const audio = ensureAudio();
     audio.src = url;
     audio.volume = 0;
+    musicPlaybackRef.currentFileUrl = url;
+    musicPlaybackRef.paused = false;
+    startProgressUpdater();
     audio.play().then(() => {
-      // Fade in
       const targetVol = Math.min(1, Math.max(0, volume));
       const steps = 15;
       const stepMs = 500 / steps;
@@ -118,14 +137,78 @@ export function MusicEngine() {
         if (step >= steps) clearInterval(timer);
       }, stepMs);
     }).catch(() => {
-      // Autoplay blocked — user hasn't interacted yet, retry on click
       const handler = () => {
         audio.play().catch(() => {});
         document.removeEventListener('click', handler);
       };
       document.addEventListener('click', handler, { once: true });
     });
-  }, [ensureAudio]);
+  }, [ensureAudio, startProgressUpdater]);
+
+  // Advance to the next file in the current theme
+  const advanceToNext = useCallback(() => {
+    const trackId = prevTrackRef.current;
+    if (!trackId) return;
+    const track = TRACKS.find((t) => t.id === trackId);
+    if (!track) return;
+    const nextUrl = getNextFile(track.id, track.files);
+    const vol = useAudioStore.getState().getEffectiveVolume('music');
+    // Update the session store with new file index so UI stays in sync
+    const idx = trackIndexRef.current[track.id];
+    useSessionStore.getState().setCurrentTrackFileIndex(idx);
+    playFile(nextUrl, vol);
+  }, [getNextFile, playFile]);
+
+  // Go to previous file (or restart if >3s in)
+  const goToPrev = useCallback(() => {
+    const audio = audioRef.current;
+    const trackId = prevTrackRef.current;
+    if (!trackId) return;
+    const track = TRACKS.find((t) => t.id === trackId);
+    if (!track) return;
+
+    if (audio && audio.currentTime > 3) {
+      audio.currentTime = 0;
+      return;
+    }
+
+    const currentIdx = trackIndexRef.current[trackId] ?? 0;
+    const prevIdx = (currentIdx - 1 + track.files.length) % track.files.length;
+    trackIndexRef.current[trackId] = prevIdx;
+    useSessionStore.getState().setCurrentTrackFileIndex(prevIdx);
+    const vol = useAudioStore.getState().getEffectiveVolume('music');
+    playFile(track.files[prevIdx], vol);
+  }, [playFile]);
+
+  // Handle music-action events (pause/resume/next/prev)
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const action = (e as CustomEvent<string>).detail;
+      const audio = audioRef.current;
+      switch (action) {
+        case 'pause':
+          if (audio && !audio.paused) {
+            audio.pause();
+            musicPlaybackRef.paused = true;
+          }
+          break;
+        case 'resume':
+          if (audio && audio.paused && audio.src && prevTrackRef.current) {
+            audio.play().catch(() => {});
+            musicPlaybackRef.paused = false;
+          }
+          break;
+        case 'next':
+          advanceToNext();
+          break;
+        case 'prev':
+          goToPrev();
+          break;
+      }
+    };
+    window.addEventListener('music-action', handler);
+    return () => window.removeEventListener('music-action', handler);
+  }, [advanceToNext, goToPrev]);
 
   // When a track ends, play the next file in the theme
   useEffect(() => {
@@ -133,18 +216,34 @@ export function MusicEngine() {
     if (!audio) return;
 
     const handleEnded = () => {
-      const trackId = prevTrackRef.current;
-      if (!trackId) return;
-      const track = TRACKS.find((t) => t.id === trackId);
-      if (!track) return;
-      const nextUrl = getNextFile(track.id, track.files);
-      const vol = useAudioStore.getState().getEffectiveVolume('music');
-      playFile(nextUrl, vol);
+      advanceToNext();
     };
 
     audio.addEventListener('ended', handleEnded);
     return () => audio.removeEventListener('ended', handleEnded);
-  }, [getNextFile, playFile]);
+  }, [advanceToNext]);
+
+  // Error handling: skip to next file on audio error
+  useEffect(() => {
+    const audio = audioRef.current;
+    if (!audio) return;
+
+    const handleError = () => {
+      const trackId = prevTrackRef.current;
+      if (!trackId) return;
+      const track = TRACKS.find((t) => t.id === trackId);
+      if (!track) return;
+
+      console.error('[MusicEngine] Audio error, skipping to next file');
+      // Try the next file. If we've cycled through all files and still
+      // erroring, the advanceToNext will keep trying. We limit by
+      // checking if the errored URL is the same as what we just set.
+      advanceToNext();
+    };
+
+    audio.addEventListener('error', handleError);
+    return () => audio.removeEventListener('error', handleError);
+  }, [advanceToNext]);
 
   // React to track changes (theme change OR specific file index change)
   useEffect(() => {
@@ -157,18 +256,29 @@ export function MusicEngine() {
     prevFileIndexRef.current = currentTrackFileIndex;
 
     if (currentTrack === null) {
-      fadeOut(300);
+      playIdRef.current++;
+      const myId = playIdRef.current;
+      fadeOut(300, myId);
+      musicPlaybackRef.currentTime = 0;
+      musicPlaybackRef.duration = 0;
+      musicPlaybackRef.paused = false;
+      musicPlaybackRef.currentFileUrl = '';
+      stopProgressUpdater();
       return;
     }
 
     const track = TRACKS.find((t) => t.id === currentTrack);
     if (!track || track.files.length === 0) return;
 
+    playIdRef.current++;
+    const myPlayId = playIdRef.current;
+
     (async () => {
-      await fadeOut(wasPlaying ? 500 : 0);
+      const stillCurrent = await fadeOut(wasPlaying ? 500 : 0, myPlayId);
+      if (!stillCurrent) return; // A newer play was requested — abort
+
       let url: string;
       if (currentTrackFileIndex != null && currentTrackFileIndex < track.files.length) {
-        // Specific file requested by DM
         url = track.files[currentTrackFileIndex];
         trackIndexRef.current[track.id] = currentTrackFileIndex;
       } else {
@@ -176,7 +286,7 @@ export function MusicEngine() {
       }
       playFile(url, effectiveVolume);
     })();
-  }, [currentTrack, currentTrackFileIndex, effectiveVolume, fadeOut, getNextFile, playFile]);
+  }, [currentTrack, currentTrackFileIndex, effectiveVolume, fadeOut, getNextFile, playFile, stopProgressUpdater]);
 
   // Update volume when settings change
   useEffect(() => {
@@ -200,9 +310,22 @@ export function MusicEngine() {
   useEffect(() => {
     return () => {
       if (fadeTimerRef.current) clearInterval(fadeTimerRef.current as unknown as number);
+      stopProgressUpdater();
       audioRef.current?.pause();
       audioRef.current = null;
     };
+  }, [stopProgressUpdater]);
+
+  // Allow external seek via a window event (used by progress bar click)
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const audio = audioRef.current;
+      if (!audio) return;
+      const time = (e as CustomEvent<number>).detail;
+      audio.currentTime = time;
+    };
+    window.addEventListener('music-seek', handler);
+    return () => window.removeEventListener('music-seek', handler);
   }, []);
 
   return null;

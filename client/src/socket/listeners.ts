@@ -77,6 +77,10 @@ export function registerListeners(socket: Socket): () => void {
     useSessionStore.getState().setCurrentTrackFileIndex(data.fileIndex ?? null);
   });
 
+  socket.on('session:music-action-broadcast', (data: { action: string }) => {
+    window.dispatchEvent(new CustomEvent('music-action', { detail: data.action }));
+  });
+
   // --- Map ---
   socket.on('map:loaded', ({ map, tokens, drawings, isPreview }) => {
     // Preserve locally-set imageUrl (e.g. from prebuilt maps) if server returns null
@@ -439,6 +443,7 @@ export function registerListeners(socket: Socket): () => void {
     socket.off('session:settings-updated');
     socket.off('session:error');
     socket.off('session:music-changed');
+    socket.off('session:music-action-broadcast');
     socket.off('map:loaded');
     socket.off('map:list-result');
     socket.off('map:player-map-changed');

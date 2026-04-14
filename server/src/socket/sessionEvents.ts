@@ -8,7 +8,7 @@ import {
   addPlayerToRoom, removePlayerFromRoom, getPlayerBySocketId,
   type RoomPlayer,
 } from '../utils/roomState.js';
-import { sessionJoinSchema, sessionKickSchema, sessionUpdateSettingsSchema, sessionViewingSchema, musicChangeSchema, handoutSchema } from '../utils/validation.js';
+import { sessionJoinSchema, sessionKickSchema, sessionUpdateSettingsSchema, sessionViewingSchema, musicChangeSchema, musicActionSchema, handoutSchema } from '../utils/validation.js';
 import { safeHandler } from '../utils/socketHelpers.js';
 import { dbRowToCharacter } from '../utils/characterMapper.js';
 
@@ -266,6 +266,14 @@ export function registerSessionEvents(io: Server, socket: Socket): void {
       track: parsed.data.track,
       fileIndex: parsed.data.fileIndex ?? null,
     });
+  }));
+
+  socket.on('session:music-action', safeHandler(socket, async (data) => {
+    const parsed = musicActionSchema.safeParse(data);
+    if (!parsed.success) return;
+    const ctx = getPlayerBySocketId(socket.id);
+    if (!ctx || ctx.player.role !== 'dm') return;
+    io.to(ctx.room.sessionId).emit('session:music-action-broadcast', { action: parsed.data.action });
   }));
 
   socket.on('session:handout', safeHandler(socket, async (data) => {

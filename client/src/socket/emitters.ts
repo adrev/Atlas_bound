@@ -309,6 +309,10 @@ export function emitMusicChange(track: string | null, fileIndex?: number) {
   getSocket().emit('session:music-change', { track, fileIndex });
 }
 
+export function emitMusicAction(action: 'pause' | 'resume' | 'next' | 'prev') {
+  getSocket().emit('session:music-action', { action });
+}
+
 // --- Character ---
 /**
  * Emit a character update to the server AND apply it locally so the UI

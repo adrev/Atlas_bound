@@ -8,6 +8,7 @@ interface AudioState {
   masterMuted: boolean;
   musicMuted: boolean;
   sfxMuted: boolean;
+  shuffleMode: boolean;
 }
 
 interface AudioActions {
@@ -17,6 +18,7 @@ interface AudioActions {
   toggleMasterMute: () => void;
   toggleMusicMute: () => void;
   toggleSfxMute: () => void;
+  toggleShuffle: () => void;
   getEffectiveVolume: (channel: 'music' | 'sfx') => number;
 }
 
@@ -29,6 +31,7 @@ export const useAudioStore = create<AudioState & AudioActions>()(
       masterMuted: false,
       musicMuted: false,
       sfxMuted: false,
+      shuffleMode: true,
 
       setMasterVolume: (v) => set({ masterVolume: v }),
       setMusicVolume: (v) => set({ musicVolume: v }),
@@ -37,6 +40,7 @@ export const useAudioStore = create<AudioState & AudioActions>()(
       toggleMasterMute: () => set((s) => ({ masterMuted: !s.masterMuted })),
       toggleMusicMute: () => set((s) => ({ musicMuted: !s.musicMuted })),
       toggleSfxMute: () => set((s) => ({ sfxMuted: !s.sfxMuted })),
+      toggleShuffle: () => set((s) => ({ shuffleMode: !s.shuffleMode })),
 
       getEffectiveVolume: (channel) => {
         const s = get();
