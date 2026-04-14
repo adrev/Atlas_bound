@@ -10,9 +10,7 @@
   },
   "dependencies": {
     "@dnd-vtt/shared": "*",
-    "@libsql/client": "^0.3.6",
     "@lucia-auth/adapter-postgresql": "^3.1.2",
-    "@lucia-auth/adapter-sqlite": "^3.0.2",
     "@types/pg": "^8.20.0",
     "arctic": "^3.7.0",
     "bcrypt": "^6.0.0",
@@ -22,7 +20,6 @@
     "express-rate-limit": "^8.3.2",
     "file-type": "^16.5.4",
     "helmet": "^8.1.0",
-    "libsql": "^0.5.29",
     "lucia": "^3.2.2",
     "multer": "^2.0.1",
     "pg": "^8.20.0",

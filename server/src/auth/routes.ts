@@ -5,7 +5,7 @@ import { v4 as uuidv4 } from 'uuid';
 import rateLimit from 'express-rate-limit';
 import pool from '../db/connection.js';
 import { lucia } from './lucia.js';
-import { optionalAuth } from './middleware.js';
+import { optionalAuth, requireAuth } from './middleware.js';
 
 const router = Router();
 
@@ -129,19 +129,30 @@ router.get('/me', optionalAuth, (req: Request, res: Response) => {
 });
 
 // PUT /api/auth/profile
-router.put('/profile', optionalAuth, async (req: Request, res: Response) => {
-  const user = (req as any).user;
-  if (!user) { res.status(401).json({ error: 'Not authenticated' }); return; }
+const profileUpdateSchema = z.object({
+  displayName: z.string().min(1).max(50).optional(),
+  avatarUrl: z.string().url().max(500).nullable().optional(),
+});
 
-  const { displayName, avatarUrl } = req.body;
-  if (!displayName?.trim()) { res.status(400).json({ error: 'Display name required' }); return; }
+router.put('/profile', requireAuth, async (req: Request, res: Response) => {
+  const user = req.user!;
+
+  const parsed = profileUpdateSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: 'Invalid request', details: parsed.error.issues });
+    return;
+  }
+
+  const { displayName, avatarUrl } = parsed.data;
+  const finalDisplayName = displayName?.trim() || user.displayName;
+  const finalAvatarUrl = avatarUrl !== undefined ? avatarUrl : user.avatarUrl;
 
   await pool.query("UPDATE auth_users SET display_name = $1, avatar_url = $2, updated_at = NOW()::text WHERE id = $3",
-    [displayName.trim(), avatarUrl || null, user.id]);
+    [finalDisplayName, finalAvatarUrl || null, user.id]);
   await pool.query('UPDATE users SET display_name = $1, avatar_url = $2 WHERE id = $3 OR auth_user_id = $3',
-    [displayName.trim(), avatarUrl || null, user.id]);
+    [finalDisplayName, finalAvatarUrl || null, user.id]);
 
-  res.json({ id: user.id, email: user.email, displayName: displayName.trim(), avatarUrl: avatarUrl || null });
+  res.json({ id: user.id, email: user.email, displayName: finalDisplayName, avatarUrl: finalAvatarUrl || null });
 });
 
 export default router;

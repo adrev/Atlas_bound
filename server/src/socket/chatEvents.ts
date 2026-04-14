@@ -5,10 +5,11 @@ import pool from '../db/connection.js';
 import { getPlayerBySocketId, checkRateLimit } from '../utils/roomState.js';
 import * as DiceService from '../services/DiceService.js';
 import { chatMessageSchema, chatWhisperSchema, chatRollSchema } from '../utils/validation.js';
+import { safeHandler } from '../utils/socketHelpers.js';
 
 export function registerChatEvents(io: Server, socket: Socket): void {
 
-  socket.on('chat:message', async (data) => {
+  socket.on('chat:message', safeHandler(socket, async (data) => {
     const parsed = chatMessageSchema.safeParse(data);
     if (!parsed.success) return;
 
@@ -33,9 +34,9 @@ export function registerChatEvents(io: Server, socket: Socket): void {
     `, [messageId, ctx.room.sessionId, ctx.player.userId, ctx.player.displayName, type, content, characterName ?? null, now]);
 
     io.to(ctx.room.sessionId).emit('chat:new-message', message);
-  });
+  }));
 
-  socket.on('chat:whisper', async (data) => {
+  socket.on('chat:whisper', safeHandler(socket, async (data) => {
     const parsed = chatWhisperSchema.safeParse(data);
     if (!parsed.success) return;
 
@@ -64,17 +65,17 @@ export function registerChatEvents(io: Server, socket: Socket): void {
     if (dmPlayer && dmPlayer.userId !== ctx.player.userId && dmPlayer.userId !== targetUserId) {
       io.to(dmPlayer.socketId).emit('chat:new-message', message);
     }
-  });
+  }));
 
-  socket.on('chat:typing', () => {
+  socket.on('chat:typing', safeHandler(socket, async () => {
     const ctx = getPlayerBySocketId(socket.id);
     if (!ctx) return;
     socket.to(ctx.room.sessionId).emit('chat:typing', {
       userId: ctx.player.userId, displayName: ctx.player.displayName,
     });
-  });
+  }));
 
-  socket.on('chat:roll', async (data) => {
+  socket.on('chat:roll', safeHandler(socket, async (data) => {
     const parsed = chatRollSchema.safeParse(data);
     if (!parsed.success) return;
 
@@ -118,5 +119,5 @@ export function registerChatEvents(io: Server, socket: Socket): void {
         message: err instanceof Error ? err.message : 'Invalid dice notation',
       });
     }
-  });
+  }));
 }

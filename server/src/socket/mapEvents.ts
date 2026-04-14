@@ -12,10 +12,11 @@ import {
   tokenUpdateSchema, fogRevealHideSchema, wallAddSchema, wallRemoveSchema,
   mapPingSchema,
 } from '../utils/validation.js';
+import { safeHandler } from '../utils/socketHelpers.js';
 
 export function registerMapEvents(io: Server, socket: Socket): void {
 
-  socket.on('map:load', async (data) => {
+  socket.on('map:load', safeHandler(socket, async (data) => {
     const parsed = mapLoadSchema.safeParse(data);
     if (!parsed.success) return;
     const ctx = getPlayerBySocketId(socket.id);
@@ -69,9 +70,9 @@ export function registerMapEvents(io: Server, socket: Socket): void {
       const visibleDrawings = filterDrawingsForPlayer(persistedDrawings, player);
       io.to(player.socketId).emit('map:loaded', { map: mapData, tokens, drawings: visibleDrawings });
     }
-  });
+  }));
 
-  socket.on('map:token-move', async (data) => {
+  socket.on('map:token-move', safeHandler(socket, async (data) => {
     const parsed = tokenMoveSchema.safeParse(data);
     if (!parsed.success) return;
     const ctx = getPlayerBySocketId(socket.id);
@@ -137,9 +138,9 @@ export function registerMapEvents(io: Server, socket: Socket): void {
         }
       }
     }
-  });
+  }));
 
-  socket.on('map:token-add', async (data) => {
+  socket.on('map:token-add', safeHandler(socket, async (data) => {
     const parsed = tokenAddSchema.safeParse(data);
     if (!parsed.success) return;
     const ctx = getPlayerBySocketId(socket.id);
@@ -187,9 +188,9 @@ export function registerMapEvents(io: Server, socket: Socket): void {
 
     const recipients = socketsOnMap(ctx.room, targetMapId);
     for (const sid of recipients) io.to(sid).emit('map:token-added', token);
-  });
+  }));
 
-  socket.on('map:token-remove', async (data) => {
+  socket.on('map:token-remove', safeHandler(socket, async (data) => {
     const parsed = tokenRemoveSchema.safeParse(data);
     if (!parsed.success) return;
     const ctx = getPlayerBySocketId(socket.id);
@@ -216,9 +217,9 @@ export function registerMapEvents(io: Server, socket: Socket): void {
     } else {
       io.to(ctx.room.sessionId).emit('map:token-removed', { tokenId });
     }
-  });
+  }));
 
-  socket.on('map:token-update', async (data) => {
+  socket.on('map:token-update', safeHandler(socket, async (data) => {
     const parsed = tokenUpdateSchema.safeParse(data);
     if (!parsed.success) return;
     const ctx = getPlayerBySocketId(socket.id);
@@ -293,9 +294,9 @@ export function registerMapEvents(io: Server, socket: Socket): void {
     } else {
       io.to(ctx.room.sessionId).emit('map:token-updated', { tokenId, changes });
     }
-  });
+  }));
 
-  socket.on('map:fog-reveal', async (data) => {
+  socket.on('map:fog-reveal', safeHandler(socket, async (data) => {
     const parsed = fogRevealHideSchema.safeParse(data);
     if (!parsed.success) return;
     const ctx = getPlayerBySocketId(socket.id);
@@ -313,9 +314,9 @@ export function registerMapEvents(io: Server, socket: Socket): void {
 
     const recipients = socketsOnMap(ctx.room, targetMapId);
     for (const sid of recipients) io.to(sid).emit('map:fog-updated', { fogState, mapId: targetMapId });
-  });
+  }));
 
-  socket.on('map:fog-hide', async (data) => {
+  socket.on('map:fog-hide', safeHandler(socket, async (data) => {
     const parsed = fogRevealHideSchema.safeParse(data);
     if (!parsed.success) return;
     const ctx = getPlayerBySocketId(socket.id);
@@ -334,9 +335,9 @@ export function registerMapEvents(io: Server, socket: Socket): void {
 
     const recipients = socketsOnMap(ctx.room, targetMapId);
     for (const sid of recipients) io.to(sid).emit('map:fog-updated', { fogState, mapId: targetMapId });
-  });
+  }));
 
-  socket.on('map:wall-add', async (data) => {
+  socket.on('map:wall-add', safeHandler(socket, async (data) => {
     const parsed = wallAddSchema.safeParse(data);
     if (!parsed.success) return;
     const ctx = getPlayerBySocketId(socket.id);
@@ -354,9 +355,9 @@ export function registerMapEvents(io: Server, socket: Socket): void {
 
     const recipients = socketsOnMap(ctx.room, targetMapId);
     for (const sid of recipients) io.to(sid).emit('map:walls-updated', { walls, mapId: targetMapId });
-  });
+  }));
 
-  socket.on('map:wall-remove', async (data) => {
+  socket.on('map:wall-remove', safeHandler(socket, async (data) => {
     const parsed = wallRemoveSchema.safeParse(data);
     if (!parsed.success) return;
     const ctx = getPlayerBySocketId(socket.id);
@@ -375,9 +376,9 @@ export function registerMapEvents(io: Server, socket: Socket): void {
 
     const recipients = socketsOnMap(ctx.room, targetMapId);
     for (const sid of recipients) io.to(sid).emit('map:walls-updated', { walls, mapId: targetMapId });
-  });
+  }));
 
-  socket.on('map:ping', (data) => {
+  socket.on('map:ping', safeHandler(socket, async (data) => {
     const parsed = mapPingSchema.safeParse(data);
     if (!parsed.success) return;
     const ctx = getPlayerBySocketId(socket.id);
@@ -386,5 +387,5 @@ export function registerMapEvents(io: Server, socket: Socket): void {
       x: parsed.data.x, y: parsed.data.y,
       userId: ctx.player.userId, displayName: ctx.player.displayName, timestamp: Date.now(),
     });
-  });
+  }));
 }

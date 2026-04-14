@@ -9,6 +9,7 @@ import {
   drawingCreateSchema, drawingDeleteSchema, drawingClearAllSchema,
   drawingStreamSchema, drawingStreamEndSchema,
 } from '../utils/validation.js';
+import { safeHandler } from '../utils/socketHelpers.js';
 
 const STREAM_EVENTS_PER_SECOND = 60;
 const streamCounters = new Map<string, { count: number; windowStart: number }>();
@@ -74,7 +75,7 @@ export function filterDrawingsForPlayer(drawings: Drawing[], player: RoomPlayer)
 
 export function registerDrawingEvents(io: Server, socket: Socket): void {
 
-  socket.on('drawing:create', async (data) => {
+  socket.on('drawing:create', safeHandler(socket, async (data) => {
     const parsed = drawingCreateSchema.safeParse(data);
     if (!parsed.success) return;
 
@@ -120,9 +121,9 @@ export function registerDrawingEvents(io: Server, socket: Socket): void {
 
     const recipients = socketsForVisibility(ctx.room, visibility, creatorUserId);
     for (const sid of recipients) { io.to(sid).emit('drawing:created', drawing); }
-  });
+  }));
 
-  socket.on('drawing:delete', async (data) => {
+  socket.on('drawing:delete', safeHandler(socket, async (data) => {
     const parsed = drawingDeleteSchema.safeParse(data);
     if (!parsed.success) return;
 
@@ -144,9 +145,9 @@ export function registerDrawingEvents(io: Server, socket: Socket): void {
 
     const recipients = socketsForVisibility(ctx.room, drawing.visibility, drawing.creatorUserId);
     for (const sid of recipients) { io.to(sid).emit('drawing:deleted', { drawingId: drawing.id }); }
-  });
+  }));
 
-  socket.on('drawing:clear-all', async (data) => {
+  socket.on('drawing:clear-all', safeHandler(socket, async (data) => {
     const parsed = drawingClearAllSchema.safeParse(data);
     if (!parsed.success) return;
 
@@ -176,9 +177,9 @@ export function registerDrawingEvents(io: Server, socket: Socket): void {
       catch (err) { console.warn('[drawing:clear-all mine] DB wipe failed:', err); }
       io.to(ctx.room.sessionId).emit('drawing:cleared', { scope: 'mine', userId });
     }
-  });
+  }));
 
-  socket.on('drawing:stream', (data) => {
+  socket.on('drawing:stream', safeHandler(socket, async (data) => {
     if (!allowStreamEvent(socket.id)) return;
     const parsed = drawingStreamSchema.safeParse(data);
     if (!parsed.success) return;
@@ -202,15 +203,15 @@ export function registerDrawingEvents(io: Server, socket: Socket): void {
       if (sid === socket.id) continue;
       io.to(sid).emit('drawing:streamed', payload);
     }
-  });
+  }));
 
-  socket.on('drawing:stream-end', (data) => {
+  socket.on('drawing:stream-end', safeHandler(socket, async (data) => {
     const parsed = drawingStreamEndSchema.safeParse(data);
     if (!parsed.success) return;
     const ctx = getPlayerBySocketId(socket.id);
     if (!ctx) return;
     socket.to(ctx.room.sessionId).emit('drawing:stream-end', { tempId: parsed.data.tempId });
-  });
+  }));
 
   socket.on('disconnect', () => { streamCounters.delete(socket.id); });
 }

@@ -8,10 +8,12 @@ import {
   type RoomPlayer,
 } from '../utils/roomState.js';
 import { sessionJoinSchema, sessionKickSchema, sessionUpdateSettingsSchema } from '../utils/validation.js';
+import { safeHandler } from '../utils/socketHelpers.js';
+import { dbRowToCharacter } from '../utils/characterMapper.js';
 
 export function registerSessionEvents(io: Server, socket: Socket): void {
 
-  socket.on('session:join', async (data) => {
+  socket.on('session:join', safeHandler(socket, async (data) => {
     const parsed = sessionJoinSchema.safeParse(data);
     if (!parsed.success) {
       socket.emit('session:error', { message: 'Invalid join data' });
@@ -192,44 +194,7 @@ export function registerSessionEvents(io: Server, socket: Socket): void {
       const { rows: charRows } = await pool.query('SELECT * FROM characters WHERE id = $1', [currentPlayer.character_id]);
       const charRow = charRows[0] as Record<string, unknown> | undefined;
       if (charRow) {
-        const safeJson = (val: unknown, fallback: unknown) => {
-          if (typeof val === 'string') try { return JSON.parse(val); } catch { return fallback; }
-          return val ?? fallback;
-        };
-        const character = {
-          id: charRow.id, userId: charRow.user_id, name: charRow.name,
-          race: charRow.race, class: charRow.class, level: charRow.level,
-          hitPoints: charRow.hit_points, maxHitPoints: charRow.max_hit_points,
-          tempHitPoints: charRow.temp_hit_points, armorClass: charRow.armor_class,
-          speed: charRow.speed, proficiencyBonus: charRow.proficiency_bonus,
-          abilityScores: safeJson(charRow.ability_scores, {}),
-          savingThrows: safeJson(charRow.saving_throws, []),
-          skills: safeJson(charRow.skills, {}),
-          spellSlots: safeJson(charRow.spell_slots, {}),
-          spells: safeJson(charRow.spells, []),
-          features: safeJson(charRow.features, []),
-          inventory: safeJson(charRow.inventory, []),
-          deathSaves: safeJson(charRow.death_saves, { successes: 0, failures: 0 }),
-          hitDice: safeJson(charRow.hit_dice, []),
-          concentratingOn: charRow.concentrating_on ?? null,
-          background: safeJson(charRow.background, { name: '', description: '', feature: '' }),
-          characteristics: safeJson(charRow.characteristics, {}),
-          personality: safeJson(charRow.personality, {}),
-          notes: safeJson(charRow.notes_data, {}),
-          proficiencies: safeJson(charRow.proficiencies_data, { armor: [], weapons: [], tools: [], languages: [] }),
-          senses: safeJson(charRow.senses, {}),
-          defenses: safeJson(charRow.defenses, {}),
-          conditions: safeJson(charRow.conditions, []),
-          currency: safeJson(charRow.currency, {}),
-          extras: safeJson(charRow.extras, []),
-          spellcastingAbility: charRow.spellcasting_ability ?? '',
-          spellAttackBonus: charRow.spell_attack_bonus ?? 0,
-          spellSaveDC: charRow.spell_save_dc ?? 10,
-          initiative: charRow.initiative ?? 0,
-          portraitUrl: charRow.portrait_url, dndbeyondId: charRow.dndbeyond_id,
-          source: charRow.source, createdAt: charRow.created_at, updatedAt: charRow.updated_at,
-        };
-        socket.emit('character:synced', { character });
+        socket.emit('character:synced', { character: dbRowToCharacter(charRow) });
       }
     }
 
@@ -249,11 +214,11 @@ export function registerSessionEvents(io: Server, socket: Socket): void {
         whisperTo: m.whisper_to, rollData: m.roll_data ? JSON.parse(m.roll_data) : null,
         hidden: (m.hidden as number) === 1, createdAt: m.created_at,
       })));
-  });
+  }));
 
   socket.on('session:leave', () => { handleDisconnect(io, socket); });
 
-  socket.on('session:kick', (data) => {
+  socket.on('session:kick', safeHandler(socket, async (data) => {
     const parsed = sessionKickSchema.safeParse(data);
     if (!parsed.success) return;
     const ctx = getPlayerBySocketId(socket.id);
@@ -266,9 +231,9 @@ export function registerSessionEvents(io: Server, socket: Socket): void {
     socket.to(ctx.room.sessionId).emit('session:player-left', { userId: targetUserId });
     const kickedSocket = io.sockets.sockets.get(targetPlayer.socketId);
     if (kickedSocket) kickedSocket.leave(ctx.room.sessionId);
-  });
+  }));
 
-  socket.on('session:update-settings', async (data) => {
+  socket.on('session:update-settings', safeHandler(socket, async (data) => {
     const parsed = sessionUpdateSettingsSchema.safeParse(data);
     if (!parsed.success) return;
     const ctx = getPlayerBySocketId(socket.id);
@@ -280,13 +245,14 @@ export function registerSessionEvents(io: Server, socket: Socket): void {
 
     await pool.query('UPDATE sessions SET settings = $1 WHERE id = $2', [JSON.stringify(newSettings), ctx.room.sessionId]);
     io.to(ctx.room.sessionId).emit('session:settings-updated', newSettings);
-  });
+  }));
 
-  socket.on('session:viewing', (data: { tab: string }) => {
+  socket.on('session:viewing', safeHandler(socket, async (data: unknown) => {
+    const typedData = data as { tab: string };
     const ctx = getPlayerBySocketId(socket.id);
     if (!ctx) return;
-    socket.to(ctx.room.sessionId).emit('session:player-viewing', { userId: ctx.player.userId, tab: data.tab });
-  });
+    socket.to(ctx.room.sessionId).emit('session:player-viewing', { userId: ctx.player.userId, tab: typedData.tab });
+  }));
 
   socket.on('disconnect', () => { handleDisconnect(io, socket); });
 }

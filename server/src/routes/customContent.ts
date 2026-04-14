@@ -6,6 +6,8 @@ import { v4 as uuidv4 } from 'uuid';
 import pool from '../db/connection.js';
 import { UPLOAD_DIR } from '../config.js';
 import { getAuthUserId, assertSessionDM, assertSessionMember } from '../utils/authorization.js';
+import { validateAndSaveUpload } from './uploads.js';
+import { createCustomMonsterSchema, createCustomSpellSchema, createCustomItemSchema } from '../utils/validation.js';
 
 const router = Router();
 
@@ -19,12 +21,13 @@ function slugify(name: string): string {
 
 router.post('/monsters', async (req: Request, res: Response) => {
   const userId = getAuthUserId(req);
+  const parsed = createCustomMonsterSchema.safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: parsed.error.errors }); return; }
   const { sessionId, name, size, type, alignment, armorClass, hitPoints, hitDice,
     speed, abilityScores, challengeRating, crNumeric, actions, specialAbilities,
-    legendaryActions, description, senses, languages, damageResistances,
-    damageImmunities, conditionImmunities, imageUrl } = req.body;
-
-  if (!sessionId || !name) { res.status(400).json({ error: 'sessionId and name required' }); return; }
+    legendaryActions, description, imageUrl } = parsed.data;
+  const { senses, languages, damageResistances,
+    damageImmunities, conditionImmunities } = req.body;
   await assertSessionDM(sessionId, userId);
 
   const slug = slugify(name);
@@ -140,14 +143,14 @@ function mapMonsterRow(row: Record<string, unknown>) {
 
 router.post('/spells', async (req: Request, res: Response) => {
   const userId = getAuthUserId(req);
+  const parsed = createCustomSpellSchema.safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: parsed.error.errors }); return; }
   const { sessionId, name, level, school, castingTime, range, components, duration,
-    description, higherLevels, concentration, ritual, classes, imageUrl,
-    damage, damageType, savingThrow, attackType,
+    description, concentration, ritual, classes, imageUrl } = parsed.data;
+  const { higherLevels, damage, damageType, savingThrow, attackType,
     aoeType, aoeSize, halfOnSave, pushDistance,
     appliesCondition, animationType, animationColor,
   } = req.body;
-
-  if (!sessionId || !name) { res.status(400).json({ error: 'sessionId and name required' }); return; }
   await assertSessionDM(sessionId, userId);
 
   const slug = slugify(name);
@@ -253,10 +256,11 @@ function mapSpellRow(row: Record<string, unknown>) {
 
 router.post('/items', async (req: Request, res: Response) => {
   const userId = getAuthUserId(req);
+  const parsed = createCustomItemSchema.safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: parsed.error.errors }); return; }
   const { sessionId, name, type, rarity, requiresAttunement, description,
-    weight, valueGp, damage, damageType, properties, imageUrl, range, ac, acType, magicBonus } = req.body;
-
-  if (!sessionId || !name) { res.status(400).json({ error: 'sessionId and name required' }); return; }
+    weight, valueGp, damage, damageType, properties, imageUrl } = parsed.data;
+  const { range, ac, acType, magicBonus } = req.body;
   await assertSessionDM(sessionId, userId);
 
   const id = uuidv4();
@@ -328,7 +332,7 @@ router.put('/items/:id', async (req: Request, res: Response) => {
   res.json({ success: true });
 });
 
-const itemImageUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
+const itemImageUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } });
 router.post('/items/:id/image', itemImageUpload.single('image'), async (req: Request, res: Response) => {
   const userId = getAuthUserId(req);
   if (!req.file) { res.status(400).json({ error: 'No image file' }); return; }
@@ -338,13 +342,18 @@ router.post('/items/:id/image', itemImageUpload.single('image'), async (req: Req
   if (rows.length === 0) { res.status(404).json({ error: 'Item not found' }); return; }
   await assertSessionDM(rows[0].session_id, userId);
 
+  // Ensure items upload directory exists
   const itemsDir = path.join(UPLOAD_DIR, 'items');
   if (!fs.existsSync(itemsDir)) fs.mkdirSync(itemsDir, { recursive: true });
 
-  const ext = req.file.mimetype === 'image/jpeg' ? '.jpg' : '.png';
-  const filename = itemId + ext;
-  const filepath = path.join(itemsDir, filename);
-  fs.writeFileSync(filepath, req.file.buffer);
+  let filename: string;
+  try {
+    filename = validateAndSaveUpload(req.file, 'items');
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : 'Invalid image file';
+    res.status(400).json({ error: msg });
+    return;
+  }
 
   const url = `/uploads/items/${filename}`;
   await pool.query('UPDATE custom_items SET image_url = $1 WHERE id = $2', [url, itemId]);

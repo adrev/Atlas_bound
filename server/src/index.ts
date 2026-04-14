@@ -152,6 +152,14 @@ const io = new Server<ClientToServerEvents, ServerToClientEvents>(httpServer, {
 // Register socket event handlers
 registerSocketHandler(io);
 
+// Global error handler — catches thrown errors from async routes and authorization helpers
+app.use((err: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+  const status = err.status || 500;
+  const message = status < 500 ? err.message : 'Internal server error';
+  if (status >= 500) console.error('[Server Error]', err);
+  res.status(status).json({ error: message });
+});
+
 // Start listening
 httpServer.listen(PORT, () => {
   console.log(`D&D VTT Server running on http://localhost:${PORT}`);

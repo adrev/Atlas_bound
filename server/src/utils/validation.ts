@@ -388,6 +388,67 @@ export const createCharacterSchema = z.object({
 
 export const updateCharacterSchema = createCharacterSchema.partial();
 
+// --- Loot schemas ---
+export const createLootSchema = z.object({
+  itemName: z.string().min(1).max(200),
+  itemSlug: z.string().max(200).optional(),
+  customItemId: z.string().max(100).nullable().optional(),
+  itemRarity: z.enum(['common', 'uncommon', 'rare', 'very rare', 'legendary', 'artifact']).optional(),
+  quantity: z.number().int().positive().max(9999).default(1),
+});
+
+// --- Custom content schemas ---
+export const createCustomMonsterSchema = z.object({
+  sessionId: z.string().min(1),
+  name: z.string().min(1).max(200),
+  size: z.string().max(50).optional(),
+  type: z.string().max(100).optional(),
+  alignment: z.string().max(100).optional(),
+  armorClass: z.number().int().min(0).max(99).optional(),
+  hitPoints: z.number().int().min(0).max(99999).optional(),
+  hitDice: z.string().max(50).optional(),
+  speed: z.string().max(200).optional(),
+  abilityScores: z.string().max(500).optional(),
+  challengeRating: z.string().max(20).optional(),
+  crNumeric: z.number().min(0).max(30).optional(),
+  actions: z.string().max(10000).optional(),
+  specialAbilities: z.string().max(10000).optional(),
+  legendaryActions: z.string().max(10000).optional(),
+  description: z.string().max(5000).optional(),
+  imageUrl: z.string().url().max(500).nullable().optional(),
+});
+
+export const createCustomSpellSchema = z.object({
+  sessionId: z.string().min(1),
+  name: z.string().min(1).max(200),
+  level: z.number().int().min(0).max(9).optional(),
+  school: z.string().max(50).optional(),
+  castingTime: z.string().max(100).optional(),
+  range: z.string().max(100).optional(),
+  components: z.string().max(200).optional(),
+  duration: z.string().max(100).optional(),
+  description: z.string().max(10000).optional(),
+  concentration: z.boolean().optional(),
+  ritual: z.boolean().optional(),
+  classes: z.array(z.string().max(50)).max(20).optional(),
+  imageUrl: z.string().url().max(500).nullable().optional(),
+});
+
+export const createCustomItemSchema = z.object({
+  sessionId: z.string().min(1),
+  name: z.string().min(1).max(200),
+  type: z.string().max(50).optional(),
+  rarity: z.string().max(50).optional(),
+  requiresAttunement: z.boolean().optional(),
+  description: z.string().max(5000).optional(),
+  weight: z.number().min(0).max(99999).optional(),
+  valueGp: z.number().min(0).max(999999).optional(),
+  damage: z.string().max(100).optional(),
+  damageType: z.string().max(50).optional(),
+  properties: z.array(z.string().max(100)).max(20).optional(),
+  imageUrl: z.string().url().max(500).nullable().optional(),
+});
+
 export const createMapSchema = z.object({
   name: z.string().min(1).max(100),
   width: z.coerce.number().int().min(100).max(10000).default(1400),

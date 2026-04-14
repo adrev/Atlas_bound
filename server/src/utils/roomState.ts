@@ -114,6 +114,7 @@ export function checkRateLimit(socketId: string, event: string, maxPerWindow: nu
 
 const rooms = new Map<string, RoomState>();
 const roomCodeIndex = new Map<string, string>();
+const socketIndex = new Map<string, { sessionId: string; userId: string }>();
 
 export function createRoom(
   sessionId: string,
@@ -158,6 +159,7 @@ export function addPlayerToRoom(
   const room = rooms.get(sessionId);
   if (!room) return;
   room.players.set(player.userId, player);
+  socketIndex.set(player.socketId, { sessionId, userId: player.userId });
 }
 
 export function removePlayerFromRoom(
@@ -166,6 +168,18 @@ export function removePlayerFromRoom(
 ): void {
   const room = rooms.get(sessionId);
   if (!room) return;
+  const player = room.players.get(userId);
+  if (player) {
+    const socketId = player.socketId;
+    socketIndex.delete(socketId);
+
+    // Clean up rate limit counters for this socket
+    for (const [key] of _rateLimitCounters) {
+      if (key.startsWith(socketId + ':')) {
+        _rateLimitCounters.delete(key);
+      }
+    }
+  }
   room.players.delete(userId);
 
   // If room is empty, clean up
@@ -178,14 +192,13 @@ export function removePlayerFromRoom(
 export function getPlayerBySocketId(
   socketId: string,
 ): { room: RoomState; player: RoomPlayer } | undefined {
-  for (const room of rooms.values()) {
-    for (const player of room.players.values()) {
-      if (player.socketId === socketId) {
-        return { room, player };
-      }
-    }
-  }
-  return undefined;
+  const entry = socketIndex.get(socketId);
+  if (!entry) return undefined;
+  const room = rooms.get(entry.sessionId);
+  if (!room) return undefined;
+  const player = room.players.get(entry.userId);
+  if (!player) return undefined;
+  return { room, player };
 }
 
 export function getAllRooms(): Map<string, RoomState> {

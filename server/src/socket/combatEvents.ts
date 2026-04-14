@@ -1,3 +1,4 @@
+import { v4 as uuidv4 } from 'uuid';
 import type { Server, Socket } from 'socket.io';
 import {
   getPlayerBySocketId, playerIsDM, isTokenOwnerOrDM,
@@ -14,10 +15,63 @@ import {
   combatDeathSaveSchema, combatUseActionSchema, combatUseMovementSchema,
   combatCastSpellSchema, conditionWithMetaSchema,
 } from '../utils/validation.js';
+import { safeHandler } from '../utils/socketHelpers.js';
+
+/**
+ * Shared helper that creates combat state, emits all combat-start events,
+ * and broadcasts the initiative order as a system chat message.
+ */
+async function startCombat(io: Server, sessionId: string, tokenIds: string[]) {
+  const combatState = await CombatService.startCombatAsync(sessionId, tokenIds);
+
+  io.to(sessionId).emit('combat:started', {
+    combatants: combatState.combatants,
+    roundNumber: combatState.roundNumber,
+  });
+
+  // Announce the initiative order in chat as a system message.
+  const lines: string[] = ['⚔️ Combat begins! Initiative order:'];
+  combatState.combatants.forEach((c, idx) => {
+    const marker = idx === 0 ? '▶' : ' ';
+    const tag = c.isNPC ? '' : ' (PC)';
+    lines.push(`   ${marker} ${idx + 1}. ${c.name}${tag} — ${c.initiative}`);
+  });
+  lines.push(`   Round 1 — ${combatState.combatants[0]?.name ?? '?'}'s turn`);
+
+  io.to(sessionId).emit('chat:new-message', {
+    id: uuidv4(),
+    sessionId,
+    userId: 'system',
+    displayName: 'System',
+    type: 'system',
+    content: lines.join('\n'),
+    characterName: null,
+    whisperTo: null,
+    rollData: null,
+    createdAt: new Date().toISOString(),
+  });
+
+  // Broadcast each initiative roll so every client sees the values.
+  for (const combatant of combatState.combatants) {
+    if (combatant.initiative === 0) continue;
+    io.to(sessionId).emit('combat:initiative-set', {
+      tokenId: combatant.tokenId,
+      roll: combatant.initiative - combatant.initiativeBonus,
+      bonus: combatant.initiativeBonus,
+      total: combatant.initiative,
+    });
+  }
+
+  // Emit the sorted combatants so every client has the correct order.
+  if (CombatService.allInitiativesRolled(sessionId)) {
+    const sorted = CombatService.sortInitiative(sessionId);
+    io.to(sessionId).emit('combat:all-initiatives-ready', { combatants: sorted });
+  }
+}
 
 export function registerCombatEvents(io: Server, socket: Socket): void {
 
-  socket.on('combat:start', async (data) => {
+  socket.on('combat:start', safeHandler(socket, async (data) => {
     console.log('[COMBAT START] received from socket', socket.id, 'data:', data);
     const parsed = combatStartSchema.safeParse(data);
     if (!parsed.success) {
@@ -37,68 +91,14 @@ export function registerCombatEvents(io: Server, socket: Socket): void {
     console.log('[COMBAT START] DM', ctx.player.userId, 'starting with', parsed.data.tokenIds.length, 'tokens');
 
     try {
-      const combatState = await CombatService.startCombatAsync(ctx.room.sessionId, parsed.data.tokenIds);
-      console.log('[COMBAT START] combat state created with', combatState.combatants.length, 'combatants');
-      io.to(ctx.room.sessionId).emit('combat:started', {
-        combatants: combatState.combatants,
-        roundNumber: combatState.roundNumber,
-      });
-
-      // Announce the initiative order in chat as a system message so
-      // players can see the rolls and the resulting order at a glance.
-      const lines: string[] = ['⚔️ Combat begins! Initiative order:'];
-      combatState.combatants.forEach((c, idx) => {
-        const marker = idx === 0 ? '▶' : ' ';
-        const tag = c.isNPC ? '' : ' (PC)';
-        lines.push(`   ${marker} ${idx + 1}. ${c.name}${tag} — ${c.initiative}`);
-      });
-      lines.push(`   Round 1 — ${combatState.combatants[0]?.name ?? '?'}'s turn`);
-
-      const startMsgId = (Math.random() + 1).toString(36).substring(2);
-      io.to(ctx.room.sessionId).emit('chat:new-message', {
-        id: startMsgId,
-        sessionId: ctx.room.sessionId,
-        userId: 'system',
-        displayName: 'System',
-        type: 'system',
-        content: lines.join('\n'),
-        characterName: null,
-        whisperTo: null,
-        rollData: null,
-        createdAt: new Date().toISOString(),
-      });
-
-      // ALL initiatives are pre-rolled by CombatService.startCombat (NPCs
-      // grouped by name, players individually). Broadcast each result so
-      // every client sees the rolls and not just the DM's initial snapshot.
-      // This covers both creatures AND player-owned combatants — the
-      // previous flow left players stuck at their server-rolled value with
-      // no confirmation event on the wire, and the orphaned "initiative
-      // prompt" path never rendered a UI.
-      for (const combatant of combatState.combatants) {
-        if (combatant.initiative === 0) continue;
-        io.to(ctx.room.sessionId).emit('combat:initiative-set', {
-          tokenId: combatant.tokenId,
-          roll: combatant.initiative - combatant.initiativeBonus,
-          bonus: combatant.initiativeBonus,
-          total: combatant.initiative,
-        });
-      }
-
-      // All initiatives should be rolled at this point. Emit the sorted
-      // combatants so every client's combatStore.combatants array is
-      // guaranteed to be in the correct order with the final values.
-      if (CombatService.allInitiativesRolled(ctx.room.sessionId)) {
-        const sorted = CombatService.sortInitiative(ctx.room.sessionId);
-        io.to(ctx.room.sessionId).emit('combat:all-initiatives-ready', { combatants: sorted });
-      }
+      await startCombat(io, ctx.room.sessionId, parsed.data.tokenIds);
     } catch (err) {
       console.error('[COMBAT START] error:', err);
       socket.emit('session:error', {
         message: err instanceof Error ? err.message : 'Failed to start combat',
       });
     }
-  });
+  }));
 
   // ------------------------------------------------------------------
   // Ready Check — DM sends a ready check before starting combat.
@@ -106,7 +106,8 @@ export function registerCombatEvents(io: Server, socket: Socket): void {
   // starts automatically with the stored tokenIds.
   // ------------------------------------------------------------------
 
-  socket.on('combat:ready-check', (data: { tokenIds: string[] }) => {
+  socket.on('combat:ready-check', safeHandler(socket, async (data: unknown) => {
+    const typedData = data as { tokenIds: string[] };
     const ctx = getPlayerBySocketId(socket.id);
     if (!ctx || ctx.player.role !== 'dm') return;
 
@@ -122,7 +123,7 @@ export function registerCombatEvents(io: Server, socket: Socket): void {
     }
 
     const deadline = Date.now() + 15000;
-    const tokenIds = data.tokenIds;
+    const tokenIds = typedData.tokenIds;
 
     ctx.room.readyCheck = {
       tokenIds,
@@ -134,49 +135,9 @@ export function registerCombatEvents(io: Server, socket: Socket): void {
 
         io.to(ctx.room.sessionId).emit('combat:ready-check-complete', {});
 
-        // Start combat with the stored tokenIds (mirrors combat:start logic)
+        // Start combat with the stored tokenIds
         try {
-          const combatState = await CombatService.startCombatAsync(ctx.room.sessionId, tokenIds);
-          io.to(ctx.room.sessionId).emit('combat:started', {
-            combatants: combatState.combatants,
-            roundNumber: combatState.roundNumber,
-          });
-
-          const lines: string[] = ['⚔️ Combat begins! Initiative order:'];
-          combatState.combatants.forEach((c, idx) => {
-            const marker = idx === 0 ? '▶' : ' ';
-            const tag = c.isNPC ? '' : ' (PC)';
-            lines.push(`   ${marker} ${idx + 1}. ${c.name}${tag} — ${c.initiative}`);
-          });
-          lines.push(`   Round 1 — ${combatState.combatants[0]?.name ?? '?'}'s turn`);
-
-          io.to(ctx.room.sessionId).emit('chat:new-message', {
-            id: (Math.random() + 1).toString(36).substring(2),
-            sessionId: ctx.room.sessionId,
-            userId: 'system',
-            displayName: 'System',
-            type: 'system',
-            content: lines.join('\n'),
-            characterName: null,
-            whisperTo: null,
-            rollData: null,
-            createdAt: new Date().toISOString(),
-          });
-
-          for (const combatant of combatState.combatants) {
-            if (combatant.initiative === 0) continue;
-            io.to(ctx.room.sessionId).emit('combat:initiative-set', {
-              tokenId: combatant.tokenId,
-              roll: combatant.initiative - combatant.initiativeBonus,
-              bonus: combatant.initiativeBonus,
-              total: combatant.initiative,
-            });
-          }
-
-          if (CombatService.allInitiativesRolled(ctx.room.sessionId)) {
-            const sorted = CombatService.sortInitiative(ctx.room.sessionId);
-            io.to(ctx.room.sessionId).emit('combat:all-initiatives-ready', { combatants: sorted });
-          }
+          await startCombat(io, ctx.room.sessionId, tokenIds);
         } catch (err) {
           console.error('[READY CHECK] auto-start combat error:', err);
         }
@@ -187,13 +148,14 @@ export function registerCombatEvents(io: Server, socket: Socket): void {
       playerIds,
       deadline,
     });
-  });
+  }));
 
-  socket.on('combat:ready-response', async (data: { ready: boolean }) => {
+  socket.on('combat:ready-response', safeHandler(socket, async (data: unknown) => {
+    const typedData = data as { ready: boolean };
     const ctx = getPlayerBySocketId(socket.id);
     if (!ctx || !ctx.room.readyCheck) return;
 
-    ctx.room.readyCheck.responses.set(ctx.player.userId, data.ready);
+    ctx.room.readyCheck.responses.set(ctx.player.userId, typedData.ready);
 
     // Broadcast update
     const responses: Record<string, boolean> = {};
@@ -216,56 +178,16 @@ export function registerCombatEvents(io: Server, socket: Socket): void {
 
       io.to(ctx.room.sessionId).emit('combat:ready-check-complete', {});
 
-      // Start combat (mirrors combat:start logic)
+      // Start combat
       try {
-        const combatState = await CombatService.startCombatAsync(ctx.room.sessionId, tokenIds);
-        io.to(ctx.room.sessionId).emit('combat:started', {
-          combatants: combatState.combatants,
-          roundNumber: combatState.roundNumber,
-        });
-
-        const lines: string[] = ['⚔️ Combat begins! Initiative order:'];
-        combatState.combatants.forEach((c, idx) => {
-          const marker = idx === 0 ? '▶' : ' ';
-          const tag = c.isNPC ? '' : ' (PC)';
-          lines.push(`   ${marker} ${idx + 1}. ${c.name}${tag} — ${c.initiative}`);
-        });
-        lines.push(`   Round 1 — ${combatState.combatants[0]?.name ?? '?'}'s turn`);
-
-        io.to(ctx.room.sessionId).emit('chat:new-message', {
-          id: (Math.random() + 1).toString(36).substring(2),
-          sessionId: ctx.room.sessionId,
-          userId: 'system',
-          displayName: 'System',
-          type: 'system',
-          content: lines.join('\n'),
-          characterName: null,
-          whisperTo: null,
-          rollData: null,
-          createdAt: new Date().toISOString(),
-        });
-
-        for (const combatant of combatState.combatants) {
-          if (combatant.initiative === 0) continue;
-          io.to(ctx.room.sessionId).emit('combat:initiative-set', {
-            tokenId: combatant.tokenId,
-            roll: combatant.initiative - combatant.initiativeBonus,
-            bonus: combatant.initiativeBonus,
-            total: combatant.initiative,
-          });
-        }
-
-        if (CombatService.allInitiativesRolled(ctx.room.sessionId)) {
-          const sorted = CombatService.sortInitiative(ctx.room.sessionId);
-          io.to(ctx.room.sessionId).emit('combat:all-initiatives-ready', { combatants: sorted });
-        }
+        await startCombat(io, ctx.room.sessionId, tokenIds);
       } catch (err) {
         console.error('[READY CHECK] all-ready combat start error:', err);
       }
     }
-  });
+  }));
 
-  socket.on('combat:end', async () => {
+  socket.on('combat:end', safeHandler(socket, async () => {
     const ctx = getPlayerBySocketId(socket.id);
     if (!ctx || ctx.player.role !== 'dm') return;
 
@@ -277,9 +199,9 @@ export function registerCombatEvents(io: Server, socket: Socket): void {
         message: err instanceof Error ? err.message : 'Failed to end combat',
       });
     }
-  });
+  }));
 
-  socket.on('combat:roll-initiative', (data) => {
+  socket.on('combat:roll-initiative', safeHandler(socket, async (data) => {
     const parsed = combatRollInitiativeSchema.safeParse(data);
     if (!parsed.success) return;
 
@@ -307,9 +229,9 @@ export function registerCombatEvents(io: Server, socket: Socket): void {
       const sorted = CombatService.sortInitiative(ctx.room.sessionId);
       io.to(ctx.room.sessionId).emit('combat:all-initiatives-ready', { combatants: sorted });
     }
-  });
+  }));
 
-  socket.on('combat:set-initiative', (data) => {
+  socket.on('combat:set-initiative', safeHandler(socket, async (data) => {
     const parsed = combatSetInitiativeSchema.safeParse(data);
     if (!parsed.success) return;
 
@@ -332,9 +254,9 @@ export function registerCombatEvents(io: Server, socket: Socket): void {
       const sorted = CombatService.sortInitiative(ctx.room.sessionId);
       io.to(ctx.room.sessionId).emit('combat:all-initiatives-ready', { combatants: sorted });
     }
-  });
+  }));
 
-  socket.on('combat:next-turn', async () => {
+  socket.on('combat:next-turn', safeHandler(socket, async () => {
     const ctx = getPlayerBySocketId(socket.id);
     if (!ctx) return;
     if (!isCurrentTurnOwnerOrDM(ctx)) return;
@@ -440,7 +362,7 @@ export function registerCombatEvents(io: Server, socket: Socket): void {
 
       // Emit as a system chat message that gets persisted + broadcast.
       // Inline the message construction to avoid pulling in another import.
-      const msgId = (Math.random() + 1).toString(36).substring(2);
+      const msgId = uuidv4();
       const now = new Date().toISOString();
       io.to(ctx.room.sessionId).emit('chat:new-message', {
         id: msgId,
@@ -459,9 +381,9 @@ export function registerCombatEvents(io: Server, socket: Socket): void {
         message: err instanceof Error ? err.message : 'Failed to advance turn',
       });
     }
-  });
+  }));
 
-  socket.on('combat:damage', async (data) => {
+  socket.on('combat:damage', safeHandler(socket, async (data) => {
     const parsed = combatDamageSchema.safeParse(data);
     if (!parsed.success) return;
 
@@ -483,9 +405,9 @@ export function registerCombatEvents(io: Server, socket: Socket): void {
         message: err instanceof Error ? err.message : 'Failed to apply damage',
       });
     }
-  });
+  }));
 
-  socket.on('combat:heal', async (data) => {
+  socket.on('combat:heal', safeHandler(socket, async (data) => {
     const parsed = combatHealSchema.safeParse(data);
     if (!parsed.success) return;
 
@@ -507,9 +429,9 @@ export function registerCombatEvents(io: Server, socket: Socket): void {
         message: err instanceof Error ? err.message : 'Failed to apply healing',
       });
     }
-  });
+  }));
 
-  socket.on('combat:condition-add', (data) => {
+  socket.on('combat:condition-add', safeHandler(socket, async (data) => {
     const parsed = combatConditionSchema.safeParse(data);
     if (!parsed.success) return;
 
@@ -530,9 +452,9 @@ export function registerCombatEvents(io: Server, socket: Socket): void {
         message: err instanceof Error ? err.message : 'Failed to add condition',
       });
     }
-  });
+  }));
 
-  socket.on('combat:condition-remove', (data) => {
+  socket.on('combat:condition-remove', safeHandler(socket, async (data) => {
     const parsed = combatConditionSchema.safeParse(data);
     if (!parsed.success) return;
 
@@ -553,9 +475,9 @@ export function registerCombatEvents(io: Server, socket: Socket): void {
         message: err instanceof Error ? err.message : 'Failed to remove condition',
       });
     }
-  });
+  }));
 
-  socket.on('combat:death-save', async (data) => {
+  socket.on('combat:death-save', safeHandler(socket, async (data) => {
     const parsed = combatDeathSaveSchema.safeParse(data);
     if (!parsed.success) return;
 
@@ -595,9 +517,9 @@ export function registerCombatEvents(io: Server, socket: Socket): void {
       deathSaves: combatant.deathSaves,
       roll: result.roll,
     });
-  });
+  }));
 
-  socket.on('combat:use-action', (data) => {
+  socket.on('combat:use-action', safeHandler(socket, async (data) => {
     const parsed = combatUseActionSchema.safeParse(data);
     if (!parsed.success) return;
 
@@ -616,9 +538,9 @@ export function registerCombatEvents(io: Server, socket: Socket): void {
       actionType: parsed.data.actionType,
       economy,
     });
-  });
+  }));
 
-  socket.on('combat:use-movement', (data) => {
+  socket.on('combat:use-movement', safeHandler(socket, async (data) => {
     const parsed = combatUseMovementSchema.safeParse(data);
     if (!parsed.success) return;
 
@@ -635,7 +557,7 @@ export function registerCombatEvents(io: Server, socket: Socket): void {
       tokenId: combatant.tokenId,
       remaining,
     });
-  });
+  }));
 
   // ----------------------------------------------------------------------
   // combat:dash — take the Dash action: consume Action slot AND double
@@ -643,7 +565,7 @@ export function registerCombatEvents(io: Server, socket: Socket): void {
   // combat:action-used with the updated economy (the client picks up
   // the new movementMax + movementRemaining from the same payload).
   // ----------------------------------------------------------------------
-  socket.on('combat:dash', () => {
+  socket.on('combat:dash', safeHandler(socket, async () => {
     const ctx = getPlayerBySocketId(socket.id);
     if (!ctx) return;
     if (!isCurrentTurnOwnerOrDM(ctx)) return;
@@ -661,7 +583,7 @@ export function registerCombatEvents(io: Server, socket: Socket): void {
     });
 
     io.to(ctx.room.sessionId).emit('chat:new-message', {
-      id: (Math.random() + 1).toString(36).substring(2),
+      id: uuidv4(),
       sessionId: ctx.room.sessionId,
       userId: 'system',
       displayName: 'System',
@@ -672,7 +594,7 @@ export function registerCombatEvents(io: Server, socket: Socket): void {
       rollData: null,
       createdAt: new Date().toISOString(),
     });
-  });
+  }));
 
   // ----------------------------------------------------------------------
   // combat:oa-execute — the player/DM clicked "Attack" on an
@@ -684,13 +606,14 @@ export function registerCombatEvents(io: Server, socket: Socket): void {
   // it silently. (Present for symmetry — the client can emit it so
   // the server can audit-log in the future.)
   // ----------------------------------------------------------------------
-  socket.on('combat:oa-execute', async (data: { attackerTokenId?: string; moverTokenId?: string }) => {
-    if (!data?.attackerTokenId || !data?.moverTokenId) return;
+  socket.on('combat:oa-execute', safeHandler(socket, async (data: unknown) => {
+    const typedOaData = data as { attackerTokenId?: string; moverTokenId?: string };
+    if (!typedOaData?.attackerTokenId || !typedOaData?.moverTokenId) return;
     const ctx = getPlayerBySocketId(socket.id);
     if (!ctx) return;
 
     // Permission: must be the attacker's owner OR the DM.
-    const attacker = ctx.room.tokens.get(data.attackerTokenId);
+    const attacker = ctx.room.tokens.get(typedOaData.attackerTokenId!);
     if (!attacker) return;
     const isDM = ctx.player.role === 'dm';
     const isOwner = attacker.ownerUserId === ctx.player.userId;
@@ -698,15 +621,15 @@ export function registerCombatEvents(io: Server, socket: Socket): void {
 
     const result = await OpportunityAttackService.executeOpportunityAttack(
       ctx.room.sessionId,
-      data.attackerTokenId,
-      data.moverTokenId,
+      typedOaData.attackerTokenId!,
+      typedOaData.moverTokenId!,
     );
 
     // Broadcast every result line as a single system chat message
     // so the combat log shows the attack on one contiguous card.
     if (result.messages.length > 0) {
       io.to(ctx.room.sessionId).emit('chat:new-message', {
-        id: (Math.random() + 1).toString(36).substring(2),
+        id: uuidv4(),
         sessionId: ctx.room.sessionId,
         userId: 'system',
         displayName: 'System',
@@ -739,19 +662,19 @@ export function registerCombatEvents(io: Server, socket: Socket): void {
 
     // Broadcast the updated reaction state for the attacker. We use
     // combat:action-used with the real economy from room state.
-    const attackerEconomy = ctx.room.actionEconomies.get(data.attackerTokenId);
+    const attackerEconomy = ctx.room.actionEconomies.get(typedOaData.attackerTokenId!);
     if (attackerEconomy) {
       io.to(ctx.room.sessionId).emit('combat:action-used', {
-        tokenId: data.attackerTokenId,
+        tokenId: typedOaData.attackerTokenId!,
         actionType: 'reaction',
         economy: attackerEconomy,
       });
     }
-  });
+  }));
 
-  socket.on('combat:oa-decline', (_data) => {
+  socket.on('combat:oa-decline', safeHandler(socket, async (_data) => {
     // Intentional no-op — reserved for future audit logging.
-  });
+  }));
 
   // ----------------------------------------------------------------------
   // combat:spell-cast-attempt — broadcast a leveled spell cast intent
@@ -763,29 +686,31 @@ export function registerCombatEvents(io: Server, socket: Socket): void {
   // when they confirm they're spending their reaction. Broadcast back
   // to everyone so the original caster's client aborts the cast.
   // ----------------------------------------------------------------------
-  socket.on('combat:spell-cast-attempt', (data: {
-    castId?: string;
-    casterTokenId?: string;
-    casterName?: string;
-    spellName?: string;
-    spellLevel?: number;
-  }) => {
-    if (!data?.castId || !data?.spellName || data?.spellLevel == null) return;
+  socket.on('combat:spell-cast-attempt', safeHandler(socket, async (data: unknown) => {
+    const typedData = data as {
+      castId?: string;
+      casterTokenId?: string;
+      casterName?: string;
+      spellName?: string;
+      spellLevel?: number;
+    };
+    if (!typedData?.castId || !typedData?.spellName || typedData?.spellLevel == null) return;
     const ctx = getPlayerBySocketId(socket.id);
     if (!ctx) return;
-    io.to(ctx.room.sessionId).emit('combat:spell-cast-attempt', data);
-  });
+    io.to(ctx.room.sessionId).emit('combat:spell-cast-attempt', typedData);
+  }));
 
-  socket.on('combat:spell-counterspelled', (data: {
-    castId?: string;
-    counterCasterName?: string;
-    counterSlotLevel?: number;
-  }) => {
-    if (!data?.castId) return;
+  socket.on('combat:spell-counterspelled', safeHandler(socket, async (data: unknown) => {
+    const typedData = data as {
+      castId?: string;
+      counterCasterName?: string;
+      counterSlotLevel?: number;
+    };
+    if (!typedData?.castId) return;
     const ctx = getPlayerBySocketId(socket.id);
     if (!ctx) return;
-    io.to(ctx.room.sessionId).emit('combat:spell-counterspelled', data);
-  });
+    io.to(ctx.room.sessionId).emit('combat:spell-counterspelled', typedData);
+  }));
 
   // ----------------------------------------------------------------------
   // combat:attack-hit-attempt — broadcast when an attack rolls a value
@@ -797,27 +722,29 @@ export function registerCombatEvents(io: Server, socket: Socket): void {
   // confirm they're spending the slot+reaction on Shield. Broadcast
   // back so the original attacker's resolver can recompute the hit.
   // ----------------------------------------------------------------------
-  socket.on('combat:attack-hit-attempt', (data: {
-    attackId?: string;
-    targetTokenId?: string;
-    attackerName?: string;
-    attackTotal?: number;
-    currentAC?: number;
-  }) => {
-    if (!data?.attackId || !data?.targetTokenId) return;
+  socket.on('combat:attack-hit-attempt', safeHandler(socket, async (data: unknown) => {
+    const typedData = data as {
+      attackId?: string;
+      targetTokenId?: string;
+      attackerName?: string;
+      attackTotal?: number;
+      currentAC?: number;
+    };
+    if (!typedData?.attackId || !typedData?.targetTokenId) return;
     const ctx = getPlayerBySocketId(socket.id);
     if (!ctx) return;
-    io.to(ctx.room.sessionId).emit('combat:attack-hit-attempt', data);
-  });
+    io.to(ctx.room.sessionId).emit('combat:attack-hit-attempt', typedData);
+  }));
 
-  socket.on('combat:shield-cast', (data: { attackId?: string; defenderName?: string }) => {
-    if (!data?.attackId) return;
+  socket.on('combat:shield-cast', safeHandler(socket, async (data: unknown) => {
+    const typedData = data as { attackId?: string; defenderName?: string };
+    if (!typedData?.attackId) return;
     const ctx = getPlayerBySocketId(socket.id);
     if (!ctx) return;
-    io.to(ctx.room.sessionId).emit('combat:shield-cast', data);
-  });
+    io.to(ctx.room.sessionId).emit('combat:shield-cast', typedData);
+  }));
 
-  socket.on('combat:cast-spell', (data) => {
+  socket.on('combat:cast-spell', safeHandler(socket, async (data) => {
     const parsed = combatCastSpellSchema.safeParse(data);
     if (!parsed.success) return;
 
@@ -841,12 +768,12 @@ export function registerCombatEvents(io: Server, socket: Socket): void {
       aoeSize: spellEvent.aoeSize,
       aoeDirection: spellEvent.aoeDirection,
     });
-  });
+  }));
 
   // ----------------------------------------------------------------------
   // condition:apply-with-meta — register a duration-tracked condition
   // ----------------------------------------------------------------------
-  socket.on('condition:apply-with-meta', (data) => {
+  socket.on('condition:apply-with-meta', safeHandler(socket, async (data) => {
     const parsed = conditionWithMetaSchema.safeParse(data);
     if (!parsed.success) return;
 
@@ -874,7 +801,7 @@ export function registerCombatEvents(io: Server, socket: Socket): void {
       tokenId: parsed.data.targetTokenId,
       changes: { conditions: targetToken.conditions },
     });
-  });
+  }));
 
   // ----------------------------------------------------------------------
   // damage:side-effects — server processes the side effects of a token
@@ -884,13 +811,14 @@ export function registerCombatEvents(io: Server, socket: Socket): void {
   //   3. Re-roll save with advantage for saveOnDamage spells (Hideous Laughter)
   // The caller (cast resolver) provides tokenId + final damage amount.
   // ----------------------------------------------------------------------
-  socket.on('damage:side-effects', async (data: { tokenId?: string; damageAmount?: number }) => {
-    if (!data?.tokenId || typeof data.damageAmount !== 'number') return;
+  socket.on('damage:side-effects', safeHandler(socket, async (data: unknown) => {
+    const typedData = data as { tokenId?: string; damageAmount?: number };
+    if (!typedData?.tokenId || typeof typedData.damageAmount !== 'number') return;
     const ctx = getPlayerBySocketId(socket.id);
     if (!ctx) return;
 
     const result = await ConditionService.processDamageSideEffects(
-      ctx.room.sessionId, data.tokenId, data.damageAmount,
+      ctx.room.sessionId, typedData.tokenId!, typedData.damageAmount!,
     );
 
     // Broadcast updated tokens for any whose conditions changed
@@ -905,8 +833,8 @@ export function registerCombatEvents(io: Server, socket: Socket): void {
 
     // If the target dropped concentration, also broadcast the cleared
     // concentratingOn field on their character
-    if (result.droppedConcentration && data.tokenId) {
-      const t = ctx.room.tokens.get(data.tokenId);
+    if (result.droppedConcentration && typedData.tokenId) {
+      const t = ctx.room.tokens.get(typedData.tokenId);
       if (t?.characterId) {
         io.to(ctx.room.sessionId).emit('character:updated', {
           characterId: t.characterId,
@@ -920,7 +848,7 @@ export function registerCombatEvents(io: Server, socket: Socket): void {
     const now = new Date().toISOString();
     for (const msg of result.messages) {
       io.to(ctx.room.sessionId).emit('chat:new-message', {
-        id: (Math.random() + 1).toString(36).substring(2),
+        id: uuidv4(),
         sessionId: ctx.room.sessionId,
         userId: 'system',
         displayName: 'System',
@@ -932,20 +860,21 @@ export function registerCombatEvents(io: Server, socket: Socket): void {
         createdAt: now,
       });
     }
-  });
+  }));
 
   // ----------------------------------------------------------------------
   // concentration:dropped — clear all conditions sourced from a caster's
   // concentration spell. Called when the caster takes damage and fails
   // the CON save, OR voluntarily switches concentration.
   // ----------------------------------------------------------------------
-  socket.on('concentration:dropped', (data: { casterTokenId?: string; spellName?: string }) => {
-    if (!data?.casterTokenId || !data?.spellName) return;
+  socket.on('concentration:dropped', safeHandler(socket, async (data: unknown) => {
+    const typedConcData = data as { casterTokenId?: string; spellName?: string };
+    if (!typedConcData?.casterTokenId || !typedConcData?.spellName) return;
     const ctx = getPlayerBySocketId(socket.id);
     if (!ctx) return;
 
     const cleared = ConditionService.clearConcentrationConditions(
-      ctx.room.sessionId, data.casterTokenId, data.spellName,
+      ctx.room.sessionId, typedConcData.casterTokenId, typedConcData.spellName,
     );
 
     // Broadcast the updated conditions for each affected token
@@ -961,17 +890,17 @@ export function registerCombatEvents(io: Server, socket: Socket): void {
     if (cleared.length > 0) {
       const now = new Date().toISOString();
       io.to(ctx.room.sessionId).emit('chat:new-message', {
-        id: (Math.random() + 1).toString(36).substring(2),
+        id: uuidv4(),
         sessionId: ctx.room.sessionId,
         userId: 'system',
         displayName: 'System',
         type: 'system',
-        content: `⚡ Concentration on ${data.spellName} dropped — ${cleared.length} affected creature${cleared.length !== 1 ? 's' : ''} freed`,
+        content: `⚡ Concentration on ${typedConcData.spellName} dropped — ${cleared.length} affected creature${cleared.length !== 1 ? 's' : ''} freed`,
         characterName: null,
         whisperTo: null,
         rollData: null,
         createdAt: now,
       });
     }
-  });
+  }));
 }

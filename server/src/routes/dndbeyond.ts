@@ -3,11 +3,31 @@ import { v4 as uuidv4 } from 'uuid';
 import pool from '../db/connection.js';
 import { parseCharacterJSON } from '../services/DndBeyondService.js';
 import { getAuthUserId, assertCharacterOwnerOrDM } from '../utils/authorization.js';
+import { dbRowToCharacter } from '../utils/characterMapper.js';
 
 const router = Router();
 
 const characterCache = new Map<string, { data: unknown; fetchedAt: number }>();
 const CACHE_TTL_MS = 5 * 60 * 1000;
+
+const CACHE_MAX_SIZE = 500;
+const CACHE_CLEANUP_TTL_MS = 30 * 60 * 1000; // 30 minutes
+
+// Periodic cache cleanup
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, entry] of characterCache) {
+    if (now - entry.fetchedAt > CACHE_CLEANUP_TTL_MS) {
+      characterCache.delete(key);
+    }
+  }
+  // Hard cap: if still over max, delete oldest entries
+  if (characterCache.size > CACHE_MAX_SIZE) {
+    const entries = [...characterCache.entries()].sort((a, b) => a[1].fetchedAt - b[1].fetchedAt);
+    const toDelete = entries.slice(0, entries.length - CACHE_MAX_SIZE);
+    for (const [key] of toDelete) characterCache.delete(key);
+  }
+}, 5 * 60 * 1000); // Run every 5 minutes
 
 router.get('/character/:characterId', async (req: Request, res: Response) => {
   const characterId = String(req.params.characterId);
@@ -281,48 +301,7 @@ router.post('/sync/:characterId', async (req: Request, res: Response) => {
   const { rows: updatedRows } = await pool.query('SELECT * FROM characters WHERE id = $1', [characterId]);
   const updatedRow = updatedRows[0] as Record<string, unknown>;
 
-  const safeJsonParse = (value: unknown, fallback: unknown = null): unknown => {
-    if (value == null) return fallback;
-    if (typeof value !== 'string') return fallback;
-    try { return JSON.parse(value); } catch { return fallback; }
-  };
-
-  const character = {
-    id: updatedRow.id, userId: updatedRow.user_id, name: updatedRow.name,
-    race: updatedRow.race, class: updatedRow.class, level: updatedRow.level,
-    hitPoints: updatedRow.hit_points, maxHitPoints: updatedRow.max_hit_points,
-    tempHitPoints: updatedRow.temp_hit_points, armorClass: updatedRow.armor_class,
-    speed: updatedRow.speed, proficiencyBonus: updatedRow.proficiency_bonus,
-    abilityScores: safeJsonParse(updatedRow.ability_scores, {}),
-    savingThrows: safeJsonParse(updatedRow.saving_throws, []),
-    skills: safeJsonParse(updatedRow.skills, {}),
-    spellSlots: safeJsonParse(updatedRow.spell_slots, {}),
-    spells: safeJsonParse(updatedRow.spells, []),
-    features: safeJsonParse(updatedRow.features, []),
-    inventory: safeJsonParse(updatedRow.inventory, []),
-    deathSaves: safeJsonParse(updatedRow.death_saves, { successes: 0, failures: 0 }),
-    hitDice: safeJsonParse(updatedRow.hit_dice, []),
-    concentratingOn: updatedRow.concentrating_on ?? null,
-    background: safeJsonParse(updatedRow.background, {}),
-    characteristics: safeJsonParse(updatedRow.characteristics, {}),
-    personality: safeJsonParse(updatedRow.personality, {}),
-    notes: safeJsonParse(updatedRow.notes_data, {}),
-    proficiencies: safeJsonParse(updatedRow.proficiencies_data, {}),
-    senses: safeJsonParse(updatedRow.senses, {}),
-    defenses: safeJsonParse(updatedRow.defenses, {}),
-    conditions: safeJsonParse(updatedRow.conditions, []),
-    currency: safeJsonParse(updatedRow.currency, {}),
-    extras: safeJsonParse(updatedRow.extras, []),
-    spellcastingAbility: updatedRow.spellcasting_ability ?? '',
-    spellAttackBonus: updatedRow.spell_attack_bonus ?? 0,
-    spellSaveDC: updatedRow.spell_save_dc ?? 10,
-    initiative: updatedRow.initiative ?? 0,
-    compendiumSlug: updatedRow.compendium_slug ?? null,
-    portraitUrl: updatedRow.portrait_url, dndbeyondId: updatedRow.dndbeyond_id,
-    source: updatedRow.source, createdAt: updatedRow.created_at, updatedAt: updatedRow.updated_at,
-  };
-
-  res.json(character);
+  res.json(dbRowToCharacter(updatedRow));
 });
 
 export default router;

@@ -2,6 +2,7 @@ import { Router, type Request, type Response } from 'express';
 import { v4 as uuidv4 } from 'uuid';
 import pool from '../db/connection.js';
 import { getAuthUserId, assertCharacterOwnerOrDM } from '../utils/authorization.js';
+import { createLootSchema } from '../utils/validation.js';
 
 const router = Router();
 
@@ -19,7 +20,9 @@ router.post('/characters/:id/loot', async (req: Request, res: Response) => {
   const userId = getAuthUserId(req);
   const charId = String(req.params.id);
   await assertCharacterOwnerOrDM(charId, userId);
-  const { itemName, itemSlug, customItemId, itemRarity, quantity } = req.body;
+  const parsed = createLootSchema.safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: parsed.error.errors }); return; }
+  const { itemName, itemSlug, customItemId, itemRarity, quantity } = parsed.data;
   const id = uuidv4();
   await pool.query(
     'INSERT INTO loot_entries (id, character_id, item_slug, custom_item_id, item_name, item_rarity, quantity) VALUES ($1, $2, $3, $4, $5, $6, $7)',
@@ -279,6 +282,20 @@ router.post('/loot/transfer', async (req: Request, res: Response) => {
 
   // Must own the source character or be DM
   await assertCharacterOwnerOrDM(String(fromCharacterId), userId);
+
+  // Verify target character is in the same session as the source
+  const { rows: fromSessions } = await pool.query(
+    'SELECT session_id FROM session_players WHERE character_id = $1', [fromCharacterId]
+  );
+  const { rows: toSessions } = await pool.query(
+    'SELECT session_id FROM session_players WHERE character_id = $1', [toCharacterId]
+  );
+  const fromSessionIds = new Set(fromSessions.map(r => r.session_id));
+  const sharedSession = toSessions.some(r => fromSessionIds.has(r.session_id));
+  if (!sharedSession) {
+    res.status(403).json({ error: 'Target character is not in the same session' });
+    return;
+  }
 
   const { rows: entryRows } = await pool.query('SELECT * FROM loot_entries WHERE id = $1 AND character_id = $2', [lootEntryId, String(fromCharacterId)]);
   const entry = entryRows[0] as any;
