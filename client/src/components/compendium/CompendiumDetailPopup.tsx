@@ -7,7 +7,7 @@ import { useSessionStore } from '../../stores/useSessionStore';
 import { useCharacterStore } from '../../stores/useCharacterStore';
 import { emitCharacterUpdate } from '../../socket/emitters';
 import { resolveSpellSlug } from '../../utils/spell-aliases';
-import { getCreatureIconUrl, getSpellIconUrl, getItemIconUrl } from '../../utils/compendiumIcons';
+import { getCreatureIconUrl, getCreatureImageUrl, getCreatureImageSvgUrl, getSpellIconUrl, getItemIconUrl } from '../../utils/compendiumIcons';
 import type {
   CompendiumMonster,
   CompendiumSpell,
@@ -99,8 +99,10 @@ function formatSpeed(speed: Record<string, number>): string {
 }
 
 function getCreatureImage(_slug: string, name?: string, type?: string): { svg: string; png: string } {
-  const icon = getCreatureIconUrl(name || _slug, type);
-  return { svg: icon, png: icon };
+  return {
+    png: getCreatureImageUrl(name || _slug),
+    svg: getCreatureImageSvgUrl(name || _slug),
+  };
 }
 
 function MonsterDetail({ monster: initialMonster }: { monster: CompendiumMonster }) {

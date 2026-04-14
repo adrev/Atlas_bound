@@ -4,25 +4,21 @@ import { useSessionStore } from '../../stores/useSessionStore';
 import { emitTokenAdd } from '../../socket/emitters';
 import { theme } from '../../styles/theme';
 import type { CompendiumMonster } from '@dnd-vtt/shared';
-import { getCreatureIconUrl } from '../../utils/compendiumIcons';
+import { getCreatureImageUrl, getCreatureImageSvgUrl, getCreatureIconUrl } from '../../utils/compendiumIcons';
 
 // --- Helpers ---
 
-/** Get the token image URLs from the creature name */
-function getCreatureSlug(name: string): string {
-  return name.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
-}
-/** SVG placeholder URL */
-function getCreatureImageSvg(name: string): string {
-  return getCreatureIconUrl(name);
-}
-/** PNG art URL — uses inline SVG placeholder instead of missing /uploads/ files */
+/** PNG art URL (GCS-hosted) */
 function getCreatureImagePng(name: string): string {
-  return getCreatureIconUrl(name);
+  return getCreatureImageUrl(name);
+}
+/** SVG fallback URL (GCS-hosted) */
+function getCreatureImageSvg(name: string): string {
+  return getCreatureImageSvgUrl(name);
 }
 /** Best image URL for spawning tokens */
 function getCreatureTokenUrl(monster: CompendiumMonster): string {
-  return getCreatureIconUrl(monster.name, monster.type);
+  return getCreatureImageUrl(monster.name);
 }
 
 function getRecommendedLevel(cr: number): string {

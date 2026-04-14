@@ -1,7 +1,12 @@
 /**
- * Generates inline SVG data URIs for compendium entries (creatures, spells, items)
- * so we never 404 on missing /uploads/ images.
+ * Compendium image URLs — uses GCS-hosted artwork with inline SVG fallback.
+ *
+ * ~4600 creature tokens, ~1400 spell icons, ~1700 item icons are hosted on
+ * Google Cloud Storage. When artwork exists, the PNG is used. When it doesn't
+ * (or fails to load), we fall back to an inline SVG colored initial.
  */
+
+const CDN = 'https://storage.googleapis.com/atlas-bound-data';
 
 const CREATURE_TYPE_COLORS: Record<string, string> = {
   aberration: '#7b2d8b',
@@ -44,7 +49,11 @@ const ITEM_TYPE_COLORS: Record<string, string> = {
   adventuring_gear: '#5a5a5a',
 };
 
-function makeSvgDataUri(initial: string, bgColor: string): string {
+function slugify(name: string): string {
+  return name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
+}
+
+function makeSvgFallback(initial: string, bgColor: string): string {
   return `data:image/svg+xml,${encodeURIComponent(
     `<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">` +
     `<circle cx="32" cy="32" r="30" fill="${bgColor}"/>` +
@@ -53,28 +62,65 @@ function makeSvgDataUri(initial: string, bgColor: string): string {
   )}`;
 }
 
+/** Primary creature image URL (PNG on GCS) */
+export function getCreatureImageUrl(name: string): string {
+  return `${CDN}/tokens/${slugify(name)}.png`;
+}
+
+/** SVG creature image URL (GCS) */
+export function getCreatureImageSvgUrl(name: string): string {
+  return `${CDN}/tokens/${slugify(name)}.svg`;
+}
+
+/** Inline SVG fallback for when GCS image doesn't exist */
 export function getCreatureIconUrl(name: string, type?: string): string {
   const initial = name.charAt(0).toUpperCase();
   const color = CREATURE_TYPE_COLORS[(type || '').toLowerCase()] || '#555';
-  return makeSvgDataUri(initial, color);
+  return makeSvgFallback(initial, color);
+}
+
+/** Primary spell image URL (PNG on GCS) */
+export function getSpellImageUrl(name: string): string {
+  return `${CDN}/spells/${slugify(name)}.png`;
 }
 
 export function getSpellIconUrl(name: string, school?: string): string {
   const initial = name.charAt(0).toUpperCase();
   const color = SPELL_SCHOOL_COLORS[(school || '').toLowerCase()] || '#3a6a9a';
-  return makeSvgDataUri(initial, color);
+  return makeSvgFallback(initial, color);
+}
+
+/** Primary item image URL (PNG on GCS) */
+export function getItemImageUrl(name: string): string {
+  return `${CDN}/items/${slugify(name)}.png`;
 }
 
 export function getItemIconUrl(name: string, type?: string): string {
   const initial = name.charAt(0).toUpperCase();
   const color = ITEM_TYPE_COLORS[(type || '').toLowerCase()] || '#5a5a5a';
-  return makeSvgDataUri(initial, color);
+  return makeSvgFallback(initial, color);
 }
 
 /**
- * Returns a placeholder icon URL for any compendium category.
+ * Returns the primary GCS image URL for any compendium category.
+ * Use with an onError fallback to getCompendiumFallbackUrl.
  */
-export function getCompendiumIconUrl(
+export function getCompendiumImageUrl(
+  name: string,
+  category: 'monsters' | 'spells' | 'items' | string,
+): string {
+  switch (category) {
+    case 'monsters': return getCreatureImageUrl(name);
+    case 'spells': return getSpellImageUrl(name);
+    case 'items': return getItemImageUrl(name);
+    default: return makeSvgFallback(name.charAt(0).toUpperCase(), '#555');
+  }
+}
+
+/**
+ * Returns an inline SVG fallback URL for any compendium category.
+ */
+export function getCompendiumFallbackUrl(
   name: string,
   category: 'monsters' | 'spells' | 'items' | string,
   subtype?: string,
@@ -83,6 +129,6 @@ export function getCompendiumIconUrl(
     case 'monsters': return getCreatureIconUrl(name, subtype);
     case 'spells': return getSpellIconUrl(name, subtype);
     case 'items': return getItemIconUrl(name, subtype);
-    default: return makeSvgDataUri(name.charAt(0).toUpperCase(), '#555');
+    default: return makeSvgFallback(name.charAt(0).toUpperCase(), '#555');
   }
 }

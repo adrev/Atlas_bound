@@ -8,7 +8,7 @@ import { CreateMonsterForm } from './CreateMonsterForm';
 import { CreateSpellForm } from './CreateSpellForm';
 import { CreateItemForm } from './CreateItemForm';
 import type { CompendiumSearchResult, CompendiumCategory } from '@dnd-vtt/shared';
-import { getCompendiumIconUrl } from '../../utils/compendiumIcons';
+import { getCompendiumImageUrl, getCompendiumFallbackUrl } from '../../utils/compendiumIcons';
 
 type FilterCategory = 'all' | 'monsters' | 'spells' | 'items' | 'homebrew';
 
@@ -321,10 +321,11 @@ export function CompendiumPanel() {
           >
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               <img
-                src={getCompendiumIconUrl(r.name, r.category, r.snippet)}
+                src={getCompendiumImageUrl(r.name, r.category)}
                 alt=""
                 loading="lazy"
                 style={{ width: 28, height: 28, borderRadius: '50%', objectFit: 'cover', flexShrink: 0, border: `1.5px solid ${theme.border.default}` }}
+                onError={(e) => { (e.currentTarget).src = getCompendiumFallbackUrl(r.name, r.category, r.snippet); }}
               />
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={styles.resultTop}>
