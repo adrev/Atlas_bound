@@ -267,12 +267,12 @@ export const chatRollSchema = z.object({
 // --- REST API schemas ---
 export const createSessionSchema = z.object({
   name: z.string().min(1).max(100),
-  displayName: z.string().min(1).max(50),
+  displayName: z.string().min(1).max(50).optional(),
 });
 
 export const joinSessionSchema = z.object({
   roomCode: z.string().min(1).max(20),
-  displayName: z.string().min(1).max(50),
+  displayName: z.string().min(1).max(50).optional(),
 });
 
 const backgroundSchema = z.object({
