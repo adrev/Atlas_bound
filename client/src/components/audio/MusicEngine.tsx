@@ -29,6 +29,15 @@ export function MusicEngine() {
   const playIdRef = useRef(0);
   /** Interval id for the playback-ref updater. */
   const progressTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  /**
+   * Ref-backed handlers for the audio element. Attached ONCE to the element
+   * the moment it's created inside `ensureAudio`, but always delegate to the
+   * latest closure via these refs. This fixes the bug where the prior
+   * useEffect-based attachment ran before `ensureAudio` had created the
+   * element, so `ended`/`error` listeners never attached.
+   */
+  const handleEndedRef = useRef<() => void>(() => {});
+  const handleErrorRef = useRef<() => void>(() => {});
 
   // Pick the next file for a theme (shuffle or sequential)
   const getNextFile = useCallback((trackId: string, files: string[]) => {
@@ -53,16 +62,28 @@ export function MusicEngine() {
     return files[trackIndexRef.current[trackId]];
   }, []);
 
+  // Stable handlers that delegate to the current ref value. These are
+  // captured once when the audio element is created so addEventListener/
+  // removeEventListener see identical function references.
+  const stableHandleEnded = useCallback(() => {
+    handleEndedRef.current?.();
+  }, []);
+  const stableHandleError = useCallback(() => {
+    handleErrorRef.current?.();
+  }, []);
+
   // Create or reuse the audio element
   const ensureAudio = useCallback(() => {
     if (!audioRef.current) {
       const audio = new Audio();
       audio.loop = false;
       // crossOrigin not needed — GCS bucket has CORS configured for kbrt.ai
+      audio.addEventListener('ended', stableHandleEnded);
+      audio.addEventListener('error', stableHandleError);
       audioRef.current = audio;
     }
     return audioRef.current;
-  }, []);
+  }, [stableHandleEnded, stableHandleError]);
 
   // Start the progress-ref updater (250ms interval)
   const startProgressUpdater = useCallback(() => {
@@ -210,39 +231,20 @@ export function MusicEngine() {
     return () => window.removeEventListener('music-action', handler);
   }, [advanceToNext, goToPrev]);
 
-  // When a track ends, play the next file in the theme
+  // Keep the ended/error handler refs up-to-date so the stable listeners
+  // attached inside `ensureAudio` always run the latest logic.
   useEffect(() => {
-    const audio = audioRef.current;
-    if (!audio) return;
-
-    const handleEnded = () => {
+    handleEndedRef.current = () => {
       advanceToNext();
     };
-
-    audio.addEventListener('ended', handleEnded);
-    return () => audio.removeEventListener('ended', handleEnded);
-  }, [advanceToNext]);
-
-  // Error handling: skip to next file on audio error
-  useEffect(() => {
-    const audio = audioRef.current;
-    if (!audio) return;
-
-    const handleError = () => {
+    handleErrorRef.current = () => {
       const trackId = prevTrackRef.current;
       if (!trackId) return;
       const track = TRACKS.find((t) => t.id === trackId);
       if (!track) return;
-
       console.error('[MusicEngine] Audio error, skipping to next file');
-      // Try the next file. If we've cycled through all files and still
-      // erroring, the advanceToNext will keep trying. We limit by
-      // checking if the errored URL is the same as what we just set.
       advanceToNext();
     };
-
-    audio.addEventListener('error', handleError);
-    return () => audio.removeEventListener('error', handleError);
   }, [advanceToNext]);
 
   // React to track changes (theme change OR specific file index change)
@@ -311,10 +313,15 @@ export function MusicEngine() {
     return () => {
       if (fadeTimerRef.current) clearInterval(fadeTimerRef.current as unknown as number);
       stopProgressUpdater();
-      audioRef.current?.pause();
+      const audio = audioRef.current;
+      if (audio) {
+        audio.pause();
+        audio.removeEventListener('ended', stableHandleEnded);
+        audio.removeEventListener('error', stableHandleError);
+      }
       audioRef.current = null;
     };
-  }, [stopProgressUpdater]);
+  }, [stopProgressUpdater, stableHandleEnded, stableHandleError]);
 
   // Allow external seek via a window event (used by progress bar click)
   useEffect(() => {

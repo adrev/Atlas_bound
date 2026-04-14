@@ -1,5 +1,4 @@
 import { useCallback, useRef, useState } from 'react';
-import type Konva from 'konva';
 import type { KonvaEventObject } from 'konva/lib/Node';
 import { useMapStore } from '../stores/useMapStore';
 import { useDrawStore } from '../stores/useDrawStore';

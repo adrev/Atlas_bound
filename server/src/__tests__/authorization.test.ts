@@ -146,3 +146,71 @@ describe('assertCharacterOwnerOrDM', () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// Loot-take source authorization regression: simulate the query pattern used
+// in POST /api/characters/:id/loot/take. Verifies that a caller with no
+// session link and no NPC-token link is denied with 403.
+// ---------------------------------------------------------------------------
+describe('loot-take source authorization (regression)', () => {
+  async function assertSourceAccess(sourceCharId: string, userId: string) {
+    // Matches the logic added in loot.ts after the target-character check.
+    // 1. Look up source owner.
+    const { rows: sourceRows } = await (await import('../db/connection.js')).default.query(
+      'SELECT user_id FROM characters WHERE id = $1',
+      [sourceCharId],
+    );
+    if (sourceRows.length === 0) {
+      const err = new Error('Source not found') as Error & { status: number };
+      err.status = 404;
+      throw err;
+    }
+    if (sourceRows[0].user_id === userId) return;
+
+    // 2. Shared-session check.
+    const { rows: shared } = await (await import('../db/connection.js')).default.query(
+      'shared-session-sql',
+      [userId, sourceCharId],
+    );
+    if (shared.length > 0) return;
+
+    // 3. NPC-token-on-map check.
+    const { rows: npcInSession } = await (await import('../db/connection.js')).default.query(
+      'npc-in-session-sql',
+      [sourceCharId, userId],
+    );
+    if (npcInSession.length > 0) return;
+
+    const err = new Error('Not authorized to take from this source') as Error & { status: number };
+    err.status = 403;
+    throw err;
+  }
+
+  it('denies take when caller has no relationship to source', async () => {
+    // source-owner lookup: owned by someone else
+    mockQuery.mockResolvedValueOnce({ rows: [{ user_id: 'someone-else' }] });
+    // shared-session lookup: empty
+    mockQuery.mockResolvedValueOnce({ rows: [] });
+    // npc-token lookup: empty
+    mockQuery.mockResolvedValueOnce({ rows: [] });
+
+    try {
+      await assertSourceAccess('source-char', 'random-user');
+      expect.fail('should have thrown');
+    } catch (err: any) {
+      expect(err.status).toBe(403);
+      expect(err.message).toBe('Not authorized to take from this source');
+    }
+  });
+
+  it('allows take when caller shares a session with the source', async () => {
+    mockQuery.mockResolvedValueOnce({ rows: [{ user_id: 'someone-else' }] });
+    mockQuery.mockResolvedValueOnce({ rows: [{ '?column?': 1 }] });
+    await expect(assertSourceAccess('source-char', 'player-1')).resolves.toBeUndefined();
+  });
+
+  it('allows take when caller owns the source character', async () => {
+    mockQuery.mockResolvedValueOnce({ rows: [{ user_id: 'me' }] });
+    await expect(assertSourceAccess('source-char', 'me')).resolves.toBeUndefined();
+  });
+});

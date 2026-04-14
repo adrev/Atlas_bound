@@ -1,26 +1,14 @@
 import { Router, type Request, type Response } from 'express';
-import multer from 'multer';
-import path from 'path';
-import fs from 'fs';
 import pool from '../db/connection.js';
-import { UPLOAD_DIR } from '../config.js';
 import { isCompendiumSeeded, getCompendiumStats, reseedCompendium } from '../services/Open5eService.js';
+import { requireAuth } from '../auth/middleware.js';
+import { tokenUpload, validateAndSaveUpload } from './uploads.js';
 import type {
   CompendiumMonster, CompendiumSpell, CompendiumItem,
-  CompendiumSearchResult, CompendiumCategory,
+  CompendiumSearchResult,
 } from '@dnd-vtt/shared';
 
 const router = Router();
-
-const tokenDir = path.join(UPLOAD_DIR, 'tokens');
-const slugTokenUpload = multer({
-  storage: multer.memoryStorage(),
-  limits: { fileSize: 10 * 1024 * 1024 },
-  fileFilter(_req, file, cb) {
-    if (['image/jpeg', 'image/png', 'image/webp', 'image/gif'].includes(file.mimetype)) cb(null, true);
-    else cb(new Error('Invalid image type'));
-  },
-});
 
 function safeJsonParse(value: unknown, fallback: unknown = null): unknown {
   if (value == null) return fallback;
@@ -255,7 +243,10 @@ router.get('/status', async (_req: Request, res: Response) => {
   res.json({ seeded, ...stats });
 });
 
-router.post('/sync', async (_req: Request, res: Response) => {
+// NOTE: Mutating endpoints require authentication. Future work: restrict
+// further to admin users (compendium is global SRD data, so ordinary users
+// should not be able to reseed or overwrite monster token images).
+router.post('/sync', requireAuth, async (_req: Request, res: Response) => {
   try {
     await reseedCompendium();
     const stats = await getCompendiumStats();
@@ -266,28 +257,29 @@ router.post('/sync', async (_req: Request, res: Response) => {
   }
 });
 
-router.post('/monsters/:slug/token-image', slugTokenUpload.single('image'), async (req: Request, res: Response) => {
-  const { slug } = req.params;
-  if (!req.file) { res.status(400).json({ error: 'No image file' }); return; }
+router.post(
+  '/monsters/:slug/token-image',
+  requireAuth,
+  tokenUpload.single('image'),
+  async (req: Request, res: Response) => {
+    const { slug } = req.params;
+    if (!req.file) { res.status(400).json({ error: 'No image file' }); return; }
 
-  const { rows } = await pool.query('SELECT name FROM compendium_monsters WHERE slug = $1', [slug]);
-  if (rows.length === 0) { res.status(404).json({ error: 'Monster not found' }); return; }
+    const { rows } = await pool.query('SELECT name FROM compendium_monsters WHERE slug = $1', [slug]);
+    if (rows.length === 0) { res.status(404).json({ error: 'Monster not found' }); return; }
 
-  const ext = req.file.mimetype === 'image/jpeg' ? '.jpg' : '.png';
-  const filename = slug + ext;
-  const filepath = path.join(tokenDir, filename);
-
-  for (const oldExt of ['.png', '.jpg', '.jpeg', '.webp']) {
-    const oldPath = path.join(tokenDir, slug + oldExt);
-    if (fs.existsSync(oldPath) && oldPath !== filepath) {
-      try { fs.unlinkSync(oldPath); } catch { /* ignore */ }
+    try {
+      const filename = validateAndSaveUpload(req.file, 'tokens');
+      await pool.query(
+        'UPDATE compendium_monsters SET token_image_source = $1 WHERE slug = $2',
+        ['uploaded', slug],
+      );
+      res.json({ url: `/uploads/tokens/${filename}`, source: 'uploaded' });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Invalid image file';
+      res.status(400).json({ error: msg });
     }
-  }
-
-  fs.writeFileSync(filepath, req.file.buffer);
-  await pool.query('UPDATE compendium_monsters SET token_image_source = $1 WHERE slug = $2', ['uploaded', slug]);
-
-  res.json({ url: `/uploads/tokens/${filename}`, source: 'uploaded' });
-});
+  },
+);
 
 export default router;

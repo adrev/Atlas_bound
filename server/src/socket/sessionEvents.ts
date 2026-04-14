@@ -4,7 +4,7 @@ import { DEFAULT_SESSION_SETTINGS } from '@dnd-vtt/shared';
 import { v4 as uuidv4 } from 'uuid';
 import pool from '../db/connection.js';
 import {
-  createRoom, getRoom, getRoomByCode,
+  createRoom, getRoom,
   addPlayerToRoom, removePlayerFromRoom, getPlayerBySocketId,
   type RoomPlayer,
 } from '../utils/roomState.js';

@@ -1,5 +1,4 @@
 import type { Combatant, CombatState, ActionEconomy, ActionType, Condition } from '@dnd-vtt/shared';
-import type { Token } from '@dnd-vtt/shared';
 import { getRoom } from '../utils/roomState.js';
 import pool from '../db/connection.js';
 

@@ -81,6 +81,37 @@ router.post('/characters/:id/loot/take', async (req: Request, res: Response) => 
     await assertCharacterOwnerOrDM(targetCharacterId, userId);
   }
 
+  // Authorize the SOURCE. Caller must either own the source, share a session
+  // with the source character, or (for NPC sources) be a member of a session
+  // where the source token is placed on a map.
+  const { rows: sourceRows } = await pool.query('SELECT user_id FROM characters WHERE id = $1', [creatureCharId]);
+  if (sourceRows.length === 0) { res.status(404).json({ error: 'Source not found' }); return; }
+  const sourceOwner = sourceRows[0].user_id;
+
+  if (sourceOwner !== userId) {
+    const { rows: shared } = await pool.query(
+      `SELECT 1 FROM session_players sp1
+       JOIN session_players sp2 ON sp1.session_id = sp2.session_id
+       WHERE sp1.user_id = $1 AND sp2.character_id = $2
+       LIMIT 1`,
+      [userId, creatureCharId],
+    );
+    if (shared.length === 0) {
+      const { rows: npcInSession } = await pool.query(
+        `SELECT 1 FROM tokens t
+         JOIN maps m ON t.map_id = m.id
+         JOIN session_players sp ON sp.session_id = m.session_id
+         WHERE t.character_id = $1 AND sp.user_id = $2
+         LIMIT 1`,
+        [creatureCharId, userId],
+      );
+      if (npcInSession.length === 0) {
+        res.status(403).json({ error: 'Not authorized to take from this source' });
+        return;
+      }
+    }
+  }
+
   const { rows: entryRows } = await pool.query('SELECT * FROM loot_entries WHERE id = $1 AND character_id = $2', [entryId, creatureCharId]);
   const entry = entryRows[0] as any;
   if (!entry) { res.status(404).json({ error: 'Loot entry not found' }); return; }

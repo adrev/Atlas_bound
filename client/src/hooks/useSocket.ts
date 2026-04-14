@@ -2,7 +2,6 @@ import { useEffect, useRef } from 'react';
 import { getSocket, disconnectSocket } from '../socket/client';
 import { registerListeners } from '../socket/listeners';
 import { emitJoinSession } from '../socket/emitters';
-import { useAuthStore } from '../stores/useAuthStore';
 
 export function useSocket(roomCode: string | undefined) {
   const cleanupRef = useRef<(() => void) | null>(null);
