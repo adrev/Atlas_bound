@@ -29,6 +29,7 @@ import { InfoTooltip } from '../ui/InfoTooltip';
 import { lookupWeaponProperty } from '../../utils/rules-text';
 import { theme } from '../../styles/theme';
 import { HPBar } from '../ui';
+import { getSpellIconUrl, getItemIconUrl } from '../../utils/compendiumIcons';
 
 /* ── Strip HTML tags from descriptions ──────────────────── */
 function stripHtml(html: string): string {
@@ -1790,9 +1791,8 @@ function AddSpellDialog({ existingSpellNames, onAdd, onClose }: {
                 borderBottom: `1px solid ${C.borderDim}`,
                 background: alreadyKnown ? 'rgba(212,168,67,0.06)' : 'transparent',
               }}>
-                <img src={`/uploads/spells/${slug}.png`} alt="" loading="lazy"
+                <img src={getSpellIconUrl(r.name)} alt="" loading="lazy"
                   style={{ width: 32, height: 32, borderRadius: '50%', objectFit: 'cover', border: `1.5px solid ${schoolColor}`, flexShrink: 0 }}
-                  onError={e => { (e.currentTarget).src = '/uploads/items/default-item.svg'; }}
                 />
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontSize: 13, fontWeight: 600, color: alreadyKnown ? C.textMuted : C.textPrimary }}>
@@ -1999,9 +1999,8 @@ function SpellsTab({ spells: rawSpells, spellSlots, spellcastingAbility, spellAt
           onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
         >
           {/* Spell image */}
-          <img src={`/uploads/spells/${slug}.png`} alt="" loading="lazy"
+          <img src={getSpellIconUrl(spell.name, spell.school)} alt="" loading="lazy"
             style={{ width: 28, height: 28, borderRadius: '50%', objectFit: 'cover', flexShrink: 0, border: `1.5px solid ${schoolColor}`, filter: isSpent ? 'grayscale(60%)' : 'none' }}
-            onError={e => { (e.currentTarget).src = '/uploads/items/default-item.svg'; }}
           />
           {/* Name + badges */}
           <div
@@ -2351,12 +2350,11 @@ function InventoryTab({
               >{item.equipped ? 'E' : ''}</span>
               {/* Item image */}
               <img
-                src={(item as any).imageUrl || ((item as any).slug ? `/uploads/items/${(item as any).slug}.png` : '')}
+                src={(item as any).imageUrl || getItemIconUrl(item.name, (item as any).type)}
                 alt=""
                 loading="lazy"
                 style={{ width: 28, height: 28, borderRadius: '50%', objectFit: 'cover', flexShrink: 0,
                   border: `1.5px solid ${RARITY_COLORS[(item.rarity || 'common').toLowerCase()] || C.borderDim}` }}
-                onError={e => { (e.currentTarget).src = '/uploads/items/default-item.svg'; }}
               />
               <div
                 style={{ flex: 1, minWidth: 0, cursor: (item as any).slug ? 'pointer' : 'default' }}

@@ -21,7 +21,7 @@ router.get('/', async (req: Request, res: Response) => {
 
 // POST /api/characters - Create a new character
 router.post('/', async (req: Request, res: Response) => {
-  const userId = getAuthUserId(req);
+  const authUserId = getAuthUserId(req);
   const parsed = createCharacterSchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: 'Invalid request', details: parsed.error.issues });
@@ -29,6 +29,7 @@ router.post('/', async (req: Request, res: Response) => {
   }
 
   const data = parsed.data;
+  const userId = data.isNpc ? 'npc' : authUserId;
   const id = uuidv4();
   const profBonus = proficiencyBonusForLevel(data.level);
   const abilityScores = data.abilityScores ?? { str: 10, dex: 10, con: 10, int: 10, wis: 10, cha: 10 };

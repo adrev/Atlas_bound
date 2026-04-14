@@ -1,3 +1,4 @@
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { SkipForward, X } from 'lucide-react';
 import { useCombatStore } from '../../stores/useCombatStore';
 import { useSessionStore } from '../../stores/useSessionStore';
@@ -14,6 +15,9 @@ export function InitiativeTracker() {
   const isDM = useSessionStore((s) => s.isDM);
   const userId = useSessionStore((s) => s.userId);
   const tokens = useMapStore((s) => s.tokens);
+  const settings = useSessionStore((s) => s.settings);
+  const turnTimerEnabled = !!settings.turnTimerEnabled;
+  const turnTimerSeconds = settings.turnTimerSeconds ?? 60;
 
   if (!active || combatants.length === 0) return null;
 
@@ -128,6 +132,16 @@ export function InitiativeTracker() {
                   </span>
                 </div>
               </div>
+
+              {/* Turn timer for current combatant */}
+              {isCurrent && turnTimerEnabled && (
+                <TurnTimer
+                  durationSeconds={turnTimerSeconds}
+                  currentTurnIndex={currentTurnIndex}
+                  roundNumber={roundNumber}
+                  isDM={isDM}
+                />
+              )}
             </div>
           );
         })}
@@ -147,6 +161,137 @@ export function InitiativeTracker() {
           End Turn
         </button>
       )}
+    </div>
+  );
+}
+
+// ── Turn Timer ─────────────────────────────────────────────
+function TurnTimer({
+  durationSeconds,
+  currentTurnIndex,
+  roundNumber,
+  isDM,
+}: {
+  durationSeconds: number;
+  currentTurnIndex: number;
+  roundNumber: number;
+  isDM: boolean;
+}) {
+  const [secondsLeft, setSecondsLeft] = useState(durationSeconds);
+  const [paused, setPaused] = useState(false);
+  const [timesUp, setTimesUp] = useState(false);
+  const timerRef = useRef<number | null>(null);
+  const startRef = useRef(Date.now());
+
+  // Reset timer when the turn changes
+  useEffect(() => {
+    setSecondsLeft(durationSeconds);
+    setPaused(false);
+    setTimesUp(false);
+    startRef.current = Date.now();
+  }, [currentTurnIndex, roundNumber, durationSeconds]);
+
+  // Tick the timer
+  useEffect(() => {
+    if (paused || timesUp) return;
+    timerRef.current = window.setInterval(() => {
+      const elapsed = (Date.now() - startRef.current) / 1000;
+      const remaining = Math.max(0, durationSeconds - elapsed);
+      setSecondsLeft(remaining);
+      if (remaining <= 0) {
+        setTimesUp(true);
+        if (timerRef.current) window.clearInterval(timerRef.current);
+      }
+    }, 100);
+    return () => {
+      if (timerRef.current) window.clearInterval(timerRef.current);
+    };
+  }, [paused, timesUp, durationSeconds]);
+
+  const handleClick = useCallback(() => {
+    if (!isDM) return;
+    if (timesUp) return;
+    if (paused) {
+      // Resume — adjust startRef so elapsed time is preserved
+      startRef.current = Date.now() - (durationSeconds - secondsLeft) * 1000;
+      setPaused(false);
+    } else {
+      setPaused(true);
+    }
+  }, [isDM, paused, timesUp, durationSeconds, secondsLeft]);
+
+  const ratio = secondsLeft / durationSeconds;
+  const circumference = 2 * Math.PI * 14;
+  const offset = circumference * (1 - ratio);
+  const ringColor =
+    ratio > 0.5 ? theme.state.success :
+    ratio > 0.25 ? theme.state.warning :
+    theme.state.danger;
+
+  return (
+    <div
+      onClick={handleClick}
+      title={isDM ? (paused ? 'Click to resume' : 'Click to pause') : undefined}
+      style={{
+        position: 'relative',
+        width: 36,
+        height: 36,
+        flexShrink: 0,
+        cursor: isDM ? 'pointer' : 'default',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+      }}
+    >
+      <svg width={36} height={36} viewBox="0 0 36 36">
+        <circle
+          cx={18} cy={18} r={14}
+          fill="none"
+          stroke={theme.border.default}
+          strokeWidth={3}
+        />
+        <circle
+          cx={18} cy={18} r={14}
+          fill="none"
+          stroke={ringColor}
+          strokeWidth={3}
+          strokeLinecap="round"
+          strokeDasharray={circumference}
+          strokeDashoffset={offset}
+          transform="rotate(-90 18 18)"
+          style={{ transition: 'stroke-dashoffset 0.1s linear, stroke 0.3s ease' }}
+        />
+      </svg>
+      <span style={{
+        position: 'absolute',
+        fontSize: timesUp ? 7 : 10,
+        fontWeight: 700,
+        color: timesUp ? theme.state.danger : theme.text.primary,
+        fontFamily: 'monospace',
+        textAlign: 'center',
+        animation: timesUp ? 'timerFlash 0.5s ease-in-out 3' : undefined,
+      }}>
+        {timesUp ? "TIME!" : Math.ceil(secondsLeft)}
+      </span>
+      {paused && (
+        <span style={{
+          position: 'absolute',
+          bottom: -2,
+          fontSize: 6,
+          fontWeight: 700,
+          color: theme.state.warning,
+          letterSpacing: '0.05em',
+          textTransform: 'uppercase',
+        }}>
+          PAUSED
+        </span>
+      )}
+      <style>{`
+        @keyframes timerFlash {
+          0%, 100% { opacity: 1; }
+          50% { opacity: 0.3; }
+        }
+      `}</style>
     </div>
   );
 }

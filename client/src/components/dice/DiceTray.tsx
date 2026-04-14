@@ -1,8 +1,10 @@
-import { useState, useEffect, useRef } from 'react';
-import { ChevronUp, ChevronDown, Minus, Eye, EyeOff, Settings, X } from 'lucide-react';
+import { useState, useEffect, useRef, useCallback } from 'react';
+import { ChevronUp, ChevronDown, Minus, Eye, EyeOff, Settings, X, Plus, Trash2 } from 'lucide-react';
 import { emitRoll } from '../../socket/emitters';
 import { useDiceStore } from '../../stores/useDiceStore';
+import { useDicePresetStore } from '../../stores/useDicePresetStore';
 import { useSessionStore } from '../../stores/useSessionStore';
+import { useCharacterStore } from '../../stores/useCharacterStore';
 import { theme } from '../../styles/theme';
 
 /**
@@ -51,11 +53,22 @@ export function DiceTray() {
   const [customNotation, setCustomNotation] = useState('');
   const [hiddenRoll, setHiddenRoll] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
+  const [showPresetForm, setShowPresetForm] = useState(false);
   const advantage = useDiceStore((s) => s.advantage);
   const setAdvantage = useDiceStore((s) => s.setAdvantage);
   const lastResult = useDiceStore((s) => s.lastResult);
   const rollHistory = useDiceStore((s) => s.rollHistory);
   const isDM = useSessionStore((s) => s.isDM);
+  const myCharacter = useCharacterStore((s) => s.myCharacter);
+  const presets = useDicePresetStore((s) => s.presets);
+  const loadPresets = useDicePresetStore((s) => s.loadPresets);
+  const addPreset = useDicePresetStore((s) => s.addPreset);
+  const removePreset = useDicePresetStore((s) => s.removePreset);
+
+  // Load presets when character changes
+  useEffect(() => {
+    if (myCharacter?.id) loadPresets(myCharacter.id);
+  }, [myCharacter?.id, loadPresets]);
 
   // Rolling animation state — cycles random values while the die
   // "tumbles". When the server's real result comes back via
@@ -127,9 +140,73 @@ export function DiceTray() {
     setCustomNotation('');
   };
 
+  const handlePresetClick = useCallback((notation: string, label: string) => {
+    emitRoll(notation, label, hiddenRoll || undefined);
+  }, [hiddenRoll]);
+
+  const handlePresetContextMenu = useCallback((e: React.MouseEvent, presetId: string) => {
+    e.preventDefault();
+    if (myCharacter?.id) removePreset(myCharacter.id, presetId);
+  }, [myCharacter?.id, removePreset]);
+
+  const handleAddPreset = useCallback((label: string, notation: string) => {
+    if (!myCharacter?.id || !label.trim() || !notation.trim()) return;
+    addPreset(myCharacter.id, { label: label.trim(), notation: notation.trim() });
+    setShowPresetForm(false);
+  }, [myCharacter?.id, addPreset]);
+
   return (
     <>
       <div style={styles.container}>
+        {/* ── Presets row ───────── */}
+        {presets.length > 0 && (
+          <>
+            <div style={styles.presetsRow}>
+              {presets.slice(0, 8).map((p) => (
+                <button
+                  key={p.id}
+                  onClick={() => handlePresetClick(p.notation, p.label)}
+                  onContextMenu={(e) => handlePresetContextMenu(e, p.id)}
+                  title={`${p.label}: ${p.notation}\nRight-click to delete`}
+                  style={styles.presetPill}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.background = theme.gold.bg;
+                    e.currentTarget.style.borderColor = theme.gold.primary;
+                    e.currentTarget.style.color = theme.gold.bright;
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.background = theme.bg.elevated;
+                    e.currentTarget.style.borderColor = theme.gold.border;
+                    e.currentTarget.style.color = theme.gold.primary;
+                  }}
+                >
+                  {p.label}
+                </button>
+              ))}
+            </div>
+            <div aria-hidden style={styles.separator} />
+          </>
+        )}
+        {myCharacter && (
+          <button
+            onClick={() => setShowPresetForm(true)}
+            title="Add dice preset"
+            style={styles.addPresetBtn}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.color = theme.gold.bright;
+              e.currentTarget.style.borderColor = theme.gold.primary;
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.color = theme.gold.primary;
+              e.currentTarget.style.borderColor = theme.gold.border;
+            }}
+          >
+            <Plus size={12} />
+          </button>
+        )}
+
+        {presets.length > 0 && <div aria-hidden style={styles.separator} />}
+
         {/* ── Dice buttons + Advanced (all one row) ───────── */}
         <div style={styles.row}>
           {DICE_TYPES.map((die) => (
@@ -194,6 +271,13 @@ export function DiceTray() {
           lastResult={lastResult}
           rollHistory={rollHistory}
           onClose={() => setShowAdvanced(false)}
+        />
+      )}
+
+      {showPresetForm && (
+        <PresetFormModal
+          onAdd={handleAddPreset}
+          onClose={() => setShowPresetForm(false)}
         />
       )}
     </>
@@ -322,6 +406,62 @@ function AdvancedDiceModal(props: AdvancedDiceModalProps) {
               </div>
             </section>
           )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Preset form modal ──────────────────────────────────────
+function PresetFormModal({
+  onAdd,
+  onClose,
+}: {
+  onAdd: (label: string, notation: string) => void;
+  onClose: () => void;
+}) {
+  const [label, setLabel] = useState('');
+  const [notation, setNotation] = useState('');
+
+  return (
+    <div onClick={onClose} style={modalStyles.overlay}>
+      <div onClick={(e) => e.stopPropagation()} style={modalStyles.panel}>
+        <div style={modalStyles.header}>
+          <span style={modalStyles.title}>Add Preset</span>
+          <button onClick={onClose} style={modalStyles.closeBtn} title="Close">
+            <X size={16} />
+          </button>
+        </div>
+        <div style={modalStyles.body}>
+          <section style={modalStyles.section}>
+            <div style={modalStyles.label}>Label</div>
+            <input
+              autoFocus
+              style={{ ...styles.customInput, width: '100%' }}
+              placeholder="Longsword Attack"
+              value={label}
+              onChange={(e) => setLabel(e.target.value)}
+            />
+          </section>
+          <section style={modalStyles.section}>
+            <div style={modalStyles.label}>Notation</div>
+            <input
+              style={{ ...styles.customInput, width: '100%' }}
+              placeholder="1d20+7"
+              value={notation}
+              onChange={(e) => setNotation(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') onAdd(label, notation);
+              }}
+            />
+          </section>
+          <button
+            style={styles.rollBtn}
+            onClick={() => onAdd(label, notation)}
+            disabled={!label.trim() || !notation.trim()}
+          >
+            Save Preset
+          </button>
         </div>
       </div>
     </div>
@@ -514,6 +654,51 @@ const styles: Record<string, React.CSSProperties> = {
     gap: theme.space.sm,
     height: '100%',
     padding: `0 ${theme.space.md}px`,
+  },
+  presetsRow: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 4,
+    maxWidth: 320,
+    overflowX: 'auto' as const,
+    overflowY: 'hidden' as const,
+    scrollbarWidth: 'none' as const,
+    flexShrink: 0,
+  },
+  presetPill: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: '0 10px',
+    height: 28,
+    borderRadius: 14,
+    background: theme.bg.elevated,
+    border: `1px solid ${theme.gold.border}`,
+    color: theme.gold.primary,
+    fontSize: 10,
+    fontWeight: 700,
+    fontFamily: theme.font.body,
+    letterSpacing: '0.02em',
+    cursor: 'pointer',
+    transition: `all ${theme.motion.fast}`,
+    outline: 'none',
+    flexShrink: 0,
+    whiteSpace: 'nowrap' as const,
+  },
+  addPresetBtn: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    background: theme.bg.elevated,
+    border: `1px solid ${theme.gold.border}`,
+    color: theme.gold.primary,
+    cursor: 'pointer',
+    transition: `all ${theme.motion.fast}`,
+    outline: 'none',
+    flexShrink: 0,
   },
   row: {
     display: 'flex',

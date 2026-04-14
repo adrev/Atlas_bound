@@ -7,6 +7,7 @@ import { useSessionStore } from '../../stores/useSessionStore';
 import { useCharacterStore } from '../../stores/useCharacterStore';
 import { emitCharacterUpdate } from '../../socket/emitters';
 import { resolveSpellSlug } from '../../utils/spell-aliases';
+import { getCreatureIconUrl, getSpellIconUrl, getItemIconUrl } from '../../utils/compendiumIcons';
 import type {
   CompendiumMonster,
   CompendiumSpell,
@@ -97,16 +98,16 @@ function formatSpeed(speed: Record<string, number>): string {
     .join(', ');
 }
 
-function getCreatureImage(slug: string): { svg: string; png: string } {
-  const base = slug.replace(/-a5e$/, '').replace(/_bf$/, '').replace(/-tob1-2023$/, '');
-  return { svg: `/uploads/tokens/${base}.svg`, png: `/uploads/tokens/${base}.png` };
+function getCreatureImage(_slug: string, name?: string, type?: string): { svg: string; png: string } {
+  const icon = getCreatureIconUrl(name || _slug, type);
+  return { svg: icon, png: icon };
 }
 
 function MonsterDetail({ monster: initialMonster }: { monster: CompendiumMonster }) {
   const [monster, setMonster] = useState(initialMonster);
   const [versions, setVersions] = useState<{ slug: string; name: string; source: string; cr: string; hp: number; ac: number }[]>([]);
   const [selectedSlug, setSelectedSlug] = useState(initialMonster.slug);
-  const imageUrls = getCreatureImage(monster.slug);
+  const imageUrls = getCreatureImage(monster.slug, monster.name, monster.type);
   const [imgSrc, setImgSrc] = useState(imageUrls.png);
   const [imgExists, setImgExists] = useState(true);
   const isDM = useSessionStore((s) => s.isDM);
@@ -414,14 +415,14 @@ function MonsterDetail({ monster: initialMonster }: { monster: CompendiumMonster
   );
 }
 
-function getSpellImage(slug: string): { png: string; alt: string } {
-  const alt = slug.replace(/-a5e$/, '').replace(/_bf$/, '');
-  return { png: `/uploads/spells/${slug}.png`, alt: `/uploads/spells/${alt}.png` };
+function getSpellImage(slug: string, name?: string, school?: string): { png: string; alt: string } {
+  const icon = getSpellIconUrl(name || slug, school);
+  return { png: icon, alt: icon };
 }
 
-function getItemImage(slug: string): { png: string; alt: string } {
-  const alt = slug.replace(/-a5e$/, '').replace(/_bf$/, '');
-  return { png: `/uploads/items/${slug}.png`, alt: `/uploads/items/${alt}.png` };
+function getItemImage(slug: string, name?: string, type?: string): { png: string; alt: string } {
+  const icon = getItemIconUrl(name || slug, type);
+  return { png: icon, alt: icon };
 }
 
 function SpellDetail({ spell }: { spell: CompendiumSpell }) {
@@ -429,7 +430,7 @@ function SpellDetail({ spell }: { spell: CompendiumSpell }) {
     spell.level === 0
       ? `${spell.school} cantrip`
       : `${ordinal(spell.level)}-level ${spell.school.toLowerCase()}`;
-  const spellImg = getSpellImage(spell.slug);
+  const spellImg = getSpellImage(spell.slug, spell.name, spell.school);
   const [spellImgSrc, setSpellImgSrc] = useState(spellImg.png);
   const [imgExists, setImgExists] = useState(true);
 
@@ -632,7 +633,7 @@ function SpellDetail({ spell }: { spell: CompendiumSpell }) {
 
 function ItemDetail({ item, onClose }: { item: CompendiumItem & { rawJson?: Record<string, unknown> }; onClose?: () => void }) {
   const rarityColor = RARITY_COLORS[item.rarity.toLowerCase()] ?? '#888';
-  const itemImg = getItemImage(item.slug);
+  const itemImg = getItemImage(item.slug, item.name, item.type);
   const [itemImgSrc, setItemImgSrc] = useState(itemImg.png);
   const [imgExists, setImgExists] = useState(true);
   const [editing, setEditing] = useState(false);
@@ -833,7 +834,7 @@ function ItemDetail({ item, onClose }: { item: CompendiumItem & { rawJson?: Reco
           {/* Image upload */}
           <div style={{ display: 'flex', gap: 8, marginBottom: 6, alignItems: 'center' }}>
             <img src={itemImgSrc} alt="" style={{ width: 40, height: 40, borderRadius: '50%', objectFit: 'cover', border: `2px solid ${theme.border.default}` }}
-              onError={e => { (e.currentTarget).src = '/uploads/items/default-item.svg'; }} />
+              onError={e => { (e.currentTarget).src = getItemIconUrl(item.name, item.type); }} />
             <input ref={fileInputRef} type="file" accept="image/png,image/jpeg,image/webp" style={{ display: 'none' }}
               onChange={async (e) => {
                 const file = e.target.files?.[0];

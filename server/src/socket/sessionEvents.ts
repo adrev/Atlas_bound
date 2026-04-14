@@ -7,7 +7,7 @@ import {
   addPlayerToRoom, removePlayerFromRoom, getPlayerBySocketId,
   type RoomPlayer,
 } from '../utils/roomState.js';
-import { sessionJoinSchema, sessionKickSchema, sessionUpdateSettingsSchema, sessionViewingSchema, musicChangeSchema } from '../utils/validation.js';
+import { sessionJoinSchema, sessionKickSchema, sessionUpdateSettingsSchema, sessionViewingSchema, musicChangeSchema, handoutSchema } from '../utils/validation.js';
 import { safeHandler } from '../utils/socketHelpers.js';
 import { dbRowToCharacter } from '../utils/characterMapper.js';
 
@@ -262,6 +262,23 @@ export function registerSessionEvents(io: Server, socket: Socket): void {
     if (!ctx || ctx.player.role !== 'dm') return;  // DM only
     // Broadcast to all players in the session (including DM)
     io.to(ctx.room.sessionId).emit('session:music-changed', { track: parsed.data.track });
+  }));
+
+  socket.on('session:handout', safeHandler(socket, async (data) => {
+    const parsed = handoutSchema.safeParse(data);
+    if (!parsed.success) return;
+    const ctx = getPlayerBySocketId(socket.id);
+    if (!ctx || ctx.player.role !== 'dm') return;
+    const { title, content, imageUrl, targetUserIds } = parsed.data;
+    const payload = { title, content: content ?? '', imageUrl: imageUrl ?? undefined, fromDM: true };
+    if (targetUserIds && targetUserIds.length > 0) {
+      for (const uid of targetUserIds) {
+        const player = ctx.room.players.get(uid);
+        if (player) io.to(player.socketId).emit('session:handout-received' as any, payload);
+      }
+    } else {
+      io.to(ctx.room.sessionId).emit('session:handout-received' as any, payload);
+    }
   }));
 
   socket.on('disconnect', () => { handleDisconnect(io, socket); });

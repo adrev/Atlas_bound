@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useMemo } from 'react';
 import { Layer, Group, Circle, Rect, Text, Ring, Shape, Line, Arrow } from 'react-konva';
-import type { Token } from '@dnd-vtt/shared';
+import type { Token, TokenAura } from '@dnd-vtt/shared';
 import { useMapStore } from '../../../stores/useMapStore';
 import { useCombatStore } from '../../../stores/useCombatStore';
 import { useSessionStore } from '../../../stores/useSessionStore';
@@ -12,6 +12,154 @@ import { theme } from '../../../styles/theme';
 // Stable empty array to avoid creating new [] on every render
 // (causes "getSnapshot should be cached" infinite loop in React)
 const EMPTY_STAGED: never[] = [];
+
+// ── Condition visual effects ──────────────────────────────────────────
+const CONDITION_VISUALS: Record<string, { color: string; opacity: number; effect: 'tint' | 'glow' | 'pulse' | 'overlay' }> = {
+  poisoned:       { color: '#2ecc71', opacity: 0.3,  effect: 'tint' },
+  burning:        { color: '#e67e22', opacity: 0.4,  effect: 'glow' },
+  frozen:         { color: '#3498db', opacity: 0.3,  effect: 'tint' },
+  stunned:        { color: '#f1c40f', opacity: 0.3,  effect: 'pulse' },
+  paralyzed:      { color: '#f1c40f', opacity: 0.4,  effect: 'tint' },
+  frightened:     { color: '#9b59b6', opacity: 0.3,  effect: 'pulse' },
+  invisible:      { color: 'transparent', opacity: 0.3, effect: 'overlay' },
+  prone:          { color: '#95a5a6', opacity: 0.2,  effect: 'tint' },
+  restrained:     { color: '#e74c3c', opacity: 0.3,  effect: 'tint' },
+  charmed:        { color: '#e91e63', opacity: 0.3,  effect: 'glow' },
+  blinded:        { color: '#2c3e50', opacity: 0.4,  effect: 'overlay' },
+  deafened:       { color: '#7f8c8d', opacity: 0.2,  effect: 'tint' },
+  concentration:  { color: '#3498db', opacity: 0.2,  effect: 'glow' },
+  blessed:        { color: '#f1c40f', opacity: 0.25, effect: 'glow' },
+  hexed:          { color: '#8e44ad', opacity: 0.3,  effect: 'glow' },
+};
+
+/**
+ * Shared pulse animation hook for condition overlays.
+ */
+function usePulseOpacity(active: boolean) {
+  const [pulseOpacity, setPulseOpacity] = useState(0.2);
+  const rafRef = useRef<number>(0);
+
+  useEffect(() => {
+    if (!active) return;
+    const start = performance.now();
+    const animate = (time: number) => {
+      const elapsed = (time - start) / 1000;
+      const t = (Math.sin(elapsed * 2.5) + 1) / 2;
+      setPulseOpacity(0.15 + t * 0.35);
+      rafRef.current = requestAnimationFrame(animate);
+    };
+    rafRef.current = requestAnimationFrame(animate);
+    return () => cancelAnimationFrame(rafRef.current);
+  }, [active]);
+
+  return pulseOpacity;
+}
+
+/**
+ * Renders glow/pulse condition effects BEHIND the token.
+ */
+function ConditionGlowLayer({ conditions, tokenSize }: { conditions: string[]; tokenSize: number }) {
+  const hasPulse = conditions.some((c) => CONDITION_VISUALS[c]?.effect === 'pulse');
+  const pulseOpacity = usePulseOpacity(hasPulse);
+
+  const elements: React.ReactNode[] = [];
+  for (const cond of conditions) {
+    const vis = CONDITION_VISUALS[cond];
+    if (!vis) continue;
+    if (vis.effect === 'glow' || vis.effect === 'pulse') {
+      const glowRadius = tokenSize / 2 + 10;
+      const op = vis.effect === 'pulse' ? pulseOpacity : vis.opacity;
+      elements.push(
+        <Circle
+          key={`glow-${cond}`}
+          radius={glowRadius}
+          fillRadialGradientStartPoint={{ x: 0, y: 0 }}
+          fillRadialGradientStartRadius={0}
+          fillRadialGradientEndPoint={{ x: 0, y: 0 }}
+          fillRadialGradientEndRadius={glowRadius}
+          fillRadialGradientColorStops={[0, vis.color, 0.6, vis.color, 1, 'transparent']}
+          opacity={op}
+          listening={false}
+        />
+      );
+    }
+  }
+  if (elements.length === 0) return null;
+  return <>{elements}</>;
+}
+
+/**
+ * Renders tint/overlay condition effects ON TOP of the token.
+ */
+function ConditionTintLayer({ conditions, tokenSize }: { conditions: string[]; tokenSize: number }) {
+  const elements: React.ReactNode[] = [];
+  for (const cond of conditions) {
+    const vis = CONDITION_VISUALS[cond];
+    if (!vis) continue;
+    if (vis.effect === 'tint') {
+      elements.push(
+        <Circle
+          key={`tint-${cond}`}
+          radius={tokenSize / 2}
+          fill={vis.color}
+          opacity={vis.opacity}
+          listening={false}
+        />
+      );
+    }
+    // 'overlay' with a non-transparent color (e.g. blinded) renders
+    // as a dark tint on top; 'invisible' is transparent and handled
+    // by groupOpacity in TokenSprite instead.
+    if (vis.effect === 'overlay' && vis.color !== 'transparent') {
+      elements.push(
+        <Circle
+          key={`overlay-${cond}`}
+          radius={tokenSize / 2}
+          fill={vis.color}
+          opacity={vis.opacity}
+          listening={false}
+        />
+      );
+    }
+  }
+  if (elements.length === 0) return null;
+  return <>{elements}</>;
+}
+
+// ── Aura overlay ──────────────────────────────────────────────────────
+function AuraOverlay({ aura, gridSize }: { aura: TokenAura; gridSize: number }) {
+  const radiusPx = (aura.radiusFeet / 5) * gridSize;
+
+  if (aura.shape === 'square') {
+    const side = radiusPx * 2;
+    return (
+      <Rect
+        x={-side / 2}
+        y={-side / 2}
+        width={side}
+        height={side}
+        fill={aura.color}
+        opacity={aura.opacity}
+        cornerRadius={4}
+        listening={false}
+      />
+    );
+  }
+
+  // Circle with soft edge via radial gradient
+  return (
+    <Circle
+      radius={radiusPx}
+      fillRadialGradientStartPoint={{ x: 0, y: 0 }}
+      fillRadialGradientStartRadius={0}
+      fillRadialGradientEndPoint={{ x: 0, y: 0 }}
+      fillRadialGradientEndRadius={radiusPx}
+      fillRadialGradientColorStops={[0, aura.color, 0.7, aura.color, 1, 'transparent']}
+      opacity={aura.opacity}
+      listening={false}
+    />
+  );
+}
 
 function TokenImage({ url, size }: { url: string; size: number }) {
   const [image, setImage] = useState<HTMLImageElement | null>(null);
@@ -62,9 +210,10 @@ interface TokenSpriteProps {
   token: Token;
   isSelected: boolean;
   isCurrentTurn: boolean;
+  showTokenLabels: boolean;
 }
 
-function TokenSprite({ token, isSelected, isCurrentTurn }: TokenSpriteProps) {
+function TokenSprite({ token, isSelected, isCurrentTurn, showTokenLabels }: TokenSpriteProps) {
   const { draggable, onDragStart, onDragEnd, onDragMove } = useDragToken(token.id);
   const selectToken = useMapStore((s) => s.selectToken);
   const setHoveredToken = useMapStore((s) => s.setHoveredToken);
@@ -239,6 +388,16 @@ function TokenSprite({ token, isSelected, isCurrentTurn }: TokenSpriteProps) {
         setHoveredToken(null);
       }}
     >
+      {/* Aura overlay — renders behind everything */}
+      {token.aura && (
+        <AuraOverlay aura={token.aura} gridSize={gridSize} />
+      )}
+
+      {/* Condition glow/pulse effects — behind the token */}
+      {tokenConditions.length > 0 && (
+        <ConditionGlowLayer conditions={tokenConditions} tokenSize={tokenSize} />
+      )}
+
       {/* Current turn glow */}
       {isCurrentTurn && (
         <Circle
@@ -282,10 +441,15 @@ function TokenSprite({ token, isSelected, isCurrentTurn }: TokenSpriteProps) {
         fill="transparent"
       />
 
+      {/* Condition tint/overlay effects — on top of the token */}
+      {tokenConditions.length > 0 && (
+        <ConditionTintLayer conditions={tokenConditions} tokenSize={tokenSize} />
+      )}
+
       {/* Skull overlay for dead tokens */}
       {isDead && (
         <Group>
-          <TokenImage url="/uploads/tokens/skull.png" size={tokenSize * 0.7} />
+          <TokenImage url={`data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><circle cx="32" cy="32" r="30" fill="#333" opacity="0.85"/><text x="32" y="44" text-anchor="middle" font-size="36" fill="#ccc" font-family="sans-serif">&#x1F480;</text></svg>')}`} size={tokenSize * 0.7} />
         </Group>
       )}
 
@@ -396,8 +560,10 @@ function TokenSprite({ token, isSelected, isCurrentTurn }: TokenSpriteProps) {
         );
       })()}
 
-      {/* Name label background + text (below token + HP bar) */}
-      {(() => {
+      {/* Name label background + text (below token + HP bar).
+          Shown always when showTokenLabels is on, or when the token
+          is selected / hovered (name is also in the tooltip). */}
+      {(showTokenLabels || isSelected) && (() => {
         const hpBarOffset = showHpBar ? 7 : 0;
         const labelWidth = Math.max(tokenSize + 20, Math.min(token.name.length * 6.5 + 16, 160));
         const needsWrap = token.name.length > (tokenSize + 20) / 6;
@@ -434,10 +600,12 @@ function TokenSprite({ token, isSelected, isCurrentTurn }: TokenSpriteProps) {
       {/* DEAD label */}
       {isDead && (() => {
         const hpBarOffset = showHpBar ? 7 : 0;
+        const labelVisible = showTokenLabels || isSelected;
+        const nameLabelOffset = labelVisible ? (token.name.length > (tokenSize + 20) / 6 ? 28 : 18) : 2;
         return (
           <Text
             text="DEAD"
-            y={tokenSize / 2 + (token.name.length > (tokenSize + 20) / 6 ? 28 : 18) + hpBarOffset}
+            y={tokenSize / 2 + nameLabelOffset + hpBarOffset}
             x={-30}
             width={60}
             align="center"
@@ -450,7 +618,7 @@ function TokenSprite({ token, isSelected, isCurrentTurn }: TokenSpriteProps) {
 
       {/* Condition badges */}
       {token.conditions.length > 0 && (
-        <Group y={tokenSize / 2 + 20 + (showHpBar ? 7 : 0)}>
+        <Group y={tokenSize / 2 + ((showTokenLabels || isSelected) ? 20 : 6) + (showHpBar ? 7 : 0)}>
           {token.conditions.slice(0, 4).map((cond, i) => (
             <Circle
               key={cond}
@@ -732,6 +900,7 @@ export function TokenLayer() {
   const isDM = useSessionStore((s) => s.isDM);
   const userId = useSessionStore((s) => s.userId);
   const enableFog = useSessionStore((s) => s.settings.enableFogOfWar);
+  const showTokenLabels = useSessionStore((s) => s.settings.showTokenLabels ?? false);
   const gridSize = useMapStore((s) => s.currentMap?.gridSize ?? 70);
   const currentMapId = useMapStore((s) => s.currentMap?.id ?? null);
   const stagedHeroesMap = useMapStore((s) => s.stagedHeroes);
@@ -782,6 +951,7 @@ export function TokenLayer() {
           token={token}
           isSelected={token.id === selectedTokenId}
           isCurrentTurn={token.id === currentTurnTokenId}
+          showTokenLabels={showTokenLabels}
         />
       ))}
       {/* Drag preview overlay (ghost + blue arrow + distance label).

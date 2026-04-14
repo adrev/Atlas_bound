@@ -44,6 +44,14 @@ export interface Token {
   conditions: Condition[];
   ownerUserId: string | null;
   createdAt: string;
+  aura?: TokenAura | null;
+}
+
+export interface TokenAura {
+  radiusFeet: number;
+  color: string;
+  opacity: number;
+  shape: 'circle' | 'square';
 }
 
 export interface LightSource {

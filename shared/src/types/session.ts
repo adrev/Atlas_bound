@@ -16,6 +16,9 @@ export interface SessionSettings {
   gridOpacity: number;
   enableFogOfWar: boolean;
   enableDynamicLighting: boolean;
+  showTokenLabels?: boolean;
+  turnTimerEnabled?: boolean;
+  turnTimerSeconds?: number;
 }
 
 export const DEFAULT_SESSION_SETTINGS: SessionSettings = {

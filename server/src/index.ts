@@ -16,6 +16,8 @@ import dndbeyondRouter from './routes/dndbeyond.js';
 import compendiumRouter from './routes/compendium.js';
 import lootRouter from './routes/loot.js';
 import customContentRouter from './routes/customContent.js';
+import notesRouter from './routes/notes.js';
+import encountersRouter from './routes/encounters.js';
 import { seedCompendium, isCompendiumSeeded } from './services/Open5eService.js';
 import { seedEquipment, isEquipmentSeeded } from './services/seedEquipment.js';
 import { registerSocketHandler } from './socket/handler.js';
@@ -126,6 +128,8 @@ app.use('/api/characters', requireAuth, charactersRouter);
 app.use('/api/dndbeyond', requireAuth, dndbeyondRouter);
 app.use('/api', requireAuth, lootRouter);
 app.use('/api/custom', requireAuth, customContentRouter);
+app.use('/api', requireAuth, notesRouter);
+app.use('/api', requireAuth, encountersRouter);
 
 // Upload endpoints (authenticated, with magic-byte validation)
 app.post('/api/uploads/token-image', requireAuth, tokenUpload.single('image'), (req, res) => {

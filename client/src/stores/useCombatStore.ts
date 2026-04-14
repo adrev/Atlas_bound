@@ -1,6 +1,16 @@
 import { create } from 'zustand';
 import type { Combatant, ActionEconomy, Condition } from '@dnd-vtt/shared';
 
+export interface DamageLogEntry {
+  round: number;
+  attackerName: string;
+  targetName: string;
+  damage: number;
+  damageType: string;
+  source: string;
+  timestamp: number;
+}
+
 interface InitiativePrompt {
   tokenId: string;
   bonus: number;
@@ -22,6 +32,15 @@ interface CombatState {
   initiativeRolls: Map<string, number>;
   initiativePrompts: InitiativePrompt[];
   readyCheck: ReadyCheckState | null;
+  damageLog: DamageLogEntry[];
+  combatStartTime: number | null;
+  /** The final recap data, preserved after combat ends so "View Again" works. */
+  lastRecap: {
+    damageLog: DamageLogEntry[];
+    roundCount: number;
+    durationMs: number;
+  } | null;
+  showRecap: boolean;
 }
 
 interface CombatActions {
@@ -47,6 +66,9 @@ interface CombatActions {
   setReadyCheck: (data: ReadyCheckState) => void;
   updateReadyResponses: (responses: Record<string, boolean>) => void;
   clearReadyCheck: () => void;
+  addDamageLog: (entry: DamageLogEntry) => void;
+  clearDamageLog: () => void;
+  setShowRecap: (show: boolean) => void;
 }
 
 const defaultActionEconomy: ActionEconomy = {
@@ -66,6 +88,10 @@ const initialState: CombatState = {
   initiativeRolls: new Map(),
   initiativePrompts: [],
   readyCheck: null,
+  damageLog: [],
+  combatStartTime: null,
+  lastRecap: null,
+  showRecap: false,
 };
 
 export const useCombatStore = create<CombatState & CombatActions>((set) => ({
@@ -81,6 +107,8 @@ export const useCombatStore = create<CombatState & CombatActions>((set) => ({
       initiativeRolls: new Map(),
       initiativePrompts: [],
       readyCheck: null,
+      damageLog: [],
+      combatStartTime: Date.now(),
     }),
 
   syncCombatState: ({ combatants, roundNumber, currentTurnIndex, actionEconomy }) =>
@@ -95,7 +123,7 @@ export const useCombatStore = create<CombatState & CombatActions>((set) => ({
     }),
 
   endCombat: () =>
-    set({
+    set((state) => ({
       active: false,
       roundNumber: 0,
       currentTurnIndex: 0,
@@ -104,7 +132,19 @@ export const useCombatStore = create<CombatState & CombatActions>((set) => ({
       initiativeRolls: new Map(),
       initiativePrompts: [],
       readyCheck: null,
-    }),
+      lastRecap: state.damageLog.length > 0
+        ? {
+            damageLog: [...state.damageLog],
+            roundCount: state.roundNumber,
+            durationMs: state.combatStartTime
+              ? Date.now() - state.combatStartTime
+              : 0,
+          }
+        : null,
+      showRecap: state.damageLog.length > 0,
+      damageLog: [],
+      combatStartTime: null,
+    })),
 
   setCombatants: (combatants) => set({ combatants }),
 
@@ -183,4 +223,13 @@ export const useCombatStore = create<CombatState & CombatActions>((set) => ({
     })),
 
   clearReadyCheck: () => set({ readyCheck: null }),
+
+  addDamageLog: (entry) =>
+    set((state) => ({
+      damageLog: [...state.damageLog, entry],
+    })),
+
+  clearDamageLog: () => set({ damageLog: [] }),
+
+  setShowRecap: (show) => set({ showRecap: show }),
 }));

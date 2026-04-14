@@ -3,6 +3,7 @@ import { theme } from '../../styles/theme';
 import { useSessionStore } from '../../stores/useSessionStore';
 import { useMapStore } from '../../stores/useMapStore';
 import { emitTokenAdd, emitSystemMessage, emitCharacterUpdate } from '../../socket/emitters';
+import { getItemIconUrl, getCreatureIconUrl } from '../../utils/compendiumIcons';
 
 const RARITY_COLORS: Record<string, string> = {
   common: '#9d9d9d', uncommon: '#1eff00', rare: '#0070dd',
@@ -312,7 +313,7 @@ export function LootEditor({ characterId, tokenName, onClose, canEdit = true }: 
       });
 
       // Spawn token via socket
-      const imgUrl = entry.item_slug ? `/uploads/items/${entry.item_slug}.png` : '/uploads/items/default-item.svg';
+      const imgUrl = getItemIconUrl(entry.item_name, entry.item_rarity);
       console.log('[DROP] Spawning token:', entry.item_name, 'at', dropX, dropY);
       emitTokenAdd({
         mapId: currentMap.id, characterId: charData.id, name: entry.item_name,
@@ -348,9 +349,8 @@ export function LootEditor({ characterId, tokenName, onClose, canEdit = true }: 
         {/* Header */}
         <div style={S.header}>
           <div style={S.headerIcon}>
-            <img src={`/uploads/tokens/${(tokenName || '').toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '')}.png`}
+            <img src={getCreatureIconUrl(tokenName || 'Loot')}
               alt="" style={{ width: 32, height: 32, borderRadius: '50%', objectFit: 'cover' }}
-              onError={e => { const p = e.currentTarget.parentElement; if (!p) return; e.currentTarget.style.display = 'none'; p.textContent = '💰'; }}
             />
           </div>
           <div style={{ flex: 1 }}>
@@ -395,9 +395,8 @@ export function LootEditor({ characterId, tokenName, onClose, canEdit = true }: 
                   onMouseEnter={e => (e.currentTarget.style.background = theme.bg.hover)}
                   onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
                 >
-                  <img src={`/uploads/items/${r.slug}.png`} alt="" loading="lazy"
+                  <img src={getItemIconUrl(r.name, r.type)} alt="" loading="lazy"
                     style={S.searchItemImg}
-                    onError={e => { (e.currentTarget).src = '/uploads/items/default-item.svg'; }}
                   />
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ fontSize: 12, fontWeight: 600, color: RARITY_COLORS[r.rarity?.toLowerCase() || 'common'] || theme.text.primary }}>
@@ -687,9 +686,8 @@ export function LootEditor({ characterId, tokenName, onClose, canEdit = true }: 
                     {entry.equipped ? 'E' : ''}
                   </div>
                 )}
-                <img src={`/uploads/items/${entry.item_slug || ''}.png`} alt="" loading="lazy"
+                <img src={getItemIconUrl(entry.item_name)} alt="" loading="lazy"
                   style={S.lootItemImg}
-                  onError={e => { (e.currentTarget).src = '/uploads/items/default-item.svg'; }}
                 />
                 <div
                   style={{ flex: 1, minWidth: 0, cursor: entry.item_slug ? 'pointer' : 'default' }}

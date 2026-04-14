@@ -9,15 +9,18 @@ import { useCharacterStore } from '../../stores/useCharacterStore';
 import { useCombatStore } from '../../stores/useCombatStore';
 import { disconnectSocket } from '../../socket/client';
 import { BattleMap } from '../canvas/BattleMap';
+import { MapTransition } from '../canvas/MapTransition';
 import { PreviewModeBanner } from '../dm/PreviewModeBanner';
 import { InitiativeModal } from '../combat/InitiativeModal';
 import { OpportunityAttackModal } from '../combat/OpportunityAttackModal';
 import { CounterspellModal } from '../combat/CounterspellModal';
 import { ShieldModal } from '../combat/ShieldModal';
 import { ReadyCheckModal } from '../combat/ReadyCheckModal';
+import { CombatRecap } from '../combat/CombatRecap';
 import { MusicEngine } from '../audio/MusicEngine';
 import { ProfileModal } from '../auth/ProfileModal';
 import { Sidebar } from './Sidebar';
+import { HandoutModal } from '../session/HandoutModal';
 import { BottomBar } from './BottomBar';
 import { MapBrowser } from '../mapbrowser/MapBrowser';
 import { CharacterSheetFull } from '../character/CharacterSheetFull';
@@ -395,6 +398,8 @@ export function AppShell() {
         {/* Canvas area */}
         <div style={styles.canvasArea}>
           <BattleMap />
+          {/* Cinematic map transition overlay */}
+          <MapTransition />
           {/* DM-only: overlays on top of the canvas when previewing a
              map the players aren't on. Auto-hides for players. */}
           <PreviewModeBanner />
@@ -437,8 +442,12 @@ export function AppShell() {
       <ShieldModal />
       {/* Ready Check prompt — shown to players when DM initiates. */}
       <ReadyCheckModal />
+      {/* Combat Recap — shown when combat ends. */}
+      <CombatRecap />
       {/* Music engine — headless audio for all users (DM + players). */}
       <MusicEngine />
+      {/* Handout modal — shows dramatic reveals sent by the DM. */}
+      <HandoutModal />
       {/* Profile Modal */}
       <ProfileModal open={showProfileModal} onClose={() => setShowProfileModal(false)} />
       {/* Character Sheet Full overlay - from token click */}

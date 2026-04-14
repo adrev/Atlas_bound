@@ -3,6 +3,7 @@ import {
   Swords,
   BookOpen,
   Library,
+  ScrollText,
   MessageSquare,
   Users,
   Settings,
@@ -18,6 +19,7 @@ import { useCharacterStore } from '../../stores/useCharacterStore';
 import { emitTokenAdd, emitCharacterUpdate, emitViewing } from '../../socket/emitters';
 import { Upload, MapPin, RefreshCw } from 'lucide-react';
 import { ChatPanel } from '../chat/ChatPanel';
+import { NotesPanel } from '../notes/NotesPanel';
 import { PlayerList } from '../session/PlayerList';
 import { DMToolbar } from '../dm/DMToolbar';
 import { CompendiumPanel } from '../compendium/CompendiumPanel';
@@ -26,7 +28,7 @@ import { Check, Circle } from 'lucide-react';
 import { theme } from '../../styles/theme';
 import { Button } from '../ui';
 
-type TabId = 'combat' | 'character' | 'compendium' | 'chat' | 'players' | 'dm';
+type TabId = 'combat' | 'character' | 'compendium' | 'notes' | 'chat' | 'players' | 'dm';
 
 interface TabDef {
   id: TabId;
@@ -42,6 +44,7 @@ const TABS: TabDef[] = [
   // listeners, routing, and component names don't need to change.
   { id: 'character', label: 'Hero', icon: <BookOpen size={16} /> },
   { id: 'compendium', label: 'Wiki', icon: <Library size={16} /> },
+  { id: 'notes', label: 'Notes', icon: <ScrollText size={16} /> },
   { id: 'chat', label: 'Chat', icon: <MessageSquare size={16} /> },
   { id: 'players', label: 'Players', icon: <Users size={16} /> },
   { id: 'dm', label: 'Tools', icon: <Settings size={16} />, dmOnly: true },
@@ -124,6 +127,7 @@ export function Sidebar() {
         {activeTab === 'combat' && <CombatPanel />}
         {activeTab === 'character' && <HeroTab />}
         {activeTab === 'compendium' && <CompendiumPanel />}
+        {activeTab === 'notes' && <NotesPanel />}
         {activeTab === 'chat' && <ChatPanel />}
         {activeTab === 'players' && <PlayerList />}
         {activeTab === 'dm' && isDM && <DMToolsPanel />}
@@ -550,6 +554,8 @@ function HeroTab() {
 function CombatPanel() {
   const combatActive = useCombatStore((s) => s.active);
   const readyCheck = useCombatStore((s) => s.readyCheck);
+  const lastRecap = useCombatStore((s) => s.lastRecap);
+  const setShowRecap = useCombatStore((s) => s.setShowRecap);
   const isDM = useSessionStore((s) => s.isDM);
   const players = useSessionStore((s) => s.players);
   const tokens = useMapStore((s) => s.tokens);
@@ -664,6 +670,16 @@ function CombatPanel() {
             <p style={{ color: theme.text.muted, fontSize: 12, margin: 0, textAlign: 'center' }}>
               Wait for the DM to start combat.
             </p>
+          )}
+          {lastRecap && (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setShowRecap(true)}
+              style={{ marginTop: 8 }}
+            >
+              View Last Recap
+            </Button>
           )}
         </div>
       </div>

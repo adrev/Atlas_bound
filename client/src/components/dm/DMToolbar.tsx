@@ -6,12 +6,14 @@ import { useAudioStore } from '../../stores/useAudioStore';
 import { emitUpdateSettings } from '../../socket/emitters';
 import { CreatureLibrary } from './CreatureLibrary';
 import { SceneManager } from './SceneManager';
+import { EncounterBuilder } from './EncounterBuilder';
 import { theme } from '../../styles/theme';
 import { EMOJI } from '../../styles/emoji';
 import { Section, Button, NumberInput, FieldGroup, Divider } from '../ui';
 import { MusicPlayer } from './MusicPlayer';
+import { HandoutSender } from './HandoutSender';
 
-type DMView = 'main' | 'creatures' | 'maps' | 'settings';
+type DMView = 'main' | 'creatures' | 'maps' | 'settings' | 'encounters';
 
 /**
  * DM Tools tab content. Rewritten for the UI unification pass using
@@ -74,6 +76,23 @@ export function DMToolbar() {
           Back to DM Tools
         </Button>
         <SceneManager />
+      </div>
+    );
+  }
+
+  if (view === 'encounters') {
+    return (
+      <div style={styles.container}>
+        <Button
+          variant="ghost"
+          size="sm"
+          leadingIcon={<ArrowLeft size={12} />}
+          onClick={() => setView('main')}
+          style={{ alignSelf: 'flex-start', marginBottom: theme.space.md }}
+        >
+          Back to DM Tools
+        </Button>
+        <EncounterBuilder />
       </div>
     );
   }
@@ -141,11 +160,38 @@ export function DMToolbar() {
 
       <Divider variant="plain" />
 
+      {/* Encounters */}
+      <Section title="Encounters" emoji="⚔️">
+        <p style={styles.hint}>
+          Save groups of creatures as presets and deploy them to the map in one click
+        </p>
+        <Button
+          variant="primary"
+          size="md"
+          fullWidth
+          onClick={() => setView('encounters')}
+        >
+          Manage Encounters
+        </Button>
+      </Section>
+
+      <Divider variant="plain" />
+
       {/* Settings */}
       <Section title="Settings" emoji="⚙">
         <Button variant="ghost" size="md" fullWidth onClick={() => setView('settings')}>
           Game Settings
         </Button>
+      </Section>
+
+      <Divider variant="plain" />
+
+      {/* Handouts */}
+      <Section title="Handouts" emoji="📜">
+        <p style={styles.hint}>
+          Send images or text to specific players as dramatic reveals
+        </p>
+        <HandoutSender />
       </Section>
 
       <Divider variant="plain" />
@@ -164,6 +210,9 @@ function SettingsPanel({
     gridOpacity: number;
     enableFogOfWar: boolean;
     enableDynamicLighting: boolean;
+    showTokenLabels?: boolean;
+    turnTimerEnabled?: boolean;
+    turnTimerSeconds?: number;
   };
 }) {
   return (
@@ -230,6 +279,53 @@ function SettingsPanel({
       <p style={styles.hint}>
         Uses walls to block line of sight and cast shadows from light sources.
       </p>
+
+      <div
+        style={styles.settingRow}
+        onClick={() =>
+          emitUpdateSettings({
+            showTokenLabels: !settings.showTokenLabels,
+          })
+        }
+      >
+        <span style={styles.settingLabel}>Show Token Labels</span>
+        <ToggleSwitch checked={settings.showTokenLabels ?? false} />
+      </div>
+      <p style={styles.hint}>
+        When enabled, token names are permanently visible below all tokens.
+      </p>
+
+      <Divider variant="ornate" marginY={theme.space.md} />
+
+      <div
+        style={styles.settingRow}
+        onClick={() =>
+          emitUpdateSettings({ turnTimerEnabled: !settings.turnTimerEnabled })
+        }
+      >
+        <span style={styles.settingLabel}>Turn Timer</span>
+        <ToggleSwitch checked={!!settings.turnTimerEnabled} />
+      </div>
+      <p style={styles.hint}>
+        Show a countdown timer during each combatant's turn.
+      </p>
+
+      {settings.turnTimerEnabled && (
+        <FieldGroup label="Timer Duration (seconds)">
+          <NumberInput
+            value={settings.turnTimerSeconds ?? 60}
+            onChange={(e) =>
+              emitUpdateSettings({ turnTimerSeconds: Number(e.target.value) })
+            }
+            min={15}
+            max={300}
+            step={5}
+            size="md"
+            fullWidth={false}
+            containerStyle={{ width: 100 }}
+          />
+        </FieldGroup>
+      )}
 
       <Divider variant="ornate" marginY={theme.space.md} />
 

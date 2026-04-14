@@ -4,6 +4,7 @@ import { useSessionStore } from '../../stores/useSessionStore';
 import { emitTokenAdd } from '../../socket/emitters';
 import { theme } from '../../styles/theme';
 import type { CompendiumMonster } from '@dnd-vtt/shared';
+import { getCreatureIconUrl } from '../../utils/compendiumIcons';
 
 // --- Helpers ---
 
@@ -13,20 +14,15 @@ function getCreatureSlug(name: string): string {
 }
 /** SVG placeholder URL */
 function getCreatureImageSvg(name: string): string {
-  return '/uploads/tokens/' + getCreatureSlug(name) + '.svg';
+  return getCreatureIconUrl(name);
 }
-/** PNG art URL (AI-generated or downloaded) */
+/** PNG art URL — uses inline SVG placeholder instead of missing /uploads/ files */
 function getCreatureImagePng(name: string): string {
-  return '/uploads/tokens/' + getCreatureSlug(name) + '.png';
+  return getCreatureIconUrl(name);
 }
-/** Best image URL for spawning tokens — prefer PNG (real art), fallback SVG */
+/** Best image URL for spawning tokens */
 function getCreatureTokenUrl(monster: CompendiumMonster): string {
-  // If we know it has real art, use PNG directly
-  if (monster.tokenImageSource && monster.tokenImageSource !== 'generated') {
-    return getCreatureImagePng(monster.name);
-  }
-  // Otherwise try PNG first (might have been generated since last API fetch)
-  return getCreatureImagePng(monster.name);
+  return getCreatureIconUrl(monster.name, monster.type);
 }
 
 function getRecommendedLevel(cr: number): string {
@@ -239,7 +235,7 @@ export function CreatureLibrary() {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            userId: 'npc',
+            isNpc: true,
             name: monster.name,
             race: monster.type,
             class: `CR ${formatCR(monster.challengeRating)}`,

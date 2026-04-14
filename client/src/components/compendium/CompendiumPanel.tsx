@@ -8,6 +8,7 @@ import { CreateMonsterForm } from './CreateMonsterForm';
 import { CreateSpellForm } from './CreateSpellForm';
 import { CreateItemForm } from './CreateItemForm';
 import type { CompendiumSearchResult, CompendiumCategory } from '@dnd-vtt/shared';
+import { getCompendiumIconUrl } from '../../utils/compendiumIcons';
 
 type FilterCategory = 'all' | 'monsters' | 'spells' | 'items' | 'homebrew';
 
@@ -59,6 +60,7 @@ export function CompendiumPanel() {
   // Load default entries when no search
   useEffect(() => {
     if (query.trim()) return;
+    setResults([]);
     setLoading(true);
     const cat = category;
 
@@ -132,10 +134,35 @@ export function CompendiumPanel() {
   const fetchResults = useCallback((q: string, cat: FilterCategory) => {
     if (!q.trim()) return; // Default browse handles empty state
 
+    setResults([]);
     setLoading(true);
-    const params = new URLSearchParams({ q: q.trim(), limit: '20' });
-    if (cat !== 'all' && cat !== 'homebrew') params.set('category', cat);
     const sid = sessionId || 'default';
+    const searchQ = q.trim().toLowerCase();
+
+    if (cat === 'homebrew') {
+      // Homebrew-only: search custom content, no SRD
+      Promise.all([
+        fetch(`/api/custom/monsters?sessionId=${sid}`).then(r => r.ok ? r.json() : [])
+          .then((items: any[]) => items.filter((i: any) => i.name.toLowerCase().includes(searchQ))
+            .map((m: any) => ({ slug: m.slug, name: m.name, category: 'monsters' as const, snippet: `Homebrew · ${m.size} ${m.type}`, cr: m.challengeRating }))),
+        fetch(`/api/custom/spells?sessionId=${sid}`).then(r => r.ok ? r.json() : [])
+          .then((items: any[]) => items.filter((i: any) => i.name.toLowerCase().includes(searchQ))
+            .map((s: any) => ({ slug: s.slug, name: s.name, category: 'spells' as const, snippet: `Homebrew · ${s.school}`, level: s.level }))),
+        fetch(`/api/custom/items?sessionId=${sid}`).then(r => r.ok ? r.json() : [])
+          .then((items: any[]) => items.filter((i: any) => i.name.toLowerCase().includes(searchQ))
+            .map((i: any) => ({ slug: i.id || i.slug, name: i.name, category: 'items' as const, snippet: `Homebrew · ${i.type}`, rarity: i.rarity }))),
+      ]).then(([monsters, spells, items]) => {
+        setResults([...monsters, ...spells, ...items]);
+        setLoading(false);
+      }).catch(() => {
+        setResults([]);
+        setLoading(false);
+      });
+      return;
+    }
+
+    const params = new URLSearchParams({ q: q.trim(), limit: '20' });
+    if (cat !== 'all') params.set('category', cat);
 
     // Search SRD compendium + homebrew in parallel, merge results
     Promise.all([
@@ -143,18 +170,18 @@ export function CompendiumPanel() {
       // Also search custom content matching the query
       ...(cat === 'all' || cat === 'monsters' ? [
         fetch(`/api/custom/monsters?sessionId=${sid}`).then(r => r.ok ? r.json() : [])
-          .then((items: any[]) => items.filter(i => i.name.toLowerCase().includes(q.trim().toLowerCase())).slice(0, 5)
-            .map(m => ({ slug: m.slug, name: m.name, category: 'monsters' as const, snippet: `Homebrew · ${m.size} ${m.type}`, cr: m.challengeRating })))
+          .then((items: any[]) => items.filter((i: any) => i.name.toLowerCase().includes(searchQ)).slice(0, 5)
+            .map((m: any) => ({ slug: m.slug, name: m.name, category: 'monsters' as const, snippet: `Homebrew · ${m.size} ${m.type}`, cr: m.challengeRating })))
       ] : []),
       ...(cat === 'all' || cat === 'spells' ? [
         fetch(`/api/custom/spells?sessionId=${sid}`).then(r => r.ok ? r.json() : [])
-          .then((items: any[]) => items.filter(i => i.name.toLowerCase().includes(q.trim().toLowerCase())).slice(0, 5)
-            .map(s => ({ slug: s.slug, name: s.name, category: 'spells' as const, snippet: `Homebrew · ${s.school}`, level: s.level })))
+          .then((items: any[]) => items.filter((i: any) => i.name.toLowerCase().includes(searchQ)).slice(0, 5)
+            .map((s: any) => ({ slug: s.slug, name: s.name, category: 'spells' as const, snippet: `Homebrew · ${s.school}`, level: s.level })))
       ] : []),
       ...(cat === 'all' || cat === 'items' ? [
         fetch(`/api/custom/items?sessionId=${sid}`).then(r => r.ok ? r.json() : [])
-          .then((items: any[]) => items.filter(i => i.name.toLowerCase().includes(q.trim().toLowerCase())).slice(0, 5)
-            .map(i => ({ slug: i.id || i.slug, name: i.name, category: 'items' as const, snippet: `Homebrew · ${i.type}`, rarity: i.rarity })))
+          .then((items: any[]) => items.filter((i: any) => i.name.toLowerCase().includes(searchQ)).slice(0, 5)
+            .map((i: any) => ({ slug: i.id || i.slug, name: i.name, category: 'items' as const, snippet: `Homebrew · ${i.type}`, rarity: i.rarity })))
       ] : []),
     ]).then(([srdData, ...customArrays]) => {
       const customResults = customArrays.flat();
@@ -163,9 +190,9 @@ export function CompendiumPanel() {
       setLoading(false);
     }).catch(() => {
       setResults([]);
-        setLoading(false);
-      });
-  }, []);
+      setLoading(false);
+    });
+  }, [sessionId]);
 
   // Debounced search on query change
   useEffect(() => {
@@ -294,14 +321,10 @@ export function CompendiumPanel() {
           >
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               <img
-                src={`/uploads/${r.category === 'monsters' ? 'tokens' : r.category === 'spells' ? 'spells' : 'items'}/${r.slug}.png`}
+                src={getCompendiumIconUrl(r.name, r.category, r.snippet)}
                 alt=""
                 loading="lazy"
                 style={{ width: 28, height: 28, borderRadius: '50%', objectFit: 'cover', flexShrink: 0, border: `1.5px solid ${theme.border.default}` }}
-                onError={(e) => {
-                  const img = e.currentTarget as HTMLImageElement;
-                  if (!img.src.includes('default-item')) img.src = '/uploads/items/default-item.svg';
-                }}
               />
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={styles.resultTop}>

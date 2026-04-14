@@ -352,6 +352,30 @@ export async function initDatabase(): Promise<void> {
 
     CREATE INDEX IF NOT EXISTS idx_custom_monsters_session ON custom_monsters(session_id);
     CREATE INDEX IF NOT EXISTS idx_custom_spells_session ON custom_spells(session_id);
+
+    CREATE TABLE IF NOT EXISTS encounter_presets (
+      id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL,
+      name TEXT NOT NULL,
+      creatures TEXT NOT NULL DEFAULT '[]',
+      created_at TEXT DEFAULT (NOW()::text)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_encounter_presets_session ON encounter_presets(session_id);
+
+    CREATE TABLE IF NOT EXISTS session_notes (
+      id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL,
+      title TEXT NOT NULL DEFAULT 'Untitled',
+      content TEXT NOT NULL DEFAULT '',
+      category TEXT NOT NULL DEFAULT 'general',
+      is_shared INTEGER NOT NULL DEFAULT 0,
+      created_by TEXT NOT NULL,
+      created_at TEXT DEFAULT (NOW()::text),
+      updated_at TEXT DEFAULT (NOW()::text)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_session_notes_session ON session_notes(session_id);
   `);
 
   // Create system NPC user if it doesn't exist

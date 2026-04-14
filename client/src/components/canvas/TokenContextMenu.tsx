@@ -33,7 +33,7 @@ function parse<T>(val: unknown, fallback: T): T {
   return (val as T) ?? fallback;
 }
 
-type SubMenu = null | 'hp' | 'attack' | 'conditions';
+type SubMenu = null | 'hp' | 'attack' | 'conditions' | 'aura';
 
 export function TokenContextMenu() {
   const contextTokenId = useMapStore((s) => s.contextMenuTokenId);
@@ -195,6 +195,63 @@ export function TokenContextMenu() {
           </div>
         )}
 
+        {subMenu === 'aura' && (
+          <div style={{ padding: '8px 12px', borderBottom: `1px solid ${C.border}` }}>
+            <div style={{ fontSize: 10, color: C.textMuted, marginBottom: 4 }}>Radius (feet)</div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 3, marginBottom: 8 }}>
+              {[5, 10, 15, 20, 30, 60].map(r => (
+                <button key={r} onClick={() => {
+                  const current = (token as any).aura;
+                  emitTokenUpdate(token.id, {
+                    aura: { radiusFeet: r, color: current?.color || '#d4a843', opacity: current?.opacity || 0.2, shape: current?.shape || 'circle' },
+                  } as any);
+                  close();
+                }} style={{
+                  padding: '3px 8px', fontSize: 10, borderRadius: 3, cursor: 'pointer',
+                  background: (token as any).aura?.radiusFeet === r ? 'rgba(212,168,67,0.3)' : C.bgHover,
+                  border: `1px solid ${(token as any).aura?.radiusFeet === r ? C.gold : C.border}`,
+                  color: (token as any).aura?.radiusFeet === r ? C.gold : C.textSec, fontWeight: 600,
+                }}>{r} ft</button>
+              ))}
+            </div>
+            <div style={{ fontSize: 10, color: C.textMuted, marginBottom: 4 }}>Color</div>
+            <div style={{ display: 'flex', gap: 4, marginBottom: 8 }}>
+              {[
+                { label: 'Gold', color: '#d4a843' },
+                { label: 'Purple', color: '#9b59b6' },
+                { label: 'Green', color: '#27ae60' },
+                { label: 'Red', color: '#c0392b' },
+                { label: 'Blue', color: '#2980b9' },
+              ].map(preset => (
+                <button key={preset.label} onClick={() => {
+                  const current = (token as any).aura;
+                  if (!current) {
+                    emitTokenUpdate(token.id, {
+                      aura: { radiusFeet: 10, color: preset.color, opacity: 0.2, shape: 'circle' },
+                    } as any);
+                  } else {
+                    emitTokenUpdate(token.id, {
+                      aura: { ...current, color: preset.color },
+                    } as any);
+                  }
+                  close();
+                }} style={{
+                  width: 24, height: 24, borderRadius: 4, cursor: 'pointer',
+                  background: preset.color,
+                  border: `2px solid ${(token as any).aura?.color === preset.color ? '#fff' : 'transparent'}`,
+                  opacity: 0.8,
+                }} title={preset.label} />
+              ))}
+            </div>
+            {(token as any).aura && (
+              <Btn label="Remove Aura" color={C.red} onClick={() => {
+                emitTokenUpdate(token.id, { aura: null } as any);
+                close();
+              }} />
+            )}
+          </div>
+        )}
+
         {/* Main menu items */}
         {subMenu === null && (
           <div>
@@ -210,6 +267,7 @@ export function TokenContextMenu() {
                 inflict a condition on themselves (e.g. via a buff spell) do
                 so through the cast flow, not by picking from this menu. */}
             {isDM && <Item icon="🎭" label="Conditions" onClick={() => setSubMenu('conditions')} hasArrow />}
+            {isDM && <Item icon="🔮" label={(token as any).aura ? 'Aura (active)' : 'Aura'} onClick={() => setSubMenu('aura')} hasArrow />}
             <Item icon="📊" label="View Stats" onClick={async () => {
               // For NPC/creature tokens: open compendium stat block
               // For player tokens: open character sheet

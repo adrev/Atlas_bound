@@ -15,6 +15,9 @@ export const sessionUpdateSettingsSchema = z.object({
   gridType: z.enum(['square', 'hex']).optional(),
   enableFogOfWar: z.boolean().optional(),
   enableDynamicLighting: z.boolean().optional(),
+  showTokenLabels: z.boolean().optional(),
+  turnTimerEnabled: z.boolean().optional(),
+  turnTimerSeconds: z.number().int().min(15).max(300).optional(),
 });
 
 // --- Map event schemas ---
@@ -68,6 +71,12 @@ export const tokenUpdateSchema = z.object({
     lightColor: z.string().optional(),
     conditions: z.array(z.string()).optional(),
     ownerUserId: z.string().nullable().optional(),
+    aura: z.object({
+      radiusFeet: z.number().min(5).max(120),
+      color: z.string(),
+      opacity: z.number().min(0).max(1),
+      shape: z.enum(['circle', 'square']),
+    }).nullable().optional(),
   }),
 });
 
@@ -317,6 +326,14 @@ export const musicChangeSchema = z.object({
   track: z.string().max(50).nullable(),  // null = stop
 });
 
+// --- Handout schema ---
+export const handoutSchema = z.object({
+  title: z.string().min(1).max(200),
+  content: z.string().max(5000).optional(),
+  imageUrl: z.string().max(1000).optional(),
+  targetUserIds: z.array(z.string()).max(20).optional(),
+});
+
 // --- Session viewing schema ---
 export const sessionViewingSchema = z.object({
   tab: z.string().min(1).max(50),
@@ -460,6 +477,7 @@ export const createCharacterSchema = z.object({
   })).optional(),
   concentratingOn: z.string().nullable().optional(),
   compendiumSlug: z.string().nullable().optional(),
+  isNpc: z.boolean().optional(),
 });
 
 export const updateCharacterSchema = createCharacterSchema.partial();
@@ -551,6 +569,16 @@ export const createCustomItemSchema = z.object({
 });
 
 export const updateCustomItemSchema = createCustomItemSchema.partial().omit({ sessionId: true });
+
+// --- Encounter preset schemas ---
+export const createEncounterSchema = z.object({
+  name: z.string().min(1).max(100),
+  creatures: z.array(z.object({
+    slug: z.string().min(1),
+    name: z.string().min(1).max(200),
+    count: z.number().int().min(1).max(20),
+  })).min(1).max(50),
+});
 
 export const createMapSchema = z.object({
   name: z.string().min(1).max(100),

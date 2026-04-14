@@ -7,6 +7,7 @@ import { useDiceStore } from '../stores/useDiceStore';
 import { useCharacterStore } from '../stores/useCharacterStore';
 import { useDrawStore } from '../stores/useDrawStore';
 import { useSceneStore } from '../stores/useSceneStore';
+import { pushHandout } from '../components/session/HandoutModal';
 
 const PREBUILT_IMAGE_MAP: Record<string, string> = {
   'Goblin Camp': '/maps/goblin-camp.png',
@@ -91,6 +92,15 @@ export function registerListeners(socket: Socket): () => void {
     // a session or DM switching to a prebuilt map mid-session)
     if (!preservedImageUrl && map.name) {
       preservedImageUrl = PREBUILT_IMAGE_MAP[map.name] ?? null;
+    }
+
+    // Fire cinematic transition overlay when switching to a DIFFERENT
+    // map for players (non-preview only). Skip if this is a preview
+    // load or if reloading the same map the client already has.
+    if (!isPreview && currentMap && currentMap.id !== map.id) {
+      window.dispatchEvent(new CustomEvent('map-transition-start', {
+        detail: { mapName: map.name || 'Unknown' },
+      }));
     }
 
     // Use the new applyMapLoad action which handles the preview flag
@@ -252,7 +262,29 @@ export function registerListeners(socket: Socket): () => void {
   });
 
   socket.on('combat:hp-changed', ({ tokenId, hp, tempHp }) => {
-    useCombatStore.getState().updateHP(tokenId, hp, tempHp);
+    const combatState = useCombatStore.getState();
+    // Record damage in the damage log when HP decreases during combat
+    if (combatState.active) {
+      const target = combatState.combatants.find((c) => c.tokenId === tokenId);
+      if (target) {
+        const oldHp = target.hp + target.tempHp;
+        const newHp = hp + (tempHp ?? 0);
+        const damage = oldHp - newHp;
+        if (damage > 0) {
+          const attacker = combatState.combatants[combatState.currentTurnIndex];
+          combatState.addDamageLog({
+            round: combatState.roundNumber,
+            attackerName: attacker?.name ?? 'Unknown',
+            targetName: target.name,
+            damage,
+            damageType: 'untyped',
+            source: 'Attack',
+            timestamp: Date.now(),
+          });
+        }
+      }
+    }
+    combatState.updateHP(tokenId, hp, tempHp);
   });
 
   socket.on('combat:condition-changed', ({ tokenId, conditions }) => {
@@ -392,6 +424,11 @@ export function registerListeners(socket: Socket): () => void {
     useDrawStore.getState().clearPreview(tempId);
   });
 
+  // --- Handouts ---
+  socket.on('session:handout-received' as any, (payload: { title: string; content: string; imageUrl?: string; fromDM: boolean }) => {
+    pushHandout(payload);
+  });
+
   // Return cleanup function
   return () => {
     socket.off('session:state-sync');
@@ -442,5 +479,6 @@ export function registerListeners(socket: Socket): () => void {
     socket.off('drawing:cleared');
     socket.off('drawing:streamed');
     socket.off('drawing:stream-end');
+    socket.off('session:handout-received');
   };
 }
