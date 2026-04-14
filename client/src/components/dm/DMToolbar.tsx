@@ -435,8 +435,8 @@ function AudioSliderRow({
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
-          width: prominent ? 32 : 26,
-          height: prominent ? 32 : 26,
+          width: 30,
+          height: 30,
           borderRadius: theme.radius.sm,
           border: `1px solid ${dimmed ? theme.border.default : theme.gold.border}`,
           background: dimmed ? theme.bg.deep : theme.gold.bg,
@@ -446,7 +446,7 @@ function AudioSliderRow({
           transition: `all ${theme.motion.fast}`,
         }}
       >
-        {dimmed ? <VolumeX size={prominent ? 16 : 13} /> : <Volume2 size={prominent ? 16 : 13} />}
+        {dimmed ? <VolumeX size={14} /> : <Volume2 size={14} />}
       </button>
 
       <span
