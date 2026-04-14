@@ -141,6 +141,13 @@ export function registerCharacterEvents(io: Server, socket: Socket): void {
 
     const { characterId } = parsed.data;
 
+    // Verify character belongs to a player in this session
+    const { rows: linkCheck } = await pool.query(
+      'SELECT 1 FROM session_players WHERE session_id = $1 AND character_id = $2',
+      [ctx.room.sessionId, characterId],
+    );
+    if (linkCheck.length === 0) return;
+
     const { rows } = await pool.query('SELECT * FROM characters WHERE id = $1', [characterId]);
     if (rows.length === 0) return;
 

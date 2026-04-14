@@ -22,6 +22,10 @@ export function registerMapEvents(io: Server, socket: Socket): void {
     if (!ctx) return;
     const { mapId } = parsed.data;
 
+    // Verify map belongs to this session
+    const { rows: ownerCheck } = await pool.query('SELECT 1 FROM maps WHERE id = $1 AND session_id = $2', [mapId, ctx.room.sessionId]);
+    if (ownerCheck.length === 0) return;
+
     const { rows: mapRows } = await pool.query('SELECT * FROM maps WHERE id = $1', [mapId]);
     const mapRow = mapRows[0] as Record<string, unknown> | undefined;
     if (!mapRow) return;
@@ -80,6 +84,9 @@ export function registerMapEvents(io: Server, socket: Socket): void {
       const { rows } = await pool.query('SELECT * FROM tokens WHERE id = $1', [tokenId]);
       const row = rows[0] as Record<string, unknown> | undefined;
       if (!row) return;
+      // Verify token's map belongs to this session
+      const { rows: mapCheck } = await pool.query('SELECT 1 FROM maps WHERE id = $1 AND session_id = $2', [row.map_id, ctx.room.sessionId]);
+      if (mapCheck.length === 0) return;
       token = {
         id: row.id as string, mapId: row.map_id as string,
         characterId: row.character_id as string | null, name: row.name as string,
@@ -193,8 +200,12 @@ export function registerMapEvents(io: Server, socket: Socket): void {
     const inMem = ctx.room.tokens.get(tokenId);
     if (inMem) { tokenMapId = inMem.mapId; ctx.room.tokens.delete(tokenId); }
     else {
-      const { rows } = await pool.query('SELECT map_id FROM tokens WHERE id = $1', [tokenId]);
+      const { rows } = await pool.query(
+        'SELECT t.map_id FROM tokens t JOIN maps m ON t.map_id = m.id WHERE t.id = $1 AND m.session_id = $2',
+        [tokenId, ctx.room.sessionId],
+      );
       if (rows[0]) tokenMapId = rows[0].map_id;
+      else return;
     }
 
     await pool.query('DELETE FROM tokens WHERE id = $1', [tokenId]);
@@ -218,7 +229,10 @@ export function registerMapEvents(io: Server, socket: Socket): void {
     let tokenMapId: string | null = null;
     if (token) { tokenMapId = token.mapId; }
     else {
-      const { rows } = await pool.query('SELECT * FROM tokens WHERE id = $1', [tokenId]);
+      const { rows } = await pool.query(
+        'SELECT t.* FROM tokens t JOIN maps m ON t.map_id = m.id WHERE t.id = $1 AND m.session_id = $2',
+        [tokenId, ctx.room.sessionId],
+      );
       const row = rows[0] as Record<string, unknown> | undefined;
       if (!row) return;
       tokenMapId = row.map_id as string;

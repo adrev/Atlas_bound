@@ -159,6 +159,24 @@ router.post('/:id/link-character', async (req: Request, res: Response) => {
     await assertSessionDM(sessionId, authUserId);
   }
 
+  // Verify the character exists and is owned by the target player (or caller is DM)
+  const { rows: charRows } = await pool.query('SELECT user_id FROM characters WHERE id = $1', [characterId]);
+  if (charRows.length === 0) {
+    res.status(404).json({ error: 'Character not found' });
+    return;
+  }
+  if (charRows[0].user_id !== userId) {
+    // DM can link any character; players can only link their own
+    const { rows: dmCheck } = await pool.query(
+      "SELECT 1 FROM session_players WHERE session_id = $1 AND user_id = $2 AND role = 'dm'",
+      [sessionId, authUserId],
+    );
+    if (dmCheck.length === 0) {
+      res.status(403).json({ error: 'Can only link your own characters' });
+      return;
+    }
+  }
+
   await pool.query('UPDATE session_players SET character_id = $1 WHERE session_id = $2 AND user_id = $3',
     [characterId, sessionId, userId]);
   res.json({ success: true });

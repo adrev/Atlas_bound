@@ -135,6 +135,7 @@ router.get('/sessions/:sessionId/maps', async (req: Request, res: Response) => {
 
 // GET /api/maps/:id
 router.get('/maps/:id', async (req: Request, res: Response) => {
+  const userId = getAuthUserId(req);
   const { id } = req.params;
 
   const { rows: mapRows } = await pool.query('SELECT * FROM maps WHERE id = $1', [id]);
@@ -143,6 +144,8 @@ router.get('/maps/:id', async (req: Request, res: Response) => {
     return;
   }
   const map = mapRows[0] as Record<string, unknown>;
+
+  await assertSessionMember(String(map.session_id), userId);
 
   const { rows: tokens } = await pool.query('SELECT * FROM tokens WHERE map_id = $1', [id]);
 

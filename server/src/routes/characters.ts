@@ -128,12 +128,29 @@ router.get('/mine', async (req: Request, res: Response) => {
 
 // GET /api/characters/:id
 router.get('/:id', async (req: Request, res: Response) => {
+  const userId = getAuthUserId(req);
   const { rows } = await pool.query('SELECT * FROM characters WHERE id = $1', [req.params.id]);
   if (rows.length === 0) {
     res.status(404).json({ error: 'Character not found' });
     return;
   }
-  res.json(dbRowToCharacter(rows[0]));
+  const row = rows[0];
+  // Allow if user owns the character or it's an NPC
+  if (row.user_id !== userId && row.user_id !== 'npc') {
+    // Check if they share a session
+    const { rows: shared } = await pool.query(
+      `SELECT 1 FROM session_players sp1
+       JOIN session_players sp2 ON sp1.session_id = sp2.session_id
+       WHERE sp1.user_id = $1 AND sp2.user_id = $2
+       LIMIT 1`,
+      [userId, row.user_id],
+    );
+    if (shared.length === 0) {
+      res.status(403).json({ error: 'Not authorized' });
+      return;
+    }
+  }
+  res.json(dbRowToCharacter(row));
 });
 
 // PUT /api/characters/:id - Update a character
@@ -213,7 +230,12 @@ router.delete('/:id', async (req: Request, res: Response) => {
     res.status(404).json({ error: 'Character not found' });
     return;
   }
-  if (rows[0].user_id !== userId && rows[0].user_id !== 'npc') {
+  if (rows[0].user_id === 'npc') {
+    // NPCs aren't user-scoped; block deletion from this endpoint
+    res.status(403).json({ error: 'Not authorized to delete NPC characters' });
+    return;
+  }
+  if (rows[0].user_id !== userId) {
     res.status(403).json({ error: 'Not authorized' });
     return;
   }

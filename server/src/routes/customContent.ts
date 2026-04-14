@@ -5,7 +5,7 @@ import fs from 'fs';
 import { v4 as uuidv4 } from 'uuid';
 import pool from '../db/connection.js';
 import { UPLOAD_DIR } from '../config.js';
-import { getAuthUserId, assertSessionDM } from '../utils/authorization.js';
+import { getAuthUserId, assertSessionDM, assertSessionMember } from '../utils/authorization.js';
 
 const router = Router();
 
@@ -53,15 +53,19 @@ router.post('/monsters', async (req: Request, res: Response) => {
 });
 
 router.get('/monsters', async (req: Request, res: Response) => {
+  const userId = getAuthUserId(req);
   const sessionId = req.query.sessionId as string;
   if (!sessionId) { res.json([]); return; }
+  await assertSessionMember(sessionId, userId);
   const { rows } = await pool.query('SELECT * FROM custom_monsters WHERE session_id = $1 ORDER BY name ASC', [sessionId]);
   res.json(rows.map(mapMonsterRow));
 });
 
 router.get('/monsters/:slug', async (req: Request, res: Response) => {
+  const userId = getAuthUserId(req);
   const { rows } = await pool.query('SELECT * FROM custom_monsters WHERE slug = $1', [req.params.slug]);
   if (rows.length === 0) { res.status(404).json({ error: 'Not found' }); return; }
+  await assertSessionMember(rows[0].session_id, userId);
   res.json(mapMonsterRow(rows[0]));
 });
 
@@ -171,15 +175,19 @@ router.post('/spells', async (req: Request, res: Response) => {
 });
 
 router.get('/spells', async (req: Request, res: Response) => {
+  const userId = getAuthUserId(req);
   const sessionId = req.query.sessionId as string;
   if (!sessionId) { res.json([]); return; }
+  await assertSessionMember(sessionId, userId);
   const { rows } = await pool.query('SELECT * FROM custom_spells WHERE session_id = $1 ORDER BY level ASC, name ASC', [sessionId]);
   res.json(rows.map(mapSpellRow));
 });
 
 router.get('/spells/:slug', async (req: Request, res: Response) => {
+  const userId = getAuthUserId(req);
   const { rows } = await pool.query('SELECT * FROM custom_spells WHERE slug = $1', [req.params.slug]);
   if (rows.length === 0) { res.status(404).json({ error: 'Not found' }); return; }
+  await assertSessionMember(rows[0].session_id, userId);
   res.json(mapSpellRow(rows[0]));
 });
 
@@ -271,15 +279,19 @@ router.post('/items', async (req: Request, res: Response) => {
 });
 
 router.get('/items', async (req: Request, res: Response) => {
+  const userId = getAuthUserId(req);
   const sessionId = req.query.sessionId as string;
   if (!sessionId) { res.json([]); return; }
+  await assertSessionMember(sessionId, userId);
   const { rows } = await pool.query('SELECT * FROM custom_items WHERE session_id = $1 ORDER BY name ASC', [sessionId]);
   res.json(rows);
 });
 
 router.get('/items/:id', async (req: Request, res: Response) => {
+  const userId = getAuthUserId(req);
   const { rows } = await pool.query('SELECT * FROM custom_items WHERE id = $1', [req.params.id]);
   if (rows.length === 0) { res.status(404).json({ error: 'Not found' }); return; }
+  await assertSessionMember(rows[0].session_id, userId);
   res.json(rows[0]);
 });
 

@@ -7,7 +7,9 @@ const router = Router();
 
 // GET /api/characters/:id/loot
 router.get('/characters/:id/loot', async (req: Request, res: Response) => {
+  const userId = getAuthUserId(req);
   const charId = String(req.params.id);
+  await assertCharacterOwnerOrDM(charId, userId);
   const { rows: entries } = await pool.query('SELECT * FROM loot_entries WHERE character_id = $1 ORDER BY sort_order', [charId]);
   res.json(entries);
 });
