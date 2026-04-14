@@ -1,6 +1,7 @@
 import type { Server, Socket } from 'socket.io';
 import type { Player, GameMode } from '@dnd-vtt/shared';
 import { DEFAULT_SESSION_SETTINGS } from '@dnd-vtt/shared';
+import { v4 as uuidv4 } from 'uuid';
 import pool from '../db/connection.js';
 import {
   createRoom, getRoom, getRoomByCode,
@@ -282,6 +283,14 @@ export function registerSessionEvents(io: Server, socket: Socket): void {
     } else {
       io.to(ctx.room.sessionId).emit('session:handout-received' as any, payload);
     }
+
+    // Auto-save handout as a shared note
+    const noteId = uuidv4();
+    await pool.query(
+      `INSERT INTO session_notes (id, session_id, title, content, category, is_shared, created_by)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+      [noteId, ctx.room.sessionId, title, content || '', 'general', true, ctx.player.userId]
+    );
   }));
 
   socket.on('disconnect', () => { handleDisconnect(io, socket); });

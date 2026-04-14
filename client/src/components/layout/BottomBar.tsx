@@ -4,8 +4,10 @@ import { QuickActions } from '../quickactions/QuickActions';
 import { DiceTray } from '../dice/DiceTray';
 import { useAudioStore } from '../../stores/useAudioStore';
 import { useCharacterStore } from '../../stores/useCharacterStore';
+import { useSessionStore } from '../../stores/useSessionStore';
 import { emitCharacterUpdate } from '../../socket/emitters';
 import { AudioPopover } from '../audio/AudioPopover';
+import { TRACKS } from '../audio/tracks';
 import { theme } from '../../styles/theme';
 import type { SpellSlot } from '@dnd-vtt/shared';
 
@@ -23,6 +25,8 @@ export function BottomBar() {
   const toggleMasterMute = useAudioStore((s) => s.toggleMasterMute);
   const [showAudioPopover, setShowAudioPopover] = useState(false);
   const myCharacter = useCharacterStore((s) => s.myCharacter);
+  const currentTrack = useSessionStore((s) => s.currentTrack);
+  const activeTrack = currentTrack ? TRACKS.find((t) => t.id === currentTrack) : null;
 
   const hasSpellSlots =
     myCharacter?.spellSlots &&
@@ -46,17 +50,41 @@ export function BottomBar() {
       <div style={styles.diceSection}>
         <DiceTray />
       </div>
+      {activeTrack && (
+        <button
+          onClick={() => setShowAudioPopover((v) => !v)}
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 4,
+            padding: '2px 8px',
+            fontSize: 11,
+            color: theme.gold.primary,
+            background: theme.gold.bg,
+            border: `1px solid ${theme.gold.border}`,
+            borderRadius: theme.radius.sm,
+            cursor: 'pointer',
+            flexShrink: 0,
+            whiteSpace: 'nowrap' as const,
+          }}
+          title="Now playing — click for audio controls"
+        >
+          <span>{activeTrack.emoji}</span>
+          <span style={{ fontWeight: 600 }}>{activeTrack.name}</span>
+        </button>
+      )}
       <div style={{ position: 'relative', flexShrink: 0, marginLeft: theme.space.sm }}>
         <button
           onClick={() => setShowAudioPopover((v) => !v)}
           onContextMenu={(e) => { e.preventDefault(); toggleMasterMute(); }}
-          title={masterMuted ? 'Unmute audio (right-click to quick-toggle)' : 'Audio settings (right-click to quick-mute)'}
+          title="Audio Controls (right-click to quick-mute)"
           style={{
             display: 'flex',
+            flexDirection: 'column' as const,
             alignItems: 'center',
             justifyContent: 'center',
-            width: 32,
-            height: 32,
+            width: 36,
+            height: 40,
             borderRadius: theme.radius.sm,
             border: `1px solid ${masterMuted ? theme.border.default : theme.gold.border}`,
             background: masterMuted ? theme.bg.deep : theme.gold.bg,
@@ -64,9 +92,11 @@ export function BottomBar() {
             cursor: 'pointer',
             flexShrink: 0,
             transition: `all ${theme.motion.fast}`,
+            gap: 1,
           }}
         >
           {masterMuted ? <VolumeX size={16} /> : <Volume2 size={16} />}
+          <span style={{ fontSize: 8, fontWeight: 600, lineHeight: 1, letterSpacing: '0.04em' }}>Audio</span>
         </button>
         {showAudioPopover && (
           <AudioPopover onClose={() => setShowAudioPopover(false)} />

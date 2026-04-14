@@ -14,7 +14,7 @@ export function HandoutSender() {
   const [selectedPlayers, setSelectedPlayers] = useState<Set<string>>(new Set());
   const players = useSessionStore((s) => s.players);
 
-  const nonDMPlayers = players.filter((p) => p.role !== 'dm');
+  const connectedPlayers = players.filter((p) => p.role !== 'dm' && p.connected);
 
   const handleSend = () => {
     if (!title.trim()) return;
@@ -107,26 +107,28 @@ export function HandoutSender() {
             <span>Send to all players</span>
           </label>
 
-          {!sendToAll && (
-            <div style={styles.playerList}>
-              {nonDMPlayers.map((p) => (
-                <label key={p.userId} style={styles.checkLabel}>
-                  <input
-                    type="checkbox"
-                    checked={selectedPlayers.has(p.userId)}
-                    onChange={() => togglePlayer(p.userId)}
-                    style={{ accentColor: theme.gold.primary }}
-                  />
-                  <span>{p.displayName}</span>
-                </label>
-              ))}
-              {nonDMPlayers.length === 0 && (
-                <span style={{ fontSize: 11, color: theme.text.muted }}>
-                  No players connected
-                </span>
-              )}
-            </div>
-          )}
+          <div style={styles.playerList}>
+            {connectedPlayers.map((p) => (
+              <label key={p.userId} style={{
+                ...styles.checkLabel,
+                opacity: sendToAll ? 0.5 : 1,
+              }}>
+                <input
+                  type="checkbox"
+                  checked={sendToAll || selectedPlayers.has(p.userId)}
+                  onChange={() => togglePlayer(p.userId)}
+                  disabled={sendToAll}
+                  style={{ accentColor: theme.gold.primary }}
+                />
+                <span>{p.displayName}</span>
+              </label>
+            ))}
+            {connectedPlayers.length === 0 && (
+              <span style={{ fontSize: 11, color: theme.text.muted }}>
+                No players connected
+              </span>
+            )}
+          </div>
         </div>
 
         <Button
