@@ -49,7 +49,7 @@ router.post('/monsters', async (req: Request, res: Response) => {
       imageUrl ?? null,
     ]);
     res.json({ slug, name, source: 'Custom' });
-  } catch (err) {
+  } catch (_err) {
     res.status(500).json({ error: 'Failed to create monster' });
   }
 });
@@ -171,7 +171,7 @@ router.post('/spells', async (req: Request, res: Response) => {
       appliesCondition ?? null, animationType ?? null, animationColor ?? null,
     ]);
     res.json({ slug, name, source: 'Custom' });
-  } catch (err) {
+  } catch (_err) {
     res.status(500).json({ error: 'Failed to create spell' });
   }
 });
@@ -278,7 +278,7 @@ router.post('/items', async (req: Request, res: Response) => {
       range ?? '', ac ?? 0, acType ?? '', magicBonus ?? 0,
     ]);
     res.json({ id, name, source: 'Custom' });
-  } catch (err) {
+  } catch (_err) {
     res.status(500).json({ error: 'Failed to create item' });
   }
 });

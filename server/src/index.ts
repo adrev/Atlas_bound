@@ -30,6 +30,7 @@ import googleAuth from './auth/oauth/google.js';
 import appleAuth from './auth/oauth/apple.js';
 import { requireAuth } from './auth/middleware.js';
 import { lucia } from './auth/lucia.js';
+import pool from './db/connection.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -89,18 +90,89 @@ app.use(cors({
 }));
 app.use(express.json({ limit: '10mb' }));
 
-// Static file serving for uploads (authenticated, with nosniff)
+// Static file serving for uploads (authenticated + scoped, with nosniff).
+//
+// Paths under /uploads/tokens, /uploads/spells, /uploads/items are treated
+// as public compendium artwork and only require a valid session.
+//
+// Paths under /uploads/maps and /uploads/portraits are scoped to users
+// who share a session with the asset: otherwise any authenticated user
+// could harvest maps/portraits from other users' sessions by guessing
+// filenames. The lookup is imperfect (file renames etc. are not tracked)
+// but it stops cross-session scraping in the common case.
 app.use('/uploads', async (req, res, next) => {
   const sessionCookie = lucia.readSessionCookie(req.headers.cookie ?? '');
   if (!sessionCookie) {
     res.status(401).json({ error: 'Authentication required' });
     return;
   }
-  const { session } = await lucia.validateSession(sessionCookie);
-  if (!session) {
+  const { session, user } = await lucia.validateSession(sessionCookie);
+  if (!session || !user) {
     res.status(401).json({ error: 'Invalid session' });
     return;
   }
+
+  const reqPath = req.path;
+
+  // Reject any path traversal attempts (belt-and-suspenders in addition
+  // to express.static's own protection).
+  if (reqPath.includes('..')) {
+    res.status(400).json({ error: 'Invalid path' });
+    return;
+  }
+
+  // Public compendium art — no per-user scoping needed.
+  if (
+    reqPath.startsWith('/tokens/') ||
+    reqPath.startsWith('/spells/') ||
+    reqPath.startsWith('/items/')
+  ) {
+    next();
+    return;
+  }
+
+  // Maps: caller must be a member of a session that references the map file.
+  if (reqPath.startsWith('/maps/')) {
+    const filename = reqPath.slice('/maps/'.length);
+    const url = `/uploads/maps/${filename}`;
+    const { rows } = await pool.query(
+      `SELECT 1 FROM maps m
+       JOIN session_players sp ON sp.session_id = m.session_id
+       WHERE m.image_url = $1 AND sp.user_id = $2
+       LIMIT 1`,
+      [url, user.id],
+    );
+    if (rows.length === 0) {
+      res.status(403).json({ error: 'Forbidden' });
+      return;
+    }
+    next();
+    return;
+  }
+
+  // Portraits: caller must own the character that uses the portrait,
+  // or share a session with a character that uses it.
+  if (reqPath.startsWith('/portraits/')) {
+    const filename = reqPath.slice('/portraits/'.length);
+    const url = `/uploads/portraits/${filename}`;
+    const { rows } = await pool.query(
+      `SELECT 1 FROM characters c
+       LEFT JOIN session_players sp1 ON sp1.character_id = c.id
+       LEFT JOIN session_players sp2 ON sp2.session_id = sp1.session_id
+       WHERE c.portrait_url = $1
+         AND (c.user_id = $2 OR sp2.user_id = $2)
+       LIMIT 1`,
+      [url, user.id],
+    );
+    if (rows.length === 0) {
+      res.status(403).json({ error: 'Forbidden' });
+      return;
+    }
+    next();
+    return;
+  }
+
+  // Any other /uploads subpath: fall through to static (authenticated only).
   next();
 }, express.static(UPLOAD_DIR, {
   maxAge: '1h',

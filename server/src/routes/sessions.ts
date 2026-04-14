@@ -1,5 +1,7 @@
 import { Router, type Request, type Response } from 'express';
 import { v4 as uuidv4 } from 'uuid';
+import { randomBytes } from 'crypto';
+import rateLimit from 'express-rate-limit';
 import pool from '../db/connection.js';
 import { createSessionSchema, joinSessionSchema } from '../utils/validation.js';
 import { DEFAULT_SESSION_SETTINGS } from '@dnd-vtt/shared';
@@ -7,14 +9,27 @@ import { getAuthUserId, assertSessionMember, assertSessionDM } from '../utils/au
 
 const router = Router();
 
-function generateRoomCode(): string {
-  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+// 32-char alphabet excluding 0/O and 1/I for readability.
+// 8 chars × log2(32) = 40 bits of entropy per code.
+const ROOM_CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+const ROOM_CODE_LENGTH = 8;
+
+export function generateRoomCode(): string {
+  const bytes = randomBytes(ROOM_CODE_LENGTH);
   let code = '';
-  for (let i = 0; i < 6; i++) {
-    code += chars[Math.floor(Math.random() * chars.length)];
+  for (let i = 0; i < ROOM_CODE_LENGTH; i++) {
+    code += ROOM_CODE_ALPHABET[bytes[i] % ROOM_CODE_ALPHABET.length];
   }
   return code;
 }
+
+// Rate-limit room-code join attempts to prevent code enumeration.
+const joinLimiter = rateLimit({
+  windowMs: 60 * 1000, max: 20,
+  message: { error: 'Too many join attempts. Please try again later.' },
+  standardHeaders: true, legacyHeaders: false,
+  validate: false, // Cloud Run proxies set X-Forwarded-For
+});
 
 async function getUniqueRoomCode(): Promise<string> {
   let code: string;
@@ -69,14 +84,15 @@ router.post('/', async (req: Request, res: Response) => {
 });
 
 // POST /api/sessions/join - Join a session by room code
-router.post('/join', async (req: Request, res: Response) => {
+router.post('/join', joinLimiter, async (req: Request, res: Response) => {
   const parsed = joinSessionSchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: 'Invalid request', details: parsed.error.issues });
     return;
   }
 
-  const { roomCode } = parsed.data;
+  // Normalize so lowercase input still matches (codes are generated uppercase).
+  const roomCode = parsed.data.roomCode.toUpperCase();
 
   const { rows: sessionRows } = await pool.query(
     'SELECT id, name, room_code, dm_user_id FROM sessions WHERE room_code = $1',

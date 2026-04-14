@@ -6,6 +6,7 @@ import rateLimit from 'express-rate-limit';
 import pool from '../db/connection.js';
 import { lucia } from './lucia.js';
 import { optionalAuth, requireAuth } from './middleware.js';
+import { safeImageUrlSchema } from '../utils/imageUrlValidator.js';
 
 const router = Router();
 
@@ -131,7 +132,7 @@ router.get('/me', optionalAuth, (req: Request, res: Response) => {
 // PUT /api/auth/profile
 const profileUpdateSchema = z.object({
   displayName: z.string().min(1).max(50).optional(),
-  avatarUrl: z.string().url().max(500).nullable().optional(),
+  avatarUrl: safeImageUrlSchema.nullable().optional(),
 });
 
 router.put('/profile', requireAuth, async (req: Request, res: Response) => {

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { safeImageUrlSchema } from './imageUrlValidator.js';
 
 // --- Session event schemas ---
 export const sessionJoinSchema = z.object({
@@ -339,7 +340,7 @@ export const musicActionSchema = z.object({
 export const handoutSchema = z.object({
   title: z.string().min(1).max(200),
   content: z.string().max(5000).optional(),
-  imageUrl: z.string().max(1000).optional(),
+  imageUrl: safeImageUrlSchema.optional(),
   targetUserIds: z.array(z.string()).max(20).optional(),
 });
 
@@ -521,7 +522,7 @@ export const createCustomMonsterSchema = z.object({
   specialAbilities: z.string().max(10000).optional(),
   legendaryActions: z.string().max(10000).optional(),
   description: z.string().max(5000).optional(),
-  imageUrl: z.string().url().max(500).nullable().optional(),
+  imageUrl: safeImageUrlSchema.nullable().optional(),
   senses: z.string().max(500).optional(),
   languages: z.string().max(500).optional(),
   damageResistances: z.string().max(500).optional(),
@@ -544,7 +545,7 @@ export const createCustomSpellSchema = z.object({
   concentration: z.boolean().optional(),
   ritual: z.boolean().optional(),
   classes: z.array(z.string().max(50)).max(20).optional(),
-  imageUrl: z.string().url().max(500).nullable().optional(),
+  imageUrl: safeImageUrlSchema.nullable().optional(),
   higherLevels: z.string().max(5000).optional(),
   damage: z.string().max(100).optional(),
   damageType: z.string().max(50).optional(),
@@ -573,7 +574,7 @@ export const createCustomItemSchema = z.object({
   damage: z.string().max(100).optional(),
   damageType: z.string().max(50).optional(),
   properties: z.array(z.string().max(100)).max(20).optional(),
-  imageUrl: z.string().url().max(500).nullable().optional(),
+  imageUrl: safeImageUrlSchema.nullable().optional(),
   range: z.string().max(100).optional(),
   ac: z.number().min(0).max(99).optional(),
   acType: z.string().max(50).optional(),

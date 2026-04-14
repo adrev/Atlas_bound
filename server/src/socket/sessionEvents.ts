@@ -225,13 +225,42 @@ export function registerSessionEvents(io: Server, socket: Socket): void {
     const ctx = getPlayerBySocketId(socket.id);
     if (!ctx || ctx.player.role !== 'dm') return;
     const { targetUserId } = parsed.data;
+
+    // Prevent self-kick: DMs should not be able to accidentally remove themselves.
+    if (targetUserId === ctx.player.userId) return;
+
+    // Prevent kicking the last DM — would orphan the session.
+    // NOTE: Kicking deletes the session_players row so the user can't simply
+    // reconnect. A kicked user can still rejoin via the room code; future work
+    // may add a ban list or let DMs rotate the room code on kick. TODO.
+    const { rows: targetRoleRows } = await pool.query(
+      'SELECT role FROM session_players WHERE session_id = $1 AND user_id = $2',
+      [ctx.room.sessionId, targetUserId],
+    );
+    const targetRole = targetRoleRows[0]?.role as string | undefined;
+    if (targetRole === 'dm') {
+      const { rows: dmCountRows } = await pool.query(
+        "SELECT COUNT(*)::int AS count FROM session_players WHERE session_id = $1 AND role = 'dm'",
+        [ctx.room.sessionId],
+      );
+      const dmCount = (dmCountRows[0]?.count as number) ?? 0;
+      if (dmCount <= 1) return;
+    }
+
+    // Remove from the DB so the kick is persistent across reconnects.
+    await pool.query(
+      'DELETE FROM session_players WHERE session_id = $1 AND user_id = $2',
+      [ctx.room.sessionId, targetUserId],
+    );
+
     const targetPlayer = ctx.room.players.get(targetUserId);
-    if (!targetPlayer) return;
-    io.to(targetPlayer.socketId).emit('session:kicked', { userId: targetUserId });
-    removePlayerFromRoom(ctx.room.sessionId, targetUserId);
+    if (targetPlayer) {
+      io.to(targetPlayer.socketId).emit('session:kicked', { userId: targetUserId });
+      removePlayerFromRoom(ctx.room.sessionId, targetUserId);
+      const kickedSocket = io.sockets.sockets.get(targetPlayer.socketId);
+      if (kickedSocket) kickedSocket.leave(ctx.room.sessionId);
+    }
     socket.to(ctx.room.sessionId).emit('session:player-left', { userId: targetUserId });
-    const kickedSocket = io.sockets.sockets.get(targetPlayer.socketId);
-    if (kickedSocket) kickedSocket.leave(ctx.room.sessionId);
   }));
 
   socket.on('session:update-settings', safeHandler(socket, async (data) => {

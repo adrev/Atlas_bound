@@ -122,120 +122,155 @@ router.post('/characters/:id/loot/take', async (req: Request, res: Response) => 
     }
   }
 
-  const { rows: entryRows } = await pool.query('SELECT * FROM loot_entries WHERE id = $1 AND character_id = $2', [entryId, creatureCharId]);
-  const entry = entryRows[0] as any;
-  if (!entry) { res.status(404).json({ error: 'Loot entry not found' }); return; }
-
-  const { rows: targetRows } = await pool.query('SELECT id, inventory FROM characters WHERE id = $1', [targetCharacterId]);
-  const targetChar = targetRows[0] as any;
-  if (!targetChar) { res.status(404).json({ error: 'Target character not found' }); return; }
-
-  const inventory = JSON.parse(targetChar.inventory || '[]');
-
-  let itemType: string = 'gear';
-  let weight = 0;
-  let description = '';
-  let cost = 0;
-  let damage = '';
-  let damageType = '';
-  let properties: string[] = [];
-  let range = '';
-  let rarity = entry.item_rarity || 'common';
-  let attunement = false;
-  let acBonus: number | undefined;
-  const slug = entry.item_slug || null;
-  const customItemId = entry.custom_item_id || null;
-
-  const mapType = (t: string): string => {
-    const lower = t.toLowerCase();
-    if (lower.includes('weapon')) return 'weapon';
-    if (lower.includes('armor') || lower.includes('shield')) return 'armor';
-    if (lower.includes('potion')) return 'potion';
-    if (lower.includes('scroll')) return 'scroll';
-    if (lower.includes('currency')) return 'currency';
-    if (lower.includes('treasure')) return 'treasure';
-    return 'gear';
-  };
-
-  if (slug) {
-    const { rows: compRows } = await pool.query('SELECT * FROM compendium_items WHERE slug = $1', [slug]);
-    const compItem = compRows[0] as any;
-    if (compItem) {
-      description = compItem.description || '';
-      rarity = compItem.rarity || rarity;
-      attunement = compItem.requires_attunement === 1;
-      itemType = mapType(compItem.type || '');
-      try {
-        const raw = JSON.parse(compItem.raw_json || '{}');
-        weight = raw.weight ?? 0;
-        cost = raw.costGp ?? raw.valueGp ?? 0;
-        damage = raw.damage ?? '';
-        damageType = raw.damageType ?? '';
-        properties = raw.properties ?? [];
-        range = raw.range ?? '';
-        if (raw.acBonus) acBonus = raw.acBonus;
-        if (raw.ac && itemType === 'armor') acBonus = raw.ac;
-      } catch { /* ignore */ }
-      if (!damage && itemType === 'weapon' && description) {
-        const m = description.match(/(\d+d\d+(?:\s*\+\s*\d+)?)\s+(slashing|piercing|bludgeoning|fire|cold|lightning|thunder|acid|poison|necrotic|radiant|force|psychic)/i);
-        if (m) { damage = m[1].replace(/\s/g, ''); damageType = m[2].toLowerCase(); }
-      }
-    }
-  }
-
-  if (customItemId) {
-    const { rows: ciRows } = await pool.query('SELECT * FROM custom_items WHERE id = $1', [customItemId]);
-    const ci = ciRows[0] as any;
-    if (ci) {
-      description = ci.description || '';
-      rarity = ci.rarity || rarity;
-      attunement = ci.requires_attunement === 1;
-      itemType = mapType(ci.type || '');
-      weight = ci.weight ?? 0;
-      cost = ci.value_gp ?? 0;
-      damage = ci.damage || '';
-      damageType = ci.damage_type || '';
-      try { properties = JSON.parse(ci.properties || '[]'); } catch { properties = []; }
-    }
-  }
-
-  const existingIdx = inventory.findIndex((i: any) =>
-    (slug && i.slug === slug) || (!slug && i.name === entry.item_name && i.type === itemType)
-  );
-
-  if (existingIdx >= 0) {
-    inventory[existingIdx].quantity = (inventory[existingIdx].quantity || 1) + 1;
-  } else {
-    const newItem: Record<string, unknown> = {
-      name: entry.item_name, quantity: 1, weight, description, equipped: false,
-      type: itemType, cost, rarity, slug, imageUrl: slug ? `/uploads/items/${slug}.png` : null,
-    };
-    if (attunement) newItem.attunement = true;
-    if (damage) newItem.damage = damage;
-    if (damageType) newItem.damageType = damageType;
-    if (properties.length > 0) newItem.properties = properties;
-    if (range) newItem.range = range;
-    if (acBonus !== undefined) newItem.acBonus = acBonus;
-    inventory.push(newItem);
-  }
-
-  if (customItemId) {
-    const lastItem = inventory[inventory.length - 1];
-    if (lastItem && !lastItem.slug) lastItem.customItemId = customItemId;
-  }
-
-  const inventoryJson = JSON.stringify(inventory);
-
+  // Race-safe take: lock the loot_entries row for the duration of this
+  // request so two concurrent take calls can't both see the same quantity
+  // and both decrement it (item duplication).
   const client = await pool.connect();
+  let responseInventory: unknown[] = [];
+  let responseItemName = '';
   try {
     await client.query('BEGIN');
-    await client.query('UPDATE characters SET inventory = $1 WHERE id = $2', [inventoryJson, targetCharacterId]);
+
+    const { rows: entryRows } = await client.query(
+      'SELECT * FROM loot_entries WHERE id = $1 AND character_id = $2 FOR UPDATE',
+      [entryId, creatureCharId],
+    );
+    const entry = entryRows[0] as any;
+    if (!entry) {
+      await client.query('ROLLBACK');
+      res.status(404).json({ error: 'Loot entry not found' });
+      return;
+    }
+    if (entry.quantity <= 0) {
+      await client.query('ROLLBACK');
+      res.status(400).json({ error: 'Item no longer available' });
+      return;
+    }
+
+    // Lock the target character row too, so parallel inventory writers
+    // to the same character serialize cleanly.
+    const { rows: targetRows } = await client.query(
+      'SELECT id, inventory FROM characters WHERE id = $1 FOR UPDATE',
+      [targetCharacterId],
+    );
+    const targetChar = targetRows[0] as any;
+    if (!targetChar) {
+      await client.query('ROLLBACK');
+      res.status(404).json({ error: 'Target character not found' });
+      return;
+    }
+
+    const inventory = JSON.parse(targetChar.inventory || '[]');
+
+    let itemType: string = 'gear';
+    let weight = 0;
+    let description = '';
+    let cost = 0;
+    let damage = '';
+    let damageType = '';
+    let properties: string[] = [];
+    let range = '';
+    let rarity = entry.item_rarity || 'common';
+    let attunement = false;
+    let acBonus: number | undefined;
+    const slug = entry.item_slug || null;
+    const customItemId = entry.custom_item_id || null;
+
+    const mapType = (t: string): string => {
+      const lower = t.toLowerCase();
+      if (lower.includes('weapon')) return 'weapon';
+      if (lower.includes('armor') || lower.includes('shield')) return 'armor';
+      if (lower.includes('potion')) return 'potion';
+      if (lower.includes('scroll')) return 'scroll';
+      if (lower.includes('currency')) return 'currency';
+      if (lower.includes('treasure')) return 'treasure';
+      return 'gear';
+    };
+
+    if (slug) {
+      const { rows: compRows } = await client.query('SELECT * FROM compendium_items WHERE slug = $1', [slug]);
+      const compItem = compRows[0] as any;
+      if (compItem) {
+        description = compItem.description || '';
+        rarity = compItem.rarity || rarity;
+        attunement = compItem.requires_attunement === 1;
+        itemType = mapType(compItem.type || '');
+        try {
+          const raw = JSON.parse(compItem.raw_json || '{}');
+          weight = raw.weight ?? 0;
+          cost = raw.costGp ?? raw.valueGp ?? 0;
+          damage = raw.damage ?? '';
+          damageType = raw.damageType ?? '';
+          properties = raw.properties ?? [];
+          range = raw.range ?? '';
+          if (raw.acBonus) acBonus = raw.acBonus;
+          if (raw.ac && itemType === 'armor') acBonus = raw.ac;
+        } catch { /* ignore */ }
+        if (!damage && itemType === 'weapon' && description) {
+          const m = description.match(/(\d+d\d+(?:\s*\+\s*\d+)?)\s+(slashing|piercing|bludgeoning|fire|cold|lightning|thunder|acid|poison|necrotic|radiant|force|psychic)/i);
+          if (m) { damage = m[1].replace(/\s/g, ''); damageType = m[2].toLowerCase(); }
+        }
+      }
+    }
+
+    if (customItemId) {
+      const { rows: ciRows } = await client.query('SELECT * FROM custom_items WHERE id = $1', [customItemId]);
+      const ci = ciRows[0] as any;
+      if (ci) {
+        description = ci.description || '';
+        rarity = ci.rarity || rarity;
+        attunement = ci.requires_attunement === 1;
+        itemType = mapType(ci.type || '');
+        weight = ci.weight ?? 0;
+        cost = ci.value_gp ?? 0;
+        damage = ci.damage || '';
+        damageType = ci.damage_type || '';
+        try { properties = JSON.parse(ci.properties || '[]'); } catch { properties = []; }
+      }
+    }
+
+    const existingIdx = inventory.findIndex((i: any) =>
+      (slug && i.slug === slug) || (!slug && i.name === entry.item_name && i.type === itemType)
+    );
+
+    if (existingIdx >= 0) {
+      inventory[existingIdx].quantity = (inventory[existingIdx].quantity || 1) + 1;
+    } else {
+      const newItem: Record<string, unknown> = {
+        name: entry.item_name, quantity: 1, weight, description, equipped: false,
+        type: itemType, cost, rarity, slug, imageUrl: slug ? `/uploads/items/${slug}.png` : null,
+      };
+      if (attunement) newItem.attunement = true;
+      if (damage) newItem.damage = damage;
+      if (damageType) newItem.damageType = damageType;
+      if (properties.length > 0) newItem.properties = properties;
+      if (range) newItem.range = range;
+      if (acBonus !== undefined) newItem.acBonus = acBonus;
+      inventory.push(newItem);
+    }
+
+    if (customItemId) {
+      const lastItem = inventory[inventory.length - 1];
+      if (lastItem && !lastItem.slug) lastItem.customItemId = customItemId;
+    }
+
+    const inventoryJson = JSON.stringify(inventory);
+
+    // Decrement or delete the loot entry, then persist the target inventory.
+    // Both writes are inside the transaction, with the loot_entries row
+    // held under FOR UPDATE, so concurrent take calls serialize and the
+    // second one sees quantity = 0 (or missing row) instead of racing.
     if (entry.quantity <= 1) {
       await client.query('DELETE FROM loot_entries WHERE id = $1', [entryId]);
     } else {
       await client.query('UPDATE loot_entries SET quantity = quantity - 1 WHERE id = $1', [entryId]);
     }
+    await client.query('UPDATE characters SET inventory = $1 WHERE id = $2', [inventoryJson, targetCharacterId]);
+
     await client.query('COMMIT');
+
+    responseInventory = inventory;
+    responseItemName = entry.item_name;
   } catch (err) {
     await client.query('ROLLBACK');
     throw err;
@@ -243,7 +278,7 @@ router.post('/characters/:id/loot/take', async (req: Request, res: Response) => 
     client.release();
   }
 
-  res.json({ success: true, itemName: entry.item_name, inventory, targetCharacterId });
+  res.json({ success: true, itemName: responseItemName, inventory: responseInventory, targetCharacterId });
 });
 
 // POST /api/characters/:id/inventory/enrich
@@ -342,23 +377,56 @@ router.post('/loot/transfer', async (req: Request, res: Response) => {
     return;
   }
 
-  const { rows: entryRows } = await pool.query('SELECT * FROM loot_entries WHERE id = $1 AND character_id = $2', [lootEntryId, String(fromCharacterId)]);
-  const entry = entryRows[0] as any;
-  if (!entry) { res.status(404).json({ error: 'Loot entry not found' }); return; }
+  // Race-safe transfer: lock the loot row so two concurrent transfers of
+  // the same entry can't both succeed (which would leave the entry under
+  // whichever transaction committed last while both clients believed
+  // they received it).
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
 
-  const { rows: targetRows } = await pool.query('SELECT id, name FROM characters WHERE id = $1', [String(toCharacterId)]);
-  const targetChar = targetRows[0] as any;
-  if (!targetChar) { res.status(404).json({ error: 'Target character not found' }); return; }
+    const { rows: entryRows } = await client.query(
+      'SELECT * FROM loot_entries WHERE id = $1 AND character_id = $2 FOR UPDATE',
+      [lootEntryId, String(fromCharacterId)],
+    );
+    const entry = entryRows[0] as any;
+    if (!entry) {
+      await client.query('ROLLBACK');
+      res.status(404).json({ error: 'Loot entry not found' });
+      return;
+    }
 
-  await pool.query('UPDATE loot_entries SET character_id = $1 WHERE id = $2', [String(toCharacterId), lootEntryId]);
+    const { rows: targetRows } = await client.query(
+      'SELECT id, name FROM characters WHERE id = $1',
+      [String(toCharacterId)],
+    );
+    const targetChar = targetRows[0] as any;
+    if (!targetChar) {
+      await client.query('ROLLBACK');
+      res.status(404).json({ error: 'Target character not found' });
+      return;
+    }
 
-  res.json({
-    success: true,
-    entry: { ...entry, character_id: String(toCharacterId) },
-    itemName: entry.item_name,
-    targetCharacterName: targetChar.name,
-    targetCharacterId: String(toCharacterId),
-  });
+    await client.query(
+      'UPDATE loot_entries SET character_id = $1 WHERE id = $2',
+      [String(toCharacterId), lootEntryId],
+    );
+
+    await client.query('COMMIT');
+
+    res.json({
+      success: true,
+      entry: { ...entry, character_id: String(toCharacterId) },
+      itemName: entry.item_name,
+      targetCharacterName: targetChar.name,
+      targetCharacterId: String(toCharacterId),
+    });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
 });
 
 // POST /api/characters/:id/loot/drop
