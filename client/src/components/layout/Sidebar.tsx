@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, lazy, Suspense } from 'react';
 import {
   Swords,
   BookOpen,
@@ -19,11 +19,34 @@ import { useCharacterStore } from '../../stores/useCharacterStore';
 import { emitTokenAdd, emitCharacterUpdate, emitViewing } from '../../socket/emitters';
 import { Upload, MapPin, RefreshCw, Trash2 } from 'lucide-react';
 import { ChatPanel } from '../chat/ChatPanel';
-import { NotesPanel } from '../notes/NotesPanel';
 import { PlayerList } from '../session/PlayerList';
-import { DMToolbar } from '../dm/DMToolbar';
-import { CompendiumPanel } from '../compendium/CompendiumPanel';
 import { emitStartCombat, emitEndCombat, emitReadyCheck } from '../../socket/emitters';
+
+// Lazy-loaded sidebar tabs. Each of these represents a sizable chunk
+// of code (compendium data, DM toolbar + its sub-panels, the notes
+// editor) that most users don't touch on first load. Splitting them
+// into their own chunks shrinks the initial bundle meaningfully.
+const NotesPanel = lazy(() =>
+  import('../notes/NotesPanel').then((m) => ({ default: m.NotesPanel })),
+);
+const DMToolbar = lazy(() =>
+  import('../dm/DMToolbar').then((m) => ({ default: m.DMToolbar })),
+);
+const CompendiumPanel = lazy(() =>
+  import('../compendium/CompendiumPanel').then((m) => ({ default: m.CompendiumPanel })),
+);
+
+function TabLoadingFallback() {
+  return (
+    <div style={{
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      height: '100%', padding: 24,
+      color: theme.text.muted, fontSize: 12,
+    }}>
+      Loading…
+    </div>
+  );
+}
 import { Check, Circle } from 'lucide-react';
 import { theme } from '../../styles/theme';
 import { Button } from '../ui';
@@ -126,11 +149,23 @@ export function Sidebar() {
       <div style={styles.content}>
         {activeTab === 'combat' && <CombatPanel />}
         {activeTab === 'character' && <HeroTab />}
-        {activeTab === 'compendium' && <CompendiumPanel />}
-        {activeTab === 'notes' && <NotesPanel />}
+        {activeTab === 'compendium' && (
+          <Suspense fallback={<TabLoadingFallback />}>
+            <CompendiumPanel />
+          </Suspense>
+        )}
+        {activeTab === 'notes' && (
+          <Suspense fallback={<TabLoadingFallback />}>
+            <NotesPanel />
+          </Suspense>
+        )}
         {activeTab === 'chat' && <ChatPanel />}
         {activeTab === 'players' && <PlayerList />}
-        {activeTab === 'dm' && isDM && <DMToolsPanel />}
+        {activeTab === 'dm' && isDM && (
+          <Suspense fallback={<TabLoadingFallback />}>
+            <DMToolsPanel />
+          </Suspense>
+        )}
       </div>
     </div>
   );

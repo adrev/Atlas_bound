@@ -8,6 +8,9 @@ import { useCharacterStore } from '../stores/useCharacterStore';
 import { useDrawStore } from '../stores/useDrawStore';
 import { useSceneStore } from '../stores/useSceneStore';
 import { pushHandout } from '../components/session/HandoutModal';
+import { pushOpportunityAttack } from '../components/combat/OpportunityAttackModal';
+import { pushCounterspellOpportunity } from '../components/combat/CounterspellModal';
+import { pushShieldOpportunity } from '../components/combat/ShieldModal';
 
 const MAPS_CDN = 'https://storage.googleapis.com/atlas-bound-data/maps';
 
@@ -299,19 +302,14 @@ export function registerListeners(socket: Socket): () => void {
   // attacker's owner (or DM for NPC attackers). We push it onto the
   // OA queue which the OpportunityAttackModal renders.
   socket.on('combat:oa-opportunity', (data) => {
-    // Lazy-import to avoid a circular dependency with the component.
-    import('../components/combat/OpportunityAttackModal').then(({ pushOpportunityAttack }) => {
-      pushOpportunityAttack(data);
-    });
+    pushOpportunityAttack(data);
   });
 
   // Spell cast attempt — broadcast when a leveled spell is being
   // cast. Every other client checks if their character is eligible
   // to counterspell and shows a prompt.
   socket.on('combat:spell-cast-attempt', (data) => {
-    import('../components/combat/CounterspellModal').then(({ pushCounterspellOpportunity }) => {
-      pushCounterspellOpportunity(data);
-    });
+    pushCounterspellOpportunity(data);
   });
 
   // Counterspell confirmation — fired by a counterspeller's client.
@@ -324,9 +322,7 @@ export function registerListeners(socket: Socket): () => void {
   // Attack-would-hit broadcast — push a Shield prompt onto the
   // queue if the target's owner is this client.
   socket.on('combat:attack-hit-attempt', (data) => {
-    import('../components/combat/ShieldModal').then(({ pushShieldOpportunity }) => {
-      pushShieldOpportunity(data);
-    });
+    pushShieldOpportunity(data);
   });
 
   // Shield confirmation — broadcast so the attacker's resolver

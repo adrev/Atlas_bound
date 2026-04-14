@@ -1,6 +1,21 @@
 import { z } from 'zod';
 import { safeImageUrlSchema } from './imageUrlValidator.js';
 
+// --- Shared primitive schemas (P3.14) ---
+// Tight bounds prevent DoS / off-map spawns / non-finite coordinate poisoning.
+// Typical map sizes are up to 4000x4000 pixels; we allow generous padding for
+// off-map tokens, snapshots, and future growth without letting callers send
+// arbitrary Infinity / 1e308 values.
+const coord = z.number().finite().min(-10000).max(20000);
+const gridCoord = z.number().int().min(-1000).max(1000);
+const colorHex = z.string().regex(/^#[0-9A-Fa-f]{3,8}$/).max(9);
+// `points` as an array of (x, y) objects (used by drawing geometry).
+const pointsXY = z.array(z.object({ x: coord, y: coord })).max(1000);
+// `pointsFlat` as a flat [x0, y0, x1, y1, …] number array (used by fog / walls
+// legacy shape). Bounded to 2000 numbers = 1000 points, same DoS ceiling.
+const pointsFlat = z.array(z.number().finite()).max(2000);
+const conditions = z.array(z.string().max(50)).max(30);
+
 // --- Session event schemas ---
 export const sessionJoinSchema = z.object({
   roomCode: z.string().min(1).max(20),
@@ -28,26 +43,26 @@ export const mapLoadSchema = z.object({
 
 export const tokenMoveSchema = z.object({
   tokenId: z.string().min(1),
-  x: z.number(),
-  y: z.number(),
+  x: coord,
+  y: coord,
 });
 
 export const tokenAddSchema = z.object({
   mapId: z.string().min(1),
   characterId: z.string().nullable().optional(),
   name: z.string().min(1).max(100),
-  x: z.number(),
-  y: z.number(),
-  size: z.number().min(0.25).max(4).default(1),
-  imageUrl: z.string().nullable().optional(),
-  color: z.string().default('#666666'),
+  x: coord,
+  y: coord,
+  size: z.number().finite().min(0.25).max(4).default(1),
+  imageUrl: safeImageUrlSchema.nullable().optional(),
+  color: colorHex.default('#666666'),
   layer: z.enum(['token', 'object', 'effect']).default('token'),
   visible: z.boolean().default(true),
   hasLight: z.boolean().default(false),
-  lightRadius: z.number().min(0).default(0),
-  lightDimRadius: z.number().min(0).default(0),
-  lightColor: z.string().default('#ffcc44'),
-  conditions: z.array(z.string()).default([]),
+  lightRadius: z.number().finite().min(0).max(1000).default(0),
+  lightDimRadius: z.number().finite().min(0).max(1000).default(0),
+  lightColor: colorHex.default('#ffcc44'),
+  conditions: conditions.default([]),
   ownerUserId: z.string().nullable().optional(),
 });
 
@@ -59,37 +74,37 @@ export const tokenUpdateSchema = z.object({
   tokenId: z.string().min(1),
   changes: z.object({
     name: z.string().min(1).max(100).optional(),
-    x: z.number().optional(),
-    y: z.number().optional(),
-    size: z.number().min(0.25).max(4).optional(),
-    imageUrl: z.string().nullable().optional(),
-    color: z.string().optional(),
+    x: coord.optional(),
+    y: coord.optional(),
+    size: z.number().finite().min(0.25).max(4).optional(),
+    imageUrl: safeImageUrlSchema.nullable().optional(),
+    color: colorHex.optional(),
     layer: z.enum(['token', 'object', 'effect']).optional(),
     visible: z.boolean().optional(),
     hasLight: z.boolean().optional(),
-    lightRadius: z.number().min(0).optional(),
-    lightDimRadius: z.number().min(0).optional(),
-    lightColor: z.string().optional(),
-    conditions: z.array(z.string()).optional(),
+    lightRadius: z.number().finite().min(0).max(1000).optional(),
+    lightDimRadius: z.number().finite().min(0).max(1000).optional(),
+    lightColor: colorHex.optional(),
+    conditions: conditions.optional(),
     ownerUserId: z.string().nullable().optional(),
     aura: z.object({
-      radiusFeet: z.number().min(5).max(120),
-      color: z.string(),
-      opacity: z.number().min(0).max(1),
+      radiusFeet: z.number().finite().min(5).max(120),
+      color: colorHex,
+      opacity: z.number().finite().min(0).max(1),
       shape: z.enum(['circle', 'square']),
     }).nullable().optional(),
   }),
 });
 
 export const fogRevealHideSchema = z.object({
-  points: z.array(z.number()),
+  points: pointsFlat,
 });
 
 export const wallAddSchema = z.object({
-  x1: z.number(),
-  y1: z.number(),
-  x2: z.number(),
-  y2: z.number(),
+  x1: coord,
+  y1: coord,
+  x2: coord,
+  y2: coord,
 });
 
 export const wallRemoveSchema = z.object({
@@ -97,8 +112,8 @@ export const wallRemoveSchema = z.object({
 });
 
 export const mapPingSchema = z.object({
-  x: z.number(),
-  y: z.number(),
+  x: coord,
+  y: coord,
 });
 
 // --- Scene Manager (Player Ribbon) schemas ---
@@ -115,23 +130,23 @@ const drawingKindSchema = z.enum([
 const drawingVisibilitySchema = z.enum(['shared', 'dm-only', 'player-only']);
 
 const drawingGeometrySchema = z.object({
-  points: z.array(z.number()).optional(),
+  points: pointsFlat.optional(),
   rect: z.object({
-    x: z.number(),
-    y: z.number(),
-    width: z.number(),
-    height: z.number(),
+    x: coord,
+    y: coord,
+    width: z.number().finite().min(0).max(30000),
+    height: z.number().finite().min(0).max(30000),
   }).optional(),
   circle: z.object({
-    x: z.number(),
-    y: z.number(),
-    radius: z.number().min(0),
+    x: coord,
+    y: coord,
+    radius: z.number().finite().min(0).max(30000),
   }).optional(),
   text: z.object({
-    x: z.number(),
-    y: z.number(),
+    x: coord,
+    y: coord,
     content: z.string().max(500),
-    fontSize: z.number().min(6).max(120),
+    fontSize: z.number().finite().min(6).max(120),
   }).optional(),
 });
 
@@ -246,14 +261,14 @@ export const combatUseMovementSchema = z.object({
 
 export const combatCastSpellSchema = z.object({
   casterId: z.string().min(1),
-  spellName: z.string().min(1),
-  targetIds: z.array(z.string()),
-  targetPosition: z.object({ x: z.number(), y: z.number() }).nullable(),
+  spellName: z.string().min(1).max(200),
+  targetIds: z.array(z.string().min(1).max(100)).max(50),
+  targetPosition: z.object({ x: coord, y: coord }).nullable(),
   animationType: z.enum(['projectile', 'aoe', 'buff', 'melee']),
-  animationColor: z.string(),
+  animationColor: colorHex,
   aoeType: z.enum(['cone', 'sphere', 'line', 'cube']).optional(),
-  aoeSize: z.number().optional(),
-  aoeDirection: z.number().optional(),
+  aoeSize: z.number().finite().min(0).max(1000).optional(),
+  aoeDirection: z.number().finite().min(-720).max(720).optional(),
 });
 
 // --- Combat relay/unvalidated event schemas ---
@@ -315,9 +330,9 @@ export const concentrationDroppedSchema = z.object({
 export const stagedPositionSchema = z.object({
   characterId: z.string().min(1),
   name: z.string().min(1).max(200),
-  x: z.number(),
-  y: z.number(),
-  imageUrl: z.string().max(1000).nullable().optional(),
+  x: coord,
+  y: coord,
+  imageUrl: safeImageUrlSchema.nullable().optional(),
   ownerUserId: z.string().nullable().optional(),
 });
 
@@ -465,7 +480,7 @@ export const createCharacterSchema = z.object({
   features: z.array(z.any()).optional(),
   inventory: z.array(z.any()).optional(),
   deathSaves: z.object({ successes: z.number(), failures: z.number() }).optional(),
-  portraitUrl: z.string().nullable().optional(),
+  portraitUrl: safeImageUrlSchema.nullable().optional(),
   background: backgroundSchema,
   characteristics: characteristicsSchema,
   personality: personalitySchema,

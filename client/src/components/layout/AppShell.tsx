@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, lazy, Suspense } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { Copy, PanelRightClose, PanelRightOpen, X, LogOut, Home, UserCog, ChevronDown, Menu } from 'lucide-react';
 import { useSocket } from '../../hooks/useSocket';
@@ -17,20 +17,34 @@ import { OpportunityAttackModal } from '../combat/OpportunityAttackModal';
 import { CounterspellModal } from '../combat/CounterspellModal';
 import { ShieldModal } from '../combat/ShieldModal';
 import { ReadyCheckModal } from '../combat/ReadyCheckModal';
-import { CombatRecap } from '../combat/CombatRecap';
 import { MusicEngine } from '../audio/MusicEngine';
-import { ProfileModal } from '../auth/ProfileModal';
 import { Sidebar } from './Sidebar';
-import { HandoutModal } from '../session/HandoutModal';
 import { BottomBar } from './BottomBar';
 import { MobileBottomBar } from './MobileBottomBar';
 import type { MobileTab } from './MobileBottomBar';
-import { MapBrowser } from '../mapbrowser/MapBrowser';
-import { CharacterSheetFull } from '../character/CharacterSheetFull';
 import { ChatPanel } from '../chat/ChatPanel';
 import { DiceTray } from '../dice/DiceTray';
 import { TokenActionPanel } from '../canvas/TokenActionPanel';
 import { theme } from '../../styles/theme';
+
+// Lazy-loaded modals/panels — only fetched when first shown. Each of
+// these is either DM-only, modal-only, or infrequently used, so
+// keeping them out of the main chunk saves significant initial bytes.
+const CombatRecap = lazy(() =>
+  import('../combat/CombatRecap').then((m) => ({ default: m.CombatRecap })),
+);
+const ProfileModal = lazy(() =>
+  import('../auth/ProfileModal').then((m) => ({ default: m.ProfileModal })),
+);
+const HandoutModal = lazy(() =>
+  import('../session/HandoutModal').then((m) => ({ default: m.HandoutModal })),
+);
+const MapBrowser = lazy(() =>
+  import('../mapbrowser/MapBrowser').then((m) => ({ default: m.MapBrowser })),
+);
+const CharacterSheetFull = lazy(() =>
+  import('../character/CharacterSheetFull').then((m) => ({ default: m.CharacterSheetFull })),
+);
 
 export function AppShell() {
   const { roomCode } = useParams<{ roomCode: string }>();
@@ -329,16 +343,18 @@ export function AppShell() {
   const sharedModals = (
     <>
       {/* Map Browser Modal */}
-      {(showMapBrowser || (!currentMap && isDM)) && (
-        <div style={styles.mapBrowserOverlay}>
-          <div style={styles.mapBrowserContainer}>
-            <MapBrowser
-              onMapLoaded={() => setShowMapBrowser(false)}
-              onClose={currentMap ? () => setShowMapBrowser(false) : undefined}
-            />
+      <Suspense fallback={null}>
+        {(showMapBrowser || (!currentMap && isDM)) && (
+          <div style={styles.mapBrowserOverlay}>
+            <div style={styles.mapBrowserContainer}>
+              <MapBrowser
+                onMapLoaded={() => setShowMapBrowser(false)}
+                onClose={currentMap ? () => setShowMapBrowser(false) : undefined}
+              />
+            </div>
           </div>
-        </div>
-      )}
+        )}
+      </Suspense>
       {showInitiativeModal && (
         <InitiativeModal onClose={() => setShowInitiativeModal(false)} />
       )}
@@ -346,27 +362,35 @@ export function AppShell() {
       <CounterspellModal />
       <ShieldModal />
       <ReadyCheckModal />
-      <CombatRecap />
+      <Suspense fallback={null}>
+        <CombatRecap />
+      </Suspense>
       <MusicEngine />
-      <HandoutModal />
-      <ProfileModal open={showProfileModal} onClose={() => setShowProfileModal(false)} />
-      {fullSheetCharacter && (
-        <div style={styles.fullSheetOverlay}>
-          <div style={styles.fullSheetContainer}>
-            <button
-              style={styles.closeFullSheet}
-              onClick={() => setFullSheetCharId(null)}
-            >
-              <X size={16} />
-            </button>
-            <CharacterSheetFull
-              character={fullSheetCharacter}
-              onClose={() => { setFullSheetCharId(null); setRequestedTab(null); }}
-              initialTab={requestedTab || undefined}
-            />
+      <Suspense fallback={null}>
+        <HandoutModal />
+      </Suspense>
+      <Suspense fallback={null}>
+        <ProfileModal open={showProfileModal} onClose={() => setShowProfileModal(false)} />
+      </Suspense>
+      <Suspense fallback={null}>
+        {fullSheetCharacter && (
+          <div style={styles.fullSheetOverlay}>
+            <div style={styles.fullSheetContainer}>
+              <button
+                style={styles.closeFullSheet}
+                onClick={() => setFullSheetCharId(null)}
+              >
+                <X size={16} />
+              </button>
+              <CharacterSheetFull
+                character={fullSheetCharacter}
+                onClose={() => { setFullSheetCharId(null); setRequestedTab(null); }}
+                initialTab={requestedTab || undefined}
+              />
+            </div>
           </div>
-        </div>
-      )}
+        )}
+      </Suspense>
     </>
   );
 

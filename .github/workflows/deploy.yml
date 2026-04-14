@@ -41,6 +41,9 @@ jobs:
       - name: Test
         run: npm test
 
+      - name: Security audit
+        run: npm audit --audit-level=moderate
+
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v2
         with:

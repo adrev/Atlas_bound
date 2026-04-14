@@ -1,10 +1,41 @@
-import { useEffect } from 'react';
+import { useEffect, lazy, Suspense } from 'react';
 import { Routes, Route, useSearchParams } from 'react-router-dom';
-import { SessionLobby } from './components/session/SessionLobby';
-import { AppShell } from './components/layout/AppShell';
 import { LoginPage } from './components/auth/LoginPage';
 import { useAuthStore } from './stores/useAuthStore';
 import { theme } from './styles/theme';
+
+const SessionLobby = lazy(() =>
+  import('./components/session/SessionLobby').then((m) => ({ default: m.SessionLobby })),
+);
+const AppShell = lazy(() =>
+  import('./components/layout/AppShell').then((m) => ({ default: m.AppShell })),
+);
+
+function RouteLoadingFallback() {
+  return (
+    <div
+      style={{
+        position: 'fixed',
+        inset: 0,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        background: theme.bg.deepest,
+      }}
+    >
+      <p
+        style={{
+          fontFamily: theme.font.display,
+          fontSize: 20,
+          color: theme.gold.primary,
+          letterSpacing: '3px',
+        }}
+      >
+        Loading...
+      </p>
+    </div>
+  );
+}
 
 export function App() {
   const { user, loading, checkAuth } = useAuthStore();
@@ -55,9 +86,11 @@ export function App() {
   }
 
   return (
-    <Routes>
-      <Route path="/" element={<SessionLobby />} />
-      <Route path="/session/:roomCode" element={<AppShell />} />
-    </Routes>
+    <Suspense fallback={<RouteLoadingFallback />}>
+      <Routes>
+        <Route path="/" element={<SessionLobby />} />
+        <Route path="/session/:roomCode" element={<AppShell />} />
+      </Routes>
+    </Suspense>
   );
 }
