@@ -11,8 +11,11 @@ import {
 // Types
 // ---------------------------------------------------------------------------
 
-type MapCategory = 'combat' | 'social' | 'dungeon';
-type FilterTab = 'all' | 'combat' | 'social';
+type MapCategory = 'combat' | 'social' | 'dungeon' | 'rest';
+type FilterTab = 'all' | 'combat' | 'social' | 'rest';
+
+// Maps are hosted on GCS (same bucket as tokens/music/spells/items)
+const MAPS_CDN = 'https://storage.googleapis.com/atlas-bound-data/maps';
 
 interface PrebuiltMap {
   id: string;
@@ -29,40 +32,36 @@ interface PrebuiltMap {
 // Data
 // ---------------------------------------------------------------------------
 
+// Curated prebuilt library. Each map has a clear story anchor (entry point,
+// branching paths, natural cover, focal point). Images hosted on GCS.
 const PREBUILT_MAPS: PrebuiltMap[] = [
-  { id: 'goblin-camp', name: 'Goblin Camp', description: 'Forest clearing with tents and campfire', category: 'combat', gridCols: 30, gridRows: 30, seed: 101, imageFile: '/maps/goblin-camp.png' },
-  { id: 'underdark-cavern', name: 'Underdark Cavern', description: 'Dark cave with bioluminescent pools', category: 'dungeon', gridCols: 40, gridRows: 30, seed: 202, imageFile: '/maps/underdark-cavern.png' },
-  { id: 'druid-grove', name: 'Druid Grove', description: 'Sacred grove with stone circle', category: 'combat', gridCols: 35, gridRows: 35, seed: 303, imageFile: '/maps/druid-grove.png' },
-  { id: 'moonrise-towers', name: 'Moonrise Towers', description: 'Dark fortress courtyard', category: 'dungeon', gridCols: 40, gridRows: 40, seed: 404, imageFile: '/maps/moonrise-towers.png' },
-  { id: 'nautiloid-wreck', name: 'Nautiloid Wreck', description: 'Crashed mind flayer ship', category: 'combat', gridCols: 30, gridRows: 25, seed: 505, imageFile: '/maps/nautiloid-wreck.png' },
-  { id: 'grymforge', name: 'Grymforge', description: 'Dwarven forge with lava channels', category: 'dungeon', gridCols: 35, gridRows: 30, seed: 606, imageFile: '/maps/grymforge.png' },
-  { id: 'forest-road-ambush', name: 'Forest Road Ambush', description: 'Wooded path with fallen trees', category: 'combat', gridCols: 40, gridRows: 20, seed: 707, imageFile: '/maps/forest-road-ambush.png' },
-  { id: 'zhentarim-hideout', name: 'Zhentarim Hideout', description: 'Underground smuggler\'s den', category: 'dungeon', gridCols: 30, gridRows: 30, seed: 808, imageFile: '/maps/zhentarim-hideout.png' },
-  { id: 'elfsong-tavern', name: 'The Elfsong Tavern', description: 'Cozy two-floor inn with bar and hearth', category: 'social', gridCols: 25, gridRows: 20, seed: 909, imageFile: '/maps/elfsong-tavern.png' },
-  { id: 'last-light-inn', name: 'Last Light Inn', description: 'Fortified roadside inn', category: 'social', gridCols: 30, gridRows: 25, seed: 1010, imageFile: '/maps/last-light-inn.png' },
-  { id: 'cathedral-lathander', name: 'Cathedral of Lathander', description: 'Grand worship hall with stained glass', category: 'social', gridCols: 35, gridRows: 30, seed: 1111, imageFile: '/maps/cathedral-lathander.png' },
-  { id: 'wine-cellar', name: 'Wine Cellar', description: 'Stone cellar with barrels and crates', category: 'dungeon', gridCols: 20, gridRows: 15, seed: 1212, imageFile: '/maps/wine-cellar.png' },
-  { id: 'apothecary-shop', name: 'Apothecary Shop', description: 'Cluttered shop with potions and herbs', category: 'social', gridCols: 15, gridRows: 15, seed: 1313, imageFile: '/maps/apothecary-shop.png' },
-  { id: 'camp-long-rest', name: 'Camp / Long Rest', description: 'Fireside campsite in the wilderness', category: 'combat', gridCols: 20, gridRows: 20, seed: 1414, imageFile: '/maps/camp-long-rest.png' },
-  { id: 'merchant-quarter', name: 'Merchant Quarter', description: 'Town square with market stalls', category: 'social', gridCols: 35, gridRows: 35, seed: 1515, imageFile: '/maps/merchant-quarter.png' },
+  { id: 'apothecary-shop', name: 'Apothecary Shop', description: 'Cluttered shop with potions and herbs', category: 'social', gridCols: 15, gridRows: 15, seed: 1313, imageFile: `${MAPS_CDN}/apothecary-shop.png` },
+  { id: 'elfsong-tavern', name: 'The Elfsong Tavern', description: 'Cozy two-floor inn with bar and hearth', category: 'social', gridCols: 25, gridRows: 20, seed: 909, imageFile: `${MAPS_CDN}/elfsong-tavern.png` },
+  { id: 'cathedral-lathander', name: 'Cathedral of Lathander', description: 'Grand worship hall with stained glass', category: 'social', gridCols: 35, gridRows: 30, seed: 1111, imageFile: `${MAPS_CDN}/cathedral-lathander.png` },
+  { id: 'druid-grove', name: 'Druid Grove', description: 'Sacred grove with stone circle', category: 'combat', gridCols: 35, gridRows: 35, seed: 303, imageFile: `${MAPS_CDN}/druid-grove.png` },
+  { id: 'forest-road-ambush', name: 'Forest Road Ambush', description: 'Wooded path with fallen trees', category: 'combat', gridCols: 40, gridRows: 20, seed: 707, imageFile: `${MAPS_CDN}/forest-road-ambush.png` },
+  { id: 'moonrise-towers', name: 'Moonrise Towers', description: 'Dark fortress courtyard', category: 'dungeon', gridCols: 40, gridRows: 40, seed: 404, imageFile: `${MAPS_CDN}/moonrise-towers.png` },
 ];
 
 const CATEGORY_LABELS: Record<MapCategory, string> = {
   combat: 'Combat',
   social: 'Social',
   dungeon: 'Dungeon',
+  rest: 'Rest',
 };
 
 const CATEGORY_COLORS: Record<MapCategory, string> = {
   combat: '#c0392b',
   social: '#2980b9',
   dungeon: '#8e44ad',
+  rest: '#27ae60',
 };
 
 const FILTER_TABS: { key: FilterTab; label: string }[] = [
   { key: 'all', label: 'All' },
   { key: 'combat', label: 'Combat / Wilderness' },
   { key: 'social', label: 'Social / Interior' },
+  { key: 'rest', label: 'Rest / Camp' },
 ];
 
 // ---------------------------------------------------------------------------
@@ -97,6 +96,11 @@ const PALETTE: Record<MapCategory, { bg: string; grid: string; features: string[
     bg: '#1a1a28',
     grid: 'rgba(50, 50, 80, 0.35)',
     features: ['#2a2a3e', '#3a3a55', '#4e2a5e', '#5a3a6e', '#6a4a7e', '#2e4a5a'],
+  },
+  rest: {
+    bg: '#1f2e1a',
+    grid: 'rgba(60, 90, 50, 0.35)',
+    features: ['#2e4a28', '#3e5a35', '#8b6914', '#a67c1f', '#5a4a35', '#3e5a2e'],
   },
 };
 
@@ -238,6 +242,7 @@ export function PrebuiltMapGallery({ onMapLoaded }: PrebuiltMapGalleryProps) {
   const filteredMaps = PREBUILT_MAPS.filter((m) => {
     if (filter === 'all') return true;
     if (filter === 'combat') return m.category === 'combat' || m.category === 'dungeon';
+    if (filter === 'rest') return m.category === 'rest';
     return m.category === 'social';
   });
 

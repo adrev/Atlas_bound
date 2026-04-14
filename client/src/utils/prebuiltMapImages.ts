@@ -14,24 +14,15 @@
  * Keep in sync with client/src/components/mapbrowser/PrebuiltMapGallery.tsx
  * which is the canonical source of truth for prebuilt map names.
  */
+const MAPS_CDN = 'https://storage.googleapis.com/atlas-bound-data/maps';
+
 export const PREBUILT_THUMBNAIL: Record<string, string> = {
-  'Goblin Camp': '/maps/goblin-camp.png',
-  'Underdark Cavern': '/maps/underdark-cavern.png',
-  'Druid Grove': '/maps/druid-grove.png',
-  'Moonrise Towers': '/maps/moonrise-towers.png',
-  'Nautiloid Wreck': '/maps/nautiloid-wreck.png',
-  'Grymforge': '/maps/grymforge.png',
-  'Forest Road Ambush': '/maps/forest-road-ambush.png',
-  'Zhentarim Hideout': '/maps/zhentarim-hideout.png',
-  'The Elfsong Tavern': '/maps/elfsong-tavern.png',
-  'Last Light Inn': '/maps/last-light-inn.png',
-  'Cathedral of Lathander': '/maps/cathedral-lathander.png',
-  'Wine Cellar': '/maps/wine-cellar.png',
-  'Apothecary Shop': '/maps/apothecary-shop.png',
-  'Camp / Long Rest': '/maps/camp-long-rest.png',
-  'Merchant Quarter': '/maps/merchant-quarter.png',
-  'Dense Forest': '/maps/dense-forest.png',
-  'Long Road': '/maps/long-road.png',
+  'Apothecary Shop': `${MAPS_CDN}/apothecary-shop.png`,
+  'The Elfsong Tavern': `${MAPS_CDN}/elfsong-tavern.png`,
+  'Cathedral of Lathander': `${MAPS_CDN}/cathedral-lathander.png`,
+  'Druid Grove': `${MAPS_CDN}/druid-grove.png`,
+  'Forest Road Ambush': `${MAPS_CDN}/forest-road-ambush.png`,
+  'Moonrise Towers': `${MAPS_CDN}/moonrise-towers.png`,
 };
 
 /**
