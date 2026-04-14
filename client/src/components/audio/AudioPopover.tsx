@@ -132,7 +132,7 @@ const styles: Record<string, React.CSSProperties> = {
     border: `1px solid ${theme.border.default}`,
     borderRadius: theme.radius.md,
     boxShadow: theme.shadow.lg,
-    zIndex: 50,
+    zIndex: 500,
     animation: 'fadeIn 0.12s ease',
   },
 };
