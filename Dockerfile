@@ -23,23 +23,23 @@ RUN npm run build --workspace=shared
 RUN npm run build --workspace=client
 RUN npm run build --workspace=server
 
-# Prune dev dependencies so we can copy production-only node_modules
-RUN npm prune --omit=dev
+# ── Production deps stage (clean install, no build tools) ──
+FROM node:20-alpine AS deps
+
+WORKDIR /app
+COPY package*.json ./
+COPY shared/package*.json ./shared/
+COPY server/package*.json ./server/
+COPY client/package*.json ./client/
+RUN npm install --omit=dev --workspace=server --workspace=shared
 
 # ── Production stage ───────────────────────────────────────
 FROM node:20-alpine
 
 WORKDIR /app
 
-# Copy package files
-COPY package*.json ./
-COPY shared/package*.json ./shared/
-COPY server/package*.json ./server/
-
-# Copy pre-built, pruned node_modules from builder (no build tools needed)
-COPY --from=builder /app/node_modules ./node_modules
-COPY --from=builder /app/server/node_modules ./server/node_modules
-COPY --from=builder /app/shared/node_modules ./shared/node_modules
+# Copy production-only node_modules (no build tools, no dev deps)
+COPY --from=deps /app/node_modules ./node_modules
 
 # Copy built artifacts from builder
 COPY --from=builder /app/shared/dist ./shared/dist
