@@ -344,7 +344,7 @@ export function LootEditor({ characterId, tokenName, onClose, canEdit = true }: 
           <div style={S.headerIcon}>
             <img src={`/uploads/tokens/${(tokenName || '').toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '')}.png`}
               alt="" style={{ width: 32, height: 32, borderRadius: '50%', objectFit: 'cover' }}
-              onError={e => { (e.currentTarget).style.display = 'none'; (e.currentTarget.parentElement!).innerHTML = '<span style="font-size:16px">💰</span>'; }}
+              onError={e => { const p = e.currentTarget.parentElement; if (!p) return; e.currentTarget.style.display = 'none'; p.textContent = '💰'; }}
             />
           </div>
           <div style={{ flex: 1 }}>

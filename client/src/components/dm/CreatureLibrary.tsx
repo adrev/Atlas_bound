@@ -417,14 +417,16 @@ function CreatureCard({
                 setImgSrc(getCreatureImageSvg(monster.name));
               } else {
                 const el = e.currentTarget;
+                const parent = el.parentElement;
+                if (!parent) return;
                 el.style.display = 'none';
                 const color = getTokenColor(monster.type);
-                el.parentElement!.style.backgroundColor = color;
-                el.parentElement!.textContent = '';
+                parent.style.backgroundColor = color;
+                parent.textContent = '';
                 const span = document.createElement('span');
                 span.style.cssText = 'font-size:16px;font-weight:700;color:#fff';
                 span.textContent = monster.name.charAt(0);
-                el.parentElement!.appendChild(span);
+                parent.appendChild(span);
               }
             }}
           />
