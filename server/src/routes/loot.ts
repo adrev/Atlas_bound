@@ -536,13 +536,13 @@ router.post('/characters/:id/loot/drop', async (req: Request, res: Response) => 
       `INSERT INTO tokens (
          id, map_id, character_id, name, x, y, size, image_url, color, layer,
          visible, has_light, light_radius, light_dim_radius, light_color,
-         conditions, owner_user_id
-       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)`,
+         conditions, owner_user_id, faction
+       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)`,
       [
         tokenId, mapId, lootCharId, item.name,
         dropX, dropY, 0.5, imgUrl, '#d4a843', 'token',
         1, 0, 0, 0, '#ffcc44',
-        JSON.stringify([]), null,
+        JSON.stringify([]), null, 'neutral',
       ],
     );
 
@@ -551,7 +551,7 @@ router.post('/characters/:id/loot/drop', async (req: Request, res: Response) => 
       x: dropX, y: dropY, size: 0.5, imageUrl: imgUrl, color: '#d4a843',
       layer: 'token', visible: true,
       hasLight: false, lightRadius: 0, lightDimRadius: 0, lightColor: '#ffcc44',
-      conditions: [], ownerUserId: null, createdAt: now,
+      conditions: [], ownerUserId: null, faction: 'neutral', createdAt: now,
     } as Token;
 
     await client.query('COMMIT');

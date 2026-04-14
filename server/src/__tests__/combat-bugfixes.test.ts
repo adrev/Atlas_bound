@@ -260,3 +260,120 @@ describe('OpportunityAttackService.detectSpellCastingOA', () => {
     expect(ops).toEqual([]);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Faction-based OA detection
+// ---------------------------------------------------------------------------
+
+describe('Opportunity attacks honor token faction', () => {
+  const GRID = 70;
+
+  it('friendly moving away from hostile provokes OA', () => {
+    const sessionId = 's-fac-move-hostile';
+    const mover = makeToken('tMover', {
+      x: 0, y: 0, faction: 'friendly',
+    });
+    const enemy = makeToken('tEnemy', {
+      x: GRID, y: 0, faction: 'hostile',
+    });
+    seedRoom(sessionId, [mover, enemy], [
+      makeCombatant('tMover', { isNPC: false }),
+      makeCombatant('tEnemy'),
+    ]);
+
+    const ops = OAService.detectOpportunityAttacks(
+      sessionId, 'tMover', 0, 0, GRID * 5, 0,
+    );
+    expect(ops.length).toBe(1);
+    expect(ops[0].attackerTokenId).toBe('tEnemy');
+  });
+
+  it('friendly moving away from neutral does NOT provoke OA', () => {
+    const sessionId = 's-fac-move-neutral';
+    const mover = makeToken('tMover', {
+      x: 0, y: 0, faction: 'friendly',
+    });
+    const neutral = makeToken('tNeutral', {
+      x: GRID, y: 0, faction: 'neutral',
+    });
+    seedRoom(sessionId, [mover, neutral], [
+      makeCombatant('tMover', { isNPC: false }),
+      makeCombatant('tNeutral'),
+    ]);
+
+    const ops = OAService.detectOpportunityAttacks(
+      sessionId, 'tMover', 0, 0, GRID * 5, 0,
+    );
+    expect(ops).toEqual([]);
+  });
+
+  it('hostile casting spell near friendly provokes OA', () => {
+    const sessionId = 's-fac-cast-hostile';
+    const caster = makeToken('tCaster', {
+      x: 0, y: 0, faction: 'hostile',
+    });
+    const enemy = makeToken('tEnemy', {
+      x: GRID, y: 0, faction: 'friendly',
+    });
+    seedRoom(sessionId, [caster, enemy], [
+      makeCombatant('tCaster'),
+      makeCombatant('tEnemy', { isNPC: false }),
+    ]);
+
+    const ops = OAService.detectSpellCastingOA(sessionId, 'tCaster');
+    expect(ops.length).toBe(1);
+    expect(ops[0].attackerTokenId).toBe('tEnemy');
+  });
+
+  it('friendly casting spell near hostile provokes OA', () => {
+    const sessionId = 's-fac-cast-friendly';
+    const caster = makeToken('tCaster', {
+      x: 0, y: 0, faction: 'friendly',
+    });
+    const enemy = makeToken('tEnemy', {
+      x: GRID, y: 0, faction: 'hostile',
+    });
+    seedRoom(sessionId, [caster, enemy], [
+      makeCombatant('tCaster', { isNPC: false }),
+      makeCombatant('tEnemy'),
+    ]);
+
+    const ops = OAService.detectSpellCastingOA(sessionId, 'tCaster');
+    expect(ops.length).toBe(1);
+    expect(ops[0].attackerTokenId).toBe('tEnemy');
+  });
+
+  it('friendly casting spell near friendly does NOT provoke OA', () => {
+    const sessionId = 's-fac-cast-ally';
+    const caster = makeToken('tCaster', {
+      x: 0, y: 0, faction: 'friendly',
+    });
+    const ally = makeToken('tAlly', {
+      x: GRID, y: 0, faction: 'friendly',
+    });
+    seedRoom(sessionId, [caster, ally], [
+      makeCombatant('tCaster', { isNPC: false }),
+      makeCombatant('tAlly', { isNPC: false }),
+    ]);
+
+    const ops = OAService.detectSpellCastingOA(sessionId, 'tCaster');
+    expect(ops).toEqual([]);
+  });
+
+  it('hostile casting near neutral does NOT provoke OA', () => {
+    const sessionId = 's-fac-cast-neutral';
+    const caster = makeToken('tCaster', {
+      x: 0, y: 0, faction: 'hostile',
+    });
+    const neutral = makeToken('tNeutral', {
+      x: GRID, y: 0, faction: 'neutral',
+    });
+    seedRoom(sessionId, [caster, neutral], [
+      makeCombatant('tCaster'),
+      makeCombatant('tNeutral'),
+    ]);
+
+    const ops = OAService.detectSpellCastingOA(sessionId, 'tCaster');
+    expect(ops).toEqual([]);
+  });
+});

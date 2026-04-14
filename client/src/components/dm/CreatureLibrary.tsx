@@ -274,6 +274,7 @@ export function CreatureLibrary() {
           lightColor: '#ffcc66',
           conditions: [],
           ownerUserId: null,
+          faction: 'hostile',
         });
       } catch {
         // Fallback without character record
@@ -294,6 +295,7 @@ export function CreatureLibrary() {
           lightColor: '#ffcc66',
           conditions: [],
           ownerUserId: null,
+          faction: 'hostile',
         });
       }
     },

@@ -25,6 +25,8 @@ export interface FogPolygon {
   points: number[];
 }
 
+export type TokenFaction = 'friendly' | 'hostile' | 'neutral';
+
 export interface Token {
   id: string;
   mapId: string;
@@ -43,6 +45,12 @@ export interface Token {
   lightColor: string;
   conditions: Condition[];
   ownerUserId: string | null;
+  /**
+   * Faction controls combat-side behavior (who OAs whom).
+   * Defaults: PC = friendly, NPC = hostile, loot bag = neutral.
+   * DM-togglable from the token overview panel.
+   */
+  faction?: TokenFaction;
   createdAt: string;
   aura?: TokenAura | null;
 }

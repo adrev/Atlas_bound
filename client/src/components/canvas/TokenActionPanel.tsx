@@ -1673,7 +1673,24 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
             }}>{token.name[0]}</div>
           )}
           <div style={{ flex: 1 }}>
-            <div style={{ fontSize: 15, fontWeight: 700 }}>{token.name}</div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              {/* Faction indicator dot visible to everyone */}
+              {(() => {
+                const fac = (token as any).faction ?? 'neutral';
+                const color = fac === 'friendly' ? C.green : fac === 'hostile' ? C.red : C.gold;
+                return (
+                  <span
+                    title={`Faction: ${fac}`}
+                    style={{
+                      width: 10, height: 10, borderRadius: '50%',
+                      background: color, display: 'inline-block',
+                      border: '1px solid rgba(0,0,0,0.35)', flexShrink: 0,
+                    }}
+                  />
+                );
+              })()}
+              <div style={{ fontSize: 15, fontWeight: 700 }}>{token.name}</div>
+            </div>
             {compendiumData && (
               <div style={{ fontSize: 10, color: C.textMuted }}>
                 {compendiumData.size} {compendiumData.type} • CR {compendiumData.challengeRating}
@@ -1684,6 +1701,39 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
                 {character.race} {character.class} Lv{character.level}
               </div>
             )}
+            {/* DM-only faction toggle — switch sides for OA / combat */}
+            {isDM && (() => {
+              const fac = (token as any).faction ?? 'neutral';
+              const opts: { key: 'friendly' | 'neutral' | 'hostile'; label: string; color: string }[] = [
+                { key: 'friendly', label: '🟢 Friendly', color: C.green },
+                { key: 'neutral', label: '🟡 Neutral', color: C.gold },
+                { key: 'hostile', label: '🔴 Hostile', color: C.red },
+              ];
+              return (
+                <div style={{ display: 'flex', gap: 3, marginTop: 4 }}>
+                  {opts.map((o) => {
+                    const active = fac === o.key;
+                    return (
+                      <button
+                        key={o.key}
+                        onClick={() => emitTokenUpdate(token.id, { faction: o.key } as any)}
+                        style={{
+                          flex: 1, padding: '2px 4px', fontSize: 9,
+                          borderRadius: 3, cursor: 'pointer',
+                          background: active ? `${o.color}33` : 'transparent',
+                          border: `1px solid ${active ? o.color : C.border}`,
+                          color: active ? o.color : C.textMuted,
+                          fontWeight: active ? 700 : 500,
+                        }}
+                        title={`Set faction: ${o.key}`}
+                      >
+                        {o.label}
+                      </button>
+                    );
+                  })}
+                </div>
+              );
+            })()}
           </div>
         </div>
 

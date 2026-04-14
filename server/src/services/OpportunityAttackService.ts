@@ -36,7 +36,7 @@ export function detectOpportunityAttacks(
   for (const enemy of room.tokens.values()) {
     if (enemy.id === moverTokenId) continue;
     if (!enemy.visible) continue;
-    if (sameSide(enemy, mover)) continue;
+    if (!isHostileTo(enemy, mover)) continue;
 
     const attackerConds = new Set((enemy.conditions || []) as string[]);
     let prevented: string | null = null;
@@ -106,7 +106,7 @@ export function detectSpellCastingOA(
   for (const enemy of room.tokens.values()) {
     if (enemy.id === casterTokenId) continue;
     if (!enemy.visible) continue;
-    if (sameSide(enemy, caster)) continue;
+    if (!isHostileTo(enemy, caster)) continue;
 
     const attackerConds = new Set((enemy.conditions || []) as string[]);
     let prevented = false;
@@ -245,10 +245,30 @@ function getGridSize(sessionId: string): number | null {
   return 70;
 }
 
-function sameSide(a: Token, b: Token): boolean {
-  const aIsPC = !!a.ownerUserId;
-  const bIsPC = !!b.ownerUserId;
-  return aIsPC === bIsPC;
+/**
+ * True when two tokens are on opposite combat sides and should
+ * trigger Opportunity Attacks against each other.
+ *
+ * Faction takes precedence — only friendly vs hostile qualifies as
+ * hostile. Neutral never triggers, friendly-vs-friendly never
+ * triggers, hostile-vs-hostile never triggers (monsters don't OA
+ * each other).
+ *
+ * For tokens created before faction existed (ownerUserId-based rows
+ * that were never migrated), we fall back to the old PC-vs-NPC
+ * two-team check so existing sessions keep working.
+ */
+function isHostileTo(attacker: Token, target: Token): boolean {
+  const a = attacker.faction;
+  const t = target.faction;
+  if (a && t) {
+    return (a === 'friendly' && t === 'hostile') ||
+           (a === 'hostile' && t === 'friendly');
+  }
+  // Backward compatibility: PC (ownerUserId) vs NPC (null) are opposed.
+  const aIsPC = !!attacker.ownerUserId;
+  const bIsPC = !!target.ownerUserId;
+  return aIsPC !== bIsPC;
 }
 
 function edgeDistance(

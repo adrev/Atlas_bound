@@ -15,6 +15,7 @@ const pointsXY = z.array(z.object({ x: coord, y: coord })).max(1000);
 // legacy shape). Bounded to 2000 numbers = 1000 points, same DoS ceiling.
 const pointsFlat = z.array(z.number().finite()).max(2000);
 const conditions = z.array(z.string().max(50)).max(30);
+const faction = z.enum(['friendly', 'hostile', 'neutral']);
 
 // --- Session event schemas ---
 export const sessionJoinSchema = z.object({
@@ -64,6 +65,7 @@ export const tokenAddSchema = z.object({
   lightColor: colorHex.default('#ffcc44'),
   conditions: conditions.default([]),
   ownerUserId: z.string().nullable().optional(),
+  faction: faction.optional(),
 });
 
 export const tokenRemoveSchema = z.object({
@@ -87,6 +89,7 @@ export const tokenUpdateSchema = z.object({
     lightColor: colorHex.optional(),
     conditions: conditions.optional(),
     ownerUserId: z.string().nullable().optional(),
+    faction: faction.optional(),
     aura: z.object({
       radiusFeet: z.number().finite().min(5).max(120),
       color: colorHex,

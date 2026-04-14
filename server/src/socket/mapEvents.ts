@@ -40,6 +40,7 @@ export function registerMapEvents(io: Server, socket: Socket): void {
       hasLight: Boolean(t.has_light), lightRadius: t.light_radius,
       lightDimRadius: t.light_dim_radius, lightColor: t.light_color,
       conditions: JSON.parse(t.conditions as string), ownerUserId: t.owner_user_id,
+      faction: (t.faction as Token['faction']) ?? 'neutral',
       createdAt: t.created_at,
     }));
 
@@ -98,6 +99,7 @@ export function registerMapEvents(io: Server, socket: Socket): void {
         hasLight: Boolean(row.has_light), lightRadius: row.light_radius as number,
         lightDimRadius: row.light_dim_radius as number, lightColor: row.light_color as string,
         conditions: JSON.parse(row.conditions as string), ownerUserId: row.owner_user_id as string | null,
+        faction: ((row.faction as string | null) ?? 'neutral') as Token['faction'],
         createdAt: row.created_at as string,
       };
     }
@@ -162,6 +164,40 @@ export function registerMapEvents(io: Server, socket: Socket): void {
     const tokenId = uuidv4();
     const now = new Date().toISOString();
 
+    // Default faction: if the client didn't specify one, infer from
+    // ownership + character type. PC tokens (non-null ownerUserId)
+    // are friendly; NPCs owned by the 'npc' system user are hostile;
+    // the "loot bag" drop flow creates neutral characters with
+    // race='loot' class='bag' and passes ownerUserId=null — we treat
+    // those (and any other loose NPC tokens the DM places) as hostile
+    // by default, and the DM toggles them to neutral/friendly from
+    // the panel. Explicit faction in the payload always wins.
+    let defaultFaction: Token['faction'] = 'hostile';
+    const payloadOwnerUserId = parsed.data.ownerUserId ?? null;
+    if (payloadOwnerUserId) {
+      defaultFaction = 'friendly';
+    } else if (parsed.data.characterId) {
+      try {
+        const { rows: charRows } = await pool.query(
+          'SELECT user_id, race, class FROM characters WHERE id = $1',
+          [parsed.data.characterId],
+        );
+        const row = charRows[0] as Record<string, unknown> | undefined;
+        if (row) {
+          const race = String(row.race ?? '').toLowerCase();
+          const klass = String(row.class ?? '').toLowerCase();
+          if (race === 'loot' && klass === 'bag') {
+            defaultFaction = 'neutral';
+          } else if (row.user_id === 'npc') {
+            defaultFaction = 'hostile';
+          } else if (row.user_id && row.user_id !== 'npc') {
+            defaultFaction = 'friendly';
+          }
+        }
+      } catch { /* fall through to hostile */ }
+    }
+    const finalFaction: Token['faction'] = parsed.data.faction ?? defaultFaction;
+
     const token: Token = {
       id: tokenId, mapId: targetMapId, characterId: parsed.data.characterId ?? null,
       name: parsed.data.name, x: parsed.data.x, y: parsed.data.y, size: parsed.data.size,
@@ -170,7 +206,9 @@ export function registerMapEvents(io: Server, socket: Socket): void {
       hasLight: parsed.data.hasLight, lightRadius: parsed.data.lightRadius,
       lightDimRadius: parsed.data.lightDimRadius, lightColor: parsed.data.lightColor,
       conditions: parsed.data.conditions as Token['conditions'],
-      ownerUserId: parsed.data.ownerUserId ?? null, createdAt: now,
+      ownerUserId: payloadOwnerUserId,
+      faction: finalFaction,
+      createdAt: now,
     };
 
     if (targetMapId === ctx.room.playerMapId) ctx.room.tokens.set(tokenId, token);
@@ -179,14 +217,14 @@ export function registerMapEvents(io: Server, socket: Socket): void {
       INSERT INTO tokens (
         id, map_id, character_id, name, x, y, size, image_url, color, layer,
         visible, has_light, light_radius, light_dim_radius, light_color,
-        conditions, owner_user_id
-      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
+        conditions, owner_user_id, faction
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
     `, [
       tokenId, token.mapId, token.characterId, token.name,
       token.x, token.y, token.size, token.imageUrl, token.color, token.layer,
       token.visible ? 1 : 0, token.hasLight ? 1 : 0,
       token.lightRadius, token.lightDimRadius, token.lightColor,
-      JSON.stringify(token.conditions), token.ownerUserId,
+      JSON.stringify(token.conditions), token.ownerUserId, token.faction,
     ]);
 
     const recipients = socketsOnMap(ctx.room, targetMapId);
@@ -249,12 +287,15 @@ export function registerMapEvents(io: Server, socket: Socket): void {
         hasLight: Boolean(row.has_light), lightRadius: row.light_radius as number,
         lightDimRadius: row.light_dim_radius as number, lightColor: row.light_color as string,
         conditions: JSON.parse(row.conditions as string), ownerUserId: row.owner_user_id as string | null,
+        faction: ((row.faction as string | null) ?? 'neutral') as Token['faction'],
         createdAt: row.created_at as string,
       };
     }
 
     const isDM = ctx.player.role === 'dm';
     const isOwner = token.ownerUserId === ctx.player.userId;
+    // Faction is a DM-only field — non-DM clients cannot change sides.
+    if (!isDM && changes.faction !== undefined) return;
     if (!isDM) {
       if (isOwner && changes.conditions !== undefined) return;
       if (!isOwner) {
@@ -285,6 +326,7 @@ export function registerMapEvents(io: Server, socket: Socket): void {
     if (changes.lightColor !== undefined) { setClauses.push(`light_color = $${paramIdx++}`); params.push(changes.lightColor); }
     if (changes.conditions !== undefined) { setClauses.push(`conditions = $${paramIdx++}`); params.push(JSON.stringify(changes.conditions)); }
     if (changes.ownerUserId !== undefined) { setClauses.push(`owner_user_id = $${paramIdx++}`); params.push(changes.ownerUserId); }
+    if (changes.faction !== undefined) { setClauses.push(`faction = $${paramIdx++}`); params.push(changes.faction); }
 
     if (setClauses.length > 0) {
       params.push(tokenId);

@@ -562,12 +562,24 @@ function TokenSprite({ token, isSelected, isCurrentTurn, showTokenLabels }: Toke
 
       {/* Name label background + text (below token + HP bar).
           Shown always when showTokenLabels is on, or when the token
-          is selected / hovered (name is also in the tooltip). */}
+          is selected / hovered (name is also in the tooltip). The
+          background is tinted by the token's faction so the combat
+          side is obvious at a glance. */}
       {(showTokenLabels || isSelected) && (() => {
         const hpBarOffset = showHpBar ? 7 : 0;
         const labelWidth = Math.max(tokenSize + 20, Math.min(token.name.length * 6.5 + 16, 160));
         const needsWrap = token.name.length > (tokenSize + 20) / 6;
         const labelHeight = needsWrap ? 26 : 16;
+        const faction = (token as { faction?: string }).faction ?? 'neutral';
+        // Semi-transparent tint over a dark base so the name stays legible.
+        const labelFill =
+          faction === 'friendly' ? 'rgba(46,204,113,0.75)' :
+          faction === 'hostile'  ? 'rgba(231,76,60,0.75)'  :
+                                   'rgba(0,0,0,0.75)';
+        const labelStroke =
+          faction === 'friendly' ? '#2ecc71' :
+          faction === 'hostile'  ? '#e74c3c' :
+                                   'transparent';
         return (
           <>
             <Rect
@@ -575,7 +587,9 @@ function TokenSprite({ token, isSelected, isCurrentTurn, showTokenLabels }: Toke
               y={tokenSize / 2 + 2 + hpBarOffset}
               width={labelWidth}
               height={labelHeight}
-              fill="rgba(0,0,0,0.75)"
+              fill={labelFill}
+              stroke={labelStroke}
+              strokeWidth={labelStroke === 'transparent' ? 0 : 1}
               cornerRadius={4}
             />
             <Text
@@ -586,7 +600,7 @@ function TokenSprite({ token, isSelected, isCurrentTurn, showTokenLabels }: Toke
               align="center"
               fontSize={10}
               fontStyle="bold"
-              fill="#eee"
+              fill="#fff"
               wrap="word"
               shadowColor="black"
               shadowBlur={3}

@@ -112,8 +112,11 @@ export async function initDatabase(): Promise<void> {
       light_color TEXT DEFAULT '#ffcc44',
       conditions TEXT DEFAULT '[]',
       owner_user_id TEXT,
+      faction TEXT NOT NULL DEFAULT 'neutral',
       created_at TEXT NOT NULL DEFAULT (NOW()::text)
     );
+
+    ALTER TABLE tokens ADD COLUMN IF NOT EXISTS faction TEXT NOT NULL DEFAULT 'neutral';
 
     CREATE TABLE IF NOT EXISTS combat_state (
       session_id TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,
