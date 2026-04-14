@@ -21,3 +21,4 @@ server/data/*.db-wal
 # Claude temp
 .claude/
 scripts/__pycache__/
+tmp-gemini-maps/
