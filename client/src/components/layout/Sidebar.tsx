@@ -17,7 +17,7 @@ import { TokenActionPanel } from '../canvas/TokenActionPanel';
 import { CharacterImport } from '../character/CharacterImport';
 import { useCharacterStore } from '../../stores/useCharacterStore';
 import { emitTokenAdd, emitCharacterUpdate, emitViewing } from '../../socket/emitters';
-import { Upload, MapPin, RefreshCw } from 'lucide-react';
+import { Upload, MapPin, RefreshCw, Trash2 } from 'lucide-react';
 import { ChatPanel } from '../chat/ChatPanel';
 import { NotesPanel } from '../notes/NotesPanel';
 import { PlayerList } from '../session/PlayerList';
@@ -443,15 +443,45 @@ function HeroTab() {
                       {c.race} {c.class} • Lv {c.level}
                     </div>
                   </div>
-                  {tokenOnMap && (
-                    <span title="On the map" style={{
-                      fontSize: 8, fontWeight: 700,
-                      padding: '2px 5px', borderRadius: 3,
-                      background: 'rgba(46,204,113,0.2)',
-                      color: theme.state.success,
-                      letterSpacing: '0.05em',
-                    }}>ON MAP</span>
-                  )}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
+                    {tokenOnMap && (
+                      <span title="On the map" style={{
+                        fontSize: 8, fontWeight: 700,
+                        padding: '2px 5px', borderRadius: 3,
+                        background: 'rgba(46,204,113,0.2)',
+                        color: theme.state.success,
+                        letterSpacing: '0.05em',
+                      }}>ON MAP</span>
+                    )}
+                    <button
+                      title="Delete character"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (!confirm(`Delete "${c.name}"? This cannot be undone.`)) return;
+                        fetch(`/api/characters/${c.id}`, { method: 'DELETE', credentials: 'include' })
+                          .then((r) => {
+                            if (r.ok) {
+                              setCharacters((prev) => prev.filter((ch) => ch.id !== c.id));
+                              // If deleted character was active, reload to clear
+                            if (myCharacter?.id === c.id) {
+                              window.location.reload();
+                            }
+                            }
+                          })
+                          .catch(() => {});
+                      }}
+                      style={{
+                        background: 'none', border: 'none', cursor: 'pointer',
+                        color: theme.text.muted, padding: 4, borderRadius: 4,
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        opacity: 0.5, transition: 'opacity 0.15s',
+                      }}
+                      onMouseEnter={(e) => { (e.currentTarget).style.opacity = '1'; (e.currentTarget).style.color = theme.danger; }}
+                      onMouseLeave={(e) => { (e.currentTarget).style.opacity = '0.5'; (e.currentTarget).style.color = theme.text.muted; }}
+                    >
+                      <Trash2 size={13} />
+                    </button>
+                  </div>
                 </button>
               );
             })
@@ -488,32 +518,29 @@ function HeroTab() {
           {syncMessage.text}
         </div>
       )}
-      <div style={{ display: 'flex', gap: 8, padding: '10px 12px' }}>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, padding: '10px 12px' }}>
         <Button
           variant="ghost"
           size="sm"
-          fullWidth
           leadingIcon={<BookOpen size={13} />}
           onClick={() => setShowList(true)}
-          style={{ color: theme.gold.primary, borderColor: theme.gold.border }}
+          style={{ color: theme.gold.primary, borderColor: theme.gold.border, flex: '1 1 auto', minWidth: 0 }}
         >
-          Show Character List
+          Character List
         </Button>
         <Button
           variant="ghost"
           size="sm"
-          fullWidth
           leadingIcon={<Upload size={13} />}
           onClick={() => setShowImport(true)}
-          style={{ color: theme.gold.primary, borderColor: theme.gold.border }}
+          style={{ color: theme.gold.primary, borderColor: theme.gold.border, flex: '1 1 auto', minWidth: 0 }}
         >
-          Import Character
+          Import
         </Button>
         {hasDdbId && (
           <Button
             variant="ghost"
             size="sm"
-            fullWidth
             leadingIcon={
               <RefreshCw
                 size={13}
@@ -522,9 +549,9 @@ function HeroTab() {
             }
             onClick={handleSyncFromDDB}
             disabled={syncing}
-            style={{ color: theme.gold.primary, borderColor: theme.gold.border }}
+            style={{ color: theme.gold.primary, borderColor: theme.gold.border, flex: '1 1 auto', minWidth: 0 }}
           >
-            {syncing ? 'Syncing...' : 'Sync from DDB'}
+            {syncing ? 'Syncing...' : 'Sync'}
           </Button>
         )}
       </div>
