@@ -12,7 +12,10 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const OUTPUT_DIR = path.join(__dirname, '..', 'client', 'public', 'maps');
 fs.mkdirSync(OUTPUT_DIR, { recursive: true });
 
-const API_KEY = 'REDACTED_API_KEY';
+const API_KEY = process.env.GEMINI_API_KEY || process.env.GOOGLE_AI_API_KEY || process.env.GOOGLE_GENERATIVE_AI_API_KEY || process.env.GOOGLE_API_KEY;
+if (!API_KEY) {
+  throw new Error('Missing Gemini API key. Set GEMINI_API_KEY before running this script.');
+}
 const BASE_URL = `https://generativelanguage.googleapis.com/v1beta/models/imagen-4.0-generate-001:predict?key=${API_KEY}`;
 
 const MAPS = [

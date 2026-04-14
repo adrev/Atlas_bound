@@ -1,4 +1,7 @@
-const API_KEY = 'REDACTED_API_KEY';
+const API_KEY = process.env.GEMINI_API_KEY || process.env.GOOGLE_AI_API_KEY || process.env.GOOGLE_GENERATIVE_AI_API_KEY || process.env.GOOGLE_API_KEY;
+if (!API_KEY) {
+  throw new Error('Missing Gemini API key. Set GEMINI_API_KEY before running this script.');
+}
 const URL = `https://generativelanguage.googleapis.com/v1beta/models/imagen-4.0-generate-001:predict?key=${API_KEY}`;
 const resp = await fetch(URL, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({instances:[{prompt:'a simple red circle on white background, digital art, no text'}],parameters:{sampleCount:1,aspectRatio:'1:1'}})});
 console.log('Status:', resp.status);

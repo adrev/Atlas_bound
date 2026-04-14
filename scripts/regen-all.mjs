@@ -3,7 +3,10 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const API_KEY = 'REDACTED_API_KEY';
+const API_KEY = process.env.GEMINI_API_KEY || process.env.GOOGLE_AI_API_KEY || process.env.GOOGLE_GENERATIVE_AI_API_KEY || process.env.GOOGLE_API_KEY;
+if (!API_KEY) {
+  throw new Error('Missing Gemini API key. Set GEMINI_API_KEY before running this script.');
+}
 const URL = `https://generativelanguage.googleapis.com/v1beta/models/nano-banana-pro-preview:generateContent?key=${API_KEY}`;
 const MAP_DIR = path.join(__dirname, '..', 'client', 'public', 'maps');
 const TOKEN_DIR = path.join(__dirname, '..', 'client', 'public', 'tokens');

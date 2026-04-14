@@ -9,7 +9,14 @@ import time
 import urllib.request
 import urllib.error
 
-API_KEY = os.environ.get("GEMINI_API_KEY", "REDACTED_API_KEY")
+API_KEY = (
+    os.environ.get("GEMINI_API_KEY")
+    or os.environ.get("GOOGLE_AI_API_KEY")
+    or os.environ.get("GOOGLE_GENERATIVE_AI_API_KEY")
+    or os.environ.get("GOOGLE_API_KEY")
+)
+if not API_KEY:
+    raise RuntimeError("Missing Gemini API key. Set GEMINI_API_KEY before running this script.")
 OUTPUT_DIR = os.path.join(os.path.dirname(__file__), "..", "client", "public", "maps")
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
