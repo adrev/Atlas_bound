@@ -15,22 +15,41 @@ export function registerSceneEvents(io: Server, socket: Socket): void {
     const ctx = getPlayerBySocketId(socket.id);
     if (!ctx) return;
 
-    const { rows } = await pool.query(`
-      SELECT m.id, m.name, m.image_url, m.width, m.height, m.grid_size, m.created_at,
-             (SELECT COUNT(*) FROM tokens t WHERE t.map_id = m.id) AS token_count
-      FROM maps m
-      WHERE m.session_id = $1
-      ORDER BY m.created_at ASC
-    `, [ctx.room.sessionId]);
+    // Players should only ever receive the currently-active player map
+    // in the list. DMs see the full set (including prep/preview scenes).
+    const isDM = ctx.player.role === 'dm';
+    const playerMapId = ctx.room.playerMapId ?? null;
+
+    let rows: Array<Record<string, unknown>>;
+    if (isDM) {
+      const result = await pool.query(`
+        SELECT m.id, m.name, m.image_url, m.width, m.height, m.grid_size, m.created_at,
+               (SELECT COUNT(*) FROM tokens t WHERE t.map_id = m.id) AS token_count
+        FROM maps m
+        WHERE m.session_id = $1
+        ORDER BY m.created_at ASC
+      `, [ctx.room.sessionId]);
+      rows = result.rows;
+    } else if (playerMapId) {
+      const result = await pool.query(`
+        SELECT m.id, m.name, m.image_url, m.width, m.height, m.grid_size, m.created_at,
+               (SELECT COUNT(*) FROM tokens t WHERE t.map_id = m.id) AS token_count
+        FROM maps m
+        WHERE m.session_id = $1 AND m.id = $2
+      `, [ctx.room.sessionId, playerMapId]);
+      rows = result.rows;
+    } else {
+      rows = [];
+    }
 
     const maps: MapSummary[] = rows.map(r => ({
-      id: r.id, name: r.name, imageUrl: r.image_url,
-      width: r.width, height: r.height, gridSize: r.grid_size,
-      tokenCount: Number(r.token_count) ?? 0, createdAt: r.created_at,
+      id: r.id as string, name: r.name as string, imageUrl: r.image_url as string | null,
+      width: r.width as number, height: r.height as number, gridSize: r.grid_size as number,
+      tokenCount: Number(r.token_count) ?? 0, createdAt: r.created_at as string,
       isPlayerMap: r.id === ctx.room.playerMapId,
     }));
 
-    console.log(`[SCENE] map:list → ${maps.length} maps, ribbon=${ctx.room.playerMapId ?? 'null'}`);
+    console.log(`[SCENE] map:list (${ctx.player.role}) → ${maps.length} maps, ribbon=${ctx.room.playerMapId ?? 'null'}`);
     socket.emit('map:list-result', { maps, playerMapId: ctx.room.playerMapId });
   }));
 

@@ -1,17 +1,21 @@
 node_modules
 */node_modules
+node_modules/
 .git
+.git/
 .gitignore
 
 # Build artifacts (we rebuild inside Docker)
 shared/dist
 server/dist
 client/dist
+dist/
 
 # Development files
 *.log
 .env
 .env.*
+.env.local
 .DS_Store
 
 # Data (SQLite DB — created at runtime, synced to Turso)
@@ -25,3 +29,16 @@ server/data
 .idea
 *.swp
 *.swo
+
+# Secrets / tooling / temp dirs (match .gitignore)
+.claude/
+.venv/
+tmp-gemini-maps/
+new-maps/
+scripts/__pycache__/
+*.pyc
+
+# Docs — exclude markdown from build context to shrink it and avoid
+# leaking internal planning notes. README.md is kept for reference.
+*.md
+!README.md

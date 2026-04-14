@@ -22,3 +22,4 @@ server/data/*.db-wal
 .claude/
 scripts/__pycache__/
 tmp-gemini-maps/
+new-maps/

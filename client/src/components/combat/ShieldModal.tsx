@@ -101,10 +101,12 @@ export function ShieldModal() {
       if (!next.includes('shield-spell')) next.push('shield-spell');
       useMapStore.getState().updateToken(myToken.id, { conditions: next as any });
     }
-    // Broadcast the shield cast so the attacker's resolver recomputes
+    // Broadcast the shield cast so the attacker's resolver recomputes.
+    // Pass the defender's token id so the server can verify ownership.
     emitShieldCast({
       attackId: head.attackId,
       defenderName: myCharacter?.name ?? 'Caster',
+      defenderTokenId: myToken?.id,
     });
     emitSystemMessage(
       `🛡 ${myCharacter?.name ?? 'Caster'} casts SHIELD — +5 AC against ${head.attackerName}'s attack (1st-level slot, reaction)`,

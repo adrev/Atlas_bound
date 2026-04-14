@@ -112,11 +112,42 @@ router.get('/sessions/:sessionId/maps', async (req: Request, res: Response) => {
 
   await assertSessionMember(sessionId, userId);
 
-  const { rows: maps } = await pool.query(`
-    SELECT id, session_id, name, image_url, width, height, grid_size, grid_type, created_at
-    FROM maps WHERE session_id = $1
-    ORDER BY created_at DESC
-  `, [sessionId]);
+  // Check whether the caller is the DM of this session. Players should
+  // only ever see the map(s) they are currently on — never DM prep
+  // scenes or preview maps.
+  const { rows: roleRows } = await pool.query(
+    'SELECT role FROM session_players WHERE session_id = $1 AND user_id = $2',
+    [sessionId, userId],
+  );
+  const isDM = roleRows[0]?.role === 'dm';
+
+  let maps: Array<Record<string, unknown>>;
+  if (isDM) {
+    const { rows } = await pool.query(`
+      SELECT id, session_id, name, image_url, width, height, grid_size, grid_type, created_at
+      FROM maps WHERE session_id = $1
+      ORDER BY created_at DESC
+    `, [sessionId]);
+    maps = rows;
+  } else {
+    const { rows: sessionRows } = await pool.query(
+      'SELECT player_map_id, current_map_id FROM sessions WHERE id = $1',
+      [sessionId],
+    );
+    const playerMapId =
+      (sessionRows[0]?.player_map_id as string | null | undefined) ??
+      (sessionRows[0]?.current_map_id as string | null | undefined) ??
+      null;
+    if (!playerMapId) {
+      res.json([]);
+      return;
+    }
+    const { rows } = await pool.query(`
+      SELECT id, session_id, name, image_url, width, height, grid_size, grid_type, created_at
+      FROM maps WHERE id = $1 AND session_id = $2
+    `, [playerMapId, sessionId]);
+    maps = rows;
+  }
 
   res.json(
     maps.map(m => ({
@@ -145,7 +176,30 @@ router.get('/maps/:id', async (req: Request, res: Response) => {
   }
   const map = mapRows[0] as Record<string, unknown>;
 
-  await assertSessionMember(String(map.session_id), userId);
+  const mapSessionId = String(map.session_id);
+  await assertSessionMember(mapSessionId, userId);
+
+  // Players must only see the map currently active for the players —
+  // never a DM's prep/preview scene.
+  const { rows: roleRows } = await pool.query(
+    'SELECT role FROM session_players WHERE session_id = $1 AND user_id = $2',
+    [mapSessionId, userId],
+  );
+  const isDM = roleRows[0]?.role === 'dm';
+  if (!isDM) {
+    const { rows: sessionRows } = await pool.query(
+      'SELECT player_map_id, current_map_id FROM sessions WHERE id = $1',
+      [mapSessionId],
+    );
+    const activeMapId =
+      (sessionRows[0]?.player_map_id as string | null | undefined) ??
+      (sessionRows[0]?.current_map_id as string | null | undefined) ??
+      null;
+    if (!activeMapId || activeMapId !== id) {
+      res.status(403).json({ error: 'Not authorized to view this map' });
+      return;
+    }
+  }
 
   const { rows: tokens } = await pool.query('SELECT * FROM tokens WHERE map_id = $1', [id]);
 

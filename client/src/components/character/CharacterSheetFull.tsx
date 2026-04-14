@@ -20,7 +20,7 @@ import {
   type AbilityScores,
   type DeathSaves,
 } from '@dnd-vtt/shared';
-import { emitRoll, emitCharacterUpdate, emitTokenAdd, emitSystemMessage } from '../../socket/emitters';
+import { emitRoll, emitCharacterUpdate, emitSystemMessage } from '../../socket/emitters';
 import { parseSpellMetaFromDesc, enrichSpellFromDescription } from '../../utils/spell-enrich';
 import { useMapStore } from '../../stores/useMapStore';
 import { useSessionStore } from '../../stores/useSessionStore';
@@ -2443,13 +2443,10 @@ function InventoryTab({
                         if (!resp.ok) { console.error('Drop failed:', await resp.text()); return; }
                         const data = await resp.json();
 
-                        // Update local inventory
+                        // Update local inventory. Server now creates the
+                        // loot token atomically and broadcasts it via
+                        // `map:token-added`, so no client emit is needed.
                         useCharacterStore.getState().applyRemoteUpdate(characterId, { inventory: data.inventory });
-
-                        // Spawn the token via socket
-                        if (data.token) {
-                          emitTokenAdd(data.token);
-                        }
                       } catch (err) { console.error('Drop item failed:', err); }
                     }}
                     style={{

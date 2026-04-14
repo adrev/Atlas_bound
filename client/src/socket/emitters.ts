@@ -221,11 +221,13 @@ export function emitSpellCastAttempt(args: {
 }
 
 /** Confirm a counterspell — broadcasts to all clients so the original
- * caster can abort their cast. */
+ * caster can abort their cast. `counterCasterTokenId` is used by the
+ * server for an ownership check. */
 export function emitSpellCounterspelled(args: {
   castId: string;
   counterCasterName: string;
   counterSlotLevel: number;
+  counterCasterTokenId?: string;
 }) {
   getSocket().emit('combat:spell-counterspelled', args);
 }
@@ -245,8 +247,13 @@ export function emitAttackHitAttempt(args: {
   getSocket().emit('combat:attack-hit-attempt', args);
 }
 
-/** Confirm Shield — broadcasts so the attacker's resolver can recompute. */
-export function emitShieldCast(args: { attackId: string; defenderName: string }) {
+/** Confirm Shield — broadcasts so the attacker's resolver can recompute.
+ * `defenderTokenId` is used by the server for an ownership check. */
+export function emitShieldCast(args: {
+  attackId: string;
+  defenderName: string;
+  defenderTokenId?: string;
+}) {
   getSocket().emit('combat:shield-cast', args);
 }
 

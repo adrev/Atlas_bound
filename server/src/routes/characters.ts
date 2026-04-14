@@ -4,7 +4,7 @@ import pool from '../db/connection.js';
 import { createCharacterSchema, updateCharacterSchema } from '../utils/validation.js';
 import { proficiencyBonusForLevel } from '@dnd-vtt/shared';
 import { parseCharacterJSON } from '../services/DndBeyondService.js';
-import { getAuthUserId, assertCharacterOwnerOrDM } from '../utils/authorization.js';
+import { getAuthUserId, assertCharacterOwnerOrDM, assertSessionDM } from '../utils/authorization.js';
 import { dbRowToCharacter } from '../utils/characterMapper.js';
 
 const router = Router();
@@ -29,6 +29,26 @@ router.post('/', async (req: Request, res: Response) => {
   }
 
   const data = parsed.data;
+
+  // Only a session DM may create a global NPC. Require proof by passing a
+  // sessionId in the body; we then verify the caller is DM of that session.
+  if (data.isNpc) {
+    if (!data.sessionId) {
+      res.status(400).json({
+        error: 'sessionId is required when creating an NPC (must be DM of that session)',
+      });
+      return;
+    }
+    try {
+      await assertSessionDM(data.sessionId, authUserId);
+    } catch (err) {
+      const status = (err as { status?: number }).status ?? 403;
+      const message = err instanceof Error ? err.message : 'Not authorized';
+      res.status(status).json({ error: message });
+      return;
+    }
+  }
+
   const userId = data.isNpc ? 'npc' : authUserId;
   const id = uuidv4();
   const profBonus = proficiencyBonusForLevel(data.level);
@@ -70,20 +90,43 @@ router.get('/:id', async (req: Request, res: Response) => {
     return;
   }
   const row = rows[0];
-  // Allow if user owns the character or it's an NPC
-  if (row.user_id !== userId && row.user_id !== 'npc') {
-    // Check if they share a session
-    const { rows: shared } = await pool.query(
-      `SELECT 1 FROM session_players sp1
-       JOIN session_players sp2 ON sp1.session_id = sp2.session_id
-       WHERE sp1.user_id = $1 AND sp2.user_id = $2
+
+  if (row.user_id === userId) {
+    res.json(dbRowToCharacter(row));
+    return;
+  }
+
+  if (row.user_id === 'npc') {
+    // Global NPCs are shared-by-reference — anyone could guess the UUID.
+    // Require the caller to share a session with a map/token linked to
+    // this NPC character before exposing it.
+    const { rows: npcLink } = await pool.query(
+      `SELECT 1 FROM tokens t
+       JOIN maps m ON t.map_id = m.id
+       JOIN session_players sp ON sp.session_id = m.session_id
+       WHERE t.character_id = $1 AND sp.user_id = $2
        LIMIT 1`,
-      [userId, row.user_id],
+      [row.id, userId],
     );
-    if (shared.length === 0) {
+    if (npcLink.length === 0) {
       res.status(403).json({ error: 'Not authorized' });
       return;
     }
+    res.json(dbRowToCharacter(row));
+    return;
+  }
+
+  // Player-owned character owned by someone else: require a shared session.
+  const { rows: shared } = await pool.query(
+    `SELECT 1 FROM session_players sp1
+     JOIN session_players sp2 ON sp1.session_id = sp2.session_id
+     WHERE sp1.user_id = $1 AND sp2.user_id = $2
+     LIMIT 1`,
+    [userId, row.user_id],
+  );
+  if (shared.length === 0) {
+    res.status(403).json({ error: 'Not authorized' });
+    return;
   }
   res.json(dbRowToCharacter(row));
 });

@@ -2,6 +2,7 @@ import { Router, type Request, type Response } from 'express';
 import pool from '../db/connection.js';
 import { isCompendiumSeeded, getCompendiumStats, reseedCompendium } from '../services/Open5eService.js';
 import { requireAuth } from '../auth/middleware.js';
+import { requireAdmin } from '../auth/admin.js';
 import { tokenUpload, validateAndSaveUpload } from './uploads.js';
 import type {
   CompendiumMonster, CompendiumSpell, CompendiumItem,
@@ -243,10 +244,10 @@ router.get('/status', async (_req: Request, res: Response) => {
   res.json({ seeded, ...stats });
 });
 
-// NOTE: Mutating endpoints require authentication. Future work: restrict
-// further to admin users (compendium is global SRD data, so ordinary users
-// should not be able to reseed or overwrite monster token images).
-router.post('/sync', requireAuth, async (_req: Request, res: Response) => {
+// Mutating endpoints are restricted to admins. Compendium data is global
+// SRD content — ordinary users must not be able to reseed it or overwrite
+// shared monster token images.
+router.post('/sync', requireAuth, requireAdmin, async (_req: Request, res: Response) => {
   try {
     await reseedCompendium();
     const stats = await getCompendiumStats();
@@ -260,6 +261,7 @@ router.post('/sync', requireAuth, async (_req: Request, res: Response) => {
 router.post(
   '/monsters/:slug/token-image',
   requireAuth,
+  requireAdmin,
   tokenUpload.single('image'),
   async (req: Request, res: Response) => {
     const { slug } = req.params;

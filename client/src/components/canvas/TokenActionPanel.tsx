@@ -1312,11 +1312,11 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
               .then(r => r.ok ? r.json() : null)
               .then(data => {
                 if (!data?.success) return;
-                // Update the caster's inventory locally
+                // Update the caster's inventory locally. Server now
+                // creates the loot token atomically and broadcasts it
+                // via `map:token-added`, so no client emit is needed.
                 useCharacterStore.getState().applyRemoteUpdate(casterCharIdForDrop, { inventory: data.inventory });
                 emitCharacterUpdate(casterCharIdForDrop, { inventory: data.inventory }, { skipLocal: true });
-                // Spawn the item token via socket so all clients see it
-                if (data.token) emitTokenAdd(data.token);
                 emitSystemMessage(`🗡 ${currentTargeting.casterName} dropped ${atk.name.replace(' (Thrown)', '')} at ${targetToken.name}'s feet`);
               })
               .catch(err => console.error('[THROW] failed to drop weapon:', err));

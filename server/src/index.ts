@@ -21,6 +21,7 @@ import encountersRouter from './routes/encounters.js';
 import { seedCompendium, isCompendiumSeeded } from './services/Open5eService.js';
 import { seedEquipment, isEquipmentSeeded } from './services/seedEquipment.js';
 import { registerSocketHandler } from './socket/handler.js';
+import { setIO } from './socket/ioInstance.js';
 import { setupStaticServing } from './static.js';
 import { tokenUpload, portraitUpload, validateAndSaveUpload } from './routes/uploads.js';
 import authRouter from './auth/routes.js';
@@ -168,6 +169,9 @@ const io = new Server<ClientToServerEvents, ServerToClientEvents>(httpServer, {
   },
   maxHttpBufferSize: 5 * 1024 * 1024, // 5MB for larger payloads
 });
+
+// Expose io to non-socket modules (HTTP routes) that need to broadcast.
+setIO(io);
 
 // Register socket event handlers
 registerSocketHandler(io);

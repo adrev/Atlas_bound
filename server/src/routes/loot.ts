@@ -4,6 +4,16 @@ import { z } from 'zod';
 import pool from '../db/connection.js';
 import { getAuthUserId, assertCharacterOwnerOrDM } from '../utils/authorization.js';
 import { createLootSchema } from '../utils/validation.js';
+import { getIO } from '../socket/ioInstance.js';
+import { getRoom, socketsOnMap } from '../utils/roomState.js';
+import type { Token } from '@dnd-vtt/shared';
+
+const lootDropSchema = z.object({
+  itemIndex: z.number().int().min(0),
+  mapId: z.string().min(1),
+  x: z.number().optional(),
+  y: z.number().optional(),
+});
 
 const updateLootSchema = z.object({
   quantity: z.number().int().min(0).max(9999).optional(),
@@ -352,54 +362,156 @@ router.post('/loot/transfer', async (req: Request, res: Response) => {
 });
 
 // POST /api/characters/:id/loot/drop
+//
+// Atomically drops an item from a character's inventory onto a map as
+// a loot-bag token. All writes happen in a single transaction; the
+// token is created server-side and broadcast via socket.io so that
+// clients no longer need to emit `map:token-add` for loot drops.
+//
+// Authorization:
+//   1. Caller must own the source character OR be DM of a session
+//      containing that character (assertCharacterOwnerOrDM).
+//   2. The target map must belong to a session the caller is a
+//      member of. Prevents dropping loot into unrelated sessions.
+//   3. The item must actually exist at itemIndex in the current
+//      (SELECT FOR UPDATE) inventory snapshot — no races.
 router.post('/characters/:id/loot/drop', async (req: Request, res: Response) => {
   const authUserId = getAuthUserId(req);
   const charId = String(req.params.id);
   await assertCharacterOwnerOrDM(charId, authUserId);
-  const { itemIndex, mapId, x, y } = req.body;
 
-  const { rows: charRows } = await pool.query('SELECT id, inventory FROM characters WHERE id = $1', [charId]);
-  const char = charRows[0] as any;
-  if (!char) { res.status(404).json({ error: 'Character not found' }); return; }
+  const parsed = lootDropSchema.safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: parsed.error.errors }); return; }
+  const { itemIndex, mapId, x, y } = parsed.data;
 
-  const inventory = JSON.parse(char.inventory || '[]');
-  if (itemIndex < 0 || itemIndex >= inventory.length) { res.status(400).json({ error: 'Invalid item index' }); return; }
+  // Verify the target map belongs to a session the caller is in.
+  const { rows: mapRows } = await pool.query('SELECT session_id FROM maps WHERE id = $1', [mapId]);
+  if (mapRows.length === 0) { res.status(404).json({ error: 'Map not found' }); return; }
+  const targetSessionId = mapRows[0].session_id as string;
 
-  const item = inventory[itemIndex];
-
-  const lootCharId = uuidv4();
-  await pool.query(
-    `INSERT INTO characters (id, user_id, name, race, class, level, hit_points, max_hit_points, armor_class)
-     VALUES ($1, 'npc', $2, 'loot', 'bag', 1, 0, 1, 0)`,
-    [lootCharId, `Dropped: ${item.name}`],
+  const { rows: memberRows } = await pool.query(
+    'SELECT 1 FROM session_players WHERE session_id = $1 AND user_id = $2',
+    [targetSessionId, authUserId],
   );
-
-  const lootEntryId = uuidv4();
-  await pool.query(
-    `INSERT INTO loot_entries (id, character_id, item_slug, custom_item_id, item_name, item_rarity, quantity)
-     VALUES ($1, $2, $3, $4, $5, $6, 1)`,
-    [lootEntryId, lootCharId, item.slug || null, item.customItemId || null, item.name, item.rarity || 'common'],
-  );
-
-  if (item.quantity > 1) {
-    inventory[itemIndex] = { ...item, quantity: item.quantity - 1 };
-  } else {
-    inventory.splice(itemIndex, 1);
+  if (memberRows.length === 0) {
+    res.status(403).json({ error: 'Not a member of the target session' });
+    return;
   }
-  await pool.query('UPDATE characters SET inventory = $1 WHERE id = $2', [JSON.stringify(inventory), charId]);
 
-  const imgUrl = item.imageUrl || (item.slug ? `/uploads/items/${item.slug}.png` : '/uploads/items/default-item.svg');
+  const client = await pool.connect();
+  let createdToken: Token | null = null;
+  let updatedInventory: unknown[] = [];
+  try {
+    await client.query('BEGIN');
+
+    // SELECT FOR UPDATE to serialize concurrent drops of the same
+    // character and prevent an attacker from draining a single item
+    // twice via two parallel requests.
+    const { rows: charRows } = await client.query(
+      'SELECT id, inventory FROM characters WHERE id = $1 FOR UPDATE',
+      [charId],
+    );
+    const char = charRows[0];
+    if (!char) {
+      await client.query('ROLLBACK');
+      res.status(404).json({ error: 'Character not found' });
+      return;
+    }
+
+    const inventory = JSON.parse(char.inventory || '[]');
+    if (itemIndex < 0 || itemIndex >= inventory.length) {
+      await client.query('ROLLBACK');
+      res.status(400).json({ error: 'Invalid item index' });
+      return;
+    }
+
+    const item = inventory[itemIndex];
+    if (!item || typeof item !== 'object') {
+      await client.query('ROLLBACK');
+      res.status(400).json({ error: 'Inventory entry is malformed' });
+      return;
+    }
+
+    const lootCharId = uuidv4();
+    await client.query(
+      `INSERT INTO characters (id, user_id, name, race, class, level, hit_points, max_hit_points, armor_class)
+       VALUES ($1, 'npc', $2, 'loot', 'bag', 1, 0, 1, 0)`,
+      [lootCharId, `Dropped: ${item.name}`],
+    );
+
+    const lootEntryId = uuidv4();
+    await client.query(
+      `INSERT INTO loot_entries (id, character_id, item_slug, custom_item_id, item_name, item_rarity, quantity)
+       VALUES ($1, $2, $3, $4, $5, $6, 1)`,
+      [lootEntryId, lootCharId, item.slug || null, item.customItemId || null, item.name, item.rarity || 'common'],
+    );
+
+    if (item.quantity > 1) {
+      inventory[itemIndex] = { ...item, quantity: item.quantity - 1 };
+    } else {
+      inventory.splice(itemIndex, 1);
+    }
+    await client.query(
+      'UPDATE characters SET inventory = $1 WHERE id = $2',
+      [JSON.stringify(inventory), charId],
+    );
+    updatedInventory = inventory;
+
+    // Create the loot-bag token on the target map.
+    const imgUrl: string = item.imageUrl || (item.slug ? `/uploads/items/${item.slug}.png` : '/uploads/items/default-item.svg');
+    const tokenId = uuidv4();
+    const now = new Date().toISOString();
+    const dropX = typeof x === 'number' ? x : 0;
+    const dropY = typeof y === 'number' ? y : 0;
+
+    await client.query(
+      `INSERT INTO tokens (
+         id, map_id, character_id, name, x, y, size, image_url, color, layer,
+         visible, has_light, light_radius, light_dim_radius, light_color,
+         conditions, owner_user_id
+       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)`,
+      [
+        tokenId, mapId, lootCharId, item.name,
+        dropX, dropY, 0.5, imgUrl, '#d4a843', 'token',
+        1, 0, 0, 0, '#ffcc44',
+        JSON.stringify([]), null,
+      ],
+    );
+
+    createdToken = {
+      id: tokenId, mapId, characterId: lootCharId, name: item.name,
+      x: dropX, y: dropY, size: 0.5, imageUrl: imgUrl, color: '#d4a843',
+      layer: 'token', visible: true,
+      hasLight: false, lightRadius: 0, lightDimRadius: 0, lightColor: '#ffcc44',
+      conditions: [], ownerUserId: null, createdAt: now,
+    } as Token;
+
+    await client.query('COMMIT');
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
+
+  // Broadcast the new token to every socket rendering the target map.
+  if (createdToken) {
+    const room = getRoom(targetSessionId);
+    const io = getIO();
+    if (room && io) {
+      if (mapId === room.playerMapId) {
+        room.tokens.set(createdToken.id, createdToken);
+      }
+      const recipients = socketsOnMap(room, mapId);
+      for (const sid of recipients) io.to(sid).emit('map:token-added', createdToken);
+    }
+  }
 
   res.json({
     success: true,
-    inventory,
-    token: {
-      mapId, characterId: lootCharId, name: item.name,
-      x: x || 0, y: y || 0, size: 0.5, imageUrl: imgUrl,
-      color: '#d4a843', layer: 'token', visible: true,
-      hasLight: false, lightRadius: 0, lightDimRadius: 0, lightColor: '#ffcc44',
-      conditions: [], ownerUserId: null,
-    },
+    inventory: updatedInventory,
+    tokenId: createdToken?.id ?? null,
+    token: createdToken,
   });
 });
 

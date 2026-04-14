@@ -193,12 +193,12 @@ export const combatSetInitiativeSchema = z.object({
 
 export const combatDamageSchema = z.object({
   tokenId: z.string().min(1),
-  amount: z.number().int().min(0),
+  amount: z.number().int().min(0).max(9999),
 });
 
 export const combatHealSchema = z.object({
   tokenId: z.string().min(1),
-  amount: z.number().int().min(0),
+  amount: z.number().int().min(0).max(9999),
 });
 
 export const combatConditionSchema = z.object({
@@ -281,6 +281,8 @@ export const combatSpellCounterspelledSchema = z.object({
   castId: z.string().min(1),
   counterCasterName: z.string().max(200).optional(),
   counterSlotLevel: z.number().int().min(1).max(9).optional(),
+  /** Token of the counterspeller — used for server-side ownership check. */
+  counterCasterTokenId: z.string().min(1).optional(),
 });
 
 export const combatAttackHitAttemptSchema = z.object({
@@ -294,11 +296,13 @@ export const combatAttackHitAttemptSchema = z.object({
 export const combatShieldCastSchema = z.object({
   attackId: z.string().min(1),
   defenderName: z.string().max(200).optional(),
+  /** Token of the defender casting Shield — used for server-side ownership check. */
+  defenderTokenId: z.string().min(1).optional(),
 });
 
 export const damageSideEffectsSchema = z.object({
   tokenId: z.string().min(1),
-  damageAmount: z.number(),
+  damageAmount: z.number().min(0).max(9999),
 });
 
 export const concentrationDroppedSchema = z.object({
@@ -483,6 +487,9 @@ export const createCharacterSchema = z.object({
   concentratingOn: z.string().nullable().optional(),
   compendiumSlug: z.string().nullable().optional(),
   isNpc: z.boolean().optional(),
+  // Required when isNpc === true: the DM must prove they are the DM of
+  // this session before a global NPC can be created.
+  sessionId: z.string().min(1).optional(),
 });
 
 export const updateCharacterSchema = createCharacterSchema.partial();

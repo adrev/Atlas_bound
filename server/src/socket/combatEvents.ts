@@ -395,7 +395,32 @@ export function registerCombatEvents(io: Server, socket: Socket): void {
 
     const ctx = getPlayerBySocketId(socket.id);
     if (!ctx) return;
+
+    // Target token must exist in this room.
+    const targetToken = ctx.room.tokens.get(parsed.data.tokenId);
+    if (!targetToken) return;
+
+    // Defense in depth beyond the Zod cap — reject any non-finite or
+    // implausibly large amount even if the schema is relaxed later.
+    const amount = parsed.data.amount;
+    if (!Number.isFinite(amount) || amount < 0 || amount > 9999) return;
+
+    // Existing targeting rule (players → NPCs or self-tokens only; DM can
+    // hit anyone). Kept as the primary cross-player anti-grief check.
     if (!canTargetToken(ctx, parsed.data.tokenId)) return;
+
+    // Additional combat-turn restriction: during active combat, a player
+    // may only apply damage while their own token is the current turn.
+    const isDM = ctx.player.role === 'dm';
+    if (!isDM) {
+      const combatState = ctx.room.combatState;
+      if (combatState?.active) {
+        const currentCombatant = combatState.combatants[combatState.currentTurnIndex];
+        if (!currentCombatant) return;
+        const turnToken = ctx.room.tokens.get(currentCombatant.tokenId);
+        if (!turnToken || turnToken.ownerUserId !== ctx.player.userId) return;
+      }
+    }
 
     try {
       const result = await CombatService.applyDamage(ctx.room.sessionId, parsed.data.tokenId, parsed.data.amount);
@@ -419,6 +444,14 @@ export function registerCombatEvents(io: Server, socket: Socket): void {
 
     const ctx = getPlayerBySocketId(socket.id);
     if (!ctx) return;
+
+    // Target token must exist in this room.
+    if (!ctx.room.tokens.get(parsed.data.tokenId)) return;
+
+    // Defense in depth for the heal amount.
+    const amount = parsed.data.amount;
+    if (!Number.isFinite(amount) || amount < 0 || amount > 9999) return;
+
     if (!isTokenOwnerOrDM(ctx, parsed.data.tokenId)) return;
 
     try {
@@ -697,6 +730,19 @@ export function registerCombatEvents(io: Server, socket: Socket): void {
     if (!parsed.success) return;
     const ctx = getPlayerBySocketId(socket.id);
     if (!ctx) return;
+
+    // Ownership check: DM is always allowed. Players must own the
+    // caster token they claim to be casting from. (If no caster token
+    // id is supplied, only DMs may emit this.)
+    const isDM = ctx.player.role === 'dm';
+    if (!isDM) {
+      const casterTokenId = parsed.data.casterTokenId;
+      if (!casterTokenId) return;
+      const casterToken = ctx.room.tokens.get(casterTokenId);
+      if (!casterToken) return;
+      if (casterToken.ownerUserId !== ctx.player.userId) return;
+    }
+
     io.to(ctx.room.sessionId).emit('combat:spell-cast-attempt', parsed.data);
   }));
 
@@ -705,6 +751,27 @@ export function registerCombatEvents(io: Server, socket: Socket): void {
     if (!parsed.success) return;
     const ctx = getPlayerBySocketId(socket.id);
     if (!ctx) return;
+
+    // Ownership check: DM is always allowed. Players must either
+    // provide a counterCasterTokenId they own, or — for backward
+    // compatibility with older clients — own at least one PC token
+    // in this room so the event can't be spoofed by a lurker.
+    const isDM = ctx.player.role === 'dm';
+    if (!isDM) {
+      const counterTokenId = parsed.data.counterCasterTokenId;
+      if (counterTokenId) {
+        const t = ctx.room.tokens.get(counterTokenId);
+        if (!t || t.ownerUserId !== ctx.player.userId) return;
+      } else {
+        // Fallback: require the emitter to own at least one token.
+        let ownsAnyToken = false;
+        for (const t of ctx.room.tokens.values()) {
+          if (t.ownerUserId === ctx.player.userId) { ownsAnyToken = true; break; }
+        }
+        if (!ownsAnyToken) return;
+      }
+    }
+
     io.to(ctx.room.sessionId).emit('combat:spell-counterspelled', parsed.data);
   }));
 
@@ -723,6 +790,24 @@ export function registerCombatEvents(io: Server, socket: Socket): void {
     if (!parsed.success) return;
     const ctx = getPlayerBySocketId(socket.id);
     if (!ctx) return;
+
+    // Target token must exist in this room.
+    if (!ctx.room.tokens.get(parsed.data.targetTokenId)) return;
+
+    // Ownership check: DM is always allowed. Players must be the
+    // current-turn combatant (i.e. own the attacker token making the
+    // attack). Prevents bystanders from spoofing fake "attack hit"
+    // events that would pop Shield prompts on other players.
+    const isDM = ctx.player.role === 'dm';
+    if (!isDM) {
+      const combatState = ctx.room.combatState;
+      if (!combatState?.active) return;
+      const currentCombatant = combatState.combatants[combatState.currentTurnIndex];
+      if (!currentCombatant) return;
+      const turnToken = ctx.room.tokens.get(currentCombatant.tokenId);
+      if (!turnToken || turnToken.ownerUserId !== ctx.player.userId) return;
+    }
+
     io.to(ctx.room.sessionId).emit('combat:attack-hit-attempt', parsed.data);
   }));
 
@@ -731,6 +816,27 @@ export function registerCombatEvents(io: Server, socket: Socket): void {
     if (!parsed.success) return;
     const ctx = getPlayerBySocketId(socket.id);
     if (!ctx) return;
+
+    // Ownership check: DM is always allowed. Players must either
+    // provide a defenderTokenId they own, or — for backward
+    // compatibility with older clients — own at least one PC token
+    // in this room. Prevents bystanders from faking Shield casts
+    // that would reduce another player's damage.
+    const isDM = ctx.player.role === 'dm';
+    if (!isDM) {
+      const defenderTokenId = parsed.data.defenderTokenId;
+      if (defenderTokenId) {
+        const t = ctx.room.tokens.get(defenderTokenId);
+        if (!t || t.ownerUserId !== ctx.player.userId) return;
+      } else {
+        let ownsAnyToken = false;
+        for (const t of ctx.room.tokens.values()) {
+          if (t.ownerUserId === ctx.player.userId) { ownsAnyToken = true; break; }
+        }
+        if (!ownsAnyToken) return;
+      }
+    }
+
     io.to(ctx.room.sessionId).emit('combat:shield-cast', parsed.data);
   }));
 
@@ -774,6 +880,17 @@ export function registerCombatEvents(io: Server, socket: Socket): void {
     const targetToken = room.tokens.get(parsed.data.targetTokenId);
     if (!targetToken) return;
 
+    // Ownership: DM, or the caster (caller) must own the claimed
+    // casterTokenId. Prevents players from spoofing arbitrary
+    // conditions on each others' tokens.
+    const isDM = ctx.player.role === 'dm';
+    if (!isDM) {
+      const casterTokenId = parsed.data.casterTokenId;
+      if (!casterTokenId) return;
+      const casterToken = room.tokens.get(casterTokenId);
+      if (!casterToken || casterToken.ownerUserId !== ctx.player.userId) return;
+    }
+
     // Apply via the service which handles both the conditions array AND
     // the metadata map
     ConditionService.applyConditionWithMeta(ctx.room.sessionId, parsed.data.targetTokenId, {
@@ -806,6 +923,31 @@ export function registerCombatEvents(io: Server, socket: Socket): void {
     if (!parsed.success) return;
     const ctx = getPlayerBySocketId(socket.id);
     if (!ctx) return;
+
+    // Target token must exist in this room.
+    const targetToken = ctx.room.tokens.get(parsed.data.tokenId);
+    if (!targetToken) return;
+
+    // Damage amount cap defense-in-depth.
+    if (!Number.isFinite(parsed.data.damageAmount) || parsed.data.damageAmount < 0 || parsed.data.damageAmount > 9999) return;
+
+    // Ownership: DM, OR the token's owner (concentration / Sleep
+    // side-effects on their own token), OR the current-turn attacker
+    // (triggering side-effects on a token they just hit).
+    const isDM = ctx.player.role === 'dm';
+    if (!isDM) {
+      const ownsTarget = targetToken.ownerUserId === ctx.player.userId;
+      let isCurrentAttacker = false;
+      const combatState = ctx.room.combatState;
+      if (combatState?.active) {
+        const currentCombatant = combatState.combatants[combatState.currentTurnIndex];
+        if (currentCombatant) {
+          const turnToken = ctx.room.tokens.get(currentCombatant.tokenId);
+          if (turnToken?.ownerUserId === ctx.player.userId) isCurrentAttacker = true;
+        }
+      }
+      if (!ownsTarget && !isCurrentAttacker) return;
+    }
 
     const result = await ConditionService.processDamageSideEffects(
       ctx.room.sessionId, parsed.data.tokenId, parsed.data.damageAmount,
@@ -862,6 +1004,15 @@ export function registerCombatEvents(io: Server, socket: Socket): void {
     if (!parsed.success) return;
     const ctx = getPlayerBySocketId(socket.id);
     if (!ctx) return;
+
+    // Caster token must exist in this room.
+    const casterToken = ctx.room.tokens.get(parsed.data.casterTokenId);
+    if (!casterToken) return;
+
+    // Ownership: DM, or the caster token's owner. Prevents another
+    // player from forcing someone else to drop concentration.
+    const isDM = ctx.player.role === 'dm';
+    if (!isDM && casterToken.ownerUserId !== ctx.player.userId) return;
 
     const cleared = ConditionService.clearConcentrationConditions(
       ctx.room.sessionId, parsed.data.casterTokenId, parsed.data.spellName,

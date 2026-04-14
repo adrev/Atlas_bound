@@ -148,10 +148,12 @@ export function registerMapEvents(io: Server, socket: Socket): void {
     if (!ctx) return;
 
     if (ctx.player.role !== 'dm') {
+      // Players may only add tokens they own. Loot drops are NOT
+      // created via this event — use POST /api/characters/:id/loot/drop
+      // which validates the source inventory atomically server-side.
       const ownerUserId = parsed.data.ownerUserId;
       const isOwnToken = ownerUserId && ownerUserId === ctx.player.userId;
-      const isLootDrop = parsed.data.layer === 'token' && parsed.data.size === 0.5;
-      if (!isOwnToken && !isLootDrop) return;
+      if (!isOwnToken) return;
     }
 
     const targetMapId = resolveViewingMapId(ctx.room, ctx.player.userId, ctx.player.role);
