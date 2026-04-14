@@ -5,11 +5,8 @@ import { TRACKS } from './tracks';
 
 /**
  * Headless audio engine mounted in AppShell for ALL users.
- * Subscribes to `currentTrack` from the session store (set via
- * the DM's socket broadcast) and manages Web Audio playback.
- * Each user controls their own volume/mute locally via useAudioStore.
- *
- * Renders nothing -- purely manages audio.
+ * Plays real MP3 tracks from GCS, shuffling within each theme.
+ * Each user controls their own volume/mute locally.
  */
 export function MusicEngine() {
   const currentTrack = useSessionStore((s) => s.currentTrack);
@@ -18,102 +15,156 @@ export function MusicEngine() {
   const musicMuted = useAudioStore((s) => s.musicMuted);
   const isMuted = masterMuted || musicMuted;
 
-  const ctxRef = useRef<AudioContext | null>(null);
-  const masterGainRef = useRef<GainNode | null>(null);
-  const cleanupRef = useRef<(() => void) | null>(null);
-  const fadeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
   const prevTrackRef = useRef<string | null>(null);
+  const trackIndexRef = useRef<Record<string, number>>({});
+  const fadeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Ensure AudioContext exists (created lazily on first track)
-  const ensureCtx = useCallback(() => {
-    if (!ctxRef.current) {
-      const ctx = new AudioContext();
-      const master = ctx.createGain();
-      master.gain.value = effectiveVolume;
-      master.connect(ctx.destination);
-      ctxRef.current = ctx;
-      masterGainRef.current = master;
+  // Pick the next file for a theme (sequential, wraps around)
+  const getNextFile = useCallback((trackId: string, files: string[]) => {
+    // Shuffle on first play of each theme
+    if (trackIndexRef.current[trackId] === undefined) {
+      trackIndexRef.current[trackId] = Math.floor(Math.random() * files.length);
+    } else {
+      trackIndexRef.current[trackId] = (trackIndexRef.current[trackId] + 1) % files.length;
     }
-    if (ctxRef.current.state === 'suspended') {
-      ctxRef.current.resume();
-    }
-    return { ctx: ctxRef.current, master: masterGainRef.current! };
-  }, [effectiveVolume]);
+    return files[trackIndexRef.current[trackId]];
+  }, []);
 
-  // Stop current track with optional fade
-  const stopCurrent = useCallback((fadeMs = 0): Promise<void> => {
+  // Create or reuse the audio element
+  const ensureAudio = useCallback(() => {
+    if (!audioRef.current) {
+      const audio = new Audio();
+      audio.loop = false; // We handle advancement to next track
+      audio.crossOrigin = 'anonymous';
+      audioRef.current = audio;
+    }
+    return audioRef.current;
+  }, []);
+
+  // Fade out current audio
+  const fadeOut = useCallback((durationMs: number): Promise<void> => {
     return new Promise((resolve) => {
-      if (!cleanupRef.current) { resolve(); return; }
-      if (fadeMs > 0 && masterGainRef.current && ctxRef.current) {
-        masterGainRef.current.gain.setTargetAtTime(0, ctxRef.current.currentTime, fadeMs / 3000);
-        fadeTimerRef.current = setTimeout(() => {
-          cleanupRef.current?.();
-          cleanupRef.current = null;
-          if (masterGainRef.current) {
-            masterGainRef.current.gain.value = useAudioStore.getState().getEffectiveVolume('music');
-          }
-          resolve();
-        }, fadeMs);
-      } else {
-        cleanupRef.current();
-        cleanupRef.current = null;
+      const audio = audioRef.current;
+      if (!audio || audio.paused) { resolve(); return; }
+
+      if (durationMs <= 0) {
+        audio.pause();
         resolve();
+        return;
       }
+
+      const startVol = audio.volume;
+      const steps = 20;
+      const stepMs = durationMs / steps;
+      const decrement = startVol / steps;
+      let step = 0;
+
+      if (fadeTimerRef.current) clearInterval(fadeTimerRef.current);
+      fadeTimerRef.current = setInterval(() => {
+        step++;
+        audio.volume = Math.max(0, startVol - decrement * step);
+        if (step >= steps) {
+          if (fadeTimerRef.current) clearInterval(fadeTimerRef.current);
+          fadeTimerRef.current = null;
+          audio.pause();
+          resolve();
+        }
+      }, stepMs) as unknown as ReturnType<typeof setTimeout>;
     });
   }, []);
 
-  // React to track changes from the session store
+  // Play a file with fade in
+  const playFile = useCallback((url: string, volume: number) => {
+    const audio = ensureAudio();
+    audio.src = url;
+    audio.volume = 0;
+    audio.play().then(() => {
+      // Fade in
+      const targetVol = Math.min(1, Math.max(0, volume));
+      const steps = 15;
+      const stepMs = 500 / steps;
+      const increment = targetVol / steps;
+      let step = 0;
+      const timer = setInterval(() => {
+        step++;
+        audio.volume = Math.min(targetVol, increment * step);
+        if (step >= steps) clearInterval(timer);
+      }, stepMs);
+    }).catch(() => {
+      // Autoplay blocked — user hasn't interacted yet, retry on click
+      const handler = () => {
+        audio.play().catch(() => {});
+        document.removeEventListener('click', handler);
+      };
+      document.addEventListener('click', handler, { once: true });
+    });
+  }, [ensureAudio]);
+
+  // When a track ends, play the next file in the theme
+  useEffect(() => {
+    const audio = audioRef.current;
+    if (!audio) return;
+
+    const handleEnded = () => {
+      const trackId = prevTrackRef.current;
+      if (!trackId) return;
+      const track = TRACKS.find((t) => t.id === trackId);
+      if (!track) return;
+      const nextUrl = getNextFile(track.id, track.files);
+      const vol = useAudioStore.getState().getEffectiveVolume('music');
+      playFile(nextUrl, vol);
+    };
+
+    audio.addEventListener('ended', handleEnded);
+    return () => audio.removeEventListener('ended', handleEnded);
+  }, [getNextFile, playFile]);
+
+  // React to track changes
   useEffect(() => {
     if (currentTrack === prevTrackRef.current) return;
     const wasPlaying = prevTrackRef.current !== null;
     prevTrackRef.current = currentTrack;
 
     if (currentTrack === null) {
-      // Stop
-      stopCurrent(300);
+      fadeOut(300);
       return;
     }
 
     const track = TRACKS.find((t) => t.id === currentTrack);
-    if (!track) return;
+    if (!track || track.files.length === 0) return;
 
-    // Crossfade into new track
     (async () => {
-      const { ctx, master } = ensureCtx();
-      await stopCurrent(wasPlaying ? 500 : 0);
-      master.gain.setTargetAtTime(
-        useAudioStore.getState().getEffectiveVolume('music'),
-        ctx.currentTime,
-        0.05,
-      );
-      const cleanup = track.build(ctx, master);
-      cleanupRef.current = cleanup;
+      await fadeOut(wasPlaying ? 500 : 0);
+      const url = getNextFile(track.id, track.files);
+      playFile(url, effectiveVolume);
     })();
-  }, [currentTrack, ensureCtx, stopCurrent]);
+  }, [currentTrack, effectiveVolume, fadeOut, getNextFile, playFile]);
 
-  // Update gain when volume changes
+  // Update volume when settings change
   useEffect(() => {
-    if (masterGainRef.current && ctxRef.current) {
-      masterGainRef.current.gain.setTargetAtTime(effectiveVolume, ctxRef.current.currentTime, 0.05);
-    }
+    const audio = audioRef.current;
+    if (!audio || audio.paused) return;
+    audio.volume = Math.min(1, Math.max(0, effectiveVolume));
   }, [effectiveVolume]);
 
-  // Suspend/resume when mute toggles while a track is active
+  // Handle mute/unmute
   useEffect(() => {
-    if (!ctxRef.current || !currentTrack) return;
-    if (isMuted && ctxRef.current.state === 'running') {
-      ctxRef.current.suspend();
-    } else if (!isMuted && ctxRef.current.state === 'suspended') {
-      ctxRef.current.resume();
+    const audio = audioRef.current;
+    if (!audio) return;
+    if (isMuted && !audio.paused) {
+      audio.pause();
+    } else if (!isMuted && audio.src && prevTrackRef.current) {
+      audio.play().catch(() => {});
     }
-  }, [isMuted, currentTrack]);
+  }, [isMuted]);
 
   // Cleanup on unmount
   useEffect(() => {
     return () => {
-      cleanupRef.current?.();
-      if (fadeTimerRef.current) clearTimeout(fadeTimerRef.current);
-      ctxRef.current?.close();
+      if (fadeTimerRef.current) clearInterval(fadeTimerRef.current as unknown as number);
+      audioRef.current?.pause();
+      audioRef.current = null;
     };
   }, []);
 
