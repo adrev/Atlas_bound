@@ -25,6 +25,8 @@ interface SessionState {
   dmIgnoreSpellSlots: boolean;
   /** The currently-playing music track id, synced from the DM via socket. */
   currentTrack: string | null;
+  /** Index of the specific file within the theme, or null for auto-shuffle. */
+  currentTrackFileIndex: number | null;
 }
 
 interface SessionActions {
@@ -46,6 +48,7 @@ interface SessionActions {
   setCurrentMapId: (mapId: string | null) => void;
   setDmIgnoreSpellSlots: (val: boolean) => void;
   setCurrentTrack: (track: string | null) => void;
+  setCurrentTrackFileIndex: (index: number | null) => void;
   reset: () => void;
 }
 
@@ -67,6 +70,7 @@ const initialState: SessionState = {
   currentMapId: null,
   dmIgnoreSpellSlots: false,
   currentTrack: null,
+  currentTrackFileIndex: null,
 };
 
 export const useSessionStore = create<SessionState & SessionActions>((set) => ({
@@ -109,6 +113,8 @@ export const useSessionStore = create<SessionState & SessionActions>((set) => ({
   setDmIgnoreSpellSlots: (val) => set({ dmIgnoreSpellSlots: val }),
 
   setCurrentTrack: (track) => set({ currentTrack: track }),
+
+  setCurrentTrackFileIndex: (index) => set({ currentTrackFileIndex: index }),
 
   reset: () => set(initialState),
 }));

@@ -261,7 +261,10 @@ export function registerSessionEvents(io: Server, socket: Socket): void {
     const ctx = getPlayerBySocketId(socket.id);
     if (!ctx || ctx.player.role !== 'dm') return;  // DM only
     // Broadcast to all players in the session (including DM)
-    io.to(ctx.room.sessionId).emit('session:music-changed', { track: parsed.data.track });
+    io.to(ctx.room.sessionId).emit('session:music-changed', {
+      track: parsed.data.track,
+      fileIndex: parsed.data.fileIndex ?? null,
+    });
   }));
 
   socket.on('session:handout', safeHandler(socket, async (data) => {

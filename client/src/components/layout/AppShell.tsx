@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { Copy, PanelRightClose, PanelRightOpen, X, LogOut, Home, UserCog, ChevronDown } from 'lucide-react';
+import { Copy, PanelRightClose, PanelRightOpen, X, LogOut, Home, UserCog, ChevronDown, Menu } from 'lucide-react';
 import { useSocket } from '../../hooks/useSocket';
+import { useIsMobile } from '../../hooks/useIsMobile';
 import { useSessionStore } from '../../stores/useSessionStore';
 import { useAuthStore } from '../../stores/useAuthStore';
 import { useMapStore } from '../../stores/useMapStore';
@@ -22,19 +23,27 @@ import { ProfileModal } from '../auth/ProfileModal';
 import { Sidebar } from './Sidebar';
 import { HandoutModal } from '../session/HandoutModal';
 import { BottomBar } from './BottomBar';
+import { MobileBottomBar } from './MobileBottomBar';
+import type { MobileTab } from './MobileBottomBar';
 import { MapBrowser } from '../mapbrowser/MapBrowser';
 import { CharacterSheetFull } from '../character/CharacterSheetFull';
+import { ChatPanel } from '../chat/ChatPanel';
+import { DiceTray } from '../dice/DiceTray';
+import { TokenActionPanel } from '../canvas/TokenActionPanel';
 import { theme } from '../../styles/theme';
 
 export function AppShell() {
   const { roomCode } = useParams<{ roomCode: string }>();
   const navigate = useNavigate();
+  const isMobile = useIsMobile();
   const storeDisplayName = useSessionStore((s) => s.displayName);
   const gameMode = useSessionStore((s) => s.gameMode);
   const storedRoomCode = useSessionStore((s) => s.roomCode);
   const authUser = useAuthStore((s) => s.user);
   const authLogout = useAuthStore((s) => s.logout);
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [mobileTab, setMobileTab] = useState<MobileTab>('map');
+  const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [copied, setCopied] = useState(false);
   const [showMapBrowser, setShowMapBrowser] = useState(false);
   const [showUserMenu, setShowUserMenu] = useState(false);
@@ -307,6 +316,170 @@ export function AppShell() {
     );
   }
 
+  // Helper: resolve my token ID for the mobile character tab
+  const myCharacter = useCharacterStore((s) => s.myCharacter);
+  const tokens = useMapStore((s) => s.tokens);
+  const myTokenId = myCharacter
+    ? Object.values(tokens).find((t) => t.characterId === myCharacter?.id)?.id
+    : undefined;
+
+  // -----------------------------------------------------------------------
+  // Shared modals (rendered in both layouts)
+  // -----------------------------------------------------------------------
+  const sharedModals = (
+    <>
+      {/* Map Browser Modal */}
+      {(showMapBrowser || (!currentMap && isDM)) && (
+        <div style={styles.mapBrowserOverlay}>
+          <div style={styles.mapBrowserContainer}>
+            <MapBrowser
+              onMapLoaded={() => setShowMapBrowser(false)}
+              onClose={currentMap ? () => setShowMapBrowser(false) : undefined}
+            />
+          </div>
+        </div>
+      )}
+      {showInitiativeModal && (
+        <InitiativeModal onClose={() => setShowInitiativeModal(false)} />
+      )}
+      <OpportunityAttackModal />
+      <CounterspellModal />
+      <ShieldModal />
+      <ReadyCheckModal />
+      <CombatRecap />
+      <MusicEngine />
+      <HandoutModal />
+      <ProfileModal open={showProfileModal} onClose={() => setShowProfileModal(false)} />
+      {fullSheetCharacter && (
+        <div style={styles.fullSheetOverlay}>
+          <div style={styles.fullSheetContainer}>
+            <button
+              style={styles.closeFullSheet}
+              onClick={() => setFullSheetCharId(null)}
+            >
+              <X size={16} />
+            </button>
+            <CharacterSheetFull
+              character={fullSheetCharacter}
+              onClose={() => { setFullSheetCharId(null); setRequestedTab(null); }}
+              initialTab={requestedTab || undefined}
+            />
+          </div>
+        </div>
+      )}
+    </>
+  );
+
+  // -----------------------------------------------------------------------
+  // MOBILE LAYOUT
+  // -----------------------------------------------------------------------
+  if (isMobile) {
+    return (
+      <div style={styles.container}>
+        {/* Simplified top bar */}
+        <div style={styles.topBar}>
+          <div style={styles.topLeft}>
+            <button style={styles.codeButton} onClick={handleCopyCode} title="Copy room code">
+              <Copy size={14} />
+              <span style={styles.codeText}>
+                {storedRoomCode || roomCode || '---'}
+              </span>
+              {copied && <span style={styles.copiedBadge}>Copied!</span>}
+            </button>
+            <div
+              style={{
+                ...styles.modeBadge,
+                ...(gameMode === 'combat' ? styles.modeCombat : styles.modeFreeRoam),
+              }}
+            >
+              {gameMode === 'combat' ? 'Combat' : 'Free Roam'}
+            </div>
+          </div>
+          <button
+            style={styles.mobileMenuBtn}
+            onClick={() => setMobileSidebarOpen(true)}
+            title="Open menu"
+          >
+            <Menu size={20} />
+          </button>
+        </div>
+
+        {/* Mobile main content — single active panel */}
+        <div style={{ flex: 1, overflow: 'hidden', minHeight: 0, position: 'relative' }}>
+          {mobileTab === 'map' && (
+            <div style={styles.canvasArea}>
+              <BattleMap />
+              <MapTransition />
+              <PreviewModeBanner />
+            </div>
+          )}
+          {mobileTab === 'character' && (
+            <div style={styles.mobilePanel}>
+              {myTokenId ? (
+                <TokenActionPanel embedded embeddedTokenId={myTokenId} />
+              ) : myCharacter ? (
+                <div style={styles.mobileCharEmpty}>
+                  <p style={{ color: theme.text.secondary, fontSize: 14, margin: 0 }}>
+                    {myCharacter.name} is not placed on the map yet.
+                  </p>
+                </div>
+              ) : (
+                <div style={styles.mobileCharEmpty}>
+                  <p style={{ color: theme.text.muted, fontSize: 14, margin: 0 }}>
+                    No character loaded. Open the menu to import one.
+                  </p>
+                </div>
+              )}
+            </div>
+          )}
+          {mobileTab === 'chat' && (
+            <div style={styles.mobilePanel}>
+              <ChatPanel />
+            </div>
+          )}
+          {mobileTab === 'dice' && (
+            <div style={styles.mobileDicePanel}>
+              <DiceTray />
+            </div>
+          )}
+        </div>
+
+        {/* Mobile bottom tab bar */}
+        <MobileBottomBar activeTab={mobileTab} onTabChange={setMobileTab} />
+
+        {/* Mobile sidebar overlay */}
+        {mobileSidebarOpen && (
+          <div
+            style={styles.mobileSidebarOverlay}
+            onMouseDown={(e) => {
+              if (e.target === e.currentTarget) setMobileSidebarOpen(false);
+            }}
+          >
+            <div style={styles.mobileSidebarContainer}>
+              <div style={styles.mobileSidebarHeader}>
+                <span style={{ fontSize: 14, fontWeight: 700, color: theme.gold.primary }}>Menu</span>
+                <button
+                  style={styles.closeFullSheet}
+                  onClick={() => setMobileSidebarOpen(false)}
+                >
+                  <X size={16} />
+                </button>
+              </div>
+              <div style={{ flex: 1, overflow: 'auto' }}>
+                <Sidebar />
+              </div>
+            </div>
+          </div>
+        )}
+
+        {sharedModals}
+      </div>
+    );
+  }
+
+  // -----------------------------------------------------------------------
+  // DESKTOP LAYOUT
+  // -----------------------------------------------------------------------
   return (
     <div style={styles.container}>
       {/* Top bar */}
@@ -398,10 +571,7 @@ export function AppShell() {
         {/* Canvas area */}
         <div style={styles.canvasArea}>
           <BattleMap />
-          {/* Cinematic map transition overlay */}
           <MapTransition />
-          {/* DM-only: overlays on top of the canvas when previewing a
-             map the players aren't on. Auto-hides for players. */}
           <PreviewModeBanner />
         </div>
 
@@ -418,56 +588,7 @@ export function AppShell() {
         <BottomBar />
       </div>
 
-      {/* Map Browser Modal - shown when DM clicks Load Map or no map is loaded */}
-      {(showMapBrowser || (!currentMap && isDM)) && (
-        <div style={styles.mapBrowserOverlay}>
-          <div style={styles.mapBrowserContainer}>
-            <MapBrowser
-              onMapLoaded={() => setShowMapBrowser(false)}
-              onClose={currentMap ? () => setShowMapBrowser(false) : undefined}
-            />
-          </div>
-        </div>
-      )}
-      {/* Initiative Modal */}
-      {showInitiativeModal && (
-        <InitiativeModal onClose={() => setShowInitiativeModal(false)} />
-      )}
-      {/* Opportunity Attack prompt — always mounted, only renders
-          when the OA queue has an entry. */}
-      <OpportunityAttackModal />
-      {/* Counterspell prompt — same pattern. */}
-      <CounterspellModal />
-      {/* Shield reaction prompt — same pattern. */}
-      <ShieldModal />
-      {/* Ready Check prompt — shown to players when DM initiates. */}
-      <ReadyCheckModal />
-      {/* Combat Recap — shown when combat ends. */}
-      <CombatRecap />
-      {/* Music engine — headless audio for all users (DM + players). */}
-      <MusicEngine />
-      {/* Handout modal — shows dramatic reveals sent by the DM. */}
-      <HandoutModal />
-      {/* Profile Modal */}
-      <ProfileModal open={showProfileModal} onClose={() => setShowProfileModal(false)} />
-      {/* Character Sheet Full overlay - from token click */}
-      {fullSheetCharacter && (
-        <div style={styles.fullSheetOverlay}>
-          <div style={styles.fullSheetContainer}>
-            <button
-              style={styles.closeFullSheet}
-              onClick={() => setFullSheetCharId(null)}
-            >
-              <X size={16} />
-            </button>
-            <CharacterSheetFull
-              character={fullSheetCharacter}
-              onClose={() => { setFullSheetCharId(null); setRequestedTab(null); }}
-              initialTab={requestedTab || undefined}
-            />
-          </div>
-        </div>
-      )}
+      {sharedModals}
     </div>
   );
 }
@@ -710,5 +831,72 @@ const styles: Record<string, React.CSSProperties> = {
     height: 1,
     background: theme.border.default,
     margin: '4px 0',
+  },
+  // Mobile-specific styles
+  mobileMenuBtn: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: 44,
+    height: 44,
+    background: 'transparent',
+    border: 'none',
+    color: theme.text.secondary,
+    cursor: 'pointer',
+    borderRadius: theme.radius.sm,
+  },
+  mobilePanel: {
+    display: 'flex',
+    flexDirection: 'column' as const,
+    height: '100%',
+    overflow: 'auto',
+    background: theme.bg.deep,
+  },
+  mobileDicePanel: {
+    display: 'flex',
+    flexDirection: 'column' as const,
+    alignItems: 'center',
+    justifyContent: 'center',
+    height: '100%',
+    overflow: 'auto',
+    background: theme.bg.deep,
+    padding: 24,
+    gap: 16,
+  },
+  mobileCharEmpty: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    height: '100%',
+    padding: 32,
+    textAlign: 'center' as const,
+  },
+  mobileSidebarOverlay: {
+    position: 'fixed' as const,
+    inset: 0,
+    background: 'rgba(0, 0, 0, 0.7)',
+    zIndex: 300,
+    animation: 'fadeIn 0.15s ease',
+  },
+  mobileSidebarContainer: {
+    position: 'absolute' as const,
+    top: 0,
+    right: 0,
+    bottom: 0,
+    width: '85%',
+    maxWidth: 360,
+    background: theme.bg.deep,
+    borderLeft: `1px solid ${theme.border.default}`,
+    display: 'flex',
+    flexDirection: 'column' as const,
+    animation: 'fadeIn 0.15s ease',
+  },
+  mobileSidebarHeader: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: '12px 16px',
+    borderBottom: `1px solid ${theme.border.default}`,
+    flexShrink: 0,
   },
 };

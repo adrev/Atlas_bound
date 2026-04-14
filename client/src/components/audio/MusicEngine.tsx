@@ -10,6 +10,7 @@ import { TRACKS } from './tracks';
  */
 export function MusicEngine() {
   const currentTrack = useSessionStore((s) => s.currentTrack);
+  const currentTrackFileIndex = useSessionStore((s) => s.currentTrackFileIndex);
   const effectiveVolume = useAudioStore((s) => s.getEffectiveVolume('music'));
   const masterMuted = useAudioStore((s) => s.masterMuted);
   const musicMuted = useAudioStore((s) => s.musicMuted);
@@ -17,16 +18,41 @@ export function MusicEngine() {
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const prevTrackRef = useRef<string | null>(null);
+  const prevFileIndexRef = useRef<number | null>(null);
   const trackIndexRef = useRef<Record<string, number>>({});
   const fadeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** Whether the engine should shuffle (true) or play sequentially (false). */
+  const shuffleRef = useRef(true);
 
-  // Pick the next file for a theme (sequential, wraps around)
+  /** Allow external components to set shuffle mode. */
+  useEffect(() => {
+    const handler = (e: Event) => {
+      shuffleRef.current = (e as CustomEvent<boolean>).detail;
+    };
+    window.addEventListener('music-shuffle-changed', handler);
+    return () => window.removeEventListener('music-shuffle-changed', handler);
+  }, []);
+
+  // Pick the next file for a theme (shuffle or sequential)
   const getNextFile = useCallback((trackId: string, files: string[]) => {
-    // Shuffle on first play of each theme
-    if (trackIndexRef.current[trackId] === undefined) {
-      trackIndexRef.current[trackId] = Math.floor(Math.random() * files.length);
+    if (shuffleRef.current) {
+      // Shuffle: pick a random file different from current when possible
+      if (files.length <= 1) {
+        trackIndexRef.current[trackId] = 0;
+      } else {
+        let next: number;
+        do {
+          next = Math.floor(Math.random() * files.length);
+        } while (next === trackIndexRef.current[trackId] && files.length > 1);
+        trackIndexRef.current[trackId] = next;
+      }
     } else {
-      trackIndexRef.current[trackId] = (trackIndexRef.current[trackId] + 1) % files.length;
+      // Sequential
+      if (trackIndexRef.current[trackId] === undefined) {
+        trackIndexRef.current[trackId] = 0;
+      } else {
+        trackIndexRef.current[trackId] = (trackIndexRef.current[trackId] + 1) % files.length;
+      }
     }
     return files[trackIndexRef.current[trackId]];
   }, []);
@@ -120,11 +146,15 @@ export function MusicEngine() {
     return () => audio.removeEventListener('ended', handleEnded);
   }, [getNextFile, playFile]);
 
-  // React to track changes
+  // React to track changes (theme change OR specific file index change)
   useEffect(() => {
-    if (currentTrack === prevTrackRef.current) return;
+    const themeChanged = currentTrack !== prevTrackRef.current;
+    const fileChanged = currentTrackFileIndex !== prevFileIndexRef.current;
+    if (!themeChanged && !fileChanged) return;
+
     const wasPlaying = prevTrackRef.current !== null;
     prevTrackRef.current = currentTrack;
+    prevFileIndexRef.current = currentTrackFileIndex;
 
     if (currentTrack === null) {
       fadeOut(300);
@@ -136,10 +166,17 @@ export function MusicEngine() {
 
     (async () => {
       await fadeOut(wasPlaying ? 500 : 0);
-      const url = getNextFile(track.id, track.files);
+      let url: string;
+      if (currentTrackFileIndex != null && currentTrackFileIndex < track.files.length) {
+        // Specific file requested by DM
+        url = track.files[currentTrackFileIndex];
+        trackIndexRef.current[track.id] = currentTrackFileIndex;
+      } else {
+        url = getNextFile(track.id, track.files);
+      }
       playFile(url, effectiveVolume);
     })();
-  }, [currentTrack, effectiveVolume, fadeOut, getNextFile, playFile]);
+  }, [currentTrack, currentTrackFileIndex, effectiveVolume, fadeOut, getNextFile, playFile]);
 
   // Update volume when settings change
   useEffect(() => {

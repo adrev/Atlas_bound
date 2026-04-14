@@ -5,6 +5,26 @@
 
 const CDN = 'https://storage.googleapis.com/atlas-bound-data/music';
 
+const ROMAN = ['I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X'];
+
+/**
+ * Derive a human-readable display name from a CDN filename.
+ * e.g. "tavern-01.mp3" → "Tavern I", "combat-03-bis.mp3" → "Combat III (Alt)"
+ */
+export function getTrackFileName(url: string): string {
+  const filename = url.split('/').pop() ?? '';
+  const match = filename.match(/^(.+?)-(\d+)(-bis)?\.mp3$/);
+  if (!match) return filename;
+  const [, rawTheme, numStr, bis] = match;
+  const theme = rawTheme
+    .split('-')
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(' ');
+  const num = parseInt(numStr, 10);
+  const roman = ROMAN[num - 1] ?? String(num);
+  return `${theme} ${roman}${bis ? ' (Alt)' : ''}`;
+}
+
 export interface Track {
   id: string;
   name: string;

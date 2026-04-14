@@ -305,8 +305,8 @@ export function emitDamageSideEffects(tokenId: string, damageAmount: number) {
 }
 
 // --- Music ---
-export function emitMusicChange(track: string | null) {
-  getSocket().emit('session:music-change', { track });
+export function emitMusicChange(track: string | null, fileIndex?: number) {
+  getSocket().emit('session:music-change', { track, fileIndex });
 }
 
 // --- Character ---

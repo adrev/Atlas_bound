@@ -324,6 +324,7 @@ export const mapActivateSchema = z.object({
 // --- Music sync schema ---
 export const musicChangeSchema = z.object({
   track: z.string().max(50).nullable(),  // null = stop
+  fileIndex: z.number().int().min(0).max(20).optional(),
 });
 
 // --- Handout schema ---

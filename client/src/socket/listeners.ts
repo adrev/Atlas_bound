@@ -72,8 +72,9 @@ export function registerListeners(socket: Socket): () => void {
     console.error('[Session Error]', message);
   });
 
-  socket.on('session:music-changed', (data: { track: string | null }) => {
+  socket.on('session:music-changed', (data: { track: string | null; fileIndex?: number | null }) => {
     useSessionStore.getState().setCurrentTrack(data.track);
+    useSessionStore.getState().setCurrentTrackFileIndex(data.fileIndex ?? null);
   });
 
   // --- Map ---

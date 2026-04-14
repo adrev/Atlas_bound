@@ -3,6 +3,7 @@ import { useChatStore } from '../../stores/useChatStore';
 import { useSessionStore } from '../../stores/useSessionStore';
 import { getSocket } from '../../socket/client';
 import { ChatInput } from './ChatInput';
+import { DiceRollCard } from './DiceRollCard';
 import type { ChatMessage } from '@dnd-vtt/shared';
 import { theme } from '../../styles/theme';
 
@@ -23,9 +24,9 @@ function MessageBubble({ message }: { message: ChatMessage }) {
       background: 'rgba(155, 89, 182, 0.08)',
     },
     roll: {
-      borderLeft: `3px solid ${theme.gold.primary}`,
-      paddingLeft: 10,
-      background: theme.gold.bg,
+      // Styling is handled by DiceRollCard
+      padding: 0,
+      background: 'transparent',
     },
     system: {
       // Gold-bordered card for spell results / system events. Distinct
@@ -62,7 +63,7 @@ function MessageBubble({ message }: { message: ChatMessage }) {
       ...styles.message, ...typeStyles[message.type],
       ...(isHidden ? { background: 'rgba(155,89,182,0.08)', borderLeft: '2px solid #9b59b6' } : {}),
     }}>
-      {message.type !== 'system' && (
+      {message.type !== 'system' && message.type !== 'roll' && (
         <div style={styles.messageHeader}>
           <span style={{ ...styles.messageName, color: nameColor }}>
             {message.type === 'ic' && message.characterName
@@ -92,18 +93,12 @@ function MessageBubble({ message }: { message: ChatMessage }) {
       )}
 
       {message.type === 'roll' && message.rollData ? (
-        <div style={styles.rollContent}>
-          <span style={{ ...styles.rollTotal, ...(isHidden ? { color: theme.purple } : {}) }}>{message.rollData.total}</span>
-          <span style={styles.rollNotation}>{message.rollData.notation}</span>
-          <span style={styles.rollBreakdown}>
-            [{message.rollData.dice.map((d) => d.value).join(', ')}]
-            {message.rollData.modifier !== 0 &&
-              ` ${message.rollData.modifier > 0 ? '+' : ''}${message.rollData.modifier}`}
-          </span>
-          {message.rollData.reason && (
-            <span style={styles.rollReason}>{message.rollData.reason}</span>
-          )}
-        </div>
+        <DiceRollCard
+          rollData={message.rollData}
+          content={message.content}
+          displayName={message.characterName ?? message.displayName}
+          isHidden={isHidden}
+        />
       ) : message.type === 'system' ? (
         // System messages support multi-line content with explicit \n
         <div style={{ whiteSpace: 'pre-wrap', lineHeight: 1.5 }}>{message.content}</div>
@@ -270,34 +265,6 @@ const styles: Record<string, React.CSSProperties> = {
     margin: 0,
     lineHeight: 1.4,
     wordBreak: 'break-word',
-  },
-  rollContent: {
-    display: 'flex',
-    alignItems: 'baseline',
-    gap: 6,
-    flexWrap: 'wrap',
-  },
-  rollTotal: {
-    fontSize: 20,
-    fontWeight: 700,
-    color: theme.gold.primary,
-    fontFamily: theme.font.display,
-  },
-  rollNotation: {
-    fontSize: 12,
-    color: theme.text.secondary,
-    fontFamily: 'monospace',
-  },
-  rollBreakdown: {
-    fontSize: 11,
-    color: theme.text.muted,
-    fontFamily: 'monospace',
-  },
-  rollReason: {
-    fontSize: 11,
-    color: theme.text.secondary,
-    fontStyle: 'italic',
-    width: '100%',
   },
   scrollToBottom: {
     position: 'absolute' as const,
