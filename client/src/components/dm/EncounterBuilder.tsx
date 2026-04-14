@@ -356,6 +356,7 @@ export function EncounterBuilder() {
                   style={styles.searchResult}
                   onClick={() => addCreature(m)}
                 >
+                  <img src={getCreatureIconUrl(m.name, m.type)} alt="" style={{ width: 28, height: 28, borderRadius: '50%', flexShrink: 0 }} />
                   <span style={styles.searchResultName}>{m.name}</span>
                   <span style={styles.searchResultMeta}>
                     CR {formatCR(m.challengeRating)} | {m.type}
@@ -382,6 +383,7 @@ export function EncounterBuilder() {
           )}
           {creatures.map((c) => (
             <div key={c.slug} style={styles.creatureRow}>
+              <img src={getCreatureIconUrl(c.name)} alt="" style={{ width: 24, height: 24, borderRadius: '50%', flexShrink: 0 }} />
               <span style={styles.creatureName}>{c.name}</span>
               <div style={styles.countControls}>
                 <button style={styles.countButton} onClick={() => updateCount(c.slug, -1)}>
