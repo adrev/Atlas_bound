@@ -1,5 +1,7 @@
+import { Volume2, VolumeX } from 'lucide-react';
 import { QuickActions } from '../quickactions/QuickActions';
 import { DiceTray } from '../dice/DiceTray';
+import { useAudioStore } from '../../stores/useAudioStore';
 import { theme } from '../../styles/theme';
 
 /**
@@ -12,6 +14,9 @@ import { theme } from '../../styles/theme';
  *   [ QuickActions ............... | divider | ... DiceTray ]
  */
 export function BottomBar() {
+  const masterMuted = useAudioStore((s) => s.masterMuted);
+  const toggleMasterMute = useAudioStore((s) => s.toggleMasterMute);
+
   return (
     <div style={styles.container}>
       <div style={styles.quickActionsSection}>
@@ -21,6 +26,27 @@ export function BottomBar() {
       <div style={styles.diceSection}>
         <DiceTray />
       </div>
+      <button
+        onClick={toggleMasterMute}
+        title={masterMuted ? 'Unmute audio' : 'Mute all audio'}
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          width: 32,
+          height: 32,
+          borderRadius: theme.radius.sm,
+          border: `1px solid ${masterMuted ? theme.border.default : theme.gold.border}`,
+          background: masterMuted ? theme.bg.deep : theme.gold.bg,
+          color: masterMuted ? theme.text.muted : theme.gold.primary,
+          cursor: 'pointer',
+          flexShrink: 0,
+          transition: `all ${theme.motion.fast}`,
+          marginLeft: theme.space.sm,
+        }}
+      >
+        {masterMuted ? <VolumeX size={16} /> : <Volume2 size={16} />}
+      </button>
     </div>
   );
 }

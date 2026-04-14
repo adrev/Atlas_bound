@@ -24,6 +24,7 @@ import { TokenActionPanel } from './TokenActionPanel';
 import { MapContextMenu } from './MapContextMenu';
 import { TokenTooltip } from './TokenTooltip';
 import { DrawToolbar } from './DrawToolbar';
+import { InitiativeOverlay } from './InitiativeOverlay';
 import { emitDrawingStream, emitDrawingStreamEnd } from '../../socket/emitters';
 import { theme } from '../../styles/theme';
 
@@ -497,6 +498,7 @@ export function BattleMap() {
           </Layer>
         )}
       </Stage>
+      <InitiativeOverlay />
       <PingOverlay stageX={stageProps.x} stageY={stageProps.y} stageScale={stageProps.scaleX} />
       <TokenTooltip />
       <TokenActionPanel />

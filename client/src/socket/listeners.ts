@@ -348,11 +348,15 @@ export function registerListeners(socket: Socket): () => void {
 
   // --- Chat ---
   socket.on('chat:new-message', (message) => {
-    useChatStore.getState().addMessage(message);
+    const chat = useChatStore.getState();
+    chat.addMessage(message);
+    if (!chat.chatTabActive) chat.incrementUnread();
   });
 
   socket.on('chat:roll-result', (message) => {
-    useChatStore.getState().addMessage(message);
+    const chat = useChatStore.getState();
+    chat.addMessage(message);
+    if (!chat.chatTabActive) chat.incrementUnread();
     if (message.rollData) {
       useDiceStore.getState().setResult(message.rollData);
     }

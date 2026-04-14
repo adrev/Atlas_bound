@@ -99,12 +99,14 @@ function TokenSprite({ token, isSelected, isCurrentTurn }: TokenSpriteProps) {
     : movePctRemaining > 0.1 ? '#d4a843' // gold (running low)
     : '#c53131';                          // red (out of move)
   // HP ratio: prefer combatant (combat), then character store, then 1 (full)
+  const currentHp = combatant ? combatant.hp : charHp;
+  const currentMaxHp = combatant ? combatant.maxHp : charMaxHp;
   const actualHpRatio = combatant
     ? Math.max(0, combatant.hp / Math.max(1, combatant.maxHp))
     : (charHp !== null && charMaxHp !== null && charMaxHp > 0)
       ? Math.max(0, charHp / charMaxHp)
       : 1;
-  const showHpBar = combatant || (charHp !== null && charMaxHp !== null && charHp < charMaxHp);
+  const hasHpData = currentHp !== null && currentMaxHp !== null && currentMaxHp > 0;
 
   const hpColor =
     actualHpRatio > 0.5
@@ -131,12 +133,18 @@ function TokenSprite({ token, isSelected, isCurrentTurn }: TokenSpriteProps) {
   };
 
   const isDM = useSessionStore.getState().isDM;
+  const userId = useSessionStore.getState().userId;
+  const isNPC = !token.ownerUserId;
+
+  // HP bar visibility: DM sees all, players see own + visible creature bars
+  const isOwnToken = token.ownerUserId === userId;
+  const showHpBarForPlayer = isDM || isOwnToken || (isNPC && token.visible);
+  const showHpBar = showHpBarForPlayer && hasHpData && (combatant || (charHp !== null && charMaxHp !== null && charHp < charMaxHp));
 
   // Loot bag tokens (race === 'loot' or item image) should never show as dead
   const isLootBag = charData?.race === 'loot' || (token.imageUrl?.includes('/uploads/items/'));
   // Death state — skip for loot bags which naturally have 0 HP
   const isDead = !isLootBag && ((charHp !== null && charHp <= 0) || (combatant && combatant.hp <= 0));
-  const isNPC = !token.ownerUserId;
 
   // Visibility state — DM sees invisible tokens dimmed so they can still
   // be moved/managed but it's clear they're hidden from players
@@ -281,25 +289,45 @@ function TokenSprite({ token, isSelected, isCurrentTurn }: TokenSpriteProps) {
         </Group>
       )}
 
-      {/* HP bar (above token) - shows during combat OR when damaged */}
+      {/* HP bar (below token) - shows during combat OR when damaged */}
       {showHpBar && (
-        <Group y={-tokenSize / 2 - 8}>
+        <Group y={tokenSize / 2 + 1}>
+          {/* Background bar */}
           <Rect
-            x={-tokenSize / 2 + 4}
+            x={-tokenSize / 2}
             y={0}
-            width={tokenSize - 8}
+            width={tokenSize}
             height={4}
-            fill="rgba(0,0,0,0.6)"
+            fill="rgba(40,40,40,0.85)"
             cornerRadius={2}
           />
+          {/* Fill bar */}
           <Rect
-            x={-tokenSize / 2 + 4}
+            x={-tokenSize / 2}
             y={0}
-            width={Math.max(0, (tokenSize - 8) * actualHpRatio)}
+            width={Math.max(0, tokenSize * actualHpRatio)}
             height={4}
             fill={hpColor}
             cornerRadius={2}
           />
+          {/* HP text - only show if token is large enough (size >= 1) */}
+          {token.size >= 1 && currentHp !== null && currentMaxHp !== null && (
+            <Text
+              x={-tokenSize / 2}
+              y={-1}
+              width={tokenSize}
+              height={6}
+              align="center"
+              text={`${currentHp}/${currentMaxHp}`}
+              fontSize={8}
+              fontFamily="monospace"
+              fontStyle="bold"
+              fill="#fff"
+              shadowColor="black"
+              shadowBlur={2}
+              shadowEnabled
+            />
+          )}
         </Group>
       )}
 
@@ -368,8 +396,9 @@ function TokenSprite({ token, isSelected, isCurrentTurn }: TokenSpriteProps) {
         );
       })()}
 
-      {/* Name label background + text (below token) */}
+      {/* Name label background + text (below token + HP bar) */}
       {(() => {
+        const hpBarOffset = showHpBar ? 7 : 0;
         const labelWidth = Math.max(tokenSize + 20, Math.min(token.name.length * 6.5 + 16, 160));
         const needsWrap = token.name.length > (tokenSize + 20) / 6;
         const labelHeight = needsWrap ? 26 : 16;
@@ -377,7 +406,7 @@ function TokenSprite({ token, isSelected, isCurrentTurn }: TokenSpriteProps) {
           <>
             <Rect
               x={-labelWidth / 2}
-              y={tokenSize / 2 + 2}
+              y={tokenSize / 2 + 2 + hpBarOffset}
               width={labelWidth}
               height={labelHeight}
               fill="rgba(0,0,0,0.75)"
@@ -385,7 +414,7 @@ function TokenSprite({ token, isSelected, isCurrentTurn }: TokenSpriteProps) {
             />
             <Text
               text={token.name}
-              y={tokenSize / 2 + 3}
+              y={tokenSize / 2 + 3 + hpBarOffset}
               x={-labelWidth / 2}
               width={labelWidth}
               align="center"
@@ -403,22 +432,25 @@ function TokenSprite({ token, isSelected, isCurrentTurn }: TokenSpriteProps) {
       })()}
 
       {/* DEAD label */}
-      {isDead && (
-        <Text
-          text="DEAD"
-          y={tokenSize / 2 + (token.name.length > (tokenSize + 20) / 6 ? 28 : 18)}
-          x={-30}
-          width={60}
-          align="center"
-          fontSize={9}
-          fontStyle="bold"
-          fill="#c53131"
-        />
-      )}
+      {isDead && (() => {
+        const hpBarOffset = showHpBar ? 7 : 0;
+        return (
+          <Text
+            text="DEAD"
+            y={tokenSize / 2 + (token.name.length > (tokenSize + 20) / 6 ? 28 : 18) + hpBarOffset}
+            x={-30}
+            width={60}
+            align="center"
+            fontSize={9}
+            fontStyle="bold"
+            fill="#c53131"
+          />
+        );
+      })()}
 
       {/* Condition badges */}
       {token.conditions.length > 0 && (
-        <Group y={tokenSize / 2 + 20}>
+        <Group y={tokenSize / 2 + 20 + (showHpBar ? 7 : 0)}>
           {token.conditions.slice(0, 4).map((cond, i) => (
             <Circle
               key={cond}

@@ -1,13 +1,15 @@
 import { useState } from 'react';
-import { ArrowLeft } from 'lucide-react';
+import { ArrowLeft, Volume2, VolumeX } from 'lucide-react';
 import { useMapStore } from '../../stores/useMapStore';
 import { useSessionStore } from '../../stores/useSessionStore';
+import { useAudioStore } from '../../stores/useAudioStore';
 import { emitUpdateSettings } from '../../socket/emitters';
 import { CreatureLibrary } from './CreatureLibrary';
 import { SceneManager } from './SceneManager';
 import { theme } from '../../styles/theme';
 import { EMOJI } from '../../styles/emoji';
 import { Section, Button, NumberInput, FieldGroup, Divider } from '../ui';
+import { MusicPlayer } from './MusicPlayer';
 
 type DMView = 'main' | 'creatures' | 'maps' | 'settings';
 
@@ -145,6 +147,11 @@ export function DMToolbar() {
           Game Settings
         </Button>
       </Section>
+
+      <Divider variant="plain" />
+
+      {/* Music */}
+      <MusicPlayer />
     </div>
   );
 }
@@ -223,6 +230,169 @@ function SettingsPanel({
       <p style={styles.hint}>
         Uses walls to block line of sight and cast shadows from light sources.
       </p>
+
+      <Divider variant="ornate" marginY={theme.space.md} />
+
+      <AudioSettingsPanel />
+    </div>
+  );
+}
+
+function AudioSettingsPanel() {
+  const {
+    masterVolume,
+    musicVolume,
+    sfxVolume,
+    masterMuted,
+    musicMuted,
+    sfxMuted,
+    setMasterVolume,
+    setMusicVolume,
+    setSfxVolume,
+    toggleMasterMute,
+    toggleMusicMute,
+    toggleSfxMute,
+  } = useAudioStore();
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space.md }}>
+      <h4
+        style={{
+          ...theme.type.h3,
+          color: theme.gold.primary,
+          margin: 0,
+          display: 'flex',
+          alignItems: 'center',
+          gap: theme.space.sm,
+        }}
+      >
+        <Volume2 size={14} />
+        AUDIO SETTINGS
+      </h4>
+
+      {/* Master Volume */}
+      <AudioSliderRow
+        label="Master Volume"
+        value={masterVolume}
+        muted={masterMuted}
+        onToggleMute={toggleMasterMute}
+        onChange={setMasterVolume}
+        disabled={false}
+        prominent
+      />
+
+      {/* Music */}
+      <AudioSliderRow
+        label="Music"
+        value={musicVolume}
+        muted={musicMuted}
+        onToggleMute={toggleMusicMute}
+        onChange={setMusicVolume}
+        disabled={masterMuted}
+      />
+
+      {/* Sound Effects */}
+      <AudioSliderRow
+        label="Sound Effects"
+        value={sfxVolume}
+        muted={sfxMuted}
+        onToggleMute={toggleSfxMute}
+        onChange={setSfxVolume}
+        disabled={masterMuted}
+      />
+    </div>
+  );
+}
+
+function AudioSliderRow({
+  label,
+  value,
+  muted,
+  onToggleMute,
+  onChange,
+  disabled,
+  prominent,
+}: {
+  label: string;
+  value: number;
+  muted: boolean;
+  onToggleMute: () => void;
+  onChange: (v: number) => void;
+  disabled: boolean;
+  prominent?: boolean;
+}) {
+  const dimmed = disabled || muted;
+  return (
+    <div
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: theme.space.sm,
+        opacity: disabled && !prominent ? 0.4 : 1,
+        transition: `opacity ${theme.motion.normal}`,
+      }}
+    >
+      <button
+        onClick={onToggleMute}
+        title={muted ? 'Unmute' : 'Mute'}
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          width: prominent ? 32 : 26,
+          height: prominent ? 32 : 26,
+          borderRadius: theme.radius.sm,
+          border: `1px solid ${dimmed ? theme.border.default : theme.gold.border}`,
+          background: dimmed ? theme.bg.deep : theme.gold.bg,
+          color: dimmed ? theme.text.muted : theme.gold.primary,
+          cursor: 'pointer',
+          flexShrink: 0,
+          transition: `all ${theme.motion.fast}`,
+        }}
+      >
+        {dimmed ? <VolumeX size={prominent ? 16 : 13} /> : <Volume2 size={prominent ? 16 : 13} />}
+      </button>
+
+      <span
+        style={{
+          ...theme.type.body,
+          color: dimmed ? theme.text.muted : theme.text.secondary,
+          minWidth: 90,
+          fontSize: prominent ? 13 : 12,
+          fontWeight: prominent ? 700 : 600,
+        }}
+      >
+        {label}
+      </span>
+
+      <input
+        type="range"
+        min={0}
+        max={100}
+        step={1}
+        value={value}
+        onChange={(e) => onChange(Number(e.target.value))}
+        disabled={disabled}
+        style={{
+          flex: 1,
+          height: 4,
+          cursor: disabled ? 'not-allowed' : 'pointer',
+          accentColor: theme.gold.primary,
+        }}
+      />
+
+      <span
+        style={{
+          fontSize: 11,
+          fontWeight: 600,
+          color: dimmed ? theme.text.muted : theme.text.secondary,
+          width: 32,
+          textAlign: 'right',
+          flexShrink: 0,
+        }}
+      >
+        {value}%
+      </span>
     </div>
   );
 }

@@ -80,6 +80,78 @@ function showActionDeniedToast(slot: ActionType, label: string) {
   document.body.appendChild(toast);
   setTimeout(() => toast.remove(), 2800);
 }
+/**
+ * Show a brief toast with an Undo button after manual HP changes.
+ * Clicking Undo reverts the HP to its previous value.
+ */
+function showHpUndoToast(
+  tokenName: string,
+  oldHp: number,
+  newHp: number,
+  isDamage: boolean,
+  onUndo: () => void,
+) {
+  const existing = document.getElementById('hp-undo-toast');
+  if (existing) existing.remove();
+
+  const amount = Math.abs(oldHp - newHp);
+  const verb = isDamage ? 'took' : 'healed';
+  const amountLabel = isDamage ? `${amount} damage` : `${amount} HP`;
+
+  const toast = document.createElement('div');
+  toast.id = 'hp-undo-toast';
+  Object.assign(toast.style, {
+    position: 'fixed',
+    top: '12%',
+    left: '50%',
+    transform: 'translateX(-50%)',
+    display: 'flex',
+    alignItems: 'center',
+    gap: '10px',
+    padding: '10px 16px',
+    background: theme.bg.deep,
+    color: theme.text.primary,
+    borderRadius: `${theme.radius.md}px`,
+    border: `2px solid ${isDamage ? theme.state.danger : theme.state.success}`,
+    zIndex: '99999',
+    minWidth: '240px',
+    maxWidth: '400px',
+    boxShadow: '0 6px 20px rgba(0,0,0,0.6)',
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    fontSize: '12px',
+    animation: 'slideUp 0.15s ease',
+  });
+
+  const msgSpan = document.createElement('span');
+  msgSpan.style.cssText = 'flex:1;line-height:1.4';
+  msgSpan.textContent = `${tokenName} ${verb} ${amountLabel} (${oldHp}\u2192${newHp})`;
+  toast.appendChild(msgSpan);
+
+  const undoBtn = document.createElement('button');
+  undoBtn.textContent = 'Undo';
+  Object.assign(undoBtn.style, {
+    padding: '3px 10px',
+    fontSize: '11px',
+    fontWeight: '700',
+    fontFamily: 'inherit',
+    background: isDamage ? theme.state.dangerBg : theme.state.successBg,
+    color: isDamage ? theme.state.danger : theme.state.success,
+    border: `1px solid ${isDamage ? 'rgba(192,57,43,0.4)' : 'rgba(39,174,96,0.4)'}`,
+    borderRadius: `${theme.radius.sm}px`,
+    cursor: 'pointer',
+    whiteSpace: 'nowrap',
+    flexShrink: '0',
+  });
+  undoBtn.addEventListener('click', () => {
+    onUndo();
+    toast.remove();
+  });
+  toast.appendChild(undoBtn);
+
+  document.body.appendChild(toast);
+  setTimeout(() => { if (toast.parentNode) toast.remove(); }, 5000);
+}
+
 import { enrichSpellFromDescription } from '../../utils/spell-enrich';
 import { effectiveSpellSaveDC, effectiveSpellAttackBonus } from '../../utils/spell-stats';
 import { InfoTooltip } from '../ui/InfoTooltip';
@@ -1645,6 +1717,7 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
             hp={hp} maxHp={maxHp} hpPct={hpPct}
             canEdit={canAct}
             onDamage={(amount) => {
+              const oldHp = hp;
               const newHp = Math.max(0, hp - amount);
               setLocalHp(newHp);
               // Persist to server AND update the local store, otherwise the
@@ -1654,6 +1727,11 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
               if (charId) {
                 emitCharacterUpdate(charId, { hitPoints: newHp });
                 useCharacterStore.getState().applyRemoteUpdate(charId, { hitPoints: newHp });
+                showHpUndoToast(token.name, oldHp, newHp, true, () => {
+                  setLocalHp(oldHp);
+                  emitCharacterUpdate(charId, { hitPoints: oldHp });
+                  useCharacterStore.getState().applyRemoteUpdate(charId, { hitPoints: oldHp });
+                });
               } else {
                 // Create character record in background
                 createCharForToken(token, compendiumData, newHp, maxHp, ac, speed).then(id => {
@@ -1662,12 +1740,18 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
               }
             }}
             onHeal={(amount) => {
+              const oldHp = hp;
               const newHp = Math.min(maxHp, hp + amount);
               setLocalHp(newHp);
               const charId = token.characterId || localCharId;
               if (charId) {
                 emitCharacterUpdate(charId, { hitPoints: newHp });
                 useCharacterStore.getState().applyRemoteUpdate(charId, { hitPoints: newHp });
+                showHpUndoToast(token.name, oldHp, newHp, false, () => {
+                  setLocalHp(oldHp);
+                  emitCharacterUpdate(charId, { hitPoints: oldHp });
+                  useCharacterStore.getState().applyRemoteUpdate(charId, { hitPoints: oldHp });
+                });
               } else {
                 createCharForToken(token, compendiumData, newHp, maxHp, ac, speed).then(id => {
                   if (id) setLocalCharId(id);

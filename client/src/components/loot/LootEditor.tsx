@@ -103,9 +103,15 @@ export function LootEditor({ characterId, tokenName, onClose, canEdit = true }: 
           .then(data => data.results || []),
         fetch(`/api/custom/items?sessionId=${sid}`)
           .then(r => r.ok ? r.json() : [])
-          .then((items: any[]) =>
-            items
-              .filter(i => i.name.toLowerCase().includes(searchQuery.toLowerCase()))
+          .then((items: any[]) => {
+            const normalize = (s: string) => s.toLowerCase().replace(/[\s\-_]/g, '');
+            const normalizedQuery = normalize(searchQuery);
+            return items
+              .filter(i =>
+                normalize(i.name).includes(normalizedQuery) ||
+                (i.type && normalize(i.type).includes(normalizedQuery)) ||
+                (i.rarity && normalize(i.rarity).includes(normalizedQuery))
+              )
               .slice(0, 4)
               .map((i: any) => ({
                 slug: i.id || i.slug,
@@ -115,8 +121,8 @@ export function LootEditor({ characterId, tokenName, onClose, canEdit = true }: 
                 rarity: i.rarity,
                 _custom: true,
                 _customData: i,
-              }))
-          ),
+              }));
+          }),
       ]).then(([srdResults, customResults]) => {
         // Show homebrew first, then SRD
         setSearchResults([...customResults, ...srdResults]);
@@ -406,6 +412,13 @@ export function LootEditor({ characterId, tokenName, onClose, canEdit = true }: 
           )}
 
           {searching && <div style={{ fontSize: 10, color: theme.text.muted, marginTop: 4 }}>Searching...</div>}
+
+          {/* No results feedback */}
+          {!searching && searchQuery.length >= 2 && searchResults.length === 0 && !showCustom && (
+            <div style={{ fontSize: 11, color: theme.text.muted, marginTop: 6, textAlign: 'center', padding: '8px 0' }}>
+              No items found for "{searchQuery}"
+            </div>
+          )}
 
           {/* Custom item creation panel */}
           {showCustom && (

@@ -191,8 +191,10 @@ export function DrawToolbar() {
             <ToolButton
               active={activeTool === t.id}
               onClick={() => useDrawStore.getState().setTool(t.id)}
+              title={`${t.label} (${t.shortcut})`}
             >
               {t.icon}
+              <span style={styles.shortcutHint}>{t.shortcut}</span>
             </ToolButton>
           </InfoTooltip>
         ))}
@@ -352,18 +354,21 @@ function ToolButton({
   disabled,
   onClick,
   tint,
+  title,
 }: {
   children: ReactNode;
   active?: boolean;
   disabled?: boolean;
   onClick?: () => void;
   tint?: string;
+  title?: string;
 }) {
   const accent = tint ?? GOLD;
   return (
     <button
       disabled={disabled}
       onClick={onClick}
+      title={title}
       style={{
         ...styles.toolBtn,
         background: active ? theme.gold.bg : 'transparent',
@@ -501,6 +506,17 @@ const styles: Record<string, React.CSSProperties> = {
     padding: 0,
     flexShrink: 0,
     transition: 'background 120ms, border-color 120ms, color 120ms',
+    position: 'relative' as const,
+  },
+  shortcutHint: {
+    position: 'absolute' as const,
+    bottom: 1,
+    right: 2,
+    fontSize: 7,
+    fontWeight: 700,
+    lineHeight: 1,
+    opacity: 0.5,
+    pointerEvents: 'none' as const,
   },
   swatchRow: {
     display: 'flex',

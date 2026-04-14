@@ -10,6 +10,7 @@ import {
 import { useSessionStore } from '../../stores/useSessionStore';
 import { useCombatStore } from '../../stores/useCombatStore';
 import { useMapStore } from '../../stores/useMapStore';
+import { useChatStore } from '../../stores/useChatStore';
 import { InitiativeTracker } from '../combat/InitiativeTracker';
 import { TokenActionPanel } from '../canvas/TokenActionPanel';
 import { CharacterImport } from '../character/CharacterImport';
@@ -49,6 +50,12 @@ const TABS: TabDef[] = [
 export function Sidebar() {
   const [activeTab, setActiveTab] = useState<TabId>('chat');
   const isDM = useSessionStore((s) => s.isDM);
+  const unreadCount = useChatStore((s) => s.unreadCount);
+
+  // Keep the chat store in sync with whether the chat tab is visible
+  useEffect(() => {
+    useChatStore.getState().setChatTabActive(activeTab === 'chat');
+  }, [activeTab]);
 
   // Broadcast which tab we're viewing to other players
   useEffect(() => {
@@ -90,7 +97,14 @@ export function Sidebar() {
               onClick={() => setActiveTab(tab.id)}
               title={tab.label}
             >
-              {tab.icon}
+              <span style={{ position: 'relative' as const, display: 'inline-flex' }}>
+                {tab.icon}
+                {tab.id === 'chat' && activeTab !== 'chat' && unreadCount > 0 && (
+                  <span style={styles.unreadBadge}>
+                    {unreadCount > 9 ? '9+' : unreadCount}
+                  </span>
+                )}
+              </span>
               <span style={styles.tabLabel}>{tab.label}</span>
             </button>
             {/* Rune-slab separator between tiles — a thin vertical
@@ -787,5 +801,22 @@ const styles: Record<string, React.CSSProperties> = {
     height: '100%',
     padding: 12,
     gap: 12,
+  },
+  unreadBadge: {
+    position: 'absolute' as const,
+    top: -4,
+    right: -8,
+    minWidth: 14,
+    height: 14,
+    padding: '0 3px',
+    borderRadius: 7,
+    background: theme.danger,
+    color: '#fff',
+    fontSize: 8,
+    fontWeight: 700,
+    lineHeight: '14px',
+    textAlign: 'center' as const,
+    pointerEvents: 'none' as const,
+    boxShadow: '0 0 4px rgba(192,57,43,0.6)',
   },
 };

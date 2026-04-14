@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef, useCallback } from 'react';
 import { useMapStore } from '../../stores/useMapStore';
 import { useCharacterStore } from '../../stores/useCharacterStore';
 import { useCombatStore } from '../../stores/useCombatStore';
@@ -7,6 +7,7 @@ import { abilityModifier } from '@dnd-vtt/shared';
 import { theme } from '../../styles/theme';
 
 const HOVER_DELAY = 150;
+const AUTO_HIDE_DELAY = 3000;
 
 // Every color in this tooltip is a thin alias over the shared theme
 // tokens so the hover popup stays in lockstep with the rest of the
@@ -51,13 +52,42 @@ export function TokenTooltip() {
   const combatants = useCombatStore((s) => s.combatants);
 
   const [visibleTokenId, setVisibleTokenId] = useState<string | null>(null);
+  const [dismissed, setDismissed] = useState(false);
+  const [isHoveringTooltip, setIsHoveringTooltip] = useState(false);
   const [fetchedIds] = useState(() => new Set<string>());
+  const autoHideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // Show tooltip after hover delay
   useEffect(() => {
-    if (!hoveredTokenId) { setVisibleTokenId(null); return; }
-    const timer = setTimeout(() => setVisibleTokenId(hoveredTokenId), HOVER_DELAY);
+    if (!hoveredTokenId) { setVisibleTokenId(null); setDismissed(false); return; }
+    const timer = setTimeout(() => {
+      setVisibleTokenId(hoveredTokenId);
+      setDismissed(false);
+    }, HOVER_DELAY);
     return () => clearTimeout(timer);
   }, [hoveredTokenId]);
+
+  // Auto-hide after AUTO_HIDE_DELAY when not hovering the tooltip
+  useEffect(() => {
+    if (autoHideTimerRef.current) {
+      clearTimeout(autoHideTimerRef.current);
+      autoHideTimerRef.current = null;
+    }
+    if (!visibleTokenId || dismissed || isHoveringTooltip) return;
+    autoHideTimerRef.current = setTimeout(() => {
+      setDismissed(true);
+    }, AUTO_HIDE_DELAY);
+    return () => {
+      if (autoHideTimerRef.current) {
+        clearTimeout(autoHideTimerRef.current);
+        autoHideTimerRef.current = null;
+      }
+    };
+  }, [visibleTokenId, dismissed, isHoveringTooltip]);
+
+  const handleDismiss = useCallback(() => {
+    setDismissed(true);
+  }, []);
 
   // Auto-fetch character data if missing from store
   useEffect(() => {
@@ -80,7 +110,7 @@ export function TokenTooltip() {
       .catch(() => {});
   }, [visibleTokenId, tokens, allCharacters, fetchedIds]);
 
-  if (!visibleTokenId || !hoverPosition) return null;
+  if (!visibleTokenId || !hoverPosition || dismissed) return null;
 
   const token = tokens[visibleTokenId];
   if (!token) return null;
@@ -107,18 +137,39 @@ export function TokenTooltip() {
   const tooltipY = Math.max(hoverPosition.y - 8, 20);
 
   return (
-    <div style={{
-      position: 'fixed', left: tooltipX, top: tooltipY, zIndex: 10000,
-      pointerEvents: 'none', transform: 'translateY(-100%)',
-      animation: 'tooltipFadeIn 0.15s ease',
-    }}>
+    <div
+      style={{
+        position: 'fixed', left: tooltipX, top: tooltipY, zIndex: 10000,
+        pointerEvents: 'auto', transform: 'translateY(-100%)',
+        animation: 'tooltipFadeIn 0.15s ease',
+      }}
+      onMouseEnter={() => setIsHoveringTooltip(true)}
+      onMouseLeave={() => setIsHoveringTooltip(false)}
+    >
       <div style={{
+        position: 'relative',
         background: C.bg, border: `1px solid ${C.border}`, borderRadius: 8,
         boxShadow: '0 8px 32px rgba(0,0,0,0.6)', padding: 0,
         minWidth: showFullInfo ? 280 : 160, maxWidth: 320,
         fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
         color: C.text, fontSize: 12, overflow: 'hidden',
       }}>
+        {/* Close button */}
+        <button
+          onClick={handleDismiss}
+          style={{
+            position: 'absolute', top: 4, right: 4, zIndex: 1,
+            width: 18, height: 18, borderRadius: '50%',
+            background: 'rgba(255,255,255,0.1)', border: 'none',
+            color: C.textMuted, fontSize: 12, lineHeight: '16px',
+            cursor: 'pointer', display: 'flex', alignItems: 'center',
+            justifyContent: 'center', padding: 0,
+          }}
+          onMouseEnter={(e) => { (e.target as HTMLElement).style.background = 'rgba(255,255,255,0.25)'; }}
+          onMouseLeave={(e) => { (e.target as HTMLElement).style.background = 'rgba(255,255,255,0.1)'; }}
+        >
+          x
+        </button>
         {/* Large portrait */}
         {showFullInfo && portraitUrl && (
           <div style={{
@@ -275,7 +326,6 @@ export function TokenTooltip() {
           </div>
         )}
       </div>
-
       <style>{`
         @keyframes tooltipFadeIn {
           from { opacity: 0; transform: translateY(calc(-100% + 4px)); }

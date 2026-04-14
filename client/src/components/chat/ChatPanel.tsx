@@ -118,10 +118,33 @@ export function ChatPanel() {
   const messages = useChatStore((s) => s.messages);
   const scrollRef = useRef<HTMLDivElement>(null);
   const [typingUsers, setTypingUsers] = useState<Map<string, { displayName: string; timeout: ReturnType<typeof setTimeout> }>>(new Map());
+  const [showScrollBtn, setShowScrollBtn] = useState(false);
+  /** Whether the user is currently near the bottom of the chat. */
+  const isAtBottomRef = useRef(true);
 
-  useEffect(() => {
+  const checkScrollPosition = useCallback(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const distFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    const atBottom = distFromBottom < 100;
+    isAtBottomRef.current = atBottom;
+    setShowScrollBtn(!atBottom);
+  }, []);
+
+  const scrollToBottom = useCallback(() => {
     if (scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    }
+    setShowScrollBtn(false);
+  }, []);
+
+  // Auto-scroll on new message only if user is already at the bottom
+  useEffect(() => {
+    if (isAtBottomRef.current && scrollRef.current) {
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    } else {
+      // New message arrived while scrolled up — make sure the button is visible
+      setShowScrollBtn(true);
     }
   }, [messages.length]);
 
@@ -159,15 +182,22 @@ export function ChatPanel() {
 
   return (
     <div style={styles.container}>
-      <div ref={scrollRef} style={styles.messageList}>
-        {messages.length === 0 && (
-          <p style={styles.empty}>
-            No messages yet. Say something!
-          </p>
+      <div style={{ position: 'relative' as const, flex: 1, minHeight: 0 }}>
+        <div ref={scrollRef} style={styles.messageList} onScroll={checkScrollPosition}>
+          {messages.length === 0 && (
+            <p style={styles.empty}>
+              No messages yet. Say something!
+            </p>
+          )}
+          {messages.map((msg) => (
+            <MessageBubble key={msg.id} message={msg} />
+          ))}
+        </div>
+        {showScrollBtn && (
+          <button onClick={scrollToBottom} style={styles.scrollToBottom}>
+            &#8595; New messages
+          </button>
         )}
-        {messages.map((msg) => (
-          <MessageBubble key={msg.id} message={msg} />
-        ))}
       </div>
       {typingNames.length > 0 && (
         <div style={styles.typingIndicator}>
@@ -188,7 +218,8 @@ const styles: Record<string, React.CSSProperties> = {
     height: '100%',
   },
   messageList: {
-    flex: 1,
+    position: 'absolute' as const,
+    inset: 0,
     overflow: 'auto',
     padding: '12px 12px 8px',
     display: 'flex',
@@ -267,5 +298,24 @@ const styles: Record<string, React.CSSProperties> = {
     color: theme.text.secondary,
     fontStyle: 'italic',
     width: '100%',
+  },
+  scrollToBottom: {
+    position: 'absolute' as const,
+    bottom: 8,
+    left: '50%',
+    transform: 'translateX(-50%)',
+    padding: '4px 14px',
+    fontSize: 11,
+    fontWeight: 600,
+    fontFamily: 'inherit',
+    color: theme.gold.primary,
+    background: theme.bg.card,
+    border: `1px solid ${theme.gold.border}`,
+    borderRadius: 16,
+    cursor: 'pointer',
+    boxShadow: theme.shadow.md,
+    zIndex: 5,
+    whiteSpace: 'nowrap' as const,
+    transition: `opacity ${theme.motion.fast}`,
   },
 };
