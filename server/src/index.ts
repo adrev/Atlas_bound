@@ -111,6 +111,11 @@ app.use('/api/auth', discordAuth);
 app.use('/api/auth', googleAuth);
 app.use('/api/auth', appleAuth);
 
+// Health check (before auth middleware — used by Cloud Run + Docker HEALTHCHECK)
+app.get('/api/health', (_req, res) => {
+  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+});
+
 // Public API routes
 app.use('/api/compendium', compendiumRouter);
 
@@ -142,11 +147,6 @@ app.post('/api/uploads/portrait', requireAuth, portraitUpload.single('image'), (
     const msg = err instanceof Error ? err.message : 'Invalid image file';
     res.status(400).json({ error: msg });
   }
-});
-
-// Health check
-app.get('/api/health', (_req, res) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
 // Serve client build in production (static files + SPA fallback)
