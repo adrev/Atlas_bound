@@ -411,6 +411,19 @@ export const chatRollSchema = z.object({
   notation: z.string().min(1).max(200),
   reason: z.string().max(200).optional(),
   hidden: z.boolean().optional(),
+  // Client-reported result from the 3D dice animation. If present,
+  // the server trusts it instead of re-rolling randomly — this is what
+  // keeps the 3D dice face in sync with the chat card (dice-box can't
+  // be forced to land on a predetermined value, so we let it be
+  // authoritative instead). Omitted for server-initiated rolls (NPC
+  // actions, auto-rolls, offline clients).
+  reported: z.object({
+    dice: z.array(z.object({
+      type: z.number().int().min(2).max(1000),
+      value: z.number().int().min(0).max(1000),
+    })).min(1).max(100),
+    total: z.number().int().min(-10000).max(10000),
+  }).optional(),
 });
 
 // --- REST API schemas ---

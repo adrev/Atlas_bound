@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { ChevronUp, ChevronDown, Minus, Eye, EyeOff, Settings, X, Plus, Trash2 } from 'lucide-react';
-import { emitRoll } from '../../socket/emitters';
+import { startPhysicalRoll } from '../../socket/emitters';
 import { useDiceStore } from '../../stores/useDiceStore';
 import { useDicePresetStore } from '../../stores/useDicePresetStore';
 import { useSessionStore } from '../../stores/useSessionStore';
@@ -126,22 +126,25 @@ export function DiceTray() {
       sides === 20 && advantage !== 'normal'
         ? `2d20 (${advantage})`
         : `1d${sides}`;
-    setRollingDie({
-      sides,
-      displayValue: 1 + Math.floor(Math.random() * sides),
-      finalValue: null,
-    });
-    emitRoll(notation, undefined, hiddenRoll || undefined);
+    // The 2D rolling-die SVG overlay was replaced by the 3D overlay in
+    // Dice3DOverlay.tsx (mounted at AppShell root). We intentionally
+    // skip setRollingDie() here so the two animations don't fight.
+    // The `rollingDie` state + RollingDieOverlay component are kept
+    // compiled-but-dormant so the offline safety net still works if
+    // this needs to be toggled back in a hurry.
+    // Physical dice tray → route through the 3D animation so the
+    // dice that roll on screen determine the result posted in chat.
+    startPhysicalRoll(notation, undefined, hiddenRoll || undefined);
   };
 
   const handleCustomRoll = () => {
     if (!customNotation.trim()) return;
-    emitRoll(customNotation.trim(), undefined, hiddenRoll || undefined);
+    startPhysicalRoll(customNotation.trim(), undefined, hiddenRoll || undefined);
     setCustomNotation('');
   };
 
   const handlePresetClick = useCallback((notation: string, label: string) => {
-    emitRoll(notation, label, hiddenRoll || undefined);
+    startPhysicalRoll(notation, label, hiddenRoll || undefined);
   }, [hiddenRoll]);
 
   const handlePresetContextMenu = useCallback((e: React.MouseEvent, presetId: string) => {

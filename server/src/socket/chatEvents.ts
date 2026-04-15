@@ -83,10 +83,27 @@ export function registerChatEvents(io: Server, socket: Socket): void {
     if (!ctx) return;
 
     const hidden = parsed.data.hidden && ctx.player.role === 'dm';
-    const { notation, reason } = parsed.data;
+    const { notation, reason, reported } = parsed.data;
 
     try {
-      const rollData = DiceService.roll(notation, reason);
+      // Prefer the client-reported result from the 3D dice (see
+      // chatRollSchema for rationale). Fall back to server-side random
+      // roll when the client didn't attach one (CLI /r commands in
+      // scripts, legacy clients, headless NPC rolls).
+      let rollData;
+      if (reported) {
+        const diceSum = reported.dice.reduce((s, d) => s + d.value, 0);
+        rollData = {
+          notation,
+          dice: reported.dice,
+          modifier: reported.total - diceSum,
+          total: reported.total,
+          advantage: 'normal' as const,
+          reason,
+        };
+      } else {
+        rollData = DiceService.roll(notation, reason);
+      }
       const messageId = uuidv4();
       const now = new Date().toISOString();
 

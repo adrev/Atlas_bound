@@ -1,6 +1,7 @@
 import { getSocket } from './client';
 import { useCharacterStore } from '../stores/useCharacterStore';
 import { useMapStore } from '../stores/useMapStore';
+import { useDiceAnimationStore } from '../stores/useDiceAnimationStore';
 import type {
   Token,
   Condition,
@@ -411,6 +412,39 @@ export function emitWhisper(targetUserId: string, content: string) {
 
 export function emitRoll(notation: string, reason?: string, hidden?: boolean) {
   getSocket().emit('chat:roll', { notation, reason, hidden });
+}
+
+/**
+ * Emit a chat roll whose outcome was determined by the local 3D dice
+ * animation (dice-box). Server trusts the reported values instead of
+ * re-rolling. Used by the Dice Tray buttons + the `/r` chat command —
+ * the only places where the user "physically" throws dice and the 3D
+ * animation is the authoritative result.
+ *
+ * Attack/spell/initiative rolls continue to use plain `emitRoll` so
+ * the server handles them as ordinary random rolls.
+ */
+export function emitPhysicalRoll(
+  notation: string,
+  reason: string | undefined,
+  hidden: boolean | undefined,
+  dice: Array<{ type: number; value: number }>,
+  total: number,
+) {
+  getSocket().emit('chat:roll', {
+    notation, reason, hidden,
+    reported: { dice, total },
+  });
+}
+
+/**
+ * Start a physical roll — the Dice Tray + /r command's entry point.
+ * Queues dice-box to animate the roll; once physics settle the
+ * Dice3DOverlay reads the result and calls `emitPhysicalRoll` above.
+ * No socket message goes out yet — that happens after the 3D settle.
+ */
+export function startPhysicalRoll(notation: string, reason?: string, hidden?: boolean) {
+  useDiceAnimationStore.getState().playPhysical(notation, reason, hidden);
 }
 
 /**

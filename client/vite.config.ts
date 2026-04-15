@@ -11,6 +11,14 @@ import react from '@vitejs/plugin-react';
  */
 export default defineConfig({
   plugins: [react()],
+  // dice-box ships its own pre-bundled ESM with embedded Babylon.js.
+  // Vite's dep-optimizer chokes on it ("does not provide an export
+  // named 't'") because Rollup can't statically analyse the minified
+  // re-exports. Excluding it forces Vite to serve the package's own
+  // bundle directly without re-pre-bundling.
+  optimizeDeps: {
+    exclude: ['@3d-dice/dice-box'],
+  },
   build: {
     chunkSizeWarningLimit: 700,
     rollupOptions: {
@@ -27,6 +35,9 @@ export default defineConfig({
           // initial boot chunk free of ~500 KB of 3D runtime until the
           // first roll.
           if (id.includes('/three/') || id.includes('/@react-three/')) return 'vendor-three';
+          // dice-box ships 3+ MB of Ammo.js + Babylon.js wrapper; split
+          // to its own chunk so it loads on first roll only, not at boot.
+          if (id.includes('/@3d-dice/') || id.includes('/ammo')) return 'vendor-dice';
           return 'vendor-misc';
         },
       },

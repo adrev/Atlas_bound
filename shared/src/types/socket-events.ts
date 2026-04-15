@@ -235,7 +235,21 @@ export interface ServerCharacterEvents {
 export interface ClientChatEvents {
   'chat:message': { type: 'ic' | 'ooc' | 'system'; content: string; characterName?: string };
   'chat:whisper': { targetUserId: string; content: string };
-  'chat:roll': { notation: string; reason?: string; hidden?: boolean };
+  /**
+   * Request a chat dice roll. If `reported` is provided the server
+   * trusts those dice/total (the 3D dice-box animation is
+   * authoritative on the rolling client). Without it, the server
+   * re-rolls random — used for NPC/auto rolls.
+   */
+  'chat:roll': {
+    notation: string;
+    reason?: string;
+    hidden?: boolean;
+    reported?: {
+      dice: Array<{ type: number; value: number }>;
+      total: number;
+    };
+  };
 }
 
 export interface ServerChatEvents {

@@ -5,7 +5,6 @@ import { useMapStore } from '../stores/useMapStore';
 import { useCombatStore } from '../stores/useCombatStore';
 import { useChatStore } from '../stores/useChatStore';
 import { useDiceStore } from '../stores/useDiceStore';
-import { useDiceAnimationStore } from '../stores/useDiceAnimationStore';
 import { useCharacterStore } from '../stores/useCharacterStore';
 import { useDrawStore } from '../stores/useDrawStore';
 import { useSceneStore } from '../stores/useSceneStore';
@@ -456,11 +455,11 @@ export function registerListeners(socket: Socket): () => void {
     if (!chat.chatTabActive) chat.incrementUnread();
     if (message.rollData) {
       useDiceStore.getState().setResult(message.rollData);
-      // Fire the 3D overlay in parallel with the chat card. The card
-      // animates in quickly; the overlay tumbles dice above the map
-      // for ~1.6s and fades out on its own. Multiplayer receives the
-      // same event → animation plays for everyone in the session.
-      useDiceAnimationStore.getState().play(message.rollData, 1600);
+      // NOTE: 3D dice animation is NOT fired here. Physical rolls
+      // (dice tray + /r) animate locally BEFORE emitting, so by the
+      // time chat:roll-result echoes back the roll is done. Attack /
+      // spell / initiative rolls never animate in 3D by design — the
+      // chat card is enough for non-physical rolls.
     }
   });
 

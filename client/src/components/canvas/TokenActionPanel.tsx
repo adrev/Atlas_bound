@@ -173,6 +173,10 @@ import { emitApplyConditionWithMeta, emitDamageSideEffects } from '../../socket/
 import { abilityModifier, calculateEquipmentBonuses, SPELL_CONDITIONS, SPELL_BUFFS, getSpellAnimation } from '@dnd-vtt/shared';
 import { useEffectStore } from '../../stores/useEffectStore';
 import { LootBagPanel } from '../loot/LootBagPanel';
+import { TokenDeadState } from './tokenPanel/TokenDeadState';
+import { TokenTraits } from './tokenPanel/TokenTraits';
+import { TokenSensesLanguages } from './tokenPanel/TokenSensesLanguages';
+import { TokenCreatureSpells } from './tokenPanel/TokenCreatureSpells';
 
 // --- Inline Loot Section for DMs ---
 const RARITY_COLORS: Record<string, string> = {
@@ -419,13 +423,19 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
       // Fetch compendium data for this creature. Prefer the stored
       // compendiumSlug (set at spawn time by CreatureLibrary) so
       // stats persist even if the token is later renamed. Fall back
-      // to deriving the slug from the token name.
+      // to deriving the slug from the token name, but ONLY when the
+      // token has no backing character record — otherwise we'd try
+      // to look up e.g. "liraya-voss" (a PC) as a monster and log a
+      // noisy 404 in the console every time the panel opens.
       if (token) {
         const char = token.characterId ? allCharacters[token.characterId] : null;
-        const storedSlug = (char as any)?.compendiumSlug;
+        const storedSlug = (char as { compendiumSlug?: string } | null)?.compendiumSlug;
         const derivedSlug = token.name.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
-        const slug = storedSlug || derivedSlug;
-        // Custom homebrew creatures use a different route.
+        const slug = storedSlug || (!char ? derivedSlug : '');
+        // Skip entirely for PC tokens — no slug, no fetch, no 404.
+        if (!slug) {
+          return;
+        }
         const route = slug.startsWith('custom-')
           ? `/api/custom/monsters/${slug}`
           : `/api/compendium/monsters/${slug}`;
@@ -1921,18 +1931,13 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
         : { flex: 1, overflowY: 'auto', padding: '6px 10px' }
       }>
         {/* === DEAD STATE === */}
-        {hp <= 0 && maxHp > 0 && isNPC && token.characterId && (
-          <LootBagPanel characterId={token.characterId} creatureName={token.name} />
-        )}
-        {hp <= 0 && maxHp > 0 && !isNPC && (
-          <div style={{
-            padding: '12px 10px', textAlign: 'center', borderRadius: 6,
-            background: 'rgba(197,49,49,0.1)', border: `1px solid ${C.red}33`,
-          }}>
-            <div style={{ fontSize: 13, fontWeight: 700, color: C.red, marginBottom: 4 }}>DEAD</div>
-            <div style={{ fontSize: 10, color: C.textSec }}>This character can be resurrected</div>
-          </div>
-        )}
+        <TokenDeadState
+          hp={hp}
+          maxHp={maxHp}
+          isNPC={isNPC}
+          characterId={token.characterId}
+          tokenName={token.name}
+        />
 
         {/* === ALIVE STATE — actions, weapons, spells, traits, loot === */}
         {(hp > 0 || maxHp === 0) && <>
@@ -2241,71 +2246,17 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
         )}
 
         {/* Traits (from compendium) */}
-        {compTraits.length > 0 && (
-          <Section title="Traits">
-            {compTraits.slice(0, 3).map((trait: any, i: number) => (
-              <div key={i} style={{ marginBottom: 3 }}>
-                <span style={{ fontSize: 10, fontWeight: 700, color: C.text }}>{trait.name}. </span>
-                <span style={{ fontSize: 9, color: C.textMuted }}>{trait.desc?.substring(0, 60)}{trait.desc?.length > 60 ? '...' : ''}</span>
-              </div>
-            ))}
-          </Section>
-        )}
+        <TokenTraits traits={compTraits} />
 
         {/* Creature Spells (from compendium trait) */}
-        {creatureSpells.length > 0 && (
-          <>
-            {creatureSpells.filter(s => s.level === 0).length > 0 && (
-              <Section title={`Cantrips (at will)${creatureSpellDC ? ` · DC ${creatureSpellDC}` : ''}`}>
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 3 }}>
-                  {creatureSpells.filter(s => s.level === 0).map((s, i) => (
-                    <button key={i} onClick={() => {
-                      if (!canAct) return;
-                      useMapStore.getState().startTargetingMode({
-                        spell: { name: s.name, level: 0, description: '', isConcentration: false, isRitual: false,
-                          school: '', castingTime: '1 action', range: '30 feet', components: '', duration: 'Instantaneous' },
-                        casterTokenId: selectedTokenId!, casterName: token.name,
-                      });
-                    }} onContextMenu={(e) => {
-                      e.preventDefault();
-                      window.dispatchEvent(new CustomEvent('open-compendium-detail', { detail: { slug: s.slug, category: 'spells', name: s.name } }));
-                    }} style={{
-                      padding: '2px 6px', fontSize: 9, borderRadius: 3,
-                      background: C.bgHover, border: `1px solid ${C.borderDim}`,
-                      color: C.textSec, cursor: canAct ? 'pointer' : 'default', fontFamily: 'inherit',
-                    }}>{s.name}</button>
-                  ))}
-                </div>
-              </Section>
-            )}
-            {creatureSpells.filter(s => s.level > 0).length > 0 && (
-              <Section title={`Spells${creatureSpellAtk ? ` · +${creatureSpellAtk}` : ''}${creatureSpellDC ? ` · DC ${creatureSpellDC}` : ''}`}>
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 3 }}>
-                  {creatureSpells.filter(s => s.level > 0).map((s, i) => (
-                    <button key={i} onClick={() => {
-                      if (!canAct) return;
-                      useMapStore.getState().startTargetingMode({
-                        spell: { name: s.name, level: s.level, description: '', isConcentration: false, isRitual: false,
-                          school: '', castingTime: '1 action', range: '60 feet', components: '', duration: 'Instantaneous' },
-                        casterTokenId: selectedTokenId!, casterName: token.name,
-                      });
-                    }} onContextMenu={(e) => {
-                      e.preventDefault();
-                      window.dispatchEvent(new CustomEvent('open-compendium-detail', { detail: { slug: s.slug, category: 'spells', name: s.name } }));
-                    }} style={{
-                      padding: '2px 6px', fontSize: 9, borderRadius: 3,
-                      background: C.bgHover, border: `1px solid ${C.borderDim}`,
-                      color: C.text, cursor: canAct ? 'pointer' : 'default', fontFamily: 'inherit',
-                    }}>
-                      <span style={{ fontSize: 7, color: C.textMuted, marginRight: 2 }}>L{s.level}</span>
-                      {s.name}
-                    </button>
-                  ))}
-                </div>
-              </Section>
-            )}
-          </>
-        )}
+        <TokenCreatureSpells
+          spells={creatureSpells}
+          spellDC={creatureSpellDC}
+          spellAtk={creatureSpellAtk}
+          canAct={canAct}
+          casterTokenId={selectedTokenId}
+          casterName={token.name}
+        />
 
         {/* Cantrips */}
         {spells.filter((s: any) => s.level === 0).length > 0 && (
@@ -2392,12 +2343,7 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
         )}
 
         {/* Senses & Languages from compendium */}
-        {compendiumData && (compendiumData.senses || compendiumData.languages) && (
-          <div style={{ fontSize: 9, color: C.textMuted, marginTop: 4, lineHeight: 1.4 }}>
-            {compendiumData.senses && <div><strong style={{ color: C.textSec }}>Senses:</strong> {compendiumData.senses}</div>}
-            {compendiumData.languages && <div><strong style={{ color: C.textSec }}>Languages:</strong> {compendiumData.languages}</div>}
-          </div>
-        )}
+        <TokenSensesLanguages senses={compendiumData?.senses} languages={compendiumData?.languages} />
         </>}
       </div>
     </div>

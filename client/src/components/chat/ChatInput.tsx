@@ -1,6 +1,6 @@
 import { useState, useRef } from 'react';
 import { Send, MessageSquare, MessageCircle } from 'lucide-react';
-import { emitChatMessage, emitWhisper, emitRoll, emitTyping } from '../../socket/emitters';
+import { emitChatMessage, emitWhisper, emitTyping, startPhysicalRoll } from '../../socket/emitters';
 import { useSessionStore } from '../../stores/useSessionStore';
 import { useCharacterStore } from '../../stores/useCharacterStore';
 import { theme } from '../../styles/theme';
@@ -20,10 +20,11 @@ export function ChatInput() {
     const trimmed = text.trim();
     if (!trimmed) return;
 
-    // Check for /roll command
+    // /roll and /r go through the 3D dice path — the tumble on screen
+    // determines the result that lands in chat (client-authoritative).
     if (trimmed.startsWith('/roll ') || trimmed.startsWith('/r ')) {
       const notation = trimmed.replace(/^\/(roll|r)\s+/, '');
-      emitRoll(notation);
+      startPhysicalRoll(notation);
       setText('');
       return;
     }
