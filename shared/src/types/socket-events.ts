@@ -159,6 +159,8 @@ export interface ServerMapEvents {
 // --- Combat Events ---
 export interface ClientCombatEvents {
   'combat:start': { tokenIds: string[] };
+  /** Add a single token to the active initiative order mid-combat. */
+  'combat:add-combatant': { tokenId: string };
   'combat:end': NoPayload;
   'combat:roll-initiative': { tokenId: string; bonus: number };
   'combat:set-initiative': { tokenId: string; total: number };

@@ -180,6 +180,81 @@ export async function startCombatAsync(sessionId: string, tokenIds: string[]): P
   return combatState;
 }
 
+/**
+ * Add a token to the current initiative order mid-combat. Rolls an
+ * initiative for it just like combat-start does and inserts it into
+ * the sorted `combatants` list.
+ *
+ * Returns the new combatant, or null if the token can't be added
+ * (combat not active, token missing, or token already in combat).
+ */
+export async function addCombatantAsync(sessionId: string, tokenId: string): Promise<Combatant | null> {
+  const room = getRoom(sessionId);
+  if (!room) return null;
+  if (!room.combatState?.active) return null;
+  // Deduplicate — nothing silly about having the same token twice in
+  // combat, but it's almost never intentional.
+  if (room.combatState.combatants.some((c) => c.tokenId === tokenId)) return null;
+
+  const token = room.tokens.get(tokenId);
+  if (!token) return null;
+
+  // Same derivation as startCombatAsync — read HP / AC / init bonus
+  // from the backing character row when there is one, else use
+  // token defaults.
+  let hp = 10, maxHp = 10, tempHp = 0, ac = 10, speed = 30, initBonus = 0;
+  let portrait: string | null = null;
+  let isNPC = !token.ownerUserId;
+  if (token.characterId) {
+    const { rows } = await pool.query('SELECT * FROM characters WHERE id = $1', [token.characterId]);
+    const charRow = rows[0] as Record<string, unknown> | undefined;
+    if (charRow) {
+      hp = (charRow.hit_points as number) ?? 10;
+      maxHp = (charRow.max_hit_points as number) ?? 10;
+      tempHp = (charRow.temp_hit_points as number) ?? 0;
+      ac = (charRow.armor_class as number) ?? 10;
+      speed = (charRow.speed as number) ?? 30;
+      portrait = charRow.portrait_url as string | null;
+      try {
+        const rawAbilities = charRow.ability_scores;
+        const abilities = typeof rawAbilities === 'string' ? JSON.parse(rawAbilities) : (rawAbilities ?? {});
+        const dex = Number(abilities?.dex ?? abilities?.dexterity ?? 10);
+        initBonus = Number.isFinite(dex) ? Math.floor((dex - 10) / 2) : 0;
+      } catch { initBonus = 0; }
+      const charUserId = charRow.user_id as string | null;
+      isNPC = !token.ownerUserId || charUserId === 'npc';
+    }
+  }
+
+  const combatant: Combatant = {
+    tokenId, characterId: token.characterId, name: token.name,
+    initiative: Math.floor(Math.random() * 20) + 1 + initBonus,
+    initiativeBonus: initBonus,
+    hp, maxHp, tempHp, armorClass: ac, speed, isNPC,
+    conditions: [...token.conditions],
+    deathSaves: { successes: 0, failures: 0 },
+    portraitUrl: portrait ?? token.imageUrl,
+  };
+
+  // Insert into the sorted list while keeping the existing turn
+  // pointer aligned to the same combatant. If we insert before the
+  // current turn index we need to bump it so play doesn't jump.
+  const currentName = room.combatState.combatants[room.combatState.currentTurnIndex]?.name;
+  room.combatState.combatants.push(combatant);
+  room.combatState.combatants.sort((a, b) => {
+    if (b.initiative !== a.initiative) return b.initiative - a.initiative;
+    return b.initiativeBonus - a.initiativeBonus;
+  });
+  const newIdx = room.combatState.combatants.findIndex((c) => c.name === currentName);
+  if (newIdx >= 0) room.combatState.currentTurnIndex = newIdx;
+
+  await pool.query(
+    'UPDATE combat_state SET combatants = $1, current_turn_index = $2 WHERE session_id = $3',
+    [JSON.stringify(room.combatState.combatants), room.combatState.currentTurnIndex, sessionId],
+  );
+  return combatant;
+}
+
 export async function endCombat(sessionId: string): Promise<void> {
   const room = getRoom(sessionId);
   if (!room) throw new Error('Room not found');

@@ -227,6 +227,9 @@ export const drawingStreamEndSchema = z.object({
 export const combatStartSchema = z.object({
   tokenIds: z.array(z.string().min(1)).min(1),
 });
+export const combatAddCombatantSchema = z.object({
+  tokenId: z.string().min(1),
+});
 
 export const combatRollInitiativeSchema = z.object({
   tokenId: z.string().min(1),

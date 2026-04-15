@@ -177,6 +177,11 @@ export function emitStartCombat(tokenIds: string[]) {
   getSocket().emit('combat:start', { tokenIds });
 }
 
+/** Add a single token to the in-progress initiative order. DM-only; server refuses otherwise. */
+export function emitAddCombatant(tokenId: string) {
+  getSocket().emit('combat:add-combatant', { tokenId });
+}
+
 export function emitEndCombat() {
   getSocket().emit('combat:end', {});
 }

@@ -16,16 +16,19 @@ import { SpellAnimationLayer } from '../animations/SpellAnimation';
 import { useCombatStore } from '../../stores/useCombatStore';
 import { useEffectStore } from '../../stores/useEffectStore';
 import { WallDrawLayer } from '../../components/dm/WallDrawTool';
+import { ZoneLayer } from '../../components/dm/ZoneTool';
 import { MeasureWallLayer, WallContextMenu } from './layers/MeasureWallLayer';
 import { TokenContextMenu } from './TokenContextMenu';
 import { CompendiumOverlay } from '../compendium/CompendiumOverlay';
 import { LootEditorOverlay } from '../loot/LootEditorOverlay';
 import { TokenActionPanel } from './TokenActionPanel';
+import { GroupActionBar } from './GroupActionBar';
 import { MapContextMenu } from './MapContextMenu';
 import { TokenTooltip } from './TokenTooltip';
 import { DrawToolbar } from './DrawToolbar';
 import { InitiativeOverlay } from './InitiativeOverlay';
 import { emitDrawingStream, emitDrawingStreamEnd } from '../../socket/emitters';
+import { askPrompt } from '../ui';
 import { theme } from '../../styles/theme';
 
 /* ---- Ping animation overlay ---- */
@@ -237,10 +240,14 @@ export function BattleMap() {
   // whether we're mid-stroke so mousemove knows to append.
   //
   // Streaming: while the stroke is mid-drag, emitDrawingStream is
-  // called rAF-throttled so other clients see the line being drawn
-  // live. On mouseup the stroke is committed via useDrawStore.
+  // throttled so other clients see the line being drawn live without
+  // drowning the socket (a rAF-only throttle fired 60 events/sec during
+  // hard draws — now one every ~100 ms = ~10 fps for the preview, with
+  // the local client still rendering full-fidelity at 60 fps).
+  const DRAW_STREAM_INTERVAL_MS = 100;
   const isStrokeDrawing = useRef(false);
-  const streamRafQueued = useRef(false);
+  const lastStreamEmitAt = useRef(0);
+  const streamTimeoutRef = useRef<number | null>(null);
 
   const streamInProgressNow = useCallback(() => {
     const store = useDrawStore.getState();
@@ -257,15 +264,27 @@ export function BattleMap() {
       strokeWidth: inProg.strokeWidth,
       geometry: inProg.geometry,
     });
+    lastStreamEmitAt.current = performance.now();
   }, []);
 
   const scheduleStreamEmit = useCallback(() => {
-    if (streamRafQueued.current) return;
-    streamRafQueued.current = true;
-    requestAnimationFrame(() => {
-      streamRafQueued.current = false;
+    const now = performance.now();
+    const since = now - lastStreamEmitAt.current;
+    if (since >= DRAW_STREAM_INTERVAL_MS) {
+      // Enough time has passed; fire immediately.
+      if (streamTimeoutRef.current != null) {
+        window.clearTimeout(streamTimeoutRef.current);
+        streamTimeoutRef.current = null;
+      }
       streamInProgressNow();
-    });
+      return;
+    }
+    // Already scheduled — coalesce.
+    if (streamTimeoutRef.current != null) return;
+    streamTimeoutRef.current = window.setTimeout(() => {
+      streamTimeoutRef.current = null;
+      streamInProgressNow();
+    }, DRAW_STREAM_INTERVAL_MS - since);
   }, [streamInProgressNow]);
 
   return (
@@ -374,9 +393,13 @@ export function BattleMap() {
             if (!pointer) return;
             const mapX = (pointer.x - stageProps.x) / stageProps.scaleX;
             const mapY = (pointer.y - stageProps.y) / stageProps.scaleY;
-            // eslint-disable-next-line no-alert
-            const text = prompt('Enter label text:');
-            if (text && text.trim()) {
+            void askPrompt({
+              title: 'Add label',
+              message: 'Text to place on the map.',
+              placeholder: 'Label',
+              maxLength: 256,
+            }).then((text) => {
+              if (!text) return;
               // Seed a text in-progress stroke and commit it.
               useDrawStore.setState({
                 drawingInProgress: {
@@ -389,15 +412,15 @@ export function BattleMap() {
                     text: {
                       x: mapX,
                       y: mapY,
-                      content: text.trim(),
+                      content: text,
                       fontSize: Math.max(12, drawState.activeWidth * 6),
                     },
                   },
                   gridSnapped: false,
                 },
               });
-              drawState.commitStroke();
-            }
+              useDrawStore.getState().commitStroke();
+            });
             return;
           }
 
@@ -462,6 +485,7 @@ export function BattleMap() {
             {isDM && activeTool === 'wall' && (
               <WallDrawLayer gridSize={currentMap.gridSize} />
             )}
+            {isDM && <ZoneLayer />}
             {/* DM / player drawings — rendered ABOVE tokens so
                 annotations and arrows are never occluded. */}
             <DrawingLayer />
@@ -502,6 +526,7 @@ export function BattleMap() {
       <PingOverlay stageX={stageProps.x} stageY={stageProps.y} stageScale={stageProps.scaleX} />
       <TokenTooltip />
       <TokenActionPanel />
+      <GroupActionBar />
       <TokenContextMenu />
       <MapContextMenu />
       <WallContextMenu />

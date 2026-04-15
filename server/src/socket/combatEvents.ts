@@ -10,7 +10,7 @@ import * as ConditionService from '../services/ConditionService.js';
 import * as OpportunityAttackService from '../services/OpportunityAttackService.js';
 import { getSpellAnimation } from '@dnd-vtt/shared';
 import {
-  combatStartSchema, combatRollInitiativeSchema, combatSetInitiativeSchema,
+  combatStartSchema, combatAddCombatantSchema, combatRollInitiativeSchema, combatSetInitiativeSchema,
   combatDamageSchema, combatHealSchema, combatConditionSchema,
   combatDeathSaveSchema, combatUseActionSchema, combatUseMovementSchema,
   combatCastSpellSchema, conditionWithMetaSchema,
@@ -102,6 +102,27 @@ export function registerCombatEvents(io: Server, socket: Socket): void {
         message: err instanceof Error ? err.message : 'Failed to start combat',
       });
     }
+  }));
+
+  socket.on('combat:add-combatant', safeHandler(socket, async (data) => {
+    const parsed = combatAddCombatantSchema.safeParse(data);
+    if (!parsed.success) return;
+    const ctx = getPlayerBySocketId(socket.id);
+    if (!ctx || ctx.player.role !== 'dm') return;
+
+    const combatant = await CombatService.addCombatantAsync(ctx.room.sessionId, parsed.data.tokenId);
+    if (!combatant) {
+      socket.emit('session:error', { message: 'Combat inactive or token already in initiative' });
+      return;
+    }
+    const state = ctx.room.combatState;
+    if (!state) return;
+    io.to(ctx.room.sessionId).emit('combat:state', {
+      active: state.active,
+      combatants: state.combatants,
+      roundNumber: state.roundNumber,
+      currentTurnIndex: state.currentTurnIndex,
+    });
   }));
 
   // ------------------------------------------------------------------

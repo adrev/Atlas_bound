@@ -319,20 +319,22 @@ function TokenSprite({ token, isSelected, isCurrentTurn, showTokenLabels }: Toke
       onDragStart={onDragStart}
       onDragEnd={onDragEnd}
       onDragMove={onDragMove}
-      onClick={() => {
+      onClick={(e) => {
         // Draw mode swallows all token clicks — every pointer event
         // should feed the drawing pipeline instead of selecting.
         if (useDrawStore.getState().isDrawMode) return;
         const state = useMapStore.getState();
-        console.log('[TOKEN CLICK]', token.name, 'isTargeting:', state.isTargeting, 'targetingData:', state.targetingData?.spell?.name || state.targetingData?.weapon?.name || 'none');
         if (state.isTargeting) {
-          console.log('[TOKEN CLICK] Dispatching target-token-selected for', token.name, token.id);
           window.dispatchEvent(new CustomEvent('target-token-selected', {
             detail: { tokenId: token.id }
           }));
           return;
         }
-        selectToken(token.id);
+        // Shift-click (and Meta/Ctrl on Mac) → additive select, so the
+        // DM can build a group-action selection without a marquee drag.
+        const evt = e?.evt as MouseEvent | undefined;
+        const additive = !!evt && (evt.shiftKey || evt.metaKey || evt.ctrlKey);
+        selectToken(token.id, additive);
       }}
       onTap={() => {
         if (useDrawStore.getState().isDrawMode) return;
@@ -908,6 +910,7 @@ function StagedHeroGhost({
 export function TokenLayer() {
   const tokens = useMapStore((s) => s.tokens);
   const selectedTokenId = useMapStore((s) => s.selectedTokenId);
+  const selectedTokenIds = useMapStore((s) => s.selectedTokenIds);
   const combatActive = useCombatStore((s) => s.active);
   const currentTurnIndex = useCombatStore((s) => s.currentTurnIndex);
   const combatants = useCombatStore((s) => s.combatants);
@@ -963,7 +966,7 @@ export function TokenLayer() {
         <TokenSprite
           key={token.id}
           token={token}
-          isSelected={token.id === selectedTokenId}
+          isSelected={token.id === selectedTokenId || selectedTokenIds.includes(token.id)}
           isCurrentTurn={token.id === currentTurnTokenId}
           showTokenLabels={showTokenLabels}
         />

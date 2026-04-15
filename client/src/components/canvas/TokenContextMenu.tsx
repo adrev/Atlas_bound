@@ -5,7 +5,7 @@ import { useSessionStore } from '../../stores/useSessionStore';
 import { useCombatStore } from '../../stores/useCombatStore';
 import {
   emitTokenRemove, emitTokenUpdate, emitCharacterUpdate,
-  emitRoll, emitPing, emitStartCombat,
+  emitRoll, emitPing, emitStartCombat, emitAddCombatant,
 } from '../../socket/emitters';
 import { abilityModifier } from '@dnd-vtt/shared';
 import { theme } from '../../styles/theme';
@@ -319,7 +319,13 @@ export function TokenContextMenu() {
                 {combatActive && (
                   <Item icon="🏳️" label="End Combat" onClick={() => { import('../../socket/emitters').then(({ emitEndCombat: ec }) => ec()); close(); }} />
                 )}
-                <Item icon="📋" label="Add to Initiative" onClick={() => { /* TODO */ close(); }} />
+                {combatActive && (
+                  <Item
+                    icon="📋"
+                    label="Add to Initiative"
+                    onClick={() => { emitAddCombatant(token.id); close(); }}
+                  />
+                )}
 
                 <Divider />
 
@@ -411,13 +417,30 @@ export function TokenContextMenu() {
 
 function Item({ icon, label, onClick, hasArrow, danger }: { icon: string; label: string; onClick: () => void; hasArrow?: boolean; danger?: boolean }) {
   return (
-    <div onClick={onClick} style={{ padding: '6px 12px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8, color: danger ? C.red : C.text, fontSize: 12 }}
+    <button
+      type="button"
+      onClick={onClick}
       onMouseEnter={e => (e.currentTarget.style.background = C.bgHover)}
-      onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}>
-      <span style={{ fontSize: 13, width: 18, textAlign: 'center' }}>{icon}</span>
+      onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
+      style={{
+        padding: '6px 12px',
+        cursor: 'pointer',
+        display: 'flex',
+        alignItems: 'center',
+        gap: 8,
+        color: danger ? C.red : C.text,
+        fontSize: 12,
+        width: '100%',
+        background: 'transparent',
+        border: 'none',
+        textAlign: 'left' as const,
+        font: 'inherit',
+      }}
+    >
+      <span style={{ fontSize: 13, width: 18, textAlign: 'center' }} aria-hidden>{icon}</span>
       <span style={{ flex: 1 }}>{label}</span>
-      {hasArrow && <span style={{ fontSize: 10, color: C.textMuted }}>›</span>}
-    </div>
+      {hasArrow && <span style={{ fontSize: 10, color: C.textMuted }} aria-hidden>\u203A</span>}
+    </button>
   );
 }
 
