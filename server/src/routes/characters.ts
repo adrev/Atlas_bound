@@ -244,6 +244,38 @@ router.post('/import-json', async (req: Request, res: Response) => {
 
   try {
     const character = parseCharacterJSON(characterJson);
+
+    // Merge-instead-of-duplicate: if this user already has a character
+    // linked to the same DDB id, UPDATE that row and preserve their
+    // session state (HP, conditions, concentration, slot/feature usage
+    // counts) instead of creating a second copy. Without this, each
+    // re-import after a level-up would leave the user with 'Liraya (1)',
+    // 'Liraya (2)', ... accumulating forever.
+    if (character.dndbeyondId) {
+      const { rows: existingRows } = await pool.query(
+        'SELECT * FROM characters WHERE user_id = $1 AND dndbeyond_id = $2',
+        [userId, character.dndbeyondId],
+      );
+      if (existingRows.length > 0) {
+        const existing = existingRows[0];
+        const { buildMergeUpdate } = await import('../services/ddbMerge.js');
+        const { columns, values } = buildMergeUpdate({
+          existing,
+          incoming: character as unknown as Record<string, unknown>,
+          raw: characterJson,
+        });
+        const setClause = columns.map((c, i) => `${c} = $${i + 1}`).join(', ');
+        values.push(existing.id);
+        await pool.query(
+          `UPDATE characters SET ${setClause} WHERE id = $${values.length}`,
+          values,
+        );
+        const { rows: updated } = await pool.query('SELECT * FROM characters WHERE id = $1', [existing.id]);
+        res.json({ ...dbRowToCharacter(updated[0]), merged: true });
+        return;
+      }
+    }
+
     const id = uuidv4();
 
     await pool.query(`
