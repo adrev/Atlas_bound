@@ -18,6 +18,7 @@ import lootRouter from './routes/loot.js';
 import customContentRouter from './routes/customContent.js';
 import notesRouter from './routes/notes.js';
 import encountersRouter from './routes/encounters.js';
+import errorsRouter from './routes/errors.js';
 import { seedCompendium, isCompendiumSeeded } from './services/Open5eService.js';
 import { seedEquipment, isEquipmentSeeded } from './services/seedEquipment.js';
 import { registerSocketHandler } from './socket/handler.js';
@@ -218,6 +219,7 @@ app.get('/api/health', async (_req, res) => {
 
 // Public API routes
 app.use('/api/compendium', compendiumRouter);
+app.use('/api/errors', errorsRouter);
 
 // Protected API routes
 app.use('/api/sessions', requireAuth, sessionsRouter);

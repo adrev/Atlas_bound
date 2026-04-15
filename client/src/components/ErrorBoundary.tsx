@@ -13,6 +13,24 @@ export class ErrorBoundary extends Component<Props, State> {
 
   componentDidCatch(error: Error, info: ErrorInfo) {
     console.error('[ErrorBoundary]', error, info.componentStack);
+    // Best-effort crash report. Server rate-limits per IP (20/min)
+    // and the fetch is fire-and-forget so a failing endpoint won't
+    // stack-loop the boundary.
+    try {
+      fetch('/api/errors', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({
+          message: error.message,
+          stack: error.stack?.slice(0, 8000),
+          componentStack: info.componentStack?.slice(0, 8000),
+          url: typeof window !== 'undefined' ? window.location.href : undefined,
+          userAgent: typeof navigator !== 'undefined' ? navigator.userAgent : undefined,
+        }),
+        keepalive: true,
+      }).catch(() => { /* swallow; we already logged to console */ });
+    } catch { /* ignore */ }
   }
 
   render() {

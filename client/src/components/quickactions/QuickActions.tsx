@@ -97,6 +97,39 @@ const COMBAT_ACTIONS: QuickAction[] = [
       showToast({ emoji: '🚶', message: 'Disengage — no opportunity attacks this turn', variant: 'info', duration: 3500 });
     },
   },
+  {
+    id: 'grapple',
+    label: 'Grapple',
+    emoji: '🤼',
+    description: 'Grapple a creature up to one size larger than you. Make an Athletics check contested by the target\'s Athletics or Acrobatics.',
+    cost: 'action',
+    onClick: (ctx) => {
+      announce('attempts to **Grapple**', ctx, '— contested Athletics vs Athletics/Acrobatics');
+      showToast({ emoji: '🤼', message: 'Grapple — roll Athletics (contested)', variant: 'info', duration: 3500 });
+    },
+  },
+  {
+    id: 'shove',
+    label: 'Shove',
+    emoji: '🫸',
+    description: 'Shove a creature up to one size larger prone or 5 ft away. Athletics vs target\'s Athletics/Acrobatics.',
+    cost: 'action',
+    onClick: (ctx) => {
+      announce('attempts to **Shove**', ctx, '— contested Athletics vs Athletics/Acrobatics');
+      showToast({ emoji: '🫸', message: 'Shove — roll Athletics (contested)', variant: 'info', duration: 3500 });
+    },
+  },
+  {
+    id: 'disarm',
+    label: 'Disarm',
+    emoji: '🗡️',
+    description: 'Try to knock a weapon or item out of a creature\'s grasp. Attack roll (with disadvantage if target is larger); on hit, target makes a Strength or Dexterity save (DC = 8 + your STR/DEX mod + proficiency).',
+    cost: 'action',
+    onClick: (ctx) => {
+      announce('attempts to **Disarm**', ctx, '— attack roll, on hit target saves STR/DEX vs your DC');
+      showToast({ emoji: '🗡️', message: 'Disarm — attack roll, then target saves', variant: 'info', duration: 4000 });
+    },
+  },
 ];
 
 const UTILITY_ACTIONS: QuickAction[] = [
