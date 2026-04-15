@@ -21,6 +21,22 @@ export interface WallSegment {
   y2: number;
 }
 
+/**
+ * Named rectangular region on a map used for encounter spawn anchoring.
+ * DM draws a zone by dragging on the canvas; the EncounterBuilder can
+ * then deploy an encounter and have its creatures spawn inside the
+ * zone in a grid pattern instead of at the map center.
+ */
+export interface MapZone {
+  id: string;
+  mapId: string;
+  name: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
 export interface FogPolygon {
   points: number[];
 }
@@ -127,4 +143,9 @@ export interface MapSummary {
   createdAt: string;
   /** True if this map is currently the "player ribbon" (where the party is) */
   isPlayerMap: boolean;
+  /**
+   * DM-controlled sort position in the Scene Manager sidebar. Lower = earlier.
+   * Legacy maps get a created_at-based backfill, so this is always set.
+   */
+  displayOrder: number;
 }

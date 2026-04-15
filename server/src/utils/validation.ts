@@ -7,10 +7,7 @@ import { safeImageUrlSchema } from './imageUrlValidator.js';
 // off-map tokens, snapshots, and future growth without letting callers send
 // arbitrary Infinity / 1e308 values.
 const coord = z.number().finite().min(-10000).max(20000);
-const gridCoord = z.number().int().min(-1000).max(1000);
 const colorHex = z.string().regex(/^#[0-9A-Fa-f]{3,8}$/).max(9);
-// `points` as an array of (x, y) objects (used by drawing geometry).
-const pointsXY = z.array(z.object({ x: coord, y: coord })).max(1000);
 // `pointsFlat` as a flat [x0, y0, x1, y1, …] number array (used by fog / walls
 // legacy shape). Bounded to 2000 numbers = 1000 points, same DoS ceiling.
 const pointsFlat = z.array(z.number().finite()).max(2000);
@@ -119,11 +116,42 @@ export const mapPingSchema = z.object({
   y: coord,
 });
 
+// --- Map zone (encounter spawn region) schemas ---
+const dim = z.number().finite().min(0).max(30000);
+export const zoneAddSchema = z.object({
+  name: z.string().min(1).max(64),
+  x: coord,
+  y: coord,
+  width: dim,
+  height: dim,
+});
+export const zoneUpdateSchema = z.object({
+  zoneId: z.string().min(1),
+  name: z.string().min(1).max(64).optional(),
+  x: coord.optional(),
+  y: coord.optional(),
+  width: dim.optional(),
+  height: dim.optional(),
+});
+export const zoneDeleteSchema = z.object({
+  zoneId: z.string().min(1),
+});
+
 // --- Scene Manager (Player Ribbon) schemas ---
 export const mapListSchema = z.object({}).passthrough();
 export const mapPreviewLoadSchema = z.object({ mapId: z.string().min(1) });
 export const mapActivateForPlayersSchema = z.object({ mapId: z.string().min(1) });
 export const mapDeleteSchema = z.object({ mapId: z.string().min(1) });
+export const mapRenameSchema = z.object({
+  mapId: z.string().min(1),
+  name: z.string().trim().min(1).max(80),
+});
+export const mapDuplicateSchema = z.object({ mapId: z.string().min(1) });
+export const mapReorderSchema = z.object({
+  // Cap at 500 so a malformed client can't trigger an unbounded number
+  // of UPDATEs in one socket frame.
+  mapIds: z.array(z.string().min(1)).min(1).max(500),
+});
 
 // --- Drawing event schemas ---
 
@@ -386,14 +414,59 @@ export const chatRollSchema = z.object({
 });
 
 // --- REST API schemas ---
+const sessionPassword = z.string().min(4).max(64);
+const banReason = z.string().max(200);
+
 export const createSessionSchema = z.object({
   name: z.string().min(1).max(100),
   displayName: z.string().min(1).max(50).optional(),
+  visibility: z.enum(['public', 'private']).optional(),
+  /** Only meaningful when visibility === 'private'. Min 4 chars, max 64. */
+  password: sessionPassword.optional(),
 });
 
 export const joinSessionSchema = z.object({
   roomCode: z.string().min(1).max(20),
   displayName: z.string().min(1).max(50).optional(),
+  /** Private sessions: plaintext password. */
+  password: z.string().max(64).optional(),
+  /** Private sessions: shareable invite token (alternative to password). */
+  inviteToken: z.string().min(10).max(64).optional(),
+});
+
+export const patchSessionSchema = z.object({
+  name: z.string().min(1).max(100).optional(),
+  visibility: z.enum(['public', 'private']).optional(),
+  /** Set a new password. Empty string = remove password. */
+  password: z.union([sessionPassword, z.literal('')]).optional(),
+  /** Trigger: rotate the invite_code. Any truthy value regenerates. */
+  regenerateInvite: z.boolean().optional(),
+});
+
+// Target user IDs are always Lucia-generated UUIDs; tighten from
+// `z.string().min(1)` so a malformed id fails with 400 instead of
+// falling through to an FK-violation 500.
+const userIdField = z.string().uuid();
+
+export const sessionBanSchema = z.object({
+  targetUserId: userIdField,
+  reason: banReason.optional(),
+});
+
+export const sessionUnbanSchema = z.object({
+  targetUserId: userIdField,
+});
+
+export const sessionPromoteSchema = z.object({
+  targetUserId: userIdField,
+});
+
+export const sessionDemoteSchema = z.object({
+  targetUserId: userIdField,
+});
+
+export const transferOwnershipSchema = z.object({
+  newOwnerId: userIdField,
 });
 
 const backgroundSchema = z.object({

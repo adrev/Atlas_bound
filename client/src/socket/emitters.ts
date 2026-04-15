@@ -75,6 +75,28 @@ export function emitDeleteMap(mapId: string) {
   getSocket().emit('map:delete', { mapId });
 }
 
+/** DM-only: rename a map. Server clamps length to 80 chars and rebroadcasts list. */
+export function emitRenameMap(mapId: string, name: string) {
+  getSocket().emit('map:rename', { mapId, name });
+}
+
+/**
+ * DM-only: duplicate a map. Copies walls + encounter zones to a fresh
+ * row; starts empty of tokens and with fully-fogged fog state.
+ */
+export function emitDuplicateMap(mapId: string) {
+  getSocket().emit('map:duplicate', { mapId });
+}
+
+/**
+ * DM-only: persist a new sidebar order. Pass the full ordered list of
+ * map IDs; the server assigns display_order = index+1 and broadcasts
+ * the updated list to every DM.
+ */
+export function emitReorderMaps(mapIds: string[]) {
+  getSocket().emit('map:reorder', { mapIds });
+}
+
 export function emitTokenMove(tokenId: string, x: number, y: number) {
   getSocket().emit('map:token-move', { tokenId, x, y });
 }
@@ -125,6 +147,19 @@ export function emitWallRemove(index: number) {
 
 export function emitPing(x: number, y: number) {
   getSocket().emit('map:ping', { x, y });
+}
+
+// --- Encounter spawn zones (DM-only) ---
+export function emitZoneAdd(zone: { name: string; x: number; y: number; width: number; height: number }) {
+  getSocket().emit('map:zone-add', zone);
+}
+
+export function emitZoneUpdate(patch: { zoneId: string; name?: string; x?: number; y?: number; width?: number; height?: number }) {
+  getSocket().emit('map:zone-update', patch);
+}
+
+export function emitZoneDelete(zoneId: string) {
+  getSocket().emit('map:zone-delete', { zoneId });
 }
 
 // --- Ready Check ---

@@ -8,6 +8,7 @@ import { theme } from '../../styles/theme';
 import { Button, Section, Divider } from '../ui';
 import type { CompendiumMonster } from '@dnd-vtt/shared';
 import { getCreatureIconUrl } from '../../utils/compendiumIcons';
+import { computeSpawnAnchor, computeTokenPosition } from '../../utils/zoneSpawn';
 
 // --- Helpers (reused from CreatureLibrary) ---
 
@@ -66,10 +67,17 @@ interface EncounterPreset {
 export function EncounterBuilder() {
   const sessionId = useSessionStore((s) => s.sessionId);
   const currentMap = useMapStore((s) => s.currentMap);
+  const zones = useMapStore((s) => s.zones);
   const [mode, setMode] = useState<'list' | 'build'>('list');
   const [presets, setPresets] = useState<EncounterPreset[]>([]);
   const [loading, setLoading] = useState(false);
   const [deploying, setDeploying] = useState<string | null>(null);
+  /**
+   * Where to drop creatures when the DM clicks Deploy. `null` = use the
+   * map's geometric center (legacy behavior); a zone id = scatter inside
+   * that zone. Reset to null when the active map changes.
+   */
+  const [spawnZoneId, setSpawnZoneId] = useState<string | null>(null);
 
   // Build mode state
   const [encounterName, setEncounterName] = useState('');
@@ -216,10 +224,12 @@ export function EncounterBuilder() {
       const data = await resp.json();
       const allCreatures = data.creatures as EncounterCreature[];
 
-      // Compute grid positions near map center
+      // Compute grid positions. Default: map center. If a spawn zone
+      // is selected, use the zone's center instead (and clamp the
+      // spawn area to the zone's bounds so creatures stay inside).
+      // Math lives in `utils/zoneSpawn` so it's unit-tested.
       const gridSize = currentMap.gridSize || 70;
-      const centerX = currentMap.width / 2;
-      const centerY = currentMap.height / 2;
+      const zone = spawnZoneId ? zones.find((z) => z.id === spawnZoneId) ?? null : null;
 
       let tokenIndex = 0;
       for (const creature of allCreatures) {
@@ -241,18 +251,19 @@ export function EncounterBuilder() {
           } catch { /* ignore */ }
         }
 
+        const thisTokenSize = monster ? (SIZE_MAP[monster.size] ?? 1) : 1;
+        // Re-anchor per creature so Large/Huge tokens get a bigger
+        // margin inside the zone than Medium tokens. For maps without
+        // a zone this is a no-op (anchor keeps infinite offsets).
+        const creatureAnchor = computeSpawnAnchor(currentMap, zone, thisTokenSize);
+
         for (let i = 0; i < creature.count; i++) {
-          // Grid pattern: arrange in a grid near center
-          const cols = Math.ceil(Math.sqrt(totalCreatureCount(allCreatures)));
-          const col = tokenIndex % cols;
-          const row = Math.floor(tokenIndex / cols);
-          const offsetX = (col - Math.floor(cols / 2)) * gridSize;
-          const offsetY = (row - Math.floor(cols / 2)) * gridSize;
-          const x = centerX + offsetX;
-          const y = centerY + offsetY;
+          const { x, y } = computeTokenPosition(
+            tokenIndex, totalCreatureCount(allCreatures), creatureAnchor, gridSize,
+          );
 
           const walkSpeed = monster?.speed?.walk ?? 30;
-          const tokenSize = monster ? (SIZE_MAP[monster.size] ?? 1) : 1;
+          const tokenSize = thisTokenSize;
           const tokenColor = monster ? getTokenColor(monster.type) : '#666666';
 
           // Create character record
@@ -264,6 +275,10 @@ export function EncounterBuilder() {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                   isNpc: true,
+                  // Required by the server since the P1 security hardening —
+                  // without it the POST 400s, characterId is null, and the
+                  // spawned token has no backing HP row (silent half-fail).
+                  sessionId,
                   name: creature.count > 1 ? `${monster.name} ${i + 1}` : monster.name,
                   race: monster.type,
                   class: `CR ${formatCR(monster.challengeRating)}`,
@@ -441,6 +456,28 @@ export function EncounterBuilder() {
         </Button>
       </Section>
 
+      {/* Spawn-zone selector. Lets the DM pick which zone the next
+          deployment should drop into (defaults to map center). Only
+          shown when at least one zone exists on the active map. */}
+      {zones.length > 0 && (
+        <div style={styles.zonePicker}>
+          <label htmlFor="spawn-zone" style={styles.zonePickerLabel}>
+            Spawn into:
+          </label>
+          <select
+            id="spawn-zone"
+            value={spawnZoneId ?? ''}
+            onChange={(e) => setSpawnZoneId(e.target.value || null)}
+            style={styles.zonePickerSelect}
+          >
+            <option value="">Map center (default)</option>
+            {zones.map((z) => (
+              <option key={z.id} value={z.id}>{z.name}</option>
+            ))}
+          </select>
+        </div>
+      )}
+
       <Divider variant="plain" />
 
       {loading && (
@@ -500,7 +537,29 @@ function totalCreatureCount(creatures: EncounterCreature[]): number {
 
 // --- Styles ---
 
-const styles: Record<string, React.CSSProperties> = {
+const styles: Record<string, React.CSSProperties & { zonePicker?: never }> = {
+  zonePicker: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 8,
+    padding: '8px 4px',
+  },
+  zonePickerLabel: {
+    fontSize: 12,
+    color: theme.text.secondary,
+    fontWeight: 600,
+    flexShrink: 0,
+  },
+  zonePickerSelect: {
+    flex: 1,
+    padding: '4px 8px',
+    fontSize: 12,
+    background: theme.bg.deep,
+    color: theme.text.primary,
+    border: `1px solid ${theme.border.default}`,
+    borderRadius: theme.radius.sm,
+    cursor: 'pointer',
+  },
   container: {
     display: 'flex',
     flexDirection: 'column',

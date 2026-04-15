@@ -12,8 +12,19 @@ const router = Router();
 // GET /api/characters - List the authenticated user's characters
 router.get('/', async (req: Request, res: Response) => {
   const userId = getAuthUserId(req);
+  // Defense-in-depth filters beyond user_id='npc':
+  //  * class LIKE 'CR %' — EncounterBuilder stamps creatures with e.g.
+  //    "CR 1/4". Legacy rows may have leaked onto a real user_id from
+  //    before the `isNpc` path existed.
+  //  * race='loot' AND class='bag' — the loot-bag drop flow creates
+  //    characters that should never show up in a user's hero list.
   const { rows } = await pool.query(
-    "SELECT * FROM characters WHERE user_id = $1 AND user_id != 'npc' ORDER BY updated_at DESC",
+    `SELECT * FROM characters
+      WHERE user_id = $1
+        AND user_id != 'npc'
+        AND (class IS NULL OR class NOT LIKE 'CR %')
+        AND NOT (race = 'loot' AND class = 'bag')
+      ORDER BY updated_at DESC`,
     [userId],
   );
   res.json(rows.map(dbRowToCharacter));
@@ -202,7 +213,7 @@ router.put('/:id', async (req: Request, res: Response) => {
 
 // DELETE /api/characters/:id
 router.delete('/:id', async (req: Request, res: Response) => {
-  const userId = (req as any).user?.id;
+  const userId = req.user?.id;
   const { rows } = await pool.query('SELECT user_id FROM characters WHERE id = $1', [req.params.id]);
   if (rows.length === 0) {
     res.status(404).json({ error: 'Character not found' });

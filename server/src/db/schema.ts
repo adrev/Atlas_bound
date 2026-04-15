@@ -13,8 +13,28 @@ export async function initDatabase(): Promise<void> {
       game_mode TEXT DEFAULT 'free-roam',
       created_at TEXT NOT NULL DEFAULT (NOW()::text),
       updated_at TEXT NOT NULL DEFAULT (NOW()::text),
-      settings TEXT DEFAULT '{}'
+      settings TEXT DEFAULT '{}',
+      visibility TEXT NOT NULL DEFAULT 'public',
+      password_hash TEXT,
+      invite_code TEXT
     );
+
+    -- Privacy columns for legacy sessions that pre-date the feature.
+    ALTER TABLE sessions ADD COLUMN IF NOT EXISTS visibility TEXT NOT NULL DEFAULT 'public';
+    ALTER TABLE sessions ADD COLUMN IF NOT EXISTS password_hash TEXT;
+    ALTER TABLE sessions ADD COLUMN IF NOT EXISTS invite_code TEXT;
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_sessions_invite_code
+      ON sessions(invite_code) WHERE invite_code IS NOT NULL;
+
+    CREATE TABLE IF NOT EXISTS session_bans (
+      session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+      user_id    TEXT NOT NULL REFERENCES users(id)    ON DELETE CASCADE,
+      banned_by  TEXT NOT NULL,
+      banned_at  TEXT NOT NULL DEFAULT (NOW()::text),
+      reason     TEXT,
+      PRIMARY KEY (session_id, user_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_session_bans_session ON session_bans(session_id);
 
     CREATE TABLE IF NOT EXISTS users (
       id TEXT PRIMARY KEY,
@@ -91,8 +111,18 @@ export async function initDatabase(): Promise<void> {
       grid_offset_y INTEGER DEFAULT 0,
       walls TEXT DEFAULT '[]',
       fog_state TEXT DEFAULT '[]',
+      display_order INTEGER NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL DEFAULT (NOW()::text)
     );
+
+    -- display_order added 2026-04-15 for map reorder. Legacy rows get
+    -- their created_at rank so the existing list stays stable until
+    -- the DM drags something.
+    ALTER TABLE maps ADD COLUMN IF NOT EXISTS display_order INTEGER NOT NULL DEFAULT 0;
+    UPDATE maps SET display_order = sub.rn FROM (
+      SELECT id, ROW_NUMBER() OVER (PARTITION BY session_id ORDER BY created_at ASC) AS rn
+      FROM maps
+    ) AS sub WHERE maps.id = sub.id AND maps.display_order = 0;
 
     CREATE TABLE IF NOT EXISTS tokens (
       id TEXT PRIMARY KEY,
@@ -379,7 +409,110 @@ export async function initDatabase(): Promise<void> {
     );
 
     CREATE INDEX IF NOT EXISTS idx_session_notes_session ON session_notes(session_id);
+
+    CREATE TABLE IF NOT EXISTS map_zones (
+      id TEXT PRIMARY KEY,
+      map_id TEXT NOT NULL REFERENCES maps(id) ON DELETE CASCADE,
+      name TEXT NOT NULL DEFAULT 'Zone',
+      x DOUBLE PRECISION NOT NULL DEFAULT 0,
+      y DOUBLE PRECISION NOT NULL DEFAULT 0,
+      width DOUBLE PRECISION NOT NULL DEFAULT 0,
+      height DOUBLE PRECISION NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL DEFAULT (NOW()::text)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_map_zones_map ON map_zones(map_id);
+
+    -- Owner must also be present in session_players with role='dm'.
+    -- Back-fill for any legacy sessions where the owner row is missing,
+    -- otherwise the co-DM logic won't find them when checking role.
+    INSERT INTO session_players (session_id, user_id, role)
+    SELECT s.id, s.dm_user_id, 'dm'
+    FROM sessions s
+    LEFT JOIN session_players sp
+      ON sp.session_id = s.id AND sp.user_id = s.dm_user_id
+    WHERE sp.session_id IS NULL;
+
+    -- Any existing DM row with a different role (shouldn't happen, but
+    -- defensive against manual DB edits) gets corrected to 'dm'.
+    UPDATE session_players sp SET role = 'dm'
+    FROM sessions s
+    WHERE s.id = sp.session_id AND s.dm_user_id = sp.user_id AND sp.role <> 'dm';
   `);
+
+  // --- Backfill invite codes for legacy sessions. --------------------------
+  //
+  // Sessions created before the privacy feature shipped have
+  // `invite_code IS NULL`. If a DM flips one of those to private
+  // without a password, there'd be no way in. Generate a fresh code
+  // for each NULL row on boot.
+  try {
+    const { rows: needInvite } = await pool.query<{ id: string }>(
+      'SELECT id FROM sessions WHERE invite_code IS NULL',
+    );
+    if (needInvite.length > 0) {
+      const { generateInviteCode } = await import('../utils/sessionPassword.js');
+      for (const row of needInvite) {
+        // Collisions against the UNIQUE index are astronomically rare
+        // but we retry up to 3x per row just in case.
+        for (let attempt = 0; attempt < 3; attempt++) {
+          try {
+            await pool.query('UPDATE sessions SET invite_code = $1 WHERE id = $2', [generateInviteCode(), row.id]);
+            break;
+          } catch (err) {
+            if (attempt === 2) throw err;
+          }
+        }
+      }
+      console.log(`[migration] Backfilled invite_code on ${needInvite.length} legacy session${needInvite.length !== 1 ? 's' : ''}`);
+    }
+  } catch (err) {
+    console.warn('[migration] Failed to backfill invite_code:', err);
+  }
+
+  // --- Backfill FK cascades on tables that shipped without them. -----------
+  //
+  // These tables were created in production with no foreign-key constraint,
+  // so a DELETE on the parent row would orphan children. Postgres has no
+  // "ADD CONSTRAINT IF NOT EXISTS" so we probe first and add the constraint
+  // only when it's missing. Safe to re-run on every boot.
+  const CASCADE_FKS: Array<{ table: string; column: string; ref: string; onDelete: 'CASCADE' | 'SET NULL'; constraint: string }> = [
+    { table: 'custom_items',    column: 'session_id',   ref: 'sessions(id)',   onDelete: 'CASCADE',  constraint: 'custom_items_session_fk' },
+    { table: 'custom_monsters', column: 'session_id',   ref: 'sessions(id)',   onDelete: 'CASCADE',  constraint: 'custom_monsters_session_fk' },
+    { table: 'custom_spells',   column: 'session_id',   ref: 'sessions(id)',   onDelete: 'CASCADE',  constraint: 'custom_spells_session_fk' },
+    { table: 'loot_entries',    column: 'character_id', ref: 'characters(id)', onDelete: 'CASCADE',  constraint: 'loot_entries_character_fk' },
+    { table: 'tokens',          column: 'character_id', ref: 'characters(id)', onDelete: 'SET NULL', constraint: 'tokens_character_fk' },
+  ];
+
+  for (const fk of CASCADE_FKS) {
+    try {
+      const { rows } = await pool.query(
+        'SELECT 1 FROM pg_constraint WHERE conname = $1',
+        [fk.constraint],
+      );
+      if (rows.length > 0) continue;
+
+      // Purge orphans before adding the constraint, otherwise ADD CONSTRAINT
+      // will fail against any existing dangling rows.
+      const parentTable = fk.ref.split('(')[0];
+      if (fk.onDelete === 'CASCADE') {
+        await pool.query(
+          `DELETE FROM ${fk.table} WHERE ${fk.column} IS NOT NULL AND ${fk.column} NOT IN (SELECT id FROM ${parentTable})`,
+        );
+      } else {
+        await pool.query(
+          `UPDATE ${fk.table} SET ${fk.column} = NULL WHERE ${fk.column} IS NOT NULL AND ${fk.column} NOT IN (SELECT id FROM ${parentTable})`,
+        );
+      }
+
+      await pool.query(
+        `ALTER TABLE ${fk.table} ADD CONSTRAINT ${fk.constraint} FOREIGN KEY (${fk.column}) REFERENCES ${fk.ref} ON DELETE ${fk.onDelete}`,
+      );
+      console.log(`[migration] Added FK ${fk.constraint} (${fk.table}.${fk.column} -> ${fk.ref})`);
+    } catch (err) {
+      console.warn(`[migration] Failed to add FK ${fk.constraint}:`, err);
+    }
+  }
 
   // Create system NPC user if it doesn't exist
   await pool.query(`

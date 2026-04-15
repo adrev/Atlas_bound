@@ -1,14 +1,21 @@
-import type { Player, SessionSettings, GameMode } from './session.js';
-import type { Token, WallSegment, FogPolygon, Condition, MapPing, MapSummary } from './map.js';
+import type {
+  Player, SessionSettings, GameMode, SessionBan, SessionVisibility,
+} from './session.js';
+import type {
+  Token, WallSegment, FogPolygon, Condition, MapPing, MapSummary, MapZone,
+} from './map.js';
 import type { Combatant, ActionType, InitiativeRollResult, SpellCastEvent, ActionEconomy } from './combat.js';
 import type { ChatMessage, DiceRollData } from './chat.js';
-import type { Character } from './character.js';
 import type { Drawing, DrawingStreamPayload } from './drawing.js';
+
+/** Payload for socket events that carry no data. Typed as an empty
+ *  record rather than `{}` since `{}` matches any non-nullish value. */
+type NoPayload = Record<string, never>;
 
 // --- Session Events ---
 export interface ClientSessionEvents {
   'session:join': { roomCode: string; displayName: string };
-  'session:leave': {};
+  'session:leave': NoPayload;
   'session:kick': { targetUserId: string };
   'session:update-settings': Partial<SessionSettings>;
 }
@@ -23,12 +30,33 @@ export interface ServerSessionEvents {
     settings: SessionSettings;
     currentMapId: string | null;
     gameMode: GameMode;
+    visibility: SessionVisibility;
+    hasPassword: boolean;
+    /** DM-only invite token. Players receive null. */
+    inviteCode: string | null;
+    ownerUserId: string;
+    bans: SessionBan[];
   };
   'session:player-joined': Player;
   'session:player-left': { userId: string };
   'session:kicked': { userId: string };
   'session:settings-updated': SessionSettings;
   'session:error': { message: string };
+  'session:handout-received': { title: string; content: string; imageUrl?: string; fromDM: boolean };
+
+  // Privacy + bans (Phase 5 \u2014 public/private sessions)
+  'session:settings-changed': {
+    visibility: SessionVisibility;
+    hasPassword: boolean;
+    /** DM-only invite token. Players receive null. */
+    inviteCode: string | null;
+  };
+  'session:bans-updated': { bans: SessionBan[] };
+  'session:player-banned': { userId: string; reason: string | null };
+  'session:role-changed': { userId: string; role: 'dm' | 'player' };
+  'session:owner-changed': { oldOwnerId: string; newOwnerId: string };
+  /** Owner deleted the session \u2014 every member should redirect home. */
+  'session:deleted': { sessionId: string };
 }
 
 // --- Map Events ---
@@ -43,10 +71,23 @@ export interface ClientMapEvents {
   'map:wall-add': WallSegment;
   'map:wall-remove': { index: number };
   'map:ping': { x: number; y: number };
+  /** DM-only: create a named encounter-spawn zone on the map the DM is viewing. */
+  'map:zone-add': { name: string; x: number; y: number; width: number; height: number };
+  /** DM-only: update a named encounter-spawn zone on the map the DM is viewing. */
+  'map:zone-update': {
+    zoneId: string;
+    name?: string;
+    x?: number;
+    y?: number;
+    width?: number;
+    height?: number;
+  };
+  /** DM-only: delete an encounter-spawn zone from the map the DM is viewing. */
+  'map:zone-delete': { zoneId: string };
 
   // --- Scene Manager (Player Ribbon / DM preview) events ---
   /** Request the full list of maps in this session for the scene manager sidebar */
-  'map:list': {};
+  'map:list': NoPayload;
   /** DM-only: load a map into this DM's private preview view. Does NOT
    *  move the player ribbon, does NOT broadcast to other clients. */
   'map:preview-load': { mapId: string };
@@ -56,6 +97,16 @@ export interface ClientMapEvents {
   /** DM-only: delete a map from the session library. Refuses if it is
    *  currently the player ribbon (DM must move the ribbon first). */
   'map:delete': { mapId: string };
+  /** DM-only: rename a map in the session library. */
+  'map:rename': { mapId: string; name: string };
+  /** DM-only: duplicate a map (copies walls + zones, skips tokens + fog). */
+  'map:duplicate': { mapId: string };
+  /**
+   * DM-only: persist a new display order for the session's maps.
+   * Client sends the full ordered ID list after a drag; server writes
+   * one UPDATE per row then broadcasts `map:list-result` to DMs.
+   */
+  'map:reorder': { mapIds: string[] };
 }
 
 export interface ServerMapEvents {
@@ -72,6 +123,8 @@ export interface ServerMapEvents {
       gridOffsetY: number;
       walls: WallSegment[];
       fogState: FogPolygon[];
+      /** DM planning data. DMs receive real zones; players receive an empty array. */
+      zones: MapZone[];
     };
     tokens: Token[];
     /** Permanent drawings for this map, filtered by visibility for the
@@ -88,6 +141,8 @@ export interface ServerMapEvents {
   'map:token-updated': { tokenId: string; changes: Partial<Token>; mapId?: string };
   'map:fog-updated': { fogState: FogPolygon[]; mapId?: string };
   'map:walls-updated': { walls: WallSegment[]; mapId?: string };
+  /** DM-only broadcast to DMs viewing the map; players should never receive it. */
+  'map:zones-updated': { zones: MapZone[]; mapId: string };
   'map:pinged': MapPing;
 
   // --- Scene Manager (Player Ribbon / DM preview) events ---
@@ -104,10 +159,10 @@ export interface ServerMapEvents {
 // --- Combat Events ---
 export interface ClientCombatEvents {
   'combat:start': { tokenIds: string[] };
-  'combat:end': {};
+  'combat:end': NoPayload;
   'combat:roll-initiative': { tokenId: string; bonus: number };
   'combat:set-initiative': { tokenId: string; total: number };
-  'combat:next-turn': {};
+  'combat:next-turn': NoPayload;
   'combat:damage': { tokenId: string; amount: number };
   'combat:heal': { tokenId: string; amount: number };
   'combat:condition-add': { tokenId: string; condition: Condition };
@@ -120,7 +175,7 @@ export interface ClientCombatEvents {
 
 export interface ServerCombatEvents {
   'combat:started': { combatants: Combatant[]; roundNumber: number };
-  'combat:ended': {};
+  'combat:ended': NoPayload;
   'combat:initiative-prompt': { tokenId: string; bonus: number };
   'combat:initiative-set': InitiativeRollResult;
   'combat:all-initiatives-ready': { combatants: Combatant[] };
