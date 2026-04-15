@@ -424,15 +424,19 @@ function MonsterDetail({ monster: initialMonster }: { monster: CompendiumMonster
 // every detail popup showed a gold letter circle instead of the
 // actual artwork we ship on GCS.
 function getSpellImage(slug: string, name?: string, school?: string): { png: string; alt: string } {
+  // Prefer the authoritative DB slug — re-slugifying the display name
+  // mismatches for apostrophes ("Black Goat's Blessing" →
+  // "black-goat-s-blessing" via slugify vs "black-goats-blessing" in
+  // GCS). Name stays as the fallback for the letter-avatar.
   return {
-    png: getSpellImageUrl(name || slug),
+    png: getSpellImageUrl(slug),
     alt: getSpellIconUrl(name || slug, school),
   };
 }
 
 function getItemImage(slug: string, name?: string, type?: string): { png: string; alt: string } {
   return {
-    png: getItemImageUrl(name || slug),
+    png: getItemImageUrl(slug),
     alt: getItemIconUrl(name || slug, type),
   };
 }

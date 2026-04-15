@@ -62,9 +62,23 @@ function makeSvgFallback(initial: string, bgColor: string): string {
   )}`;
 }
 
+/**
+ * Return a GCS artwork URL by either the authoritative DB slug OR a
+ * display name (which we slugify as a best-effort fallback). Prefer
+ * passing the slug — slugify doesn't always match the DB's original
+ * slug for names with apostrophes ("Black Goat's Blessing" slugifies
+ * to "black-goat-s-blessing" but the DB slug is "black-goats-blessing").
+ */
+function slugOrName(slugOrName: string): string {
+  // Heuristic: if it already looks like a slug (lowercase + dashes
+  // only), pass through. Otherwise slugify.
+  if (/^[a-z0-9-]+$/.test(slugOrName)) return slugOrName;
+  return slugify(slugOrName);
+}
+
 /** Primary creature image URL (PNG on GCS) */
 export function getCreatureImageUrl(name: string): string {
-  return `${CDN}/tokens/${slugify(name)}.png`;
+  return `${CDN}/tokens/${slugOrName(name)}.png`;
 }
 
 /** SVG creature image URL (GCS) */
@@ -79,9 +93,9 @@ export function getCreatureIconUrl(name: string, type?: string): string {
   return makeSvgFallback(initial, color);
 }
 
-/** Primary spell image URL (PNG on GCS) */
+/** Primary spell image URL (PNG on GCS) — pass the slug when you have it. */
 export function getSpellImageUrl(name: string): string {
-  return `${CDN}/spells/${slugify(name)}.png`;
+  return `${CDN}/spells/${slugOrName(name)}.png`;
 }
 
 export function getSpellIconUrl(name: string, school?: string): string {
@@ -90,9 +104,9 @@ export function getSpellIconUrl(name: string, school?: string): string {
   return makeSvgFallback(initial, color);
 }
 
-/** Primary item image URL (PNG on GCS) */
+/** Primary item image URL (PNG on GCS) — pass the slug when you have it. */
 export function getItemImageUrl(name: string): string {
-  return `${CDN}/items/${slugify(name)}.png`;
+  return `${CDN}/items/${slugOrName(name)}.png`;
 }
 
 export function getItemIconUrl(name: string, type?: string): string {

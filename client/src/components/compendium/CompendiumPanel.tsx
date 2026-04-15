@@ -321,7 +321,7 @@ export function CompendiumPanel() {
           >
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               <img
-                src={getCompendiumImageUrl(r.name, r.category)}
+                src={getCompendiumImageUrl(r.slug, r.category)}
                 alt=""
                 loading="lazy"
                 style={{ width: 28, height: 28, borderRadius: '50%', objectFit: 'cover', flexShrink: 0, border: `1.5px solid ${theme.border.default}` }}
