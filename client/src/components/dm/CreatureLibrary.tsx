@@ -18,7 +18,10 @@ function getCreatureImageSvg(name: string): string {
 }
 /** Best image URL for spawning tokens */
 function getCreatureTokenUrl(monster: CompendiumMonster): string {
-  return getCreatureImageUrl(monster.name);
+  // DB slug, not name — slugify(name) doesn't round-trip for names
+  // with apostrophes or edition suffixes (e.g. "Black Goat's
+  // Blessing" → "black-goat-s-blessing" vs DB "black-goats-blessing").
+  return getCreatureImageUrl(monster.slug);
 }
 
 function getRecommendedLevel(cr: number): string {
@@ -394,7 +397,7 @@ function CreatureCard({
   const [expanded, setExpanded] = useState(false);
   const cr = monster.crNumeric;
   const walkSpeed = monster.speed?.walk ?? 30;
-  const [imgSrc, setImgSrc] = useState(getCreatureImagePng(monster.name));
+  const [imgSrc, setImgSrc] = useState(getCreatureImagePng(monster.slug));
 
   return (
     <div style={styles.card}>
@@ -408,7 +411,7 @@ function CreatureCard({
             style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: '50%' }}
             onError={(e) => {
               if (imgSrc.endsWith('.png')) {
-                setImgSrc(getCreatureImageSvg(monster.name));
+                setImgSrc(getCreatureImageSvg(monster.slug));
               } else {
                 const el = e.currentTarget;
                 const parent = el.parentElement;

@@ -98,9 +98,12 @@ function formatSpeed(speed: Record<string, number>): string {
     .join(', ');
 }
 
-function getCreatureImage(_slug: string, name?: string, type?: string): { svg: string; png: string } {
+function getCreatureImage(_slug: string, name?: string, _type?: string): { svg: string; png: string } {
+  // Prefer the DB slug — see notes on getSpellImage below for why
+  // slugify(name) isn't round-trip-safe. Name/type kept as signature
+  // parameters for call-site compatibility but not used.
   return {
-    png: getCreatureImageUrl(name || _slug),
+    png: getCreatureImageUrl(_slug),
     svg: getCreatureImageSvgUrl(name || _slug),
   };
 }

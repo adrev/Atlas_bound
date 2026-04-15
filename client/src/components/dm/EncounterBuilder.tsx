@@ -7,13 +7,22 @@ import { emitTokenAdd } from '../../socket/emitters';
 import { theme } from '../../styles/theme';
 import { Button, Section, Divider } from '../ui';
 import type { CompendiumMonster } from '@dnd-vtt/shared';
-import { getCreatureIconUrl } from '../../utils/compendiumIcons';
+import { getCreatureIconUrl, getCreatureImageUrl } from '../../utils/compendiumIcons';
 import { computeSpawnAnchor, computeTokenPosition } from '../../utils/zoneSpawn';
 
 // --- Helpers (reused from CreatureLibrary) ---
 
-function getCreatureImagePng(name: string, type?: string): string {
-  return getCreatureIconUrl(name, type);
+/**
+ * Token portrait URL. Prefers the real GCS PNG by slug; falls back
+ * to a procedural SVG letter-avatar keyed on type colour. Previously
+ * this helper was misnamed `getCreatureImagePng` but returned only
+ * the letter-avatar, so every spawned encounter token had a
+ * letter-circle portrait.
+ */
+function getCreatureTokenImage(slugOrName: string, type?: string): string {
+  // If the caller has the slug, use it directly. Otherwise slugify
+  // inside getCreatureImageUrl still produces the best-effort match.
+  return getCreatureImageUrl(slugOrName) || getCreatureIconUrl(slugOrName, type);
 }
 
 const SIZE_MAP: Record<string, number> = {
@@ -289,7 +298,7 @@ export function EncounterBuilder() {
                   speed: walkSpeed,
                   abilityScores: monster.abilityScores,
                   proficiencyBonus: Math.max(2, Math.floor((monster.crNumeric - 1) / 4) + 2),
-                  portraitUrl: getCreatureImagePng(monster.name, monster.type),
+                  portraitUrl: getCreatureTokenImage(monster.slug, monster.type),
                   compendiumSlug: monster.slug,
                 }),
               });
@@ -312,7 +321,7 @@ export function EncounterBuilder() {
             x,
             y,
             size: tokenSize,
-            imageUrl: getCreatureImagePng(creature.name, monster?.type),
+            imageUrl: getCreatureTokenImage(monster?.slug ?? creature.name, monster?.type),
             color: tokenColor,
             layer: 'token',
             visible: true,
