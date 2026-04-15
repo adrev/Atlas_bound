@@ -25,11 +25,14 @@ import { parseSpellMetaFromDesc, enrichSpellFromDescription } from '../../utils/
 import { useMapStore } from '../../stores/useMapStore';
 import { useSessionStore } from '../../stores/useSessionStore';
 import { useCharacterStore } from '../../stores/useCharacterStore';
+import { performLongRest, performShortRest } from '../../utils/rest';
 import { InfoTooltip } from '../ui/InfoTooltip';
 import { lookupWeaponProperty } from '../../utils/rules-text';
 import { theme } from '../../styles/theme';
-import { HPBar } from '../ui';
+import { HPBar, askConfirm, showInfo } from '../ui';
 import { getSpellIconUrl, getItemIconUrl } from '../../utils/compendiumIcons';
+import { NotesTab } from './tabs/NotesTab';
+import { BackgroundTab } from './tabs/BackgroundTab';
 
 /* ── Strip HTML tags from descriptions ──────────────────── */
 function stripHtml(html: string): string {
@@ -1002,74 +1005,11 @@ function HeaderBar({ character, canEdit = true }: { character: Character; canEdi
       </button>
       <button
         onClick={() => {
-          const changes: string[] = [];
-          const updates: Record<string, unknown> = {};
-
-          // 1) Restore HP to max
-          if (character.hitPoints < character.maxHitPoints) {
-            updates.hitPoints = character.maxHitPoints;
-            changes.push(`HP restored (${character.hitPoints} \u2192 ${character.maxHitPoints})`);
-          }
-          // 2) Clear temp HP
-          if (character.tempHitPoints > 0) {
-            updates.tempHitPoints = 0;
-            changes.push('Temporary HP cleared');
-          }
-          // 3) Restore all spell slots
-          const slots = parse<Record<string, { max: number; used: number }>>(character.spellSlots, {});
-          const updatedSlots: Record<string, { max: number; used: number }> = {};
-          const restoredLevels: string[] = [];
-          for (const [lvl, slot] of Object.entries(slots)) {
-            if (slot.used > 0) restoredLevels.push(lvl);
-            updatedSlots[lvl] = { max: slot.max, used: 0 };
-          }
-          if (restoredLevels.length > 0) {
-            updates.spellSlots = updatedSlots;
-            changes.push(`Spell slots restored (level${restoredLevels.length !== 1 ? 's' : ''} ${restoredLevels.join(', ')})`);
-          }
-          // 4) Restore all feature uses
-          const features = parse<Array<{ name: string; usesTotal?: number; usesRemaining?: number; resetOn?: string | null }>>(character.features, []);
-          let restoredFeatures = 0;
-          const updatedFeatures = features.map((f) => {
-            if (f.usesTotal && (f.usesRemaining ?? f.usesTotal) < f.usesTotal) {
-              restoredFeatures++;
-              return { ...f, usesRemaining: f.usesTotal };
-            }
-            return f;
-          });
-          if (restoredFeatures > 0) {
-            updates.features = updatedFeatures;
-            changes.push(`${restoredFeatures} feature${restoredFeatures !== 1 ? 's' : ''} restored`);
-          }
-          // 5) Restore half (rounded up) of spent Hit Dice (D&D 5e rule)
-          const hitDicePools = parse<Array<{ dieSize: number; total: number; used: number }>>(character.hitDice as unknown, []);
-          if (hitDicePools.length > 0) {
-            let restoredHd = 0;
-            const updatedPools = hitDicePools.map(p => {
-              if (p.used <= 0) return p;
-              const recovery = Math.max(1, Math.ceil(p.total / 2));
-              const newUsed = Math.max(0, p.used - recovery);
-              restoredHd += (p.used - newUsed);
-              return { ...p, used: newUsed };
-            });
-            if (restoredHd > 0) {
-              updates.hitDice = updatedPools;
-              changes.push(`Recovered ${restoredHd} Hit Dice`);
-            }
-          }
-          // 6) Death saves cleared
-          updates.deathSaves = { successes: 0, failures: 0 };
-          // 7) Drop concentration
-          if (character.concentratingOn) {
-            updates.concentratingOn = null;
-            changes.push(`Concentration on ${character.concentratingOn} dropped`);
-          }
-
-          if (changes.length === 0) changes.push('Already fully rested');
-          emitCharacterUpdate(character.id, updates);
-          useCharacterStore.getState().applyRemoteUpdate(character.id, updates);
-          showRestToast('Long Rest', changes);
-          emitSystemMessage(`💤 ${character.name} takes a Long Rest\n   ${changes.join(' • ')}`);
+          // Delegated to the shared utility so this path produces an
+          // identical chat message to the Long Rest button on the
+          // bottom-bar quick actions. Previously we had two side-by-
+          // side implementations that had drifted apart.
+          performLongRest(character);
         }}
         style={{
           padding: '6px 12px', fontSize: 11, fontWeight: 600,
@@ -1121,48 +1061,12 @@ function ShortRestDialog({ character, onClose }: { character: Character; onClose
   }
 
   function finishRest() {
-    // Reset short-rest features + Warlock slots; HP healing is already done
-    // via Hit Dice spending above.
-    const changes: string[] = [];
-    const updates: Record<string, unknown> = {};
-    const features = parse<Array<{ name: string; usesTotal?: number; usesRemaining?: number; resetOn?: string | null }>>(liveChar.features, []);
-    let restoredFeatures = 0;
-    const updatedFeatures = features.map((f) => {
-      if (f.resetOn === 'short' && f.usesTotal && (f.usesRemaining ?? f.usesTotal) < f.usesTotal) {
-        restoredFeatures++;
-        return { ...f, usesRemaining: f.usesTotal };
-      }
-      return f;
-    });
-    if (restoredFeatures > 0) {
-      updates.features = updatedFeatures;
-      changes.push(`${restoredFeatures} short-rest feature${restoredFeatures !== 1 ? 's' : ''} restored`);
-    }
-
-    const isWarlock = (liveChar.class || '').toLowerCase().includes('warlock');
-    if (isWarlock) {
-      const slots = parse<Record<string, { max: number; used: number }>>(liveChar.spellSlots, {});
-      const updatedSlots: Record<string, { max: number; used: number }> = {};
-      let restoredSlots = 0;
-      for (const [lvl, slot] of Object.entries(slots)) {
-        if (slot.used > 0) restoredSlots++;
-        updatedSlots[lvl] = { max: slot.max, used: 0 };
-      }
-      if (restoredSlots > 0) {
-        updates.spellSlots = updatedSlots;
-        changes.push('Warlock spell slots restored');
-      }
-    }
-
-    if (Object.keys(updates).length > 0) {
-      emitCharacterUpdate(character.id, updates);
-      useCharacterStore.getState().applyRemoteUpdate(character.id, updates);
-    }
-
-    const summary = changes.length > 0
-      ? `💤 ${character.name} finishes a Short Rest\n   ${changes.join(' • ')}`
-      : `💤 ${character.name} finishes a Short Rest`;
-    emitSystemMessage(summary);
+    // Delegated to the shared utility so the sheet's "Finish Short
+    // Rest" button emits the exact same chat message as the bottom
+    // bar's Short Rest quick action. HP healing from Hit Dice that
+    // the player spent during this dialog already went through via
+    // spendHitDie() above.
+    performShortRest(liveChar);
     onClose();
   }
 
@@ -2096,9 +2000,12 @@ function SpellsTab({ spells: rawSpells, spellSlots, spellcastingAbility, spellAt
                 <button
                   onClick={(e) => {
                     e.stopPropagation();
-                    if (window.confirm(`Remove "${spell.name}" from this character? Note: a fresh DDB import will add it back if the character has it on D&D Beyond.`)) {
-                      removeSpell(spell.name);
-                    }
+                    void askConfirm({
+                      title: 'Remove spell',
+                      message: `Remove "${spell.name}" from this character? A fresh DDB import will add it back if the character has it on D&D Beyond.`,
+                      tone: 'danger',
+                      confirmLabel: 'Remove',
+                    }).then((ok) => { if (ok) removeSpell(spell.name); });
                   }}
                   title="Remove spell from character (will be re-added on next DDB import)"
                   style={{
@@ -2428,7 +2335,7 @@ function InventoryTab({
                         // Find position near the character's token
                         const mapState = useMapStore.getState();
                         const currentMap = mapState.currentMap;
-                        if (!currentMap) { alert('No map loaded'); return; }
+                        if (!currentMap) { showInfo('No map loaded.', 'warning'); return; }
                         const tokens = mapState.tokens;
                         const myToken = Object.values(tokens).find((t: any) => t.characterId === characterId);
                         const dropX = myToken ? (myToken as any).x + 70 : currentMap.width / 2;
@@ -2440,14 +2347,21 @@ function InventoryTab({
                           headers: { 'Content-Type': 'application/json' },
                           body: JSON.stringify({ itemIndex: i, mapId: currentMap.id, x: dropX, y: dropY }),
                         });
-                        if (!resp.ok) { console.error('Drop failed:', await resp.text()); return; }
+                        if (!resp.ok) {
+                          console.error('Drop failed:', await resp.text());
+                          showInfo('Couldn\u2019t drop item \u2014 server rejected the request.', 'danger');
+                          return;
+                        }
                         const data = await resp.json();
 
                         // Update local inventory. Server now creates the
                         // loot token atomically and broadcasts it via
                         // `map:token-added`, so no client emit is needed.
                         useCharacterStore.getState().applyRemoteUpdate(characterId, { inventory: data.inventory });
-                      } catch (err) { console.error('Drop item failed:', err); }
+                      } catch (err) {
+                        console.error('Drop item failed:', err);
+                        showInfo('Couldn\u2019t drop item. Try again.', 'danger');
+                      }
                     }}
                     style={{
                       padding: '3px 8px', fontSize: 10, fontWeight: 600, borderRadius: 4,
@@ -2576,133 +2490,6 @@ function FeaturesTab({ features }: { features: Feature[] }) {
           </div>
         );
       })}
-    </div>
-  );
-}
-
-/* ═══════════════════════════════════════════════════════════
-   TAB: BACKGROUND
-   ═══════════════════════════════════════════════════════════ */
-function BackgroundTab({ background, characteristics, personality }: {
-  background: CharacterBackground;
-  characteristics: CharacterCharacteristics;
-  personality: CharacterPersonality;
-}) {
-  const charFields: [string, string][] = [
-    ['Alignment', characteristics.alignment],
-    ['Gender', characteristics.gender],
-    ['Size', characteristics.size],
-    ['Age', characteristics.age],
-    ['Height', characteristics.height],
-    ['Weight', characteristics.weight],
-    ['Eyes', characteristics.eyes],
-    ['Hair', characteristics.hair],
-    ['Skin', characteristics.skin],
-    ['Faith', characteristics.faith],
-  ].filter(([, v]) => v) as [string, string][];
-
-  return (
-    <div>
-      {/* Background name & description */}
-      {background.name && (
-        <>
-          <SectionHeader>Background: {background.name}</SectionHeader>
-          {background.description && (
-            <div style={{ fontSize: 12, color: C.textSecondary, lineHeight: 1.5, marginBottom: 12, whiteSpace: 'pre-wrap' }}>
-              {stripHtml(background.description)}
-            </div>
-          )}
-          {background.feature && (
-            <div style={{
-              background: C.bgCard, padding: '8px 12px', borderRadius: 4,
-              border: `1px solid ${C.borderDim}`, marginBottom: 12,
-            }}>
-              <div style={{ fontSize: 11, fontWeight: 700, color: C.red, marginBottom: 4 }}>Background Feature</div>
-              <div style={{ fontSize: 12, color: C.textSecondary, lineHeight: 1.5, whiteSpace: 'pre-wrap' }}>{background.feature}</div>
-            </div>
-          )}
-        </>
-      )}
-
-      {/* Characteristics grid */}
-      {charFields.length > 0 && (
-        <>
-          <SectionHeader style={{ marginTop: 12 }}>Characteristics</SectionHeader>
-          <div style={{
-            display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(120px, 1fr))',
-            gap: 6, marginBottom: 12,
-          }}>
-            {charFields.map(([label, value]) => (
-              <div key={label} style={{
-                background: C.bgCard, padding: '6px 10px', borderRadius: 4,
-                border: `1px solid ${C.borderDim}`,
-              }}>
-                <div style={{ fontSize: 9, color: C.textMuted, textTransform: 'uppercase', fontWeight: 600 }}>{label}</div>
-                <div style={{ fontSize: 12, color: C.textPrimary }}>{value}</div>
-              </div>
-            ))}
-          </div>
-        </>
-      )}
-
-      {/* Personality sections */}
-      {([
-        ['Personality Traits', personality.traits],
-        ['Ideals', personality.ideals],
-        ['Bonds', personality.bonds],
-        ['Flaws', personality.flaws],
-      ] as const).map(([label, text]) => {
-        if (!text) return null;
-        return (
-          <div key={label} style={{ marginBottom: 12 }}>
-            <SectionHeader>{label}</SectionHeader>
-            <div style={{
-              fontSize: 12, color: C.textSecondary, lineHeight: 1.5,
-              padding: '6px 10px', background: C.bgCard,
-              borderRadius: 4, border: `1px solid ${C.borderDim}`,
-              whiteSpace: 'pre-wrap',
-            }}>
-              {text}
-            </div>
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
-/* ═══════════════════════════════════════════════════════════
-   TAB: NOTES
-   ═══════════════════════════════════════════════════════════ */
-function NotesTab({ notes }: { notes: CharacterNotes }) {
-  const sections: { key: keyof CharacterNotes; label: string }[] = [
-    { key: 'organizations', label: 'Organizations' },
-    { key: 'allies', label: 'Allies' },
-    { key: 'enemies', label: 'Enemies' },
-    { key: 'backstory', label: 'Backstory' },
-    { key: 'other', label: 'Other' },
-  ];
-
-  return (
-    <div>
-      {sections.map(({ key, label }) => (
-        <div key={key} style={{ marginBottom: 16 }}>
-          <SectionHeader>{label}</SectionHeader>
-          <textarea
-            defaultValue={notes[key] ?? ''}
-            placeholder={`${label}...`}
-            style={{
-              width: '100%', minHeight: 80, padding: '8px 10px',
-              background: C.bgCard, border: `1px solid ${C.border}`,
-              borderRadius: 4, color: C.textPrimary, fontSize: 12,
-              lineHeight: 1.5, resize: 'vertical', outline: 'none',
-              fontFamily: 'inherit', boxSizing: 'border-box',
-            }}
-            onFocus={e => (e.currentTarget.style.borderColor = C.red)}
-            onBlur={e => (e.currentTarget.style.borderColor = C.border)}
-          />
-        </div>
-      ))}
     </div>
   );
 }

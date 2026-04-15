@@ -39,12 +39,18 @@ const __dirname = path.dirname(__filename);
 await initDatabase();
 console.log('Database initialized');
 
-// Seed compendium in the background (don't block startup)
+// Seed compendium in the background (don't block startup). Flip a
+// module-level flag when done so /api/health can distinguish
+// "process is alive" from "ready to serve reads that hit the compendium".
+let compendiumReady = false;
 isCompendiumSeeded().then(seeded => {
   if (!seeded) {
     console.log('Seeding D&D 5E compendium from open5e API...');
-    seedCompendium().then(() => console.log('Compendium seeded!')).catch(err => console.error('Seed failed:', err));
+    seedCompendium()
+      .then(() => { compendiumReady = true; console.log('Compendium seeded!'); })
+      .catch(err => console.error('Seed failed:', err));
   } else {
+    compendiumReady = true;
     console.log('Compendium already seeded');
   }
 });
@@ -71,10 +77,18 @@ app.use(helmet({
   contentSecurityPolicy: {
     directives: {
       defaultSrc: ["'self'"],
-      scriptSrc: ["'self'"],
+      // 'wasm-unsafe-eval' lets us instantiate WebAssembly modules
+      // (Ammo.js physics powering the 3D dice). blob: is needed so
+      // @3d-dice/dice-box can spawn its Babylon.js render worker from
+      // a generated blob URL — without it the dice never appear and
+      // the browser logs a CSP violation the moment a roll fires.
+      scriptSrc: ["'self'", "'wasm-unsafe-eval'", 'blob:'],
+      // Explicit worker-src so the browser doesn't fall through to
+      // the script-src fallback and still block the blob worker.
+      workerSrc: ["'self'", 'blob:'],
       styleSrc: ["'self'", "'unsafe-inline'"],
       imgSrc: ["'self'", 'data:', 'blob:', '*.dndbeyond.com', '*.discordapp.com', '*.discord.com', '*.googleusercontent.com', 'https://storage.googleapis.com'],
-      connectSrc: ["'self'", 'wss:', 'ws:', 'https://storage.googleapis.com'],
+      connectSrc: ["'self'", 'wss:', 'ws:', 'blob:', 'https://storage.googleapis.com'],
       mediaSrc: ["'self'", 'https://storage.googleapis.com'],
     },
   },
@@ -187,9 +201,19 @@ app.use('/api/auth', discordAuth);
 app.use('/api/auth', googleAuth);
 app.use('/api/auth', appleAuth);
 
-// Health check (before auth middleware — used by Cloud Run + Docker HEALTHCHECK)
-app.get('/api/health', (_req, res) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+// Health check (before auth middleware — used by Cloud Run + Docker HEALTHCHECK).
+// Returns 200 as soon as the process is up; reports compendium-seed state so
+// smoke tests can distinguish "alive" from "fully ready to serve reads".
+app.get('/api/health', async (_req, res) => {
+  let db: 'ok' | 'down' = 'ok';
+  try { await pool.query('SELECT 1'); } catch { db = 'down'; }
+  const status = db === 'ok' && compendiumReady ? 'ready' : 'starting';
+  res.status(db === 'ok' ? 200 : 503).json({
+    status,
+    db,
+    compendium: compendiumReady ? 'ready' : 'seeding',
+    timestamp: new Date().toISOString(),
+  });
 });
 
 // Public API routes
@@ -249,9 +273,10 @@ setIO(io);
 registerSocketHandler(io);
 
 // Global error handler — catches thrown errors from async routes and authorization helpers
-app.use((err: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
-  const status = err.status || 500;
-  const message = status < 500 ? err.message : 'Internal server error';
+app.use((err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+  const e = err as { status?: number; message?: string } | null;
+  const status = e?.status ?? 500;
+  const message = status < 500 ? (e?.message ?? 'Bad request') : 'Internal server error';
   if (status >= 500) console.error('[Server Error]', err);
   res.status(status).json({ error: message });
 });

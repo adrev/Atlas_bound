@@ -123,15 +123,72 @@ export function performLongRest(character: Character): void {
 }
 
 /**
- * Short Rest is dialog-based (player chooses how many hit dice to
- * spend). Instead of duplicating that UI in QuickActions, we dispatch
- * a custom event that AppShell listens for and opens the full
- * character sheet modal so the existing Short Rest button can handle it.
+ * Perform a "quick" Short Rest. Restores:
+ *   1. All short-rest feature uses (resetOn === 'short')
+ *   2. All Warlock spell slots (class match, not slot level)
+ *   3. Concentration is NOT dropped (a short rest doesn't require it)
+ *
+ * Hit Dice spending is intentionally NOT done here — that's a manual,
+ * dice-by-dice decision the player makes in the Short Rest dialog
+ * inside the character sheet. For the quick-action path (Bottom Bar)
+ * and the "Finish Short Rest" button inside the dialog, this function
+ * produces the identical chat message so there's no inconsistency.
  */
-export function triggerShortRestDialog(): void {
-  window.dispatchEvent(
-    new CustomEvent('open-full-character-sheet', {
-      detail: { focusAction: 'short-rest' },
-    }),
-  );
+export function performShortRest(character: Character): void {
+  const changes: string[] = [];
+  const updates: Record<string, unknown> = {};
+
+  // 1) Restore short-rest feature uses.
+  const features = parse<
+    Array<{ name: string; usesTotal?: number; usesRemaining?: number; resetOn?: string | null }>
+  >((character as unknown as { features: unknown }).features, []);
+  let restoredFeatures = 0;
+  const updatedFeatures = features.map((f) => {
+    if (f.resetOn === 'short' && f.usesTotal && (f.usesRemaining ?? f.usesTotal) < f.usesTotal) {
+      restoredFeatures++;
+      return { ...f, usesRemaining: f.usesTotal };
+    }
+    return f;
+  });
+  if (restoredFeatures > 0) {
+    updates.features = updatedFeatures;
+    changes.push(`${restoredFeatures} short-rest feature${restoredFeatures !== 1 ? 's' : ''} restored`);
+  }
+
+  // 2) Warlocks recover their spell slots on a short rest (unique 5e rule).
+  const isWarlock = (character.class || '').toLowerCase().includes('warlock');
+  if (isWarlock) {
+    const slots = parse<Record<string, { max: number; used: number }>>(
+      (character as unknown as { spellSlots: unknown }).spellSlots,
+      {},
+    );
+    const updatedSlots: Record<string, { max: number; used: number }> = {};
+    let restoredSlots = 0;
+    for (const [lvl, slot] of Object.entries(slots)) {
+      if (slot.used > 0) restoredSlots++;
+      updatedSlots[lvl] = { max: slot.max, used: 0 };
+    }
+    if (restoredSlots > 0) {
+      updates.spellSlots = updatedSlots;
+      changes.push('Warlock spell slots restored');
+    }
+  }
+
+  if (Object.keys(updates).length > 0) {
+    emitCharacterUpdate(character.id, updates);
+    useCharacterStore.getState().applyRemoteUpdate(character.id, updates);
+  }
+
+  const summary = changes.length > 0
+    ? `${EMOJI.rest.short} ${character.name} finishes a Short Rest\n   ${changes.join(' • ')}`
+    : `${EMOJI.rest.short} ${character.name} finishes a Short Rest`;
+  showToast({
+    emoji: EMOJI.rest.short,
+    message: changes.length > 0
+      ? `Short Rest — ${changes.join(' • ')}`
+      : 'Short Rest — already refreshed',
+    variant: 'success',
+    duration: 4000,
+  });
+  emitSystemMessage(summary);
 }

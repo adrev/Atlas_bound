@@ -7,7 +7,7 @@ import { useCombatStore } from '../../stores/useCombatStore';
 import { theme } from '../../styles/theme';
 import { EMOJI } from '../../styles/emoji';
 import { showToast } from '../ui';
-import { performLongRest, triggerShortRestDialog } from '../../utils/rest';
+import { performLongRest, performShortRest } from '../../utils/rest';
 import type { Character } from '@dnd-vtt/shared';
 
 /**
@@ -151,7 +151,11 @@ const REST_ACTIONS: QuickAction[] = [
         });
         return;
       }
-      triggerShortRestDialog();
+      // Short Rest now runs directly (no dialog) — matches the
+      // behaviour of the Long Rest button on this bar. Players can
+      // still open the full character sheet's Short Rest dialog
+      // to spend Hit Dice one at a time for manual HP recovery.
+      performShortRest(ctx.character);
     },
   },
   {
