@@ -1,9 +1,11 @@
 import type { Socket } from 'socket.io-client';
+import type { Combatant } from '@dnd-vtt/shared';
 import { useSessionStore } from '../stores/useSessionStore';
 import { useMapStore } from '../stores/useMapStore';
 import { useCombatStore } from '../stores/useCombatStore';
 import { useChatStore } from '../stores/useChatStore';
 import { useDiceStore } from '../stores/useDiceStore';
+import { useDiceAnimationStore } from '../stores/useDiceAnimationStore';
 import { useCharacterStore } from '../stores/useCharacterStore';
 import { useDrawStore } from '../stores/useDrawStore';
 import { useSceneStore } from '../stores/useSceneStore';
@@ -11,17 +13,7 @@ import { pushHandout } from '../components/session/HandoutModal';
 import { pushOpportunityAttack } from '../components/combat/OpportunityAttackModal';
 import { pushCounterspellOpportunity } from '../components/combat/CounterspellModal';
 import { pushShieldOpportunity } from '../components/combat/ShieldModal';
-
-const MAPS_CDN = 'https://storage.googleapis.com/atlas-bound-data/maps';
-
-const PREBUILT_IMAGE_MAP: Record<string, string> = {
-  'Apothecary Shop': `${MAPS_CDN}/apothecary-shop.png`,
-  'The Elfsong Tavern': `${MAPS_CDN}/elfsong-tavern.png`,
-  'Cathedral of Lathander': `${MAPS_CDN}/cathedral-lathander.png`,
-  'Druid Grove': `${MAPS_CDN}/druid-grove.png`,
-  'Forest Road Ambush': `${MAPS_CDN}/forest-road-ambush.png`,
-  'Moonrise Towers': `${MAPS_CDN}/moonrise-towers.png`,
-};
+import { PREBUILT_THUMBNAIL as PREBUILT_IMAGE_MAP } from '../data/prebuiltMaps';
 
 export function registerListeners(socket: Socket): () => void {
   const sessionStore = useSessionStore.getState;
@@ -37,6 +29,11 @@ export function registerListeners(socket: Socket): () => void {
       settings: data.settings,
       currentMapId: data.currentMapId,
       gameMode: data.gameMode,
+      visibility: data.visibility,
+      hasPassword: data.hasPassword,
+      inviteCode: data.inviteCode,
+      ownerUserId: data.ownerUserId,
+      bans: data.bans,
     });
   });
 
@@ -64,6 +61,72 @@ export function registerListeners(socket: Socket): () => void {
 
   socket.on('session:error', ({ message }) => {
     console.error('[Session Error]', message);
+    // Surface the problem to the user \u2014 previously swallowed, which
+    // left people staring at a blank loading screen when they tried to
+    // rejoin a session they'd been kicked/banned from.
+    const state = sessionStore();
+    const inSession = !!state.sessionId;
+    import('../components/ui/Toast').then(({ showToast }) => {
+      showToast({ message, variant: 'danger', duration: 5000 });
+    });
+    // Common fatal error: they're no longer a member. Reset + redirect
+    // so they can try to rejoin fresh.
+    if (/not a member|not found/i.test(message)) {
+      useSessionStore.getState().reset();
+      if (inSession) setTimeout(() => { window.location.href = '/'; }, 800);
+    }
+  });
+
+  socket.on('session:deleted', () => {
+    import('../components/ui/Toast').then(({ showToast }) => {
+      showToast({
+        message: 'This session was deleted by the owner.',
+        variant: 'warning',
+        duration: 5000,
+      });
+    });
+    useSessionStore.getState().reset();
+    setTimeout(() => { window.location.href = '/'; }, 800);
+  });
+
+  // --- Privacy + bans (public/private sessions + role hierarchy) ---
+  socket.on('session:settings-changed', ({ visibility, hasPassword, inviteCode }) => {
+    useSessionStore.getState().updatePrivacy({ visibility, hasPassword, inviteCode });
+  });
+
+  socket.on('session:bans-updated', ({ bans }) => {
+    useSessionStore.getState().setBans(bans);
+  });
+
+  socket.on('session:player-banned', ({ userId, reason }) => {
+    const state = sessionStore();
+    if (state.userId === userId) {
+      // Banned: lazy-import the toast so we don't pull the UI bundle
+      // into the socket layer. Reset state + navigate home after a
+      // brief window so the toast lands on the lobby too.
+      import('../components/ui/Toast').then(({ showToast }) => {
+        showToast({
+          variant: 'danger',
+          emoji: '\u26D4',
+          message: reason
+            ? `You were banned from this session: "${reason}"`
+            : 'You were banned from this session.',
+          duration: 8000,
+        });
+      });
+      useSessionStore.getState().reset();
+      setTimeout(() => { window.location.href = '/'; }, 1500);
+    } else {
+      useSessionStore.getState().removePlayer(userId);
+    }
+  });
+
+  socket.on('session:role-changed', ({ userId, role }) => {
+    useSessionStore.getState().setPlayerRole(userId, role);
+  });
+
+  socket.on('session:owner-changed', ({ newOwnerId }) => {
+    useSessionStore.getState().setOwner(newOwnerId);
   });
 
   socket.on('session:music-changed', (data: { track: string | null; fileIndex?: number | null }) => {
@@ -118,6 +181,7 @@ export function registerListeners(socket: Socket): () => void {
         gridOffsetY: map.gridOffsetY,
         walls: map.walls,
         fogState: map.fogState,
+        zones: map.zones,
       },
       tokens,
       isPreview,
@@ -193,6 +257,11 @@ export function registerListeners(socket: Socket): () => void {
     useMapStore.getState().updateWalls(walls);
   });
 
+  socket.on('map:zones-updated', ({ zones, mapId }) => {
+    if (!isForCurrentMap(mapId)) return;
+    useMapStore.getState().updateZones(zones);
+  });
+
   socket.on('map:pinged', (ping) => {
     useMapStore.getState().addPing(ping);
   });
@@ -200,7 +269,7 @@ export function registerListeners(socket: Socket): () => void {
   // --- Combat ---
   socket.on('combat:started', ({ combatants, roundNumber }) => {
     console.log('[COMBAT] combat:started received',
-      combatants.map((c: any) => `${c.name}${c.isNPC ? '' : ' (PC)'}=${c.initiative}(bonus ${c.initiativeBonus})`).join(', '),
+      combatants.map((c: Combatant) => `${c.name}${c.isNPC ? '' : ' (PC)'}=${c.initiative}(bonus ${c.initiativeBonus})`).join(', '),
     );
     useCombatStore.getState().startCombat(combatants, roundNumber);
     useSessionStore.getState().setGameMode('combat');
@@ -236,7 +305,7 @@ export function registerListeners(socket: Socket): () => void {
 
   socket.on('combat:all-initiatives-ready', ({ combatants }) => {
     console.log('[COMBAT] all-initiatives-ready',
-      combatants.map((c: any) => `${c.name}${c.isNPC ? '' : ' (PC)'}=${c.initiative}`).join(', '),
+      combatants.map((c: Combatant) => `${c.name}${c.isNPC ? '' : ' (PC)'}=${c.initiative}`).join(', '),
     );
     useCombatStore.getState().setCombatants(combatants);
   });
@@ -387,6 +456,11 @@ export function registerListeners(socket: Socket): () => void {
     if (!chat.chatTabActive) chat.incrementUnread();
     if (message.rollData) {
       useDiceStore.getState().setResult(message.rollData);
+      // Fire the 3D overlay in parallel with the chat card. The card
+      // animates in quickly; the overlay tumbles dice above the map
+      // for ~1.6s and fades out on its own. Multiplayer receives the
+      // same event → animation plays for everyone in the session.
+      useDiceAnimationStore.getState().play(message.rollData, 1600);
     }
   });
 
@@ -417,7 +491,7 @@ export function registerListeners(socket: Socket): () => void {
   });
 
   // --- Handouts ---
-  socket.on('session:handout-received' as any, (payload: { title: string; content: string; imageUrl?: string; fromDM: boolean }) => {
+  socket.on('session:handout-received', (payload) => {
     pushHandout(payload);
   });
 
@@ -427,8 +501,14 @@ export function registerListeners(socket: Socket): () => void {
     socket.off('session:player-joined');
     socket.off('session:player-left');
     socket.off('session:kicked');
+    socket.off('session:settings-changed');
+    socket.off('session:bans-updated');
+    socket.off('session:player-banned');
+    socket.off('session:role-changed');
+    socket.off('session:owner-changed');
     socket.off('session:settings-updated');
     socket.off('session:error');
+    socket.off('session:deleted');
     socket.off('session:music-changed');
     socket.off('session:music-action-broadcast');
     socket.off('map:loaded');
@@ -440,6 +520,7 @@ export function registerListeners(socket: Socket): () => void {
     socket.off('map:token-updated');
     socket.off('map:fog-updated');
     socket.off('map:walls-updated');
+    socket.off('map:zones-updated');
     socket.off('map:pinged');
     socket.off('combat:started');
     socket.off('combat:state-sync');

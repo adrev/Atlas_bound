@@ -18,7 +18,9 @@ import { CounterspellModal } from '../combat/CounterspellModal';
 import { ShieldModal } from '../combat/ShieldModal';
 import { ReadyCheckModal } from '../combat/ReadyCheckModal';
 import { MusicEngine } from '../audio/MusicEngine';
-import { Sidebar } from './Sidebar';
+// Sidebar is large (DM panels, scene manager, creature library). Lazy-loaded
+// so the initial session bundle stays under the 500 kB warning threshold.
+const Sidebar = lazy(() => import('./Sidebar').then((m) => ({ default: m.Sidebar })));
 import { BottomBar } from './BottomBar';
 import { MobileBottomBar } from './MobileBottomBar';
 import type { MobileTab } from './MobileBottomBar';
@@ -26,6 +28,14 @@ import { ChatPanel } from '../chat/ChatPanel';
 import { DiceTray } from '../dice/DiceTray';
 import { TokenActionPanel } from '../canvas/TokenActionPanel';
 import { theme } from '../../styles/theme';
+import { ToastHost } from '../ui/Toast';
+import { DialogHost } from '../ui/Dialog';
+
+// Lazy-load the 3D dice overlay so Three.js (~500 KB min+gz) is only
+// pulled in on first roll, not during the initial app boot.
+const Dice3DOverlay = lazy(() =>
+  import('../dice/Dice3DOverlay').then((m) => ({ default: m.Dice3DOverlay })),
+);
 
 // Lazy-loaded modals/panels — only fetched when first shown. Each of
 // these is either DM-only, modal-only, or infrequently used, so
@@ -366,6 +376,8 @@ export function AppShell() {
         <CombatRecap />
       </Suspense>
       <MusicEngine />
+      <ToastHost />
+      <DialogHost />
       <Suspense fallback={null}>
         <HandoutModal />
       </Suspense>
@@ -490,13 +502,16 @@ export function AppShell() {
                 </button>
               </div>
               <div style={{ flex: 1, overflow: 'auto' }}>
-                <Sidebar />
+                <Suspense fallback={null}>
+                  <Sidebar />
+                </Suspense>
               </div>
             </div>
           </div>
         )}
 
         {sharedModals}
+        <Suspense fallback={null}><Dice3DOverlay /></Suspense>
       </div>
     );
   }
@@ -602,7 +617,9 @@ export function AppShell() {
         {/* Sidebar */}
         {sidebarOpen && (
           <div style={styles.sidebar}>
-            <Sidebar />
+            <Suspense fallback={null}>
+              <Sidebar />
+            </Suspense>
           </div>
         )}
       </div>
@@ -613,6 +630,7 @@ export function AppShell() {
       </div>
 
       {sharedModals}
+      <Suspense fallback={null}><Dice3DOverlay /></Suspense>
     </div>
   );
 }
