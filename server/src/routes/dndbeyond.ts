@@ -242,27 +242,31 @@ router.post('/import', async (req: Request, res: Response) => {
     }
 
     if (existing) {
-      await pool.query(`
-        UPDATE characters SET
-          name = $1, race = $2, class = $3, level = $4, hit_points = $5, max_hit_points = $6,
-          temp_hit_points = $7, armor_class = $8, speed = $9, proficiency_bonus = $10,
-          ability_scores = $11, saving_throws = $12, skills = $13, spell_slots = $14, spells = $15,
-          features = $16, inventory = $17, death_saves = $18, portrait_url = $19,
-          dndbeyond_json = $20, source = $21, updated_at = NOW()::text
-        WHERE id = $22
-      `, [
-        character.name, character.race, character.class,
-        character.level, character.hitPoints, character.maxHitPoints,
-        character.tempHitPoints, character.armorClass, character.speed,
-        character.proficiencyBonus,
-        JSON.stringify(character.abilityScores), JSON.stringify(character.savingThrows),
-        JSON.stringify(character.skills), JSON.stringify(character.spellSlots),
-        JSON.stringify(character.spells), JSON.stringify(character.features),
-        JSON.stringify(character.inventory), JSON.stringify(character.deathSaves),
-        character.portraitUrl, JSON.stringify(characterJson), 'dndbeyond_import',
-        existing.id,
-      ]);
-      res.json({ id: existing.id, name: character.name, updated: true });
+      // Fetch the full existing row so the merge helper can preserve
+      // in-flight session state (hit_points, conditions, concentration,
+      // slot/feature usage) while still replacing the canonical DDB
+      // fields. Previously this UPDATE clobbered everything.
+      const { rows: fullRows } = await pool.query(
+        'SELECT * FROM characters WHERE id = $1',
+        [existing.id],
+      );
+      const existingRow = fullRows[0];
+
+      const { buildMergeUpdate } = await import('../services/ddbMerge.js');
+      const { columns, values } = buildMergeUpdate({
+        existing: existingRow,
+        incoming: character as unknown as Record<string, unknown>,
+        raw: characterJson,
+      });
+      columns.push('source');
+      values.push('dndbeyond_import');
+      const setClause = columns.map((c, i) => `${c} = $${i + 1}`).join(', ');
+      values.push(existing.id);
+      await pool.query(
+        `UPDATE characters SET ${setClause}, updated_at = NOW()::text WHERE id = $${values.length}`,
+        values,
+      );
+      res.json({ id: existing.id, name: character.name, updated: true, merged: true });
     } else {
       const id = uuidv4();
       await pool.query(`
