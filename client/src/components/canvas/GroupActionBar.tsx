@@ -160,7 +160,11 @@ export function GroupActionBar() {
               cursor: 'pointer',
             }}>{c}</button>
           ))}
-          <button onClick={() => setMode(null)} style={btnStyle('#555')}>✕</button>
+          <button
+            onClick={() => setMode(null)}
+            aria-label="Close condition picker"
+            style={btnStyle('#555')}
+          >✕</button>
         </>
       ) : (
         <>
