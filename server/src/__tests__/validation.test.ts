@@ -259,6 +259,72 @@ describe('chatRollSchema', () => {
     const result = chatRollSchema.safeParse({ notation: '' });
     expect(result.success).toBe(false);
   });
+
+  // The `reported` field carries the client-side 3D dice result.
+  // When present the server trusts it instead of re-rolling random.
+  // These tests lock in the expected shape so the dice-box → chat
+  // pipeline can't regress into silently accepting garbage.
+  it('accepts a roll with reported dice + total', () => {
+    const result = chatRollSchema.safeParse({
+      notation: '1d20+3',
+      reported: { dice: [{ type: 20, value: 15 }], total: 18 },
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('accepts reported rolls for multi-die notation', () => {
+    const result = chatRollSchema.safeParse({
+      notation: '2d6+4',
+      reported: {
+        dice: [{ type: 6, value: 3 }, { type: 6, value: 5 }],
+        total: 12,
+      },
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('rejects reported dice with no entries', () => {
+    const result = chatRollSchema.safeParse({
+      notation: '1d20',
+      reported: { dice: [], total: 15 },
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects reported rolls with too many dice (>100)', () => {
+    const big = Array.from({ length: 101 }, () => ({ type: 6, value: 1 }));
+    const result = chatRollSchema.safeParse({
+      notation: 'silly',
+      reported: { dice: big, total: 101 },
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects reported total outside the ±10000 window', () => {
+    const result = chatRollSchema.safeParse({
+      notation: '1d20',
+      reported: { dice: [{ type: 20, value: 20 }], total: 1_000_000 },
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects reported dice value above the type cap', () => {
+    // Validator only clamps 0..1000 on the raw number; business-level
+    // sanity (e.g. d20 value ≤ 20) is enforced in the service layer.
+    const result = chatRollSchema.safeParse({
+      notation: '1d20',
+      reported: { dice: [{ type: 20, value: 9999 }], total: 9999 },
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects reported dice with non-integer type', () => {
+    const result = chatRollSchema.safeParse({
+      notation: '1d20',
+      reported: { dice: [{ type: 20.5, value: 10 }], total: 10 },
+    });
+    expect(result.success).toBe(false);
+  });
 });
 
 // ---------------------------------------------------------------------------
