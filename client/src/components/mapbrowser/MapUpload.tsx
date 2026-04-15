@@ -7,6 +7,7 @@ import {
 } from '../../socket/emitters';
 import { GridAligner } from './GridAligner';
 import type { GridSettings } from './GridAligner';
+import { detectGrid } from '../../utils/detect-grid';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -44,6 +45,7 @@ export function MapUpload({ open, onClose, onMapCreated }: MapUploadProps) {
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [autoGrid, setAutoGrid] = useState<{ cellSize: number; confidence: number } | null>(null);
 
   // -----------------------------------------------------------------------
   // File handling
@@ -57,12 +59,21 @@ export function MapUpload({ open, onClose, onMapCreated }: MapUploadProps) {
 
     const url = URL.createObjectURL(f);
     setPreviewUrl(url);
+    setAutoGrid(null);
 
     const img = new Image();
     img.onload = () => {
       setImageDims({ w: img.naturalWidth, h: img.naturalHeight });
     };
     img.src = url;
+
+    // Try to auto-detect grid pitch. Runs async; if we find a
+    // confident answer we suggest it; user can keep or override.
+    detectGrid(url).then((detected) => {
+      if (!detected) return;
+      setAutoGrid(detected);
+      setGrid((prev) => ({ ...prev, cellSize: detected.cellSize }));
+    }).catch(() => { /* non-fatal — keep default grid size */ });
   }, []);
 
   // -----------------------------------------------------------------------
@@ -155,6 +166,21 @@ export function MapUpload({ open, onClose, onMapCreated }: MapUploadProps) {
           />
           <span style={styles.hint}>JPG, PNG, or WebP up to 20 MB</span>
         </div>
+
+        {/* Auto-grid hint */}
+        {autoGrid && (
+          <div style={{
+            margin: '4px 0', padding: '6px 10px',
+            background: 'rgba(39,174,96,0.1)',
+            border: '1px solid rgba(39,174,96,0.4)',
+            borderRadius: 4, fontSize: 11, color: theme.state.success ?? '#27ae60',
+          }}>
+            ✨ Detected grid pitch: <strong>{autoGrid.cellSize}px</strong>
+            <span style={{ opacity: 0.6, marginLeft: 6 }}>
+              ({(autoGrid.confidence * 100).toFixed(0)}% confidence — drag the grid aligner to tweak if wrong)
+            </span>
+          </div>
+        )}
 
         {/* Grid alignment overlay */}
         {previewUrl && imageDims && (
