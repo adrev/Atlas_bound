@@ -156,6 +156,16 @@ export interface Spell {
    * level is available. Per-spell toggle in the SpellsTab UI.
    */
   dmOverride?: boolean;
+  /**
+   * Marks this spell as PREPARED for today. Only relevant for prepare-
+   * classes (cleric, druid, wizard, paladin, artificer); the UI only
+   * shows the toggle on those characters. Undefined or false means the
+   * spell is known but not currently prepared — unprepared spells
+   * still render in the list but get a dimmed visual state and the
+   * player is shown a warning on cast attempts. Cantrips and ritual-
+   * only spells ignore this flag (always available).
+   */
+  prepared?: boolean;
 }
 
 export interface InventoryItem {

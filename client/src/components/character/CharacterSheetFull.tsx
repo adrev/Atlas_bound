@@ -26,6 +26,7 @@ import { useMapStore } from '../../stores/useMapStore';
 import { useSessionStore } from '../../stores/useSessionStore';
 import { useCharacterStore } from '../../stores/useCharacterStore';
 import { performLongRest, performShortRest } from '../../utils/rest';
+import { isPrepareClass, maxPreparedSpells, countPreparedSpells } from '../../utils/prepared-spells';
 import { InfoTooltip } from '../ui/InfoTooltip';
 import { lookupWeaponProperty } from '../../utils/rules-text';
 import { theme } from '../../styles/theme';
@@ -788,6 +789,7 @@ export function CharacterSheetFull({ character, onClose, initialTab }: { charact
                   profBonus={profBonus}
                   characterId={character.id}
                   characterLevel={character.level}
+                  characterClass={character.class}
                   isDM={isDM}
                   isOwner={isOwner}
                 />
@@ -1736,7 +1738,7 @@ function AddSpellDialog({ existingSpellNames, onAdd, onClose }: {
   );
 }
 
-function SpellsTab({ spells: rawSpells, spellSlots, spellcastingAbility, spellAttackBonus, spellSaveDC, abilityScores, profBonus, characterId, characterLevel, isDM, isOwner }: {
+function SpellsTab({ spells: rawSpells, spellSlots, spellcastingAbility, spellAttackBonus, spellSaveDC, abilityScores, profBonus, characterId, characterLevel, characterClass, isDM, isOwner }: {
   spells: Spell[];
   spellSlots: Record<number, SpellSlot>;
   spellcastingAbility: string;
@@ -1746,6 +1748,7 @@ function SpellsTab({ spells: rawSpells, spellSlots, spellcastingAbility, spellAt
   profBonus: number;
   characterId: string;
   characterLevel: number;
+  characterClass: string;
   isDM: boolean;
   isOwner: boolean;
 }) {
@@ -1835,6 +1838,24 @@ function SpellsTab({ spells: rawSpells, spellSlots, spellcastingAbility, spellAt
     emitCharacterUpdate(characterId, { spells: updated });
   };
 
+  // Toggle the per-spell "prepared" flag for prepare-classes.
+  // Cantrips are always prepared; their toggle is a no-op and the
+  // UI hides the checkbox on cantrips.
+  const toggleSpellPrepared = (spellName: string) => {
+    const updated = rawSpells.map(s => s.name.toLowerCase() === spellName.toLowerCase()
+      ? { ...s, prepared: !s.prepared }
+      : s,
+    );
+    emitCharacterUpdate(characterId, { spells: updated });
+  };
+
+  // Prepared-spells state (empty / disabled for non-prepare classes).
+  const preparesSpells = isPrepareClass(characterClass);
+  const maxPrepared = preparesSpells
+    ? maxPreparedSpells(characterClass, characterLevel, spellcastingAbility, abilityScores)
+    : 0;
+  const numPrepared = preparesSpells ? countPreparedSpells(rawSpells) : 0;
+
   const existingSpellNames = useMemo(
     () => new Set(spells.map(s => s.name.toLowerCase())),
     [spells],
@@ -1889,12 +1910,20 @@ function SpellsTab({ spells: rawSpells, spellSlots, spellcastingAbility, spellAt
             ? `${spell.name} — Out of level ${spell.level} slots (0/${slotsMax}). Long Rest to recharge.`
             : `${spell.name} — Level ${spell.level} (${slotsLeft}/${slotsMax} slots left, Long Rest to recharge)`;
 
+    // Prepared-class gating: leveled spells need to be prepared for
+    // casting. Cantrips are always ready. Non-prepare classes never
+    // see the checkbox. We show unprepared leveled spells slightly
+    // dimmed so the player's eye goes to their actually-available
+    // spells first.
+    const showPrepareToggle = preparesSpells && spell.level > 0 && canEdit;
+    const isUnprepared = preparesSpells && spell.level > 0 && !spell.prepared;
+
     return (
       <div key={i} title={tooltip} style={{
         background: C.bgCard, borderRadius: 4,
         border: `1px solid ${isSpent ? C.borderDim : C.borderDim}`, marginBottom: 2,
         overflow: 'hidden',
-        opacity: isSpent ? 0.5 : 1,
+        opacity: isSpent ? 0.5 : isUnprepared ? 0.65 : 1,
       }}>
         <div
           style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '5px 8px', cursor: 'pointer' }}
@@ -1902,6 +1931,24 @@ function SpellsTab({ spells: rawSpells, spellSlots, spellcastingAbility, spellAt
           onMouseEnter={e => (e.currentTarget.style.background = C.bgHover)}
           onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
         >
+          {/* Prepared checkbox — prepare-classes only */}
+          {showPrepareToggle && (
+            <label
+              onClick={(e) => e.stopPropagation()}
+              title={spell.prepared ? 'Prepared — click to un-prepare' : 'Not prepared — click to prepare'}
+              style={{
+                display: 'inline-flex', alignItems: 'center', flexShrink: 0,
+                cursor: 'pointer', marginRight: 2,
+              }}
+            >
+              <input
+                type="checkbox"
+                checked={!!spell.prepared}
+                onChange={() => toggleSpellPrepared(spell.name)}
+                style={{ cursor: 'pointer', accentColor: C.gold }}
+              />
+            </label>
+          )}
           {/* Spell image */}
           <img src={getSpellIconUrl(spell.name, spell.school)} alt="" loading="lazy"
             style={{ width: 28, height: 28, borderRadius: '50%', objectFit: 'cover', flexShrink: 0, border: `1.5px solid ${schoolColor}`, filter: isSpent ? 'grayscale(60%)' : 'none' }}
@@ -2068,6 +2115,29 @@ function SpellsTab({ spells: rawSpells, spellSlots, spellcastingAbility, spellAt
           }}>+ Add Spell</button>
         )}
       </div>
+      {/* Prepared-spells counter (prepare-classes only) */}
+      {preparesSpells && (
+        <div style={{
+          marginBottom: 8, padding: '6px 10px',
+          background: numPrepared > maxPrepared
+            ? 'rgba(231,76,60,0.08)'
+            : 'rgba(208,162,87,0.08)',
+          border: `1px solid ${numPrepared > maxPrepared ? 'rgba(231,76,60,0.35)' : 'rgba(208,162,87,0.25)'}`,
+          borderRadius: 4, fontSize: 11, color: C.textSecondary,
+          display: 'flex', alignItems: 'center', gap: 8,
+        }}>
+          <span style={{ fontSize: 11, fontWeight: 700, color: C.gold, letterSpacing: '0.05em' }}>PREPARED</span>
+          <span style={{ color: numPrepared > maxPrepared ? '#e74c3c' : C.textPrimary, fontWeight: 700 }}>
+            {numPrepared}
+          </span>
+          <span style={{ color: C.textMuted }}>/ {maxPrepared}</span>
+          <span style={{ marginLeft: 'auto', fontSize: 10, color: C.textMuted, fontStyle: 'italic' }}>
+            {numPrepared > maxPrepared
+              ? 'Over your limit — unprepare some spells after your next Long Rest'
+              : 'Check the box on a leveled spell to prepare it'}
+          </span>
+        </div>
+      )}
       {/* DM override active banner */}
       {dmIgnoreSpellSlots && isDM && (
         <div style={{

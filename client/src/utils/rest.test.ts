@@ -26,7 +26,10 @@ vi.mock('../styles/emoji', () => ({
 
 import { performLongRest, performShortRest } from './rest';
 
-type RawCharacter = Character & {
+// DB rows arrive with features/hitDice/spellSlots as JSON strings; the
+// rest helpers parse them defensively. We simulate that by writing
+// strings here and reaching past the Character type with `as unknown`.
+type RawCharacter = Omit<Character, 'features' | 'hitDice' | 'spellSlots' | 'tempHitPoints' | 'concentratingOn'> & {
   hitDice?: unknown;
   features?: unknown;
   spellSlots?: unknown;
@@ -34,7 +37,7 @@ type RawCharacter = Character & {
   concentratingOn?: string | null;
 };
 
-function baseChar(overrides: Partial<RawCharacter> = {}): RawCharacter {
+function baseChar(overrides: Partial<RawCharacter> = {}): Character {
   return {
     id: 'c1',
     name: 'Tester',
@@ -46,7 +49,7 @@ function baseChar(overrides: Partial<RawCharacter> = {}): RawCharacter {
     spellSlots: JSON.stringify({}),
     hitDice: JSON.stringify([]),
     ...overrides,
-  } as RawCharacter;
+  } as unknown as Character;
 }
 
 beforeEach(() => {
