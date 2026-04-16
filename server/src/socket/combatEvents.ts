@@ -595,6 +595,24 @@ export function registerCombatEvents(io: Server, socket: Socket): void {
       deathSaves: combatant.deathSaves,
       roll: result.roll,
     });
+
+    // Only notify Discord on the dramatic outcomes — a successful
+    // save every round would spam the channel. Nat-20 stabilises,
+    // nat-1 is 2 failures, 3 failures = dead.
+    const dead = combatant.deathSaves.failures >= 3;
+    if (result.isCritSuccess || result.isCritFail || dead) {
+      const title = dead
+        ? `💀 ${combatant.name} has died`
+        : result.isCritSuccess
+          ? `✨ ${combatant.name} stabilised on a Nat 20`
+          : `☠️ ${combatant.name} rolled a Nat 1 on a Death Save`;
+      const color = dead ? 0x6b1d1d : result.isCritSuccess ? 0x27ae60 : 0xc0392b;
+      void DiscordService.notifySession(ctx.room.sessionId, {
+        title,
+        description: `Death saves: ${combatant.deathSaves.successes}✓ / ${combatant.deathSaves.failures}✗`,
+        color,
+      });
+    }
   }));
 
   socket.on('combat:use-action', safeHandler(socket, async (data) => {
