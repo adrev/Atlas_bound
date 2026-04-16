@@ -133,13 +133,16 @@ router.get('/sessions/:sessionId/maps', async (req: Request, res: Response) => {
     maps = rows;
   } else {
     const { rows: sessionRows } = await pool.query(
-      'SELECT player_map_id, current_map_id FROM sessions WHERE id = $1',
+      'SELECT player_map_id FROM sessions WHERE id = $1',
       [sessionId],
     );
+    // Players get the ribbon map only — never `current_map_id`,
+    // which on legacy sessions can still be pointing at a DM preview
+    // from before the preview-isolation fix shipped. If the ribbon
+    // has never been set, players simply see an empty list and
+    // wait for the DM to "Move Players Here".
     const playerMapId =
-      (sessionRows[0]?.player_map_id as string | null | undefined) ??
-      (sessionRows[0]?.current_map_id as string | null | undefined) ??
-      null;
+      (sessionRows[0]?.player_map_id as string | null | undefined) ?? null;
     if (!playerMapId) {
       res.json([]);
       return;
@@ -190,13 +193,14 @@ router.get('/maps/:id', async (req: Request, res: Response) => {
   const isDM = roleRows[0]?.role === 'dm';
   if (!isDM) {
     const { rows: sessionRows } = await pool.query(
-      'SELECT player_map_id, current_map_id FROM sessions WHERE id = $1',
+      'SELECT player_map_id FROM sessions WHERE id = $1',
       [mapSessionId],
     );
+    // Players must see only the ribbon map. The legacy fallback to
+    // `current_map_id` used to leak DM prep scenes on sessions that
+    // pre-date the preview isolation split.
     const activeMapId =
-      (sessionRows[0]?.player_map_id as string | null | undefined) ??
-      (sessionRows[0]?.current_map_id as string | null | undefined) ??
-      null;
+      (sessionRows[0]?.player_map_id as string | null | undefined) ?? null;
     if (!activeMapId || activeMapId !== id) {
       res.status(403).json({ error: 'Not authorized to view this map' });
       return;

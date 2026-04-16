@@ -118,23 +118,24 @@ describe('GET /sessions/:sessionId/maps visibility', () => {
     expect(res.body).toEqual([]);
   });
 
-  it('falls back to current_map_id when player_map_id is null', async () => {
+  // P2 regression: the old code fell back to `current_map_id` when
+  // `player_map_id` was null, which could expose a DM prep map on
+  // legacy sessions. Players must now see an empty list when the
+  // ribbon is unset — `current_map_id` is DM state and must not leak.
+  it('does NOT fall back to current_map_id when player_map_id is null (P2 #2)', async () => {
     mockQuery.mockResolvedValueOnce({ rows: [{ '?column?': 1 }] });
     mockQuery.mockResolvedValueOnce({ rows: [{ role: 'player' }] });
-    mockQuery.mockResolvedValueOnce({ rows: [{ player_map_id: null, current_map_id: 'm3' }] });
-    mockQuery.mockResolvedValueOnce({
-      rows: [
-        { id: 'm3', session_id: 's1', name: 'Fallback', image_url: null, width: 10, height: 10, grid_size: 70, grid_type: 'square', created_at: 'now' },
-      ],
-    });
+    // Only player_map_id is selected now. Simulate the handler's
+    // SELECT returning null for the ribbon but current_map_id set
+    // (which should be ignored).
+    mockQuery.mockResolvedValueOnce({ rows: [{ player_map_id: null }] });
 
     const req = { user: { id: 'player-user' }, params: { sessionId: 's1' } } as unknown as Request;
     const res = makeRes();
     await handler(req, res);
 
     expect(res.statusCode).toBe(200);
-    const body = res.body as Array<{ id: string }>;
-    expect(body[0].id).toBe('m3');
+    expect(res.body).toEqual([]);
   });
 });
 

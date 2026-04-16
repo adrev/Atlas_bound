@@ -100,6 +100,27 @@ export function registerTokenEvents(io: Server, socket: Socket): void {
       const ownerUserId = parsed.data.ownerUserId;
       const isOwnToken = ownerUserId && ownerUserId === ctx.player.userId;
       if (!isOwnToken) return;
+
+      // Anchor the token to a character? Then the character must
+      // belong to the caller. Previously a player could craft a
+      // payload with ownerUserId=self but characterId=another user's
+      // PC — and any subsequent combat HP writes would flow back to
+      // that other character via tokens.character_id.
+      const claimedCharId = parsed.data.characterId ?? null;
+      if (claimedCharId) {
+        const { rows: charRows } = await pool.query(
+          'SELECT user_id FROM characters WHERE id = $1',
+          [claimedCharId],
+        );
+        const charOwner = charRows[0]?.user_id as string | null | undefined;
+        if (!charOwner) return;
+        // Accept: caller owns the character, or it's an NPC record
+        // (the 'npc' pseudo-user) that the session legitimately
+        // surfaces from the compendium / encounter builder.
+        if (charOwner !== ctx.player.userId && charOwner !== 'npc') {
+          return;
+        }
+      }
     }
 
     const targetMapId = resolveViewingMapId(ctx.room, ctx.player.userId, ctx.player.role);

@@ -325,27 +325,41 @@ router.post('/:id/link-character', async (req: Request, res: Response) => {
   // Must be a member of the session
   await assertSessionMember(sessionId, authUserId);
 
-  // Players can only link characters to themselves; DM can link for anyone
+  // Players can only link characters to themselves; DMs may trigger the
+  // link on behalf of another player but the character must still be
+  // owned by that target player. Previously a DM could type any guessed
+  // character id and the server would accept it, "laundering" an
+  // unrelated user's PC into the session (after which the session-scoped
+  // authorisation helpers — which trust session_players.character_id —
+  // would let the session read or mutate that character).
   if (userId !== authUserId) {
     await assertSessionDM(sessionId, authUserId);
   }
 
-  // Verify the character exists and is owned by the target player (or caller is DM)
+  // Target must actually be a member of this session; otherwise we'd
+  // be writing a character_id onto a row that doesn't exist.
+  const { rows: memberRows } = await pool.query(
+    'SELECT 1 FROM session_players WHERE session_id = $1 AND user_id = $2',
+    [sessionId, userId],
+  );
+  if (memberRows.length === 0) {
+    res.status(404).json({ error: 'Player not in session' });
+    return;
+  }
+
   const { rows: charRows } = await pool.query('SELECT user_id FROM characters WHERE id = $1', [characterId]);
   if (charRows.length === 0) {
     res.status(404).json({ error: 'Character not found' });
     return;
   }
+  // Strict ownership: the character must belong to the user we are
+  // linking it to. DMs do NOT get to bypass this — if a DM needs to
+  // hand a PC to a player they should use a dedicated character-
+  // transfer flow (not yet built). For now, refuse to link mismatched
+  // ownership under any role to close the laundering window.
   if (charRows[0].user_id !== userId) {
-    // DM can link any character; players can only link their own
-    const { rows: dmCheck } = await pool.query(
-      "SELECT 1 FROM session_players WHERE session_id = $1 AND user_id = $2 AND role = 'dm'",
-      [sessionId, authUserId],
-    );
-    if (dmCheck.length === 0) {
-      res.status(403).json({ error: 'Can only link your own characters' });
-      return;
-    }
+    res.status(403).json({ error: 'Character is not owned by the target player' });
+    return;
   }
 
   await pool.query('UPDATE session_players SET character_id = $1 WHERE session_id = $2 AND user_id = $3',
@@ -361,7 +375,8 @@ router.get('/:id', async (req: Request, res: Response) => {
   await assertSessionMember(String(id), userId);
 
   const { rows: sessionRows } = await pool.query(`
-    SELECT id, name, room_code, dm_user_id, current_map_id, combat_active, game_mode, settings,
+    SELECT id, name, room_code, dm_user_id, current_map_id, player_map_id,
+           combat_active, game_mode, settings,
            visibility, password_hash, invite_code, created_at, updated_at
     FROM sessions WHERE id = $1
   `, [id]);
@@ -379,24 +394,51 @@ router.get('/:id', async (req: Request, res: Response) => {
     WHERE sp.session_id = $1
   `, [id]);
 
-  const { rows: maps } = await pool.query(`
-    SELECT id, name, image_url, width, height, grid_size, created_at
-    FROM maps WHERE session_id = $1
-    ORDER BY created_at DESC
-  `, [id]);
-
   // The invite token is DM planning data — a curious player can't see
   // it in the socket state-sync, so we must not leak it via REST either.
   const requesterIsDM = players.some(
     (p) => p.user_id === userId && p.role === 'dm',
   );
 
+  // Scope the maps list to DMs. Players must never receive the prep /
+  // preview map list through REST because /uploads/maps/* authorises
+  // any session member to load the image by URL — once a player has
+  // the image_url of a DM's preview scene, they can see the artwork
+  // for encounters the party hasn't walked into yet. Players get only
+  // the active player-ribbon map (player_map_id), not the session's
+  // legacy current_map_id which may still point at DM prep state from
+  // before the preview-isolation fix shipped.
+  let maps: Array<Record<string, unknown>> = [];
+  if (requesterIsDM) {
+    const { rows } = await pool.query(`
+      SELECT id, name, image_url, width, height, grid_size, created_at
+      FROM maps WHERE session_id = $1
+      ORDER BY created_at DESC
+    `, [id]);
+    maps = rows;
+  } else {
+    const playerMapId = (session.player_map_id as string | null | undefined) ?? null;
+    if (playerMapId) {
+      const { rows } = await pool.query(`
+        SELECT id, name, image_url, width, height, grid_size, created_at
+        FROM maps WHERE id = $1 AND session_id = $2
+      `, [playerMapId, id]);
+      maps = rows;
+    }
+  }
+
   res.json({
     id: session.id,
     name: session.name,
     roomCode: session.room_code,
     dmUserId: session.dm_user_id,
-    currentMapId: session.current_map_id,
+    // currentMapId is DM prep-pointer state. Non-DMs see the player
+    // ribbon map in its place (or null when no ribbon is set) so the
+    // client still has a single "what map am I on" pointer to consume
+    // without needing to know the role distinction.
+    currentMapId: requesterIsDM
+      ? session.current_map_id
+      : ((session.player_map_id as string | null | undefined) ?? null),
     combatActive: Boolean(session.combat_active),
     gameMode: session.game_mode,
     settings: safeParseJSON(session.settings, DEFAULT_SESSION_SETTINGS, 'sessions.settings'),

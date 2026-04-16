@@ -1,11 +1,13 @@
 import type { Server, Socket } from 'socket.io';
 import type { ChatMessage } from '@dnd-vtt/shared';
+import { parseDiceNotation } from '@dnd-vtt/shared';
 import { v4 as uuidv4 } from 'uuid';
 import pool from '../db/connection.js';
 import { getPlayerBySocketId, checkRateLimit } from '../utils/roomState.js';
 import * as DiceService from '../services/DiceService.js';
 import { chatMessageSchema, chatWhisperSchema, chatRollSchema } from '../utils/validation.js';
 import { safeHandler } from '../utils/socketHelpers.js';
+import { validateReportedRoll } from '../utils/rollValidator.js';
 
 export function registerChatEvents(io: Server, socket: Socket): void {
 
@@ -104,23 +106,27 @@ export function registerChatEvents(io: Server, socket: Socket): void {
       // scripts, legacy clients, headless NPC rolls).
       let rollData;
       if (reported) {
-        // Sanity-check the client-reported payload. We can't prove the
-        // client's 3D dice rolled fairly, but we CAN reject payloads
-        // that are self-contradictory or clearly impossible:
-        //   - every die value must fit its declared face count
-        //   - total must equal sum(dice) + modifier
-        //   - dice count is bounded by the Zod schema already
-        // Anything that fails these falls back to a server-side roll
-        // so a misbehaving client cannot set total=9999 and persist it.
-        const diceSum = reported.dice.reduce((s, d) => s + d.value, 0);
-        const diceValid = reported.dice.every(
-          (d) => d.type >= 2 && d.value >= 1 && d.value <= d.type,
-        );
-        if (diceValid) {
+        // Sanity-check the client-reported payload against the notation
+        // the client claimed to roll. The earlier version derived the
+        // modifier from `total - sum(dice)`, which meant a client could
+        // report dice:[{type:20,value:1}] and total:10000 and the
+        // server would happily persist modifier=9999. Now we parse the
+        // notation server-side and enforce:
+        //   - each die value is within [1, sides]
+        //   - the reported dice bag matches the notation's declared
+        //     dice (same count of each sides, ignoring sign)
+        //   - total == sum(signed dice) + notation_modifier
+        // Any mismatch triggers a fresh server-side roll so a faked
+        // total can't land in chat history.
+        const parsed = (() => {
+          try { return parseDiceNotation(notation); } catch { return null; }
+        })();
+        const valid = validateReportedRoll(parsed, reported);
+        if (valid && parsed) {
           rollData = {
             notation,
             dice: reported.dice,
-            modifier: reported.total - diceSum,
+            modifier: parsed.modifier,
             total: reported.total,
             advantage: 'normal' as const,
             reason,

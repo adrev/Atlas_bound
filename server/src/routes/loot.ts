@@ -134,22 +134,46 @@ router.post('/characters/:id/loot/take', async (req: Request, res: Response) => 
     await assertCharacterOwnerOrDM(targetCharacterId, userId);
   }
 
-  // Authorize the SOURCE. Caller must either own the source, share a session
-  // with the source character, or (for NPC sources) be a member of a session
-  // where the source token is placed on a map.
+  // Authorize the SOURCE.
+  //
+  // Prior behaviour allowed any session member to take from any
+  // character linked to a shared session — which meant a player could
+  // rip entries out of another player's PC just by knowing the
+  // character id. Close that hole by splitting the accept cases:
+  //
+  //   1. Caller owns the source character — fine (looting your own bag).
+  //   2. Caller is the DM of a session containing the source — fine
+  //      (DM cleanup / NPC hand-off).
+  //   3. Source is an NPC/loot-bag container (user_id === 'npc' or
+  //      the character has no real human owner) AND the source token
+  //      is placed on a map belonging to a session the caller is in.
+  //      That covers the "goblin drops a longsword" case without
+  //      letting a player siphon from another PC's inventory.
+  //
+  // A PC owned by another human user is explicitly rejected, even if
+  // both characters share the same session.
   const { rows: sourceRows } = await pool.query('SELECT user_id FROM characters WHERE id = $1', [creatureCharId]);
   if (sourceRows.length === 0) { res.status(404).json({ error: 'Source not found' }); return; }
-  const sourceOwner = sourceRows[0].user_id;
+  const sourceOwner = sourceRows[0].user_id as string | null;
+  const sourceIsHumanPC = sourceOwner !== null && sourceOwner !== 'npc';
 
   if (sourceOwner !== userId) {
-    const { rows: shared } = await pool.query(
-      `SELECT 1 FROM session_players sp1
-       JOIN session_players sp2 ON sp1.session_id = sp2.session_id
-       WHERE sp1.user_id = $1 AND sp2.character_id = $2
+    // 2 — DM override: caller is DM of some session that contains the source.
+    const { rows: dmOverride } = await pool.query(
+      `SELECT 1 FROM session_players sp
+       JOIN tokens t ON t.character_id = $2
+       JOIN maps m ON m.id = t.map_id AND m.session_id = sp.session_id
+       WHERE sp.user_id = $1 AND sp.role = 'dm'
        LIMIT 1`,
       [userId, creatureCharId],
     );
-    if (shared.length === 0) {
+    if (dmOverride.length === 0) {
+      // 3 — non-DM player looting an NPC / loot-bag that's present on a
+      // shared map. Human-owned PCs never qualify; that was the bug.
+      if (sourceIsHumanPC) {
+        res.status(403).json({ error: 'Not authorized to take from another player\'s character' });
+        return;
+      }
       const { rows: npcInSession } = await pool.query(
         `SELECT 1 FROM tokens t
          JOIN maps m ON t.map_id = m.id
