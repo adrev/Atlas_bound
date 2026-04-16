@@ -332,17 +332,14 @@ export function registerSessionEvents(io: Server, socket: Socket): void {
 
     await pool.query('UPDATE sessions SET settings = $1 WHERE id = $2', [JSON.stringify(newSettings), ctx.room.sessionId]);
 
-    // Emit non-secret settings to EVERY member, but only hand the
-    // DM the webhook URL (it's not a password but also not something
-    // rando players should see).
-    io.to(ctx.room.sessionId).emit('session:settings-updated', newSettings);
+    // Emit per-role so DMs get the webhook URL (they own it) and
+    // players don't (it's not a secret, but not something they need).
+    // One emit per socket avoids duplicate broadcasts on the DM path.
     for (const p of ctx.room.players.values()) {
-      if (p.role === 'dm') {
-        io.to(p.socketId).emit('session:settings-updated', {
-          ...newSettings,
-          discordWebhookUrl: currentWebhook,
-        });
-      }
+      const payload = p.role === 'dm'
+        ? { ...newSettings, discordWebhookUrl: currentWebhook }
+        : newSettings;
+      io.to(p.socketId).emit('session:settings-updated', payload);
     }
   }));
 

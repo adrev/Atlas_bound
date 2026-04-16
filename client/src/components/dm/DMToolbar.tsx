@@ -332,39 +332,40 @@ function DiscordWebhookField({
 
   const placeholder = 'https://discord.com/api/webhooks/…';
   return (
-    <FieldGroup label="Discord Webhook (optional)">
-      <input
-        type="url"
-        value={draft}
-        placeholder={placeholder}
-        onChange={(e) => setDraft(e.target.value)}
-        onKeyDown={(e) => { if (e.key === 'Enter' && dirty) handleSave(); }}
-        style={{
-          flex: 1, minWidth: 0,
-          padding: '6px 8px', fontSize: 11,
-          background: theme.bg.deep, color: theme.text.primary,
-          border: `1px solid ${theme.border.default}`, borderRadius: 4,
-          fontFamily: 'inherit', outline: 'none',
-        }}
-      />
-      <button
-        type="button"
-        onClick={handleSave}
-        disabled={!dirty}
-        style={{
-          padding: '6px 10px', fontSize: 11, fontWeight: 700,
-          background: dirty ? theme.gold.primary : theme.bg.deep,
-          color: dirty ? '#1a1a1a' : theme.text.muted,
-          border: `1px solid ${dirty ? theme.gold.primary : theme.border.default}`,
-          borderRadius: 4, cursor: dirty ? 'pointer' : 'default',
-          marginLeft: 6,
-        }}
-      >
-        {saved ? 'Saved' : 'Save'}
-      </button>
-      <p style={{ ...theme.type.small, color: theme.text.muted, marginTop: 4, flexBasis: '100%' }}>
-        Posts combat start/end notifications to Discord. Clear the field and Save to disable.
-      </p>
+    <FieldGroup
+      label="Discord Webhook (optional)"
+      helperText="Posts combat start/end + dramatic death-save notifications to Discord. Clear the field and Save to disable."
+    >
+      <div style={{ display: 'flex', gap: 6 }}>
+        <input
+          type="url"
+          value={draft}
+          placeholder={placeholder}
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter' && dirty) handleSave(); }}
+          style={{
+            flex: 1, minWidth: 0,
+            padding: '6px 8px', fontSize: 11,
+            background: theme.bg.deep, color: theme.text.primary,
+            border: `1px solid ${theme.border.default}`, borderRadius: 4,
+            fontFamily: 'inherit', outline: 'none',
+          }}
+        />
+        <button
+          type="button"
+          onClick={handleSave}
+          disabled={!dirty}
+          style={{
+            padding: '6px 10px', fontSize: 11, fontWeight: 700,
+            background: dirty ? theme.gold.primary : theme.bg.deep,
+            color: dirty ? '#1a1a1a' : theme.text.muted,
+            border: `1px solid ${dirty ? theme.gold.primary : theme.border.default}`,
+            borderRadius: 4, cursor: dirty ? 'pointer' : 'default',
+          }}
+        >
+          {saved ? 'Saved' : 'Save'}
+        </button>
+      </div>
     </FieldGroup>
   );
 }
