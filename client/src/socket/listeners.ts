@@ -12,7 +12,9 @@ import { pushHandout } from '../components/session/HandoutModal';
 import { pushOpportunityAttack } from '../components/combat/OpportunityAttackModal';
 import { pushCounterspellOpportunity } from '../components/combat/CounterspellModal';
 import { pushShieldOpportunity } from '../components/combat/ShieldModal';
-import { PREBUILT_THUMBNAIL as PREBUILT_IMAGE_MAP } from '../data/prebuiltMaps';
+// Use the full-resolution PNG map (not the JPEG thumbnail) when
+// rehydrating the canvas — the thumbnail is for UI lists.
+import { PREBUILT_IMAGE_BY_NAME as PREBUILT_IMAGE_MAP } from '../data/prebuiltMaps';
 
 export function registerListeners(socket: Socket): () => void {
   const sessionStore = useSessionStore.getState;

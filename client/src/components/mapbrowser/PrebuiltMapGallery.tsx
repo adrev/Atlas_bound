@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import { theme } from '../../styles/theme';
 import { createMap } from '../../services/api';
 import { useSessionStore } from '../../stores/useSessionStore';
@@ -43,9 +43,13 @@ const FILTER_TABS: { key: FilterTab; label: string }[] = [
 // ---------------------------------------------------------------------------
 
 function MapThumbnail({ map }: { map: PrebuiltMap }) {
+  // Use the JPEG thumbnail tier (480px wide, ~40 KB) instead of the
+  // full PNG. With 80 maps in the gallery this drops the initial paint
+  // from ~30 MB of network traffic to ~3 MB. The full PNG only loads
+  // when the DM clicks "Load Map".
   return (
     <img
-      src={map.imageFile}
+      src={map.thumbnailFile}
       alt={map.name}
       style={{
         width: 260,
@@ -77,13 +81,32 @@ export function PrebuiltMapGallery({ onMapLoaded }: PrebuiltMapGalleryProps) {
   const [loadingId, setLoadingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const filteredMaps = PREBUILT_MAPS.filter((m) => {
-    if (filter === 'all') return true;
-    if (filter === 'combat') return m.category === 'combat';
-    if (filter === 'dungeon') return m.category === 'dungeon';
-    if (filter === 'rest') return m.category === 'rest';
-    return m.category === 'social';
-  });
+  // Search box. Debounce so typing doesn't trigger a re-filter on every
+  // keystroke when the gallery is already laggy with 80+ cards rendered.
+  const [searchInput, setSearchInput] = useState('');
+  const [search, setSearch] = useState('');
+  useEffect(() => {
+    const t = window.setTimeout(() => setSearch(searchInput.trim().toLowerCase()), 150);
+    return () => window.clearTimeout(t);
+  }, [searchInput]);
+
+  const filteredMaps = useMemo(() => {
+    return PREBUILT_MAPS.filter((m) => {
+      // Category gate first — fastest reject.
+      if (filter !== 'all') {
+        if (filter === 'social' && m.category !== 'social') return false;
+        if (filter !== 'social' && m.category !== filter) return false;
+      }
+      // Then text search across name + description so a query like
+      // "river" matches both "River Crossing" and a forest map whose
+      // description mentions a river.
+      if (search) {
+        const hay = `${m.name} ${m.description}`.toLowerCase();
+        if (!hay.includes(search)) return false;
+      }
+      return true;
+    });
+  }, [filter, search]);
 
   const handleLoad = useCallback(
     async (map: PrebuiltMap) => {
@@ -133,6 +156,21 @@ export function PrebuiltMapGallery({ onMapLoaded }: PrebuiltMapGalleryProps) {
 
   return (
     <div style={styles.container}>
+      {/* Search + result count */}
+      <div style={styles.searchRow}>
+        <input
+          type="search"
+          value={searchInput}
+          onChange={(e) => setSearchInput(e.target.value)}
+          placeholder="Search by name or description (e.g. 'river', 'tavern', 'dragon')"
+          style={styles.searchInput}
+          aria-label="Search prebuilt maps"
+        />
+        <span style={styles.searchCount}>
+          {filteredMaps.length} {filteredMaps.length === 1 ? 'map' : 'maps'}
+        </span>
+      </div>
+
       {/* Filter tabs */}
       <div style={styles.tabs}>
         {FILTER_TABS.map((tab) => (
@@ -206,6 +244,31 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'flex',
     flexDirection: 'column',
     gap: 16,
+  },
+  searchRow: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 10,
+    padding: '0 2px',
+  },
+  searchInput: {
+    flex: 1,
+    minWidth: 0,
+    padding: '7px 12px',
+    fontSize: 13,
+    fontFamily: theme.font.body,
+    color: theme.text.primary,
+    background: theme.bg.elevated,
+    border: `1px solid ${theme.border.default}`,
+    borderRadius: theme.radius.md,
+    outline: 'none',
+  },
+  searchCount: {
+    fontSize: 11,
+    color: theme.text.muted,
+    fontFamily: theme.font.body,
+    whiteSpace: 'nowrap' as const,
+    flexShrink: 0,
   },
   tabs: {
     display: 'flex',
