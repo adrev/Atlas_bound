@@ -57,10 +57,11 @@ export function useCanvasViewport() {
       // Right-click = context menu, NOT panning
       if (e.evt.button === 2) return;
 
-      // Check if a tool is active (measure/wall) - don't pan during tool use
-      // Check active tool from the map store - avoid panning during tool use
+      // Check if a tool is active - don't pan during tool use. Zones
+      // are included so a DM drawing a new zone on empty map space
+      // gets the drag captured by ZoneLayer instead of panning.
       const tool = useMapStore.getState().activeTool;
-      const isToolActive = tool === 'measure' || tool === 'wall';
+      const isToolActive = tool === 'measure' || tool === 'wall' || tool === 'zone';
 
       // Middle mouse button ALWAYS pans (even during tool use)
       if (e.evt.button === 1) {
@@ -95,8 +96,91 @@ export function useCanvasViewport() {
     []
   );
 
-  const handleMouseUp = useCallback((_e?: any) => {
+  const handleMouseUp = useCallback((_e?: KonvaEventObject<MouseEvent>) => {
     isPanning.current = false;
+  }, []);
+
+  // --- Touch / pinch support for mobile + trackpad gestures. ---
+  //
+  // Konva forwards the native TouchEvent via `e.evt`. We track:
+  //   one-finger drag → pan (same as left-mouse on empty map space)
+  //   two-finger pinch → zoom, anchored on the midpoint between fingers
+  //
+  // We intentionally don't rely on Konva's built-in `draggable` on the
+  // stage because that conflicts with the token drag layer and with
+  // the map context-menu dispatcher above.
+  const touch = useRef<{
+    mode: 'none' | 'pan' | 'pinch';
+    lastX: number; lastY: number;
+    startDist: number;
+    startScale: number;
+    anchorMapX: number; anchorMapY: number;
+  }>({ mode: 'none', lastX: 0, lastY: 0, startDist: 0, startScale: 1, anchorMapX: 0, anchorMapY: 0 });
+
+  const handleTouchStart = useCallback((e: KonvaEventObject<TouchEvent>) => {
+    const touches = e.evt.touches;
+    const stage = e.target.getStage();
+    if (!stage) return;
+    if (touches.length === 1) {
+      // Only pan on empty-stage touch — tokens / tools catch their own.
+      if (e.target !== stage) return;
+      touch.current.mode = 'pan';
+      touch.current.lastX = touches[0].clientX;
+      touch.current.lastY = touches[0].clientY;
+    } else if (touches.length === 2) {
+      const dx = touches[0].clientX - touches[1].clientX;
+      const dy = touches[0].clientY - touches[1].clientY;
+      const rect = stage.container().getBoundingClientRect();
+      const midX = (touches[0].clientX + touches[1].clientX) / 2 - rect.left;
+      const midY = (touches[0].clientY + touches[1].clientY) / 2 - rect.top;
+      touch.current.mode = 'pinch';
+      touch.current.startDist = Math.hypot(dx, dy) || 1;
+      touch.current.startScale = viewport.scale;
+      // Anchor in map-space: the spot under the midpoint stays under
+      // the midpoint while the user pinches.
+      touch.current.anchorMapX = (midX - viewport.x) / viewport.scale;
+      touch.current.anchorMapY = (midY - viewport.y) / viewport.scale;
+      e.evt.preventDefault();
+    }
+  }, [viewport]);
+
+  const handleTouchMove = useCallback((e: KonvaEventObject<TouchEvent>) => {
+    const touches = e.evt.touches;
+    const stage = e.target.getStage();
+    if (!stage) return;
+    if (touch.current.mode === 'pan' && touches.length === 1) {
+      const dx = touches[0].clientX - touch.current.lastX;
+      const dy = touches[0].clientY - touch.current.lastY;
+      touch.current.lastX = touches[0].clientX;
+      touch.current.lastY = touches[0].clientY;
+      setViewport((prev) => ({ ...prev, x: prev.x + dx, y: prev.y + dy }));
+      e.evt.preventDefault();
+    } else if (touch.current.mode === 'pinch' && touches.length === 2) {
+      const dx = touches[0].clientX - touches[1].clientX;
+      const dy = touches[0].clientY - touches[1].clientY;
+      const rect = stage.container().getBoundingClientRect();
+      const midX = (touches[0].clientX + touches[1].clientX) / 2 - rect.left;
+      const midY = (touches[0].clientY + touches[1].clientY) / 2 - rect.top;
+      const dist = Math.hypot(dx, dy) || 1;
+      const nextScale = Math.max(MIN_SCALE, Math.min(MAX_SCALE,
+        touch.current.startScale * (dist / touch.current.startDist)));
+      setViewport({
+        scale: nextScale,
+        x: midX - touch.current.anchorMapX * nextScale,
+        y: midY - touch.current.anchorMapY * nextScale,
+      });
+      e.evt.preventDefault();
+    }
+  }, []);
+
+  const handleTouchEnd = useCallback((e: KonvaEventObject<TouchEvent>) => {
+    const touches = e.evt.touches;
+    if (touches.length === 0) touch.current.mode = 'none';
+    else if (touches.length === 1) {
+      touch.current.mode = 'pan';
+      touch.current.lastX = touches[0].clientX;
+      touch.current.lastY = touches[0].clientY;
+    }
   }, []);
 
   const handleContextMenu = useCallback(
@@ -137,6 +221,9 @@ export function useCanvasViewport() {
     onMouseMove: handleMouseMove,
     onMouseUp: handleMouseUp,
     onContextMenu: handleContextMenu,
+    onTouchStart: handleTouchStart,
+    onTouchMove: handleTouchMove,
+    onTouchEnd: handleTouchEnd,
     draggable: false,
   };
 

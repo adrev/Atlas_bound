@@ -369,6 +369,37 @@ function TokenSprite({ token, isSelected, isCurrentTurn, showTokenLabels }: Toke
           }
         }
       }}
+      // Long-press on mobile opens the same context menu as right-click
+      // on desktop. Konva's `onTouchStart` + `onTouchEnd` feed us the
+      // raw TouchEvent; we schedule a timer on start and cancel it on
+      // move / end unless it fired. 500ms matches iOS system long-press.
+      onTouchStart={(e) => {
+        if (useDrawStore.getState().isDrawMode) return;
+        const stage = e.target.getStage();
+        const node = e.target as unknown as { __longPressTimer?: ReturnType<typeof setTimeout> };
+        const startPointer = stage?.getPointerPosition();
+        if (!stage || !startPointer) return;
+        const container = stage.container().getBoundingClientRect();
+        node.__longPressTimer = setTimeout(() => {
+          // If the finger has moved more than ~10px, skip — that's a
+          // scroll/drag, not a long-press.
+          const now = stage.getPointerPosition();
+          if (!now) return;
+          if (Math.hypot(now.x - startPointer.x, now.y - startPointer.y) > 10) return;
+          useMapStore.getState().setContextMenu(token.id, {
+            x: now.x + container.left,
+            y: now.y + container.top,
+          });
+        }, 500);
+      }}
+      onTouchMove={(e) => {
+        const node = e.target as unknown as { __longPressTimer?: ReturnType<typeof setTimeout> };
+        if (node.__longPressTimer) { clearTimeout(node.__longPressTimer); node.__longPressTimer = undefined; }
+      }}
+      onTouchEnd={(e) => {
+        const node = e.target as unknown as { __longPressTimer?: ReturnType<typeof setTimeout> };
+        if (node.__longPressTimer) { clearTimeout(node.__longPressTimer); node.__longPressTimer = undefined; }
+      }}
       onMouseEnter={(e) => {
         if (useMapStore.getState().isTargeting) {
           const container = e.target.getStage()?.container();
