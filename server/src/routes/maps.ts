@@ -1,7 +1,8 @@
 import { Router, type Request, type Response, type NextFunction } from 'express';
+import path from 'path';
 import { v4 as uuidv4 } from 'uuid';
 import pool from '../db/connection.js';
-import { mapUpload, validateAndSaveUpload } from './uploads.js';
+import { mapUpload, validateAndSaveUpload, saveMapThumbnail } from './uploads.js';
 import { createMapSchema } from '../utils/validation.js';
 import { getAuthUserId, assertSessionDM, assertSessionMember } from '../utils/authorization.js';
 import { safeParseJSON } from '../utils/safeJson.js';
@@ -15,7 +16,14 @@ router.post(
   (req: Request, res: Response, next: NextFunction) => {
     const contentType = req.headers['content-type'] || '';
     if (contentType.includes('multipart/form-data')) {
-      mapUpload.single('image')(req, res, next);
+      // `image` = full-resolution map. `thumbnail` = optional 480-px JPEG
+      // generated client-side; if absent we just skip thumbnail storage
+      // and the Scene Manager falls back to the full image. fields()
+      // gives us req.files keyed by field name instead of req.file.
+      mapUpload.fields([
+        { name: 'image', maxCount: 1 },
+        { name: 'thumbnail', maxCount: 1 },
+      ])(req, res, next);
     } else {
       next();
     }
@@ -52,6 +60,7 @@ router.post(
           sessionId: existing.session_id,
           name: existing.name,
           imageUrl: existing.image_url,
+          thumbnailUrl: existing.thumbnail_url,
           width: existing.width,
           height: existing.height,
           gridSize: existing.grid_size,
@@ -69,10 +78,28 @@ router.post(
 
     const mapId = uuidv4();
     let imageUrl: string | null = null;
-    if (req.file) {
+    let thumbnailUrl: string | null = null;
+    // multer.fields() puts files in req.files keyed by field name.
+    const files = (req.files ?? {}) as Record<string, Express.Multer.File[] | undefined>;
+    const imageFile = files.image?.[0];
+    const thumbnailFile = files.thumbnail?.[0];
+    if (imageFile) {
       try {
-        const filename = validateAndSaveUpload(req.file, 'maps');
+        const filename = validateAndSaveUpload(imageFile, 'maps');
         imageUrl = `/uploads/maps/${filename}`;
+        // Pair the thumbnail with the original by reusing its UUID
+        // stem so the auth middleware can lift one from the other if
+        // needed. Thumbnail save failures never block the upload —
+        // worst case the Scene Manager falls back to the full PNG.
+        if (thumbnailFile) {
+          try {
+            const baseUuid = path.parse(filename).name;
+            const thumbName = saveMapThumbnail(thumbnailFile, baseUuid);
+            thumbnailUrl = `/uploads/maps/thumbnails/${thumbName}`;
+          } catch (err) {
+            console.warn('[maps:create] thumbnail save failed:', err);
+          }
+        }
       } catch (err) {
         const msg = err instanceof Error ? err.message : 'Invalid image file';
         res.status(400).json({ error: msg });
@@ -81,9 +108,9 @@ router.post(
     }
 
     await pool.query(`
-      INSERT INTO maps (id, session_id, name, image_url, width, height, grid_size, grid_type)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-    `, [mapId, sessionId, name, imageUrl, width, height, gridSize, gridType]);
+      INSERT INTO maps (id, session_id, name, image_url, thumbnail_url, width, height, grid_size, grid_type)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+    `, [mapId, sessionId, name, imageUrl, thumbnailUrl, width, height, gridSize, gridType]);
 
     const { rows: mapRows } = await pool.query('SELECT * FROM maps WHERE id = $1', [mapId]);
     const map = mapRows[0] as Record<string, unknown>;
@@ -93,6 +120,7 @@ router.post(
       sessionId: map.session_id,
       name: map.name,
       imageUrl: map.image_url,
+      thumbnailUrl: map.thumbnail_url,
       width: map.width,
       height: map.height,
       gridSize: map.grid_size,
@@ -126,7 +154,7 @@ router.get('/sessions/:sessionId/maps', async (req: Request, res: Response) => {
   let maps: Array<Record<string, unknown>>;
   if (isDM) {
     const { rows } = await pool.query(`
-      SELECT id, session_id, name, image_url, width, height, grid_size, grid_type, created_at
+      SELECT id, session_id, name, image_url, thumbnail_url, width, height, grid_size, grid_type, created_at
       FROM maps WHERE session_id = $1
       ORDER BY created_at DESC
     `, [sessionId]);
@@ -160,6 +188,7 @@ router.get('/sessions/:sessionId/maps', async (req: Request, res: Response) => {
       sessionId: m.session_id,
       name: m.name,
       imageUrl: m.image_url,
+      thumbnailUrl: m.thumbnail_url,
       width: m.width,
       height: m.height,
       gridSize: m.grid_size,
@@ -214,6 +243,7 @@ router.get('/maps/:id', async (req: Request, res: Response) => {
     sessionId: map.session_id,
     name: map.name,
     imageUrl: map.image_url,
+    thumbnailUrl: map.thumbnail_url,
     width: map.width,
     height: map.height,
     gridSize: map.grid_size,

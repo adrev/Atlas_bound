@@ -135,6 +135,16 @@ export interface MapSummary {
   id: string;
   name: string;
   imageUrl: string | null;
+  /**
+   * Optional 480-px JPEG thumbnail URL for custom-uploaded maps.
+   * Generated client-side at upload time and stored at
+   * /uploads/maps/thumbnails/{uuid}.jpg. Prebuilt maps don't use
+   * this — their thumbnail tier lives on the GCS CDN and is wired
+   * up via prebuiltMaps.ts. Null on legacy custom uploads that
+   * pre-date the thumbnail column; the Scene Manager falls back
+   * to the full image_url for those.
+   */
+  thumbnailUrl: string | null;
   width: number;
   height: number;
   gridSize: number;

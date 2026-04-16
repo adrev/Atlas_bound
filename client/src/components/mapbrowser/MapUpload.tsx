@@ -8,6 +8,7 @@ import {
 import { GridAligner } from './GridAligner';
 import type { GridSettings } from './GridAligner';
 import { detectGrid } from '../../utils/detect-grid';
+import { generateMapThumbnail } from '../../utils/generate-map-thumbnail';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -97,6 +98,16 @@ export function MapUpload({ open, onClose, onMapCreated }: MapUploadProps) {
       formData.append('height', String(imageDims?.h ?? 1050));
       formData.append('gridSize', String(grid.cellSize));
       formData.append('gridType', 'square');
+
+      // Generate a 480-px JPEG thumbnail client-side and ship it
+      // alongside the original. The server stores it under
+      // /uploads/maps/thumbnails/. Failure to generate is non-fatal —
+      // the upload succeeds and the Scene Manager falls back to the
+      // full image until the user re-uploads.
+      const thumb = await generateMapThumbnail(file);
+      if (thumb) {
+        formData.append('thumbnail', thumb, 'thumbnail.jpg');
+      }
 
       const res = await fetch(`/api/sessions/${sessionId}/maps`, {
         method: 'POST',

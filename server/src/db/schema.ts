@@ -120,6 +120,7 @@ export async function initDatabase(): Promise<void> {
       walls TEXT DEFAULT '[]',
       fog_state TEXT DEFAULT '[]',
       display_order INTEGER NOT NULL DEFAULT 0,
+      thumbnail_url TEXT,
       created_at TEXT NOT NULL DEFAULT (NOW()::text)
     );
 
@@ -127,6 +128,15 @@ export async function initDatabase(): Promise<void> {
     -- their created_at rank so the existing list stays stable until
     -- the DM drags something.
     ALTER TABLE maps ADD COLUMN IF NOT EXISTS display_order INTEGER NOT NULL DEFAULT 0;
+    -- thumbnail_url added 2026-04-16 for the custom-upload thumbnail
+    -- tier. Prebuilt maps don't use this column (they have a derived
+    -- GCS thumbnail URL on the client). Custom uploads now ship a
+    -- 480px JPEG generated client-side; the server stores it under
+    -- /uploads/maps/thumbnails/ and remembers the URL here so the
+    -- /uploads auth middleware can verify the requester has access.
+    -- Legacy rows that pre-date this column get NULL — Scene Manager
+    -- falls back to the full image_url for those.
+    ALTER TABLE maps ADD COLUMN IF NOT EXISTS thumbnail_url TEXT;
     UPDATE maps SET display_order = sub.rn FROM (
       SELECT id, ROW_NUMBER() OVER (PARTITION BY session_id ORDER BY created_at ASC) AS rn
       FROM maps

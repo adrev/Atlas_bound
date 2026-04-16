@@ -6,10 +6,16 @@ import { UPLOAD_DIR } from '../config.js';
 
 // Ensure upload directories exist
 const mapUploadsDir = path.join(UPLOAD_DIR, 'maps');
+// Thumbnails for custom-uploaded maps (480-px JPEGs generated
+// client-side in MapUpload.tsx). Kept in a sub-folder so the
+// /uploads default-deny middleware can reason about them as a
+// distinct namespace, and so a future cleanup task can wipe them
+// without touching the originals.
+const mapThumbsDir = path.join(mapUploadsDir, 'thumbnails');
 const tokenUploadsDir = path.join(UPLOAD_DIR, 'tokens');
 const portraitUploadsDir = path.join(UPLOAD_DIR, 'portraits');
 
-for (const dir of [mapUploadsDir, tokenUploadsDir, portraitUploadsDir]) {
+for (const dir of [mapUploadsDir, mapThumbsDir, tokenUploadsDir, portraitUploadsDir]) {
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true });
   }
@@ -84,6 +90,27 @@ export function validateAndSaveUpload(
   const destDir = path.join(UPLOAD_DIR, subDir);
   const destPath = path.join(destDir, filename);
 
+  fs.writeFileSync(destPath, file.buffer);
+  return filename;
+}
+
+/**
+ * Validate + save a client-generated map thumbnail using the SAME UUID
+ * stem as the original map upload, so the auth middleware can pair
+ * them up. We accept JPEG only (that's what generateMapThumbnail emits)
+ * and reject anything else with magic-byte detection — a malicious
+ * client trying to inject an SVG via the thumbnail field gets dropped.
+ */
+export function saveMapThumbnail(
+  file: Express.Multer.File,
+  baseUuid: string,
+): string {
+  const detectedExt = detectImageType(file.buffer);
+  if (detectedExt !== '.jpg') {
+    throw new Error('Map thumbnail must be a JPEG.');
+  }
+  const filename = `${baseUuid}.jpg`;
+  const destPath = path.join(mapThumbsDir, filename);
   fs.writeFileSync(destPath, file.buffer);
   return filename;
 }

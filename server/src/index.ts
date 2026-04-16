@@ -146,14 +146,22 @@ app.use('/uploads', async (req, res, next) => {
     return;
   }
 
-  // Maps: caller must be a member of a session that references the map file.
+  // Maps: caller must be a member of a session that references the map
+  // file. Two distinct asset namespaces share this prefix:
+  //   /uploads/maps/{file}                       — full-resolution map
+  //   /uploads/maps/thumbnails/{file}            — 480-px JPEG thumbnail
+  // Both check the maps table; the thumbnail variant matches against
+  // `thumbnail_url` so the same membership rule applies without
+  // letting an attacker enumerate thumbnails for sessions they
+  // aren't in.
   if (reqPath.startsWith('/maps/')) {
-    const filename = reqPath.slice('/maps/'.length);
-    const url = `/uploads/maps/${filename}`;
+    const url = `/uploads${reqPath}`;
+    const isThumbnail = reqPath.startsWith('/maps/thumbnails/');
+    const column = isThumbnail ? 'thumbnail_url' : 'image_url';
     const { rows } = await pool.query(
       `SELECT 1 FROM maps m
        JOIN session_players sp ON sp.session_id = m.session_id
-       WHERE m.image_url = $1 AND sp.user_id = $2
+       WHERE m.${column} = $1 AND sp.user_id = $2
        LIMIT 1`,
       [url, user.id],
     );
