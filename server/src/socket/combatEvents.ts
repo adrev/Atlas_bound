@@ -5,6 +5,7 @@ import {
   canTargetToken, isCurrentTurnOwnerOrDM, isTokenActionable,
 } from '../utils/roomState.js';
 import * as CombatService from '../services/CombatService.js';
+import * as DiscordService from '../services/DiscordService.js';
 import * as DiceService from '../services/DiceService.js';
 import * as ConditionService from '../services/ConditionService.js';
 import * as OpportunityAttackService from '../services/OpportunityAttackService.js';
@@ -41,6 +42,17 @@ async function startCombat(io: Server, sessionId: string, tokenIds: string[]) {
     lines.push(`   ${marker} ${idx + 1}. ${c.name}${tag} — ${c.initiative}`);
   });
   lines.push(`   Round 1 — ${combatState.combatants[0]?.name ?? '?'}'s turn`);
+
+  // Fire-and-forget Discord notification. The service is a no-op when
+  // no webhook is configured, and internally swallows network errors
+  // so a flaky webhook can never stall combat-start.
+  void DiscordService.notifySession(sessionId, {
+    title: '⚔️ Combat Begins',
+    description: combatState.combatants
+      .map((c, idx) => `**${idx + 1}.** ${c.name}${c.isNPC ? '' : ' *(PC)*'} — ${c.initiative}`)
+      .join('\n'),
+    color: 0xc0392b,
+  });
 
   io.to(sessionId).emit('chat:new-message', {
     id: uuidv4(),
@@ -221,6 +233,10 @@ export function registerCombatEvents(io: Server, socket: Socket): void {
     try {
       await CombatService.endCombat(ctx.room.sessionId);
       io.to(ctx.room.sessionId).emit('combat:ended', {});
+      void DiscordService.notifySession(ctx.room.sessionId, {
+        title: '🏳️ Combat Ended',
+        color: 0x27ae60,
+      });
     } catch (err) {
       socket.emit('session:error', {
         message: err instanceof Error ? err.message : 'Failed to end combat',

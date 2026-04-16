@@ -357,6 +357,47 @@ describe('combatDamageSchema', () => {
 // ---------------------------------------------------------------------------
 // sessionUpdateSettingsSchema
 // ---------------------------------------------------------------------------
+describe('sessionUpdateSettingsSchema discordWebhookUrl', () => {
+  it('accepts a valid Discord webhook URL', () => {
+    const r = sessionUpdateSettingsSchema.safeParse({
+      discordWebhookUrl: 'https://discord.com/api/webhooks/123/abc',
+    });
+    expect(r.success).toBe(true);
+  });
+
+  it('accepts the legacy discordapp.com host', () => {
+    const r = sessionUpdateSettingsSchema.safeParse({
+      discordWebhookUrl: 'https://discordapp.com/api/webhooks/1/2',
+    });
+    expect(r.success).toBe(true);
+  });
+
+  it('accepts an empty string (the clear-disable signal)', () => {
+    expect(sessionUpdateSettingsSchema.safeParse({ discordWebhookUrl: '' }).success).toBe(true);
+  });
+
+  it('accepts null (the clear-disable signal)', () => {
+    expect(sessionUpdateSettingsSchema.safeParse({ discordWebhookUrl: null }).success).toBe(true);
+  });
+
+  it('rejects non-Discord URLs (SSRF hardening)', () => {
+    expect(sessionUpdateSettingsSchema.safeParse({
+      discordWebhookUrl: 'https://evil.example.com/webhook',
+    }).success).toBe(false);
+    expect(sessionUpdateSettingsSchema.safeParse({
+      discordWebhookUrl: 'http://discord.com/api/webhooks/1/2',
+    }).success).toBe(false);
+    expect(sessionUpdateSettingsSchema.safeParse({
+      discordWebhookUrl: 'https://discord.com.evil.com/api/webhooks/1/2',
+    }).success).toBe(false);
+  });
+
+  it('rejects URLs longer than 500 chars', () => {
+    const url = 'https://discord.com/api/webhooks/' + 'a'.repeat(500);
+    expect(sessionUpdateSettingsSchema.safeParse({ discordWebhookUrl: url }).success).toBe(false);
+  });
+});
+
 describe('sessionUpdateSettingsSchema', () => {
   it('accepts valid partial settings', () => {
     const result = sessionUpdateSettingsSchema.safeParse({ gridSize: 50, gridOpacity: 0.5 });

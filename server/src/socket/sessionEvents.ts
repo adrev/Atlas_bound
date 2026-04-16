@@ -32,13 +32,16 @@ export function registerSessionEvents(io: Server, socket: Socket): void {
     }
 
     const { rows: sessionRows } = await pool.query(`
-      SELECT id, name, room_code, dm_user_id, current_map_id, player_map_id, game_mode, settings
+      SELECT id, name, room_code, dm_user_id, current_map_id, player_map_id, game_mode, settings,
+             visibility, password_hash, invite_code, discord_webhook_url
       FROM sessions WHERE room_code = $1
     `, [roomCode]);
     const session = sessionRows[0] as {
       id: string; name: string; room_code: string; dm_user_id: string;
       current_map_id: string | null; player_map_id: string | null;
       game_mode: string; settings: string;
+      visibility: string; password_hash: string | null; invite_code: string | null;
+      discord_webhook_url: string | null;
     } | undefined;
 
     if (!session) {
@@ -89,10 +92,44 @@ export function registerSessionEvents(io: Server, socket: Socket): void {
 
     const settings = JSON.parse(session.settings || '{}');
 
+    // Bans are public \u2014 every member sees the list. Non-DMs see the
+    // same payload so they know who's been excluded (they just don't
+    // get the Unban button in the UI).
+    const { rows: banRows } = await pool.query(`
+      SELECT b.user_id, b.banned_by, b.banned_at, b.reason,
+             u.display_name, u.avatar_url,
+             bu.display_name AS banned_by_name
+      FROM session_bans b
+      JOIN users u ON u.id = b.user_id
+      LEFT JOIN users bu ON bu.id = b.banned_by
+      WHERE b.session_id = $1
+      ORDER BY b.banned_at DESC
+    `, [session.id]);
+    const bans = banRows.map(r => ({
+      userId: r.user_id as string,
+      displayName: r.display_name as string,
+      avatarUrl: r.avatar_url as string | null,
+      bannedBy: r.banned_by_name as string | null,
+      bannedByUserId: r.banned_by as string,
+      bannedAt: r.banned_at as string,
+      reason: r.reason as string | null,
+    }));
+
     socket.emit('session:state-sync', {
       sessionId: session.id, roomCode: session.room_code, userId, isDM, players,
-      settings: { ...DEFAULT_SESSION_SETTINGS, ...settings },
+      // Only surface the Discord webhook to the DM — it lives on
+      // `sessions` alongside invite_code with the same privacy bar.
+      settings: {
+        ...DEFAULT_SESSION_SETTINGS,
+        ...settings,
+        ...(isDM ? { discordWebhookUrl: session.discord_webhook_url } : {}),
+      },
       currentMapId: room.currentMapId, gameMode: room.gameMode,
+      visibility: (session.visibility as 'public' | 'private') ?? 'public',
+      hasPassword: session.password_hash !== null,
+      inviteCode: isDM ? session.invite_code : null,
+      ownerUserId: session.dm_user_id,
+      bans,
     });
 
     socket.to(session.id).emit('session:player-joined', {
@@ -132,6 +169,10 @@ export function registerSessionEvents(io: Server, socket: Socket): void {
           role: isDM ? 'dm' : 'player', characterId: currentPlayer.character_id,
         });
 
+        // Zones are DM planning data \u2014 only load them for DM rejoins
+        // so player reconnects don't receive zone coordinates/names.
+        const { loadZonesForMap } = await import('./mapEvents.js');
+        const zones = isDM ? await loadZonesForMap(room.currentMapId) : [];
         socket.emit('map:loaded', {
           map: {
             id: mapRow.id as string, name: mapRow.name as string,
@@ -141,6 +182,7 @@ export function registerSessionEvents(io: Server, socket: Socket): void {
             gridOffsetX: mapRow.grid_offset_x as number, gridOffsetY: mapRow.grid_offset_y as number,
             walls: JSON.parse(mapRow.walls as string || '[]'),
             fogState: JSON.parse(mapRow.fog_state as string || '[]'),
+            zones,
           },
           tokens, drawings: visibleDrawings,
         });
@@ -229,22 +271,21 @@ export function registerSessionEvents(io: Server, socket: Socket): void {
     // Prevent self-kick: DMs should not be able to accidentally remove themselves.
     if (targetUserId === ctx.player.userId) return;
 
-    // Prevent kicking the last DM — would orphan the session.
-    // NOTE: Kicking deletes the session_players row so the user can't simply
-    // reconnect. A kicked user can still rejoin via the room code; future work
-    // may add a ban list or let DMs rotate the room code on kick. TODO.
+    // Co-DM hierarchy:
+    //   \u2022 Owner cannot be kicked by anyone (use transfer-ownership instead).
+    //   \u2022 A co-DM cannot kick another co-DM \u2014 owner must demote first.
+    //   \u2022 Any DM can kick a player.
     const { rows: targetRoleRows } = await pool.query(
-      'SELECT role FROM session_players WHERE session_id = $1 AND user_id = $2',
+      `SELECT sp.role, s.dm_user_id
+         FROM session_players sp
+         JOIN sessions s ON s.id = sp.session_id
+         WHERE sp.session_id = $1 AND sp.user_id = $2`,
       [ctx.room.sessionId, targetUserId],
     );
-    const targetRole = targetRoleRows[0]?.role as string | undefined;
-    if (targetRole === 'dm') {
-      const { rows: dmCountRows } = await pool.query(
-        "SELECT COUNT(*)::int AS count FROM session_players WHERE session_id = $1 AND role = 'dm'",
-        [ctx.room.sessionId],
-      );
-      const dmCount = (dmCountRows[0]?.count as number) ?? 0;
-      if (dmCount <= 1) return;
+    const targetRow = targetRoleRows[0] as { role: string; dm_user_id: string } | undefined;
+    if (targetRow) {
+      if (targetRow.dm_user_id === targetUserId) return; // Owner untouchable.
+      if (targetRow.role === 'dm') return;               // Peer co-DM untouchable.
     }
 
     // Remove from the DB so the kick is persistent across reconnects.
@@ -269,12 +310,40 @@ export function registerSessionEvents(io: Server, socket: Socket): void {
     const ctx = getPlayerBySocketId(socket.id);
     if (!ctx || ctx.player.role !== 'dm') return;
 
-    const { rows: sessionRows } = await pool.query('SELECT settings FROM sessions WHERE id = $1', [ctx.room.sessionId]);
+    // The Discord webhook URL lives on its own column (not inside the
+    // `settings` JSON blob) so the DiscordService can read it without
+    // re-parsing session settings on every combat event.
+    const { discordWebhookUrl, ...settingsPatch } = parsed.data;
+    if (discordWebhookUrl !== undefined) {
+      const urlValue = discordWebhookUrl === '' ? null : discordWebhookUrl;
+      await pool.query(
+        'UPDATE sessions SET discord_webhook_url = $1 WHERE id = $2',
+        [urlValue, ctx.room.sessionId],
+      );
+    }
+
+    const { rows: sessionRows } = await pool.query(
+      'SELECT settings, discord_webhook_url FROM sessions WHERE id = $1',
+      [ctx.room.sessionId],
+    );
     const currentSettings = sessionRows[0] ? JSON.parse(sessionRows[0].settings) : {};
-    const newSettings = { ...DEFAULT_SESSION_SETTINGS, ...currentSettings, ...parsed.data };
+    const newSettings = { ...DEFAULT_SESSION_SETTINGS, ...currentSettings, ...settingsPatch };
+    const currentWebhook = (sessionRows[0]?.discord_webhook_url as string | null) ?? null;
 
     await pool.query('UPDATE sessions SET settings = $1 WHERE id = $2', [JSON.stringify(newSettings), ctx.room.sessionId]);
+
+    // Emit non-secret settings to EVERY member, but only hand the
+    // DM the webhook URL (it's not a password but also not something
+    // rando players should see).
     io.to(ctx.room.sessionId).emit('session:settings-updated', newSettings);
+    for (const p of ctx.room.players.values()) {
+      if (p.role === 'dm') {
+        io.to(p.socketId).emit('session:settings-updated', {
+          ...newSettings,
+          discordWebhookUrl: currentWebhook,
+        });
+      }
+    }
   }));
 
   socket.on('session:viewing', safeHandler(socket, async (data: unknown) => {
@@ -315,10 +384,10 @@ export function registerSessionEvents(io: Server, socket: Socket): void {
     if (targetUserIds && targetUserIds.length > 0) {
       for (const uid of targetUserIds) {
         const player = ctx.room.players.get(uid);
-        if (player) io.to(player.socketId).emit('session:handout-received' as any, payload);
+        if (player) io.to(player.socketId).emit('session:handout-received', payload);
       }
     } else {
-      io.to(ctx.room.sessionId).emit('session:handout-received' as any, payload);
+      io.to(ctx.room.sessionId).emit('session:handout-received', payload);
     }
 
     // Auto-save handout as a shared note

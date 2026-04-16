@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { ArrowLeft } from 'lucide-react';
 import { useMapStore } from '../../stores/useMapStore';
 import { useSessionStore } from '../../stores/useSessionStore';
@@ -11,6 +11,7 @@ import { EMOJI } from '../../styles/emoji';
 import { Section, Button, NumberInput, FieldGroup, Divider } from '../ui';
 import { MusicPlayer } from './MusicPlayer';
 import { HandoutSender } from './HandoutSender';
+import { SessionPrivacyPanel } from './SessionPrivacyPanel';
 
 type DMView = 'maps' | 'creatures' | 'encounters' | 'settings' | 'handouts' | 'music';
 
@@ -178,10 +179,15 @@ function SettingsPanel({
     showTokenLabels?: boolean;
     turnTimerEnabled?: boolean;
     turnTimerSeconds?: number;
+    discordWebhookUrl?: string | null;
   };
 }) {
   return (
     <div style={styles.settingsContainer}>
+      <h3 style={styles.settingsTitle}>Session Privacy</h3>
+      <SessionPrivacyPanel />
+      <Divider variant="ornate" marginY={theme.space.md} />
+
       <h3 style={styles.settingsTitle}>Game Settings</h3>
       <Divider variant="ornate" marginY={theme.space.sm} />
 
@@ -291,7 +297,75 @@ function SettingsPanel({
           />
         </FieldGroup>
       )}
+
+      <Divider variant="ornate" marginY={theme.space.md} />
+
+      <DiscordWebhookField
+        value={settings.discordWebhookUrl ?? ''}
+        onSave={(url) => emitUpdateSettings({ discordWebhookUrl: url })}
+      />
     </div>
+  );
+}
+
+/**
+ * Inline field for the session's Discord webhook URL. Debounce-free:
+ * user clicks Save to commit (which validates on the server via zod).
+ * We deliberately DO NOT auto-save-on-blur because a malformed URL
+ * would silently clear the field; a visible Save button makes the
+ * transition obvious.
+ */
+function DiscordWebhookField({
+  value, onSave,
+}: { value: string; onSave: (url: string | null) => void }) {
+  const [draft, setDraft] = useState(value);
+  const [saved, setSaved] = useState(false);
+  useEffect(() => { setDraft(value); }, [value]);
+  const dirty = draft !== value;
+
+  const handleSave = () => {
+    const trimmed = draft.trim();
+    onSave(trimmed === '' ? null : trimmed);
+    setSaved(true);
+    window.setTimeout(() => setSaved(false), 2000);
+  };
+
+  const placeholder = 'https://discord.com/api/webhooks/…';
+  return (
+    <FieldGroup label="Discord Webhook (optional)">
+      <input
+        type="url"
+        value={draft}
+        placeholder={placeholder}
+        onChange={(e) => setDraft(e.target.value)}
+        onKeyDown={(e) => { if (e.key === 'Enter' && dirty) handleSave(); }}
+        style={{
+          flex: 1, minWidth: 0,
+          padding: '6px 8px', fontSize: 11,
+          background: theme.bg.deep, color: theme.text.primary,
+          border: `1px solid ${theme.border.default}`, borderRadius: 4,
+          fontFamily: 'inherit', outline: 'none',
+        }}
+      />
+      <button
+        type="button"
+        onClick={handleSave}
+        disabled={!dirty}
+        style={{
+          padding: '6px 10px', fontSize: 11, fontWeight: 700,
+          background: dirty ? theme.gold.primary : theme.bg.deep,
+          color: dirty ? '#1a1a1a' : theme.text.muted,
+          border: `1px solid ${dirty ? theme.gold.primary : theme.border.default}`,
+          borderRadius: 4, cursor: dirty ? 'pointer' : 'default',
+          marginLeft: 6,
+        }}
+      >
+        {saved ? 'Saved' : 'Save'}
+      </button>
+      <p style={{ ...theme.type.small, color: theme.text.muted, marginTop: 4, flexBasis: '100%' }}>
+        Posts combat start/end notifications to Discord. Clear the field and Save to disable.
+      </p>
+    </FieldGroup>
   );
 }
 

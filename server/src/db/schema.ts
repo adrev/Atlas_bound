@@ -23,6 +23,10 @@ export async function initDatabase(): Promise<void> {
     ALTER TABLE sessions ADD COLUMN IF NOT EXISTS visibility TEXT NOT NULL DEFAULT 'public';
     ALTER TABLE sessions ADD COLUMN IF NOT EXISTS password_hash TEXT;
     ALTER TABLE sessions ADD COLUMN IF NOT EXISTS invite_code TEXT;
+    -- Discord webhook URL for session event notifications. Null means
+    -- the feature is disabled for this session. Validated against
+    -- discord.com / discordapp.com at write time.
+    ALTER TABLE sessions ADD COLUMN IF NOT EXISTS discord_webhook_url TEXT;
     CREATE UNIQUE INDEX IF NOT EXISTS idx_sessions_invite_code
       ON sessions(invite_code) WHERE invite_code IS NOT NULL;
 

@@ -32,6 +32,20 @@ export const sessionUpdateSettingsSchema = z.object({
   showTokenLabels: z.boolean().optional(),
   turnTimerEnabled: z.boolean().optional(),
   turnTimerSeconds: z.number().int().min(15).max(300).optional(),
+  /**
+   * Discord webhook URL for session events (combat start/end, handouts,
+   * major rolls). Null clears it. Must start with https://discord.com/
+   * or https://discordapp.com/ to prevent SSRF abuse.
+   */
+  discordWebhookUrl: z.union([
+    z.string()
+      .max(500)
+      .refine((u) => /^https:\/\/(discord|discordapp)\.com\/api\/webhooks\//.test(u), {
+        message: 'Must be a discord.com/api/webhooks URL',
+      }),
+    z.literal(''),
+    z.null(),
+  ]).optional(),
 });
 
 // --- Map event schemas ---
