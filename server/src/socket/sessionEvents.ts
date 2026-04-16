@@ -139,6 +139,24 @@ export function registerSessionEvents(io: Server, socket: Socket): void {
       role: isDM ? 'dm' : 'player', characterId: currentPlayer.character_id, connected: true,
     });
 
+    // Re-emit the currently playing track so a late joiner hears what
+    // the DM is already playing. Only fires when a track is set —
+    // otherwise the client already defaults to silent, so re-sending
+    // "null, stop" to a fresh tab would just churn the audio element.
+    if (room.music.track) {
+      socket.emit('session:music-changed', {
+        track: room.music.track,
+        fileIndex: room.music.fileIndex,
+      });
+      // Only re-emit the last action when it represents a paused
+      // state — 'resume', 'next', 'prev' are one-shot transitions that
+      // shouldn't be replayed, but a stored 'pause' means the DM
+      // stopped the music and we should restore that on the new tab.
+      if (room.music.action === 'pause') {
+        socket.emit('session:music-action-broadcast', { action: room.music.action });
+      }
+    }
+
     // Auto-load map on join.
     //   Players → always the ribbon (player_map_id). No more hydrating
     //               onto a DM's prep/preview map.
@@ -381,6 +399,17 @@ export function registerSessionEvents(io: Server, socket: Socket): void {
     if (!parsed.success) return;
     const ctx = getPlayerBySocketId(socket.id);
     if (!ctx || ctx.player.role !== 'dm') return;  // DM only
+
+    // Cache the authoritative current track on the room so players who
+    // join mid-session get synced via the state-sync emit below.
+    // Otherwise late joiners sit in silence until the DM reselects a
+    // track, which is a common "my music isn't working" confusion.
+    ctx.room.music.track = parsed.data.track ?? null;
+    ctx.room.music.fileIndex = parsed.data.fileIndex ?? null;
+    // Picking a track implicitly resumes playback; unsetting the track
+    // (pause/stop) is signalled separately via music-action.
+    ctx.room.music.action = parsed.data.track ? 'resume' : null;
+
     // Broadcast to all players in the session (including DM)
     io.to(ctx.room.sessionId).emit('session:music-changed', {
       track: parsed.data.track,
@@ -393,6 +422,12 @@ export function registerSessionEvents(io: Server, socket: Socket): void {
     if (!parsed.success) return;
     const ctx = getPlayerBySocketId(socket.id);
     if (!ctx || ctx.player.role !== 'dm') return;
+
+    // Mirror the latest action into room state so rejoiners see the
+    // correct play/pause indicator (stopping doesn't clear the track
+    // name — the UI still shows "X is paused").
+    ctx.room.music.action = parsed.data.action;
+
     io.to(ctx.room.sessionId).emit('session:music-action-broadcast', { action: parsed.data.action });
   }));
 

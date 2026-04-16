@@ -104,15 +104,35 @@ export function registerChatEvents(io: Server, socket: Socket): void {
       // scripts, legacy clients, headless NPC rolls).
       let rollData;
       if (reported) {
+        // Sanity-check the client-reported payload. We can't prove the
+        // client's 3D dice rolled fairly, but we CAN reject payloads
+        // that are self-contradictory or clearly impossible:
+        //   - every die value must fit its declared face count
+        //   - total must equal sum(dice) + modifier
+        //   - dice count is bounded by the Zod schema already
+        // Anything that fails these falls back to a server-side roll
+        // so a misbehaving client cannot set total=9999 and persist it.
         const diceSum = reported.dice.reduce((s, d) => s + d.value, 0);
-        rollData = {
-          notation,
-          dice: reported.dice,
-          modifier: reported.total - diceSum,
-          total: reported.total,
-          advantage: 'normal' as const,
-          reason,
-        };
+        const diceValid = reported.dice.every(
+          (d) => d.type >= 2 && d.value >= 1 && d.value <= d.type,
+        );
+        if (diceValid) {
+          rollData = {
+            notation,
+            dice: reported.dice,
+            modifier: reported.total - diceSum,
+            total: reported.total,
+            advantage: 'normal' as const,
+            reason,
+            // Flag so consumers (DM chat UI, Discord relay) know the
+            // total came from the client's dice-box animation and
+            // wasn't generated server-side. They can render a subtle
+            // marker or log it for audit.
+            clientReported: true,
+          };
+        } else {
+          rollData = DiceService.roll(notation, reason);
+        }
       } else {
         rollData = DiceService.roll(notation, reason);
       }

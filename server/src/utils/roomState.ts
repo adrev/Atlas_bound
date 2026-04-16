@@ -111,6 +111,26 @@ export interface RoomState {
    * SQLite table so they survive a server restart.
    */
   drawings: Map<string, Drawing>;
+  /**
+   * Current DM-selected music track and playback state. Kept in memory
+   * only — music resumes from the start if the server restarts. Lets
+   * players who join mid-session hear whatever track the DM was already
+   * playing instead of silence until the DM bumps the track.
+   *
+   * `track` is the track name (null = stopped), `fileIndex` picks which
+   * file within a multi-file track is active, `action` is the last
+   * play/pause/stop fired so a rejoining player can match state.
+   */
+  music: {
+    track: string | null;
+    fileIndex: number | null;
+    /**
+     * Last action the DM fired. `null` means no action has been sent
+     * this session (track just selected or nothing playing yet). Enum
+     * matches musicActionSchema in validation.ts.
+     */
+    action: 'pause' | 'resume' | 'next' | 'prev' | null;
+  };
 }
 
 // ── Rate limiting ──────────────────────────────────────────
@@ -154,6 +174,7 @@ export function createRoom(
     actionEconomies: new Map(),
     conditionMeta: new Map(),
     drawings: new Map(),
+    music: { track: null, fileIndex: null, action: null },
   };
   rooms.set(sessionId, room);
   roomCodeIndex.set(roomCode, sessionId);
