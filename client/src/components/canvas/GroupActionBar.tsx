@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { useMapStore } from '../../stores/useMapStore';
 import { useSessionStore } from '../../stores/useSessionStore';
+import { useCharacterStore } from '../../stores/useCharacterStore';
 import {
   emitRoll,
   emitSystemMessage,
@@ -9,6 +10,8 @@ import {
 import { getSocket } from '../../socket/client';
 import { theme } from '../../styles/theme';
 import { showToast } from '../ui';
+import { saveModifierForCharacter } from '../../utils/save-mod';
+import type { AbilityName } from '@dnd-vtt/shared';
 
 /**
  * Mass-action bar for DM multi-select.
@@ -35,19 +38,25 @@ const CONDITIONS = [
   'Prone', 'Restrained', 'Stunned', 'Unconscious',
 ] as const;
 
+const SAVE_ABILITIES: AbilityName[] = ['str', 'dex', 'con', 'int', 'wis', 'cha'];
+
 export function GroupActionBar() {
   const selectedIds = useMapStore((s) => s.selectedTokenIds);
   const tokens = useMapStore((s) => s.tokens);
   const selectToken = useMapStore((s) => s.selectToken);
   const isDM = useSessionStore((s) => s.isDM);
+  const allCharacters = useCharacterStore((s) => s.allCharacters);
 
   const selected = useMemo(
     () => selectedIds.map((id) => tokens[id]).filter(Boolean),
     [selectedIds, tokens],
   );
 
-  const [mode, setMode] = useState<null | 'damage' | 'heal' | 'condition'>(null);
+  const [mode, setMode] = useState<null | 'damage' | 'heal' | 'condition' | 'save'>(null);
   const [amount, setAmount] = useState('');
+  const [saveDC, setSaveDC] = useState('15');
+  const [saveAbility, setSaveAbility] = useState<AbilityName>('dex');
+  const [saveDamage, setSaveDamage] = useState('');
 
   // Only surfaces for the DM and only when 2+ tokens are selected.
   if (!isDM) return null;
@@ -106,6 +115,43 @@ export function GroupActionBar() {
     }
   };
 
+  /**
+   * Mass Save flow:
+   *   - For each selected token, look up its save modifier from the
+   *     backing character (0 for raw NPC tokens).
+   *   - Emit a standard chat roll per token so everyone sees the
+   *     individual d20s with the ±mod, tagged with the ability and DC.
+   *   - If `saveDamage` is given, post a follow-up system line telling
+   *     the DM the expected damage split (full on fail, half on pass)
+   *     so they can apply with the normal per-token damage button.
+   *     Auto-apply is deliberately left out of v1 — needs the server
+   *     to correlate rolls to tokens, which is a bigger refactor.
+   */
+  const submitMassSave = () => {
+    const dc = parseInt(saveDC, 10);
+    if (!Number.isFinite(dc) || dc < 1) return;
+    const dmg = parseInt(saveDamage, 10);
+    const hasDamage = Number.isFinite(dmg) && dmg > 0;
+
+    const abilityLabel = saveAbility.toUpperCase();
+    for (const t of selected) {
+      const character = t.characterId ? allCharacters[t.characterId] : null;
+      const mod = saveModifierForCharacter(character, saveAbility);
+      const sign = mod >= 0 ? '+' : '';
+      emitRoll(
+        `1d20${sign}${mod}`,
+        `${t.name}: ${abilityLabel} save vs DC ${dc}`,
+      );
+    }
+    const headline = hasDamage
+      ? `🎲 Mass ${abilityLabel} save vs DC ${dc} — ${selected.length} tokens. Fail: ${dmg} damage · Pass: ${Math.floor(dmg / 2)}`
+      : `🎲 Mass ${abilityLabel} save vs DC ${dc} — ${selected.length} tokens rolling.`;
+    emitSystemMessage(headline);
+
+    setSaveDamage('');
+    setMode(null);
+  };
+
   return (
     <div
       style={{
@@ -150,6 +196,45 @@ export function GroupActionBar() {
           <button onClick={submit} style={btnStyle(mode === 'damage' ? '#c0392b' : '#27ae60')}>Apply</button>
           <button onClick={() => { setAmount(''); setMode(null); }} style={btnStyle('#555')}>Cancel</button>
         </>
+      ) : mode === 'save' ? (
+        <>
+          <span style={{ fontSize: 10, color: theme.text.muted }}>DC</span>
+          <input
+            type="number"
+            min={1}
+            autoFocus
+            value={saveDC}
+            onChange={(e) => setSaveDC(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') submitMassSave(); }}
+            style={inputStyle(52)}
+          />
+          <select
+            value={saveAbility}
+            onChange={(e) => setSaveAbility(e.target.value as AbilityName)}
+            style={{
+              padding: '4px 6px', fontSize: 11, fontWeight: 600,
+              background: theme.bg.deep, border: `1px solid ${theme.border.default}`,
+              color: theme.text.primary, borderRadius: 4, outline: 'none',
+              cursor: 'pointer',
+            }}
+          >
+            {SAVE_ABILITIES.map((a) => (
+              <option key={a} value={a}>{a.toUpperCase()}</option>
+            ))}
+          </select>
+          <span style={{ fontSize: 10, color: theme.text.muted }}>DMG (opt)</span>
+          <input
+            type="number"
+            min={0}
+            placeholder="—"
+            value={saveDamage}
+            onChange={(e) => setSaveDamage(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') submitMassSave(); if (e.key === 'Escape') { setSaveDamage(''); setMode(null); } }}
+            style={inputStyle(70)}
+          />
+          <button onClick={submitMassSave} style={btnStyle('#2a78c2')}>Roll Saves</button>
+          <button onClick={() => { setSaveDamage(''); setMode(null); }} style={btnStyle('#555')}>Cancel</button>
+        </>
       ) : mode === 'condition' ? (
         <>
           {CONDITIONS.map((c) => (
@@ -170,6 +255,7 @@ export function GroupActionBar() {
         <>
           <button onClick={() => setMode('damage')} style={btnStyle('#c0392b')}>💥 Damage</button>
           <button onClick={() => setMode('heal')} style={btnStyle('#27ae60')}>💚 Heal</button>
+          <button onClick={() => setMode('save')} style={btnStyle('#2a78c2')}>🛡️ Save</button>
           <button onClick={() => setMode('condition')} style={btnStyle('#8e44ad')}>🎯 Condition</button>
           <button onClick={rollInitiativeForGroup} style={btnStyle('#d4a257')}>🎲 Roll Init</button>
           <span style={{ width: 1, height: 18, background: theme.border.default, margin: '0 4px' }} />
@@ -193,5 +279,18 @@ function btnStyle(bg: string): React.CSSProperties {
     borderRadius: 4,
     cursor: 'pointer',
     fontFamily: 'inherit',
+  };
+}
+
+function inputStyle(width: number): React.CSSProperties {
+  return {
+    padding: '4px 8px',
+    fontSize: 12,
+    width,
+    background: theme.bg.deep,
+    border: `1px solid ${theme.border.default}`,
+    color: theme.text.primary,
+    borderRadius: 4,
+    outline: 'none',
   };
 }
