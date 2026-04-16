@@ -33,6 +33,10 @@ export function SceneManager() {
   const [renameDraft, setRenameDraft] = useState('');
   const [dragId, setDragId] = useState<string | null>(null);
   const [dropTargetId, setDropTargetId] = useState<string | null>(null);
+  // Inline filter for sessions with a long scene list. Filters by name
+  // substring (case-insensitive) so the DM doesn't have to scroll through
+  // 25+ scenes during a long-running campaign.
+  const [searchInput, setSearchInput] = useState('');
   // Optimistic local order — when the DM drags, we reorder this
   // immediately and emit; the server's broadcast then confirms / corrects.
   const [optimisticOrder, setOptimisticOrder] = useState<string[] | null>(null);
@@ -63,6 +67,15 @@ export function SceneManager() {
     const idx = new Map(optimisticOrder.map((id, i) => [id, i]));
     return [...base].sort((a, b) => (idx.get(a.id) ?? 1e9) - (idx.get(b.id) ?? 1e9));
   }, [maps, optimisticOrder]);
+
+  // Apply the search filter on top of sortedMaps so reordering still
+  // respects the DM's display_order — search just hides non-matching
+  // rows. Matching is case-insensitive substring on the scene name.
+  const visibleMaps = useMemo<MapSummary[]>(() => {
+    const q = searchInput.trim().toLowerCase();
+    if (!q) return sortedMaps;
+    return sortedMaps.filter((m) => m.name.toLowerCase().includes(q));
+  }, [sortedMaps, searchInput]);
 
   const handlePreview = (mapId: string) => {
     if (mapId === currentMap?.id) return;
@@ -160,9 +173,18 @@ export function SceneManager() {
     window.dispatchEvent(new CustomEvent('open-map-browser'));
   };
 
+  // Show count alongside the section title so the DM can tell at a
+  // glance how many scenes are in the session, and how many of those
+  // match the current search filter.
+  const totalCount = sortedMaps.length;
+  const visibleCount = visibleMaps.length;
+  const titleSuffix = searchInput && visibleCount !== totalCount
+    ? ` (${visibleCount} of ${totalCount})`
+    : totalCount > 0 ? ` (${totalCount})` : '';
+
   return (
     <Section
-      title="Scenes"
+      title={`Scenes${titleSuffix}`}
       emoji={EMOJI.map.scene}
       action={
         <Button size="sm" variant="primary" onClick={handleAddMap}>
@@ -221,7 +243,31 @@ export function SceneManager() {
         </div>
       )}
 
-      {sortedMaps.map((map) => {
+      {/* Inline scene search — only render when there are enough scenes
+          to make scrolling tedious. Below 6 the input is more clutter
+          than it's worth. */}
+      {loaded && totalCount >= 6 && (
+        <input
+          type="search"
+          value={searchInput}
+          onChange={(e) => setSearchInput(e.target.value)}
+          placeholder="Filter scenes by name..."
+          aria-label="Filter scenes"
+          style={{
+            width: '100%',
+            padding: '6px 10px',
+            fontSize: 12,
+            color: theme.text.primary,
+            background: theme.bg.deep,
+            border: `1px solid ${theme.border.default}`,
+            borderRadius: theme.radius.sm,
+            outline: 'none',
+            boxSizing: 'border-box' as const,
+          }}
+        />
+      )}
+
+      {visibleMaps.map((map) => {
         const isRibbon = map.id === playerMapId;
         const isDmView = map.id === currentMap?.id;
         const imgSrc = getMapThumbnail(map);
@@ -362,6 +408,17 @@ export function SceneManager() {
                 <div style={{ ...theme.type.micro, color: theme.text.muted }}>
                   {gridCols}×{gridRows} · {map.tokenCount} token
                   {map.tokenCount !== 1 ? 's' : ''}
+                  {/* Surface wall / zone counts so the DM can spot
+                      prep gaps — a combat map with 0 walls usually
+                      means line-of-sight isn't set up. We only render
+                      the chunk when the count is non-zero so blank
+                      scenes stay tidy. */}
+                  {map.wallCount > 0 && (
+                    <> · {map.wallCount} wall{map.wallCount !== 1 ? 's' : ''}</>
+                  )}
+                  {map.zoneCount > 0 && (
+                    <> · {map.zoneCount} zone{map.zoneCount !== 1 ? 's' : ''}</>
+                  )}
                 </div>
 
                 {(!isRibbon || isDmView) && (

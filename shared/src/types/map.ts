@@ -140,6 +140,18 @@ export interface MapSummary {
   gridSize: number;
   /** Number of tokens currently on this map (for the thumbnail badge) */
   tokenCount: number;
+  /**
+   * Number of wall segments drawn on this map. Lets the Scene Manager
+   * surface "this scene has X walls" so the DM can spot prep gaps —
+   * a combat map with 0 walls usually means line-of-sight isn't set up.
+   */
+  wallCount: number;
+  /**
+   * Number of encounter spawn zones drawn on this map. DM-only data;
+   * players never see zones, but seeing the count in the sidebar helps
+   * the DM know which scenes are encounter-ready vs blank.
+   */
+  zoneCount: number;
   createdAt: string;
   /** True if this map is currently the "player ribbon" (where the party is) */
   isPlayerMap: boolean;
