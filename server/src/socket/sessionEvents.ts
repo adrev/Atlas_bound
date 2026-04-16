@@ -152,6 +152,10 @@ export function registerSessionEvents(io: Server, socket: Socket): void {
       const { rows: mapRows } = await pool.query('SELECT * FROM maps WHERE id = $1', [hydrationMapId]);
       const mapRow = mapRows[0] as Record<string, unknown> | undefined;
       if (mapRow) {
+        // Cache the grid size for this map so synchronous server code
+        // (OA reach, ping scoping) reads the correct pitch even before
+        // the client sends a map:load round-trip.
+        room.mapGridSizes.set(hydrationMapId, Number(mapRow.grid_size) || 70);
         const { rows: tokenRows } = await pool.query('SELECT * FROM tokens WHERE map_id = $1', [hydrationMapId]);
         const tokens = tokenRows.map((t: Record<string, unknown>) => ({
           id: t.id as string, mapId: t.map_id as string,

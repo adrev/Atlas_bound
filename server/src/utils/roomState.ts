@@ -50,6 +50,12 @@ export interface RoomState {
    * any of their tabs closed.
    */
   userSockets: Map<string, Set<string>>;
+  /**
+   * Cache of grid sizes per map id, populated when maps load. Lets
+   * the synchronous OpportunityAttackService compute reach distances
+   * using the actual grid pitch instead of a hard-coded 70.
+   */
+  mapGridSizes: Map<string, number>;
   gameMode: 'free-roam' | 'combat';
   /**
    * Active ready check state. Non-null while a DM-initiated ready
@@ -137,6 +143,7 @@ export function createRoom(
     dmUserId,
     players: new Map(),
     userSockets: new Map(),
+    mapGridSizes: new Map(),
     gameMode: 'free-roam',
     readyCheck: null,
     playerMapId: null,

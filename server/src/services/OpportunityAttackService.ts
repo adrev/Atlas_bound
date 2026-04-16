@@ -14,6 +14,22 @@ const CONDITIONS_THAT_PREVENT_OA = new Set([
   'incapacitated', 'paralyzed', 'stunned', 'unconscious', 'petrified', 'prone', 'grappled',
 ]);
 
+/**
+ * Inventory item shape that OA cares about. We only read a handful
+ * of fields (name, type, properties, damage, equipped, magicBonus),
+ * so a narrow structural type is enough.
+ */
+interface InventoryWeapon {
+  name?: string;
+  type?: string;
+  category?: string;
+  properties?: string[];
+  damage?: string;
+  damageType?: string | null;
+  equipped?: boolean;
+  magicBonus?: number;
+}
+
 export function detectOpportunityAttacks(
   sessionId: string, moverTokenId: string,
   oldX: number, oldY: number, newX: number, newY: number,
@@ -239,9 +255,12 @@ export async function executeOpportunityAttack(
 function getGridSize(sessionId: string): number | null {
   const room = getRoom(sessionId);
   if (!room?.currentMapId) return null;
-  // We can't do a sync DB call with pg. Use in-memory data.
-  // The grid size should be available from the map data loaded during session join.
-  // For now return a sensible default. TODO: cache grid size in room state.
+  // Read the cached grid size for the map the tokens are on. The map
+  // loader writes the size into `room.mapGridSizes` whenever a map is
+  // loaded, so the sync OA reach math no longer has to fall back to
+  // a hard-coded 70 (which mis-calculated reach on any non-standard grid).
+  const cached = room.mapGridSizes.get(room.currentMapId);
+  if (typeof cached === 'number' && Number.isFinite(cached) && cached > 0) return cached;
   return 70;
 }
 
@@ -323,7 +342,7 @@ async function findBestMeleeAttack(token: Token): Promise<ResolvedMeleeAttack | 
         dexMod = Math.floor(((abilities.dex ?? abilities.dexterity ?? 10) - 10) / 2);
         abilitiesLoaded = true;
 
-        const inv = JSON.parse((row.inventory as string) || '[]') as any[];
+        const inv = JSON.parse((row.inventory as string) || '[]') as InventoryWeapon[];
         const meleeWeapons = inv.filter((i) => {
           const type = String(i?.type || i?.category || '').toLowerCase();
           if (type !== 'weapon') return false;
@@ -332,7 +351,7 @@ async function findBestMeleeAttack(token: Token): Promise<ResolvedMeleeAttack | 
           return true;
         });
 
-        const scoreWeapon = (w: any) => {
+        const scoreWeapon = (w: InventoryWeapon) => {
           const props = ((w.properties || []) as string[]).map((p: string) => String(p).toLowerCase());
           const isFinesse = props.includes('finesse');
           const abMod = isFinesse ? Math.max(strMod, dexMod) : strMod;
@@ -356,7 +375,7 @@ async function findBestMeleeAttack(token: Token): Promise<ResolvedMeleeAttack | 
           const baseMatch = baseRaw.match(/^\s*(\d+d\d+)/);
           const baseDice = baseMatch ? baseMatch[1] : '1d4';
           const dmgDice = `${baseDice}${abMod >= 0 ? `+${abMod}` : abMod}`;
-          return { name: w.name, attackBonus, damageDice: dmgDice, damageType: (w.damageType ?? null), properties: props };
+          return { name: w.name ?? 'Melee Weapon', attackBonus, damageDice: dmgDice, damageType: (w.damageType ?? null), properties: props };
         }
       } catch (err) { console.warn('[OA] inventory parse failed for', token.name, err); }
     }
@@ -368,16 +387,16 @@ async function findBestMeleeAttack(token: Token): Promise<ResolvedMeleeAttack | 
     if (row?.extras) {
       try {
         const extras = typeof row.extras === 'string' ? JSON.parse(row.extras) : row.extras;
-        const actions = (extras?.actions ?? []) as any[];
+        const actions = (extras?.actions ?? []) as Array<Record<string, unknown>>;
         for (const action of actions) {
-          const desc = (action.desc || action.description || '').toLowerCase();
+          const desc = String(action.desc ?? action.description ?? '').toLowerCase();
           if (/melee weapon attack/i.test(desc) || /melee attack/i.test(desc)) {
             const attackBonus = (action.attack_bonus as number) ?? 0;
-            const damageDice = (action.damage_dice as string) || action.damage || '1d4';
+            const damageDice = String(action.damage_dice ?? action.damage ?? '1d4');
             let damageType: string | null = null;
             const m = desc.match(/(\d+d\d+(?:\s*\+\s*\d+)?)\s+(\w+)\s+damage/);
             if (m) damageType = m[2];
-            return { name: action.name || 'Melee Attack', attackBonus, damageDice, damageType, properties: [] };
+            return { name: String(action.name ?? 'Melee Attack'), attackBonus, damageDice, damageType, properties: [] };
           }
         }
       } catch { /* ignore */ }

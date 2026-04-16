@@ -202,20 +202,34 @@ app.use('/api/auth', discordAuth);
 app.use('/api/auth', googleAuth);
 app.use('/api/auth', appleAuth);
 
-// Health check (before auth middleware — used by Cloud Run + Docker HEALTHCHECK).
-// Returns 200 as soon as the process is up; reports compendium-seed state so
-// smoke tests can distinguish "alive" from "fully ready to serve reads".
-app.get('/api/health', async (_req, res) => {
+// Split liveness + readiness so Cloud Run doesn't route traffic to a
+// node that's still seeding the compendium.
+//
+//   /healthz  — LIVENESS.  Process is up and can respond. Used by
+//               Cloud Run's basic health check. Never fails unless
+//               the process itself has deadlocked.
+//   /readyz   — READINESS. 200 only when the DB is reachable AND
+//               the compendium seed has completed. This is what
+//               autoscaler / load-balancer probes should hit.
+//
+// /api/health kept as a legacy alias of /readyz so existing probes
+// and smoke tests don't break.
+app.get('/healthz', (_req, res) => {
+  res.status(200).json({ status: 'alive', timestamp: new Date().toISOString() });
+});
+const readinessHandler = async (_req: express.Request, res: express.Response) => {
   let db: 'ok' | 'down' = 'ok';
   try { await pool.query('SELECT 1'); } catch { db = 'down'; }
-  const status = db === 'ok' && compendiumReady ? 'ready' : 'starting';
-  res.status(db === 'ok' ? 200 : 503).json({
-    status,
+  const ready = db === 'ok' && compendiumReady;
+  res.status(ready ? 200 : 503).json({
+    status: ready ? 'ready' : 'starting',
     db,
     compendium: compendiumReady ? 'ready' : 'seeding',
     timestamp: new Date().toISOString(),
   });
-});
+};
+app.get('/readyz', readinessHandler);
+app.get('/api/health', readinessHandler);
 
 // Public API routes
 app.use('/api/compendium', compendiumRouter);

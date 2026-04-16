@@ -105,6 +105,7 @@ export function registerSceneEvents(io: Server, socket: Socket): void {
     // The DM's preview is now kept purely in `room.dmViewingMap`;
     // `player_map_id` stays the source of truth for player hydration.
     ctx.room.dmViewingMap.set(ctx.player.userId, mapId);
+    ctx.room.mapGridSizes.set(mapId, Number(mapRow.grid_size) || 70);
 
     const { rows: tokenRows } = await pool.query('SELECT * FROM tokens WHERE map_id = $1', [mapId]);
     const tokens: Token[] = tokenRows.map(t => ({
@@ -180,6 +181,8 @@ export function registerSceneEvents(io: Server, socket: Socket): void {
 
     ctx.room.playerMapId = mapId;
     ctx.room.currentMapId = mapId;
+    // Cache grid size for synchronous OA / reach math.
+    ctx.room.mapGridSizes.set(mapId, Number(mapRow.grid_size) || 70);
     try {
       await pool.query('UPDATE sessions SET player_map_id = $1, current_map_id = $2 WHERE id = $3', [mapId, mapId, ctx.room.sessionId]);
     } catch (err) { console.warn('[scene:activate] session map pointers update failed:', err); }

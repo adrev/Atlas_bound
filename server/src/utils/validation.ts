@@ -131,7 +131,11 @@ export const mapPingSchema = z.object({
 });
 
 // --- Map zone (encounter spawn region) schemas ---
-const dim = z.number().finite().min(0).max(30000);
+// A zone needs a non-zero footprint; the UI ignores tiny drags but
+// the API used to allow width/height of 0, which left invisible
+// ghost-zones in the DB. Minimum of a quarter-square keeps things
+// sensible without blocking small pilot zones.
+const dim = z.number().finite().min(0.25).max(30000);
 export const zoneAddSchema = z.object({
   name: z.string().min(1).max(64),
   x: coord,

@@ -262,6 +262,9 @@ export function registerListeners(socket: Socket): () => void {
   });
 
   socket.on('map:pinged', (ping) => {
+    const p = ping as typeof ping & { mapId?: string };
+    const current = useMapStore.getState().currentMap?.id;
+    if (p.mapId && p.mapId !== current) return;
     useMapStore.getState().addPing(ping);
   });
 
