@@ -1,5 +1,5 @@
 import { useMemo, useRef } from 'react';
-import { Layer, Rect, Shape } from 'react-konva';
+import { Group, Rect, Shape } from 'react-konva';
 import { useMapStore } from '../../../stores/useMapStore';
 import { useSessionStore } from '../../../stores/useSessionStore';
 
@@ -64,7 +64,7 @@ export function FogLayer({ mapWidth, mapHeight }: FogLayerProps) {
     const cx = previewToken.x + (gridSize * previewToken.size) / 2;
     const cy = previewToken.y + (gridSize * previewToken.size) / 2;
     return (
-      <Layer listening={false}>
+      <Group listening={false}>
         <VisionPreviewOverlay
           cx={cx}
           cy={cy}
@@ -72,14 +72,14 @@ export function FogLayer({ mapWidth, mapHeight }: FogLayerProps) {
           mapWidth={mapWidth}
           mapHeight={mapHeight}
         />
-      </Layer>
+      </Group>
     );
   }
 
   if (!enableFog) return null;
 
   return (
-    <Layer listening={false}>
+    <Group listening={false}>
       {/* Base fog: covers entire map */}
       <Rect
         x={0}
@@ -123,7 +123,7 @@ export function FogLayer({ mapWidth, mapHeight }: FogLayerProps) {
           listening={false}
         />
       )}
-    </Layer>
+    </Group>
   );
 }
 

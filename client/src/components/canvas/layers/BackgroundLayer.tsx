@@ -1,6 +1,14 @@
 import { useEffect, useRef, useState } from 'react';
-import { Layer, Image as KonvaImage, Rect } from 'react-konva';
+import { Image as KonvaImage, Rect } from 'react-konva';
 import { theme } from '../../../styles/theme';
+
+// NOTE on layer consolidation (2026-04): every visual unit in
+// client/src/components/canvas/layers/ used to mount its own Konva
+// `<Layer>` wrapper. With 8+ layers per map the GPU was running 8
+// independent canvases, and Konva itself logged a "stage has 6 layers"
+// warning. Each layer now returns a fragment / Group instead, and
+// BattleMap.tsx wraps related layers into shared parent `<Layer>`
+// nodes (Base / Tokens / Overlays / Tools).
 
 interface BackgroundLayerProps {
   imageUrl: string | null;
@@ -54,7 +62,7 @@ export function BackgroundLayer({ imageUrl, width, height }: BackgroundLayerProp
   const [image, status] = useImage(imageUrl);
 
   return (
-    <Layer listening={false}>
+    <>
       {/* Dark background fill */}
       <Rect x={0} y={0} width={width} height={height} fill={theme.bg.base} />
 
@@ -62,6 +70,6 @@ export function BackgroundLayer({ imageUrl, width, height }: BackgroundLayerProp
       {image && status === 'loaded' && (
         <KonvaImage image={image} x={0} y={0} width={width} height={height} />
       )}
-    </Layer>
+    </>
   );
 }

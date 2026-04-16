@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { Layer, Group, Rect, Line, Text, Circle } from 'react-konva';
+import { Group, Rect, Line, Text, Circle } from 'react-konva';
 import { useMapStore } from '../../../stores/useMapStore';
 import { useEffectStore } from '../../../stores/useEffectStore';
 import { useCombatStore } from '../../../stores/useCombatStore';
@@ -85,7 +85,7 @@ export function MovementRangeLayer() {
   if (!currentMap || !showMovementRange) return null;
 
   return (
-    <Layer listening={false}>
+    <Group listening={false}>
       {/* Normal movement range cells (green) */}
       {reachableCells.map((cell) => {
         const pos = gridToPixel(cell.col, cell.row, gridSize, gridOffsetX, gridOffsetY);
@@ -204,6 +204,6 @@ export function MovementRangeLayer() {
           </Group>
         );
       })()}
-    </Layer>
+    </Group>
   );
 }

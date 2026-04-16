@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { Layer, Rect, Shape, Circle, Ring } from 'react-konva';
+import { Group, Rect, Shape, Circle, Ring } from 'react-konva';
 import type { Token } from '@dnd-vtt/shared';
 import { computeVisibilityPolygon } from '@dnd-vtt/shared';
 import { useMapStore } from '../../../stores/useMapStore';
@@ -117,7 +117,7 @@ export function LightingLayer({ mapWidth, mapHeight }: LightingLayerProps) {
   if (!enableLighting) return null;
 
   return (
-    <Layer listening={false}>
+    <Group listening={false}>
       {/* Darkness overlay covering the entire map */}
       <Rect
         x={0}
@@ -147,7 +147,7 @@ export function LightingLayer({ mapWidth, mapHeight }: LightingLayerProps) {
         computedLights.map((light, idx) => (
           <LightIndicator key={`ind-${light.token.id}-${idx}`} light={light} />
         ))}
-    </Layer>
+    </Group>
   );
 }
 

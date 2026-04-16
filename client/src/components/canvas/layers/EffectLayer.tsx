@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { Layer, Group, Rect, Line, Circle, Wedge, Text } from 'react-konva';
+import { Group, Rect, Line, Circle, Wedge, Text } from 'react-konva';
 import { useMapStore } from '../../../stores/useMapStore';
 import { useEffectStore } from '../../../stores/useEffectStore';
 import type { AoeType } from '../../../stores/useEffectStore';
@@ -281,7 +281,7 @@ export function EffectLayer() {
   const gridSize = currentMap.gridSize;
 
   return (
-    <Layer listening={false}>
+    <Group listening={false}>
       {/* Spell targeting template */}
       {targetingSpell && targetPosition && (
         <SpellTemplate
@@ -296,6 +296,6 @@ export function EffectLayer() {
           mapHeight={currentMap.height}
         />
       )}
-    </Layer>
+    </Group>
   );
 }

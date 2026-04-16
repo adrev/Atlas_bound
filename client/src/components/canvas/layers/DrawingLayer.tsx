@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Layer, Line, Rect, Circle, Arrow, Text, Group } from 'react-konva';
+import { Line, Rect, Circle, Arrow, Text, Group } from 'react-konva';
 import type { Drawing, DrawingGeometry, DrawingKind } from '@dnd-vtt/shared';
 import { useDrawStore, type PreviewDrawing } from '../../../stores/useDrawStore';
 import { useSessionStore } from '../../../stores/useSessionStore';
@@ -44,8 +44,12 @@ export function DrawingLayer() {
 
   const selectable = isDrawMode && activeTool === 'select';
 
+  // Now nested inside BattleMap's `<Layer>` for tools — that parent
+  // layer is always listening, but each drawing shape opts in/out
+  // individually via the `selectable` flag passed below. The previous
+  // `<Layer listening={selectable}>` toggling moves to per-shape now.
   return (
-    <Layer listening={selectable}>
+    <Group listening={selectable}>
       {/* Committed drawings */}
       {visible.map((d) => (
         <DrawingShape
@@ -82,7 +86,7 @@ export function DrawingLayer() {
           opacity={1}
         />
       )}
-    </Layer>
+    </Group>
   );
 }
 

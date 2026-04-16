@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useState } from 'react';
-import { Layer, Rect, Text, Group } from 'react-konva';
+import { Rect, Text, Group } from 'react-konva';
 import type Konva from 'konva';
 import { useMapStore } from '../../stores/useMapStore';
 import { useSessionStore } from '../../stores/useSessionStore';
@@ -128,7 +128,7 @@ export function ZoneLayer() {
   if (!isDM) return null;
 
   return (
-    <Layer
+    <Group
       listening={isZoneTool}
       onMouseDown={handleMouseDown}
       onMouseMove={handleMouseMove}
@@ -217,7 +217,7 @@ export function ZoneLayer() {
           />
         );
       })()}
-    </Layer>
+    </Group>
   );
 }
 

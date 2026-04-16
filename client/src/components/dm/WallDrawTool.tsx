@@ -1,5 +1,5 @@
 import { useState, useCallback, useMemo } from 'react';
-import { Layer, Line, Circle, Group, Text, Rect } from 'react-konva';
+import { Line, Circle, Group, Text, Rect } from 'react-konva';
 import type { WallSegment } from '@dnd-vtt/shared';
 import { useMapStore } from '../../stores/useMapStore';
 import { emitWallAdd, emitWallRemove } from '../../socket/emitters';
@@ -165,7 +165,7 @@ export function WallDrawLayer({ gridSize }: WallDrawLayerProps) {
   const isWallTool = activeTool === 'wall';
 
   return (
-    <Layer listening={isWallTool}>
+    <Group listening={isWallTool}>
       {/* Existing walls rendered as red lines */}
       {walls.map((wall, idx) => (
         <Group key={`wall-${idx}`}>
@@ -262,7 +262,7 @@ export function WallDrawLayer({ gridSize }: WallDrawLayerProps) {
           )}
         </>
       )}
-    </Layer>
+    </Group>
   );
 }
 

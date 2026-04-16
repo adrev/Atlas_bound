@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Layer, Line, Text, Circle, Group } from 'react-konva';
+import { Line, Text, Circle, Group } from 'react-konva';
 import type { WallSegment } from '@dnd-vtt/shared';
 import { useMapStore } from '../../../stores/useMapStore';
 import { useSessionStore } from '../../../stores/useSessionStore';
@@ -95,7 +95,7 @@ export function MeasureWallLayer() {
   const [draggingWall, setDraggingWall] = useState<{ wallIndex: number; endpoint: 'start' | 'end' } | null>(null);
 
   return (
-    <Layer listening={true}>
+    <Group listening={true}>
       {/* Existing walls with interactive endpoints (wall tool only) */}
       {isWall && walls.map((w, i) => (
         <WallSegmentDisplay
@@ -235,7 +235,7 @@ export function MeasureWallLayer() {
           shadowEnabled
         />
       )}
-    </Layer>
+    </Group>
   );
 }
 

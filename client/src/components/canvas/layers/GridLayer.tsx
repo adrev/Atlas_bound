@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { Layer, Line } from 'react-konva';
+import { Line } from 'react-konva';
 
 interface GridLayerProps {
   mapWidth: number;
@@ -61,7 +61,7 @@ export function GridLayer({
   }, [mapWidth, mapHeight, gridSize, viewport.x, viewport.y, viewport.scaleX, viewport.scaleY, stageWidth, stageHeight]);
 
   return (
-    <Layer listening={false}>
+    <>
       {lines.map((line) => (
         <Line
           key={line.key}
@@ -72,6 +72,6 @@ export function GridLayer({
           shadowForStrokeEnabled={false}
         />
       ))}
-    </Layer>
+    </>
   );
 }

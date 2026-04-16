@@ -477,46 +477,68 @@ export function BattleMap() {
       >
         {currentMap ? (
           <>
-            <BackgroundLayer
-              imageUrl={currentMap.imageUrl}
-              width={currentMap.width}
-              height={currentMap.height}
-            />
-            <GridLayer
-              mapWidth={currentMap.width}
-              mapHeight={currentMap.height}
-              gridSize={currentMap.gridSize}
-              gridOpacity={gridOpacity ?? 0.15}
-              viewport={stageProps}
-              stageWidth={dimensions.width}
-              stageHeight={dimensions.height}
-            />
-            <TokenLayer />
-            {isMyTurn && <MovementRangeLayer />}
-            {targetingSpell && <EffectLayer />}
-            <FogLayer
-              mapWidth={currentMap.width}
-              mapHeight={currentMap.height}
-            />
-            <LightingLayer
-              mapWidth={currentMap.width}
-              mapHeight={currentMap.height}
-            />
-            <MeasureWallLayer />
-            {isDM && activeTool === 'wall' && (
-              <WallDrawLayer gridSize={currentMap.gridSize} />
-            )}
-            {isDM && <ZoneLayer />}
-            {/* DM / player drawings — rendered ABOVE tokens so
-                annotations and arrows are never occluded. */}
-            <DrawingLayer />
-            {/* Spell animations (projectiles, AoE bursts, buff swirls,
-                melee swings) — rendered on top of everything else so
-                they're always visible during cast resolution. The
-                SpellAnimationLayer subscribes to useEffectStore's
-                activeAnimations array and auto-removes each animation
-                when it completes. */}
+            {/*
+              Layer consolidation (2026-04). Konva warns at 6+ layers
+              and recommends 3-5 because each layer is a separate canvas
+              + draw call. We previously mounted 8-12 layers (one per
+              feature). Now there are 4 grouped layers:
+
+                Base    — map image + grid (static, listening=false)
+                Tokens  — interactive token sprites + movement range
+                Overlays — fog + lighting darkness masks (listening=false)
+                Tools   — measure / walls / zones / drawings / FX / spell anims
+
+              Each former Layer component now returns a fragment or
+              Group; the per-shape `listening={false}` flags inside
+              still gate pointer events correctly because Konva walks
+              the topmost listening shape, not the topmost listening
+              layer.
+            */}
             <Layer listening={false}>
+              <BackgroundLayer
+                imageUrl={currentMap.imageUrl}
+                width={currentMap.width}
+                height={currentMap.height}
+              />
+              <GridLayer
+                mapWidth={currentMap.width}
+                mapHeight={currentMap.height}
+                gridSize={currentMap.gridSize}
+                gridOpacity={gridOpacity ?? 0.15}
+                viewport={stageProps}
+                stageWidth={dimensions.width}
+                stageHeight={dimensions.height}
+              />
+            </Layer>
+
+            <Layer>
+              <TokenLayer />
+              {isMyTurn && <MovementRangeLayer />}
+            </Layer>
+
+            <Layer listening={false}>
+              <FogLayer
+                mapWidth={currentMap.width}
+                mapHeight={currentMap.height}
+              />
+              <LightingLayer
+                mapWidth={currentMap.width}
+                mapHeight={currentMap.height}
+              />
+            </Layer>
+
+            {/* Tools layer — measure, walls, zones, spell-target template,
+                drawings, and spell animations. Drawings rendered above
+                tokens so annotations and arrows are never occluded.
+                Spell animations rendered last so casts always pop. */}
+            <Layer>
+              <MeasureWallLayer />
+              {isDM && activeTool === 'wall' && (
+                <WallDrawLayer gridSize={currentMap.gridSize} />
+              )}
+              {isDM && <ZoneLayer />}
+              {targetingSpell && <EffectLayer />}
+              <DrawingLayer />
               <SpellAnimationLayer />
             </Layer>
           </>

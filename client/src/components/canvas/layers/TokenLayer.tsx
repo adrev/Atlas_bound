@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, useMemo } from 'react';
-import { Layer, Group, Circle, Rect, Text, Ring, Shape, Line, Arrow } from 'react-konva';
+import { Group, Circle, Rect, Text, Ring, Shape, Line, Arrow } from 'react-konva';
 import type { Token, TokenAura } from '@dnd-vtt/shared';
 import { useMapStore } from '../../../stores/useMapStore';
 import { useCombatStore } from '../../../stores/useCombatStore';
@@ -992,7 +992,7 @@ export function TokenLayer() {
   }, [visibleTokens, isDM, enableFog, userId, gridSize]);
 
   return (
-    <Layer>
+    <>
       {tokenList.map((token) => (
         <TokenSprite
           key={token.id}
@@ -1011,6 +1011,6 @@ export function TokenLayer() {
         stagedHeroes.map((hero) => (
           <StagedHeroGhost key={hero.characterId} hero={hero} gridSize={gridSize} />
         ))}
-    </Layer>
+    </>
   );
 }
