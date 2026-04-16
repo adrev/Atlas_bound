@@ -468,25 +468,36 @@ export function registerListeners(socket: Socket): () => void {
   });
 
   // --- Drawings ---
+  // Server now tags every broadcast with `mapId`; drop events for
+  // maps the local client isn't looking at so DM preview drawings
+  // can't corrupt the player ribbon's draw store (and vice-versa).
+  const currentMapId = () => useMapStore.getState().currentMap?.id;
+
   socket.on('drawing:created', (drawing) => {
+    if (drawing.mapId && drawing.mapId !== currentMapId()) return;
     useDrawStore.getState().addDrawing(drawing);
   });
 
-  socket.on('drawing:deleted', ({ drawingId }) => {
-    useDrawStore.getState().removeDrawing(drawingId);
+  socket.on('drawing:deleted', (payload: { drawingId: string; mapId?: string }) => {
+    if (payload.mapId && payload.mapId !== currentMapId()) return;
+    useDrawStore.getState().removeDrawing(payload.drawingId);
   });
 
-  socket.on('drawing:cleared', ({ scope, userId }) => {
+  socket.on('drawing:cleared', (payload: { scope: 'all' | 'mine'; userId?: string; mapId?: string }) => {
+    if (payload.mapId && payload.mapId !== currentMapId()) return;
     const currentUserId = useSessionStore.getState().userId ?? undefined;
-    useDrawStore.getState().clearAllLocal(scope, userId, currentUserId);
+    useDrawStore.getState().clearAllLocal(payload.scope, payload.userId, currentUserId);
   });
 
   socket.on('drawing:streamed', (payload) => {
+    const p = payload as typeof payload & { mapId?: string };
+    if (p.mapId && p.mapId !== currentMapId()) return;
     useDrawStore.getState().setPreview(payload);
   });
 
-  socket.on('drawing:stream-end', ({ tempId }) => {
-    useDrawStore.getState().clearPreview(tempId);
+  socket.on('drawing:stream-end', (payload: { tempId: string; mapId?: string }) => {
+    if (payload.mapId && payload.mapId !== currentMapId()) return;
+    useDrawStore.getState().clearPreview(payload.tempId);
   });
 
   // --- Handouts ---

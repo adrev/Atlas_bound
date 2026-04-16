@@ -2,7 +2,7 @@ import type { Server, Socket } from 'socket.io';
 import type { Drawing, DrawingVisibility } from '@dnd-vtt/shared';
 import pool from '../db/connection.js';
 import {
-  getPlayerBySocketId, resolveViewingMapId,
+  getPlayerBySocketId, resolveViewingMapId, socketsOnMap,
   type RoomState, type RoomPlayer,
 } from '../utils/roomState.js';
 import {
@@ -26,9 +26,19 @@ function allowStreamEvent(socketId: string): boolean {
   return true;
 }
 
-function socketsForVisibility(room: RoomState, visibility: DrawingVisibility, creatorUserId: string): string[] {
+function socketsForVisibility(
+  room: RoomState,
+  visibility: DrawingVisibility,
+  creatorUserId: string,
+  mapId: string,
+): string[] {
+  // Map-scope first so drawings on a DM preview map don't reach
+  // clients on the player ribbon, and vice-versa. socketsOnMap
+  // already checks dmViewingMap / playerMapId per client.
+  const onMap = new Set(socketsOnMap(room, mapId));
   const out: string[] = [];
   for (const player of room.players.values()) {
+    if (!onMap.has(player.socketId)) continue;
     if (visibility === 'shared') { out.push(player.socketId); }
     else if (visibility === 'dm-only') { if (player.role === 'dm') out.push(player.socketId); }
     else { if (player.userId === creatorUserId || player.role === 'dm') out.push(player.socketId); }
@@ -51,7 +61,7 @@ function rowToDrawing(row: Record<string, unknown>): Drawing {
   };
 }
 
-export function loadDrawingsForMap(mapId: string): Drawing[] {
+export function loadDrawingsForMap(_mapId: string): Drawing[] {
   // This is called synchronously in many places. We need a sync wrapper.
   // Since pg is async-only, we cache drawings in memory via the room state.
   // For initial load, the caller should use loadDrawingsForMapAsync instead.
@@ -119,7 +129,7 @@ export function registerDrawingEvents(io: Server, socket: Socket): void {
       }
     }
 
-    const recipients = socketsForVisibility(ctx.room, visibility, creatorUserId);
+    const recipients = socketsForVisibility(ctx.room, visibility, creatorUserId, mapId);
     for (const sid of recipients) { io.to(sid).emit('drawing:created', drawing); }
   }));
 
@@ -143,8 +153,8 @@ export function registerDrawingEvents(io: Server, socket: Socket): void {
       catch (err) { console.warn('[drawing:delete] DB delete failed:', err); }
     }
 
-    const recipients = socketsForVisibility(ctx.room, drawing.visibility, drawing.creatorUserId);
-    for (const sid of recipients) { io.to(sid).emit('drawing:deleted', { drawingId: drawing.id }); }
+    const recipients = socketsForVisibility(ctx.room, drawing.visibility, drawing.creatorUserId, drawing.mapId);
+    for (const sid of recipients) { io.to(sid).emit('drawing:deleted', { drawingId: drawing.id, mapId: drawing.mapId }); }
   }));
 
   socket.on('drawing:clear-all', safeHandler(socket, async (data) => {
@@ -162,20 +172,28 @@ export function registerDrawingEvents(io: Server, socket: Socket): void {
     if (scope === 'all' && !isDM) return;
     const userId = ctx.player.userId;
 
+    // Broadcast only to sockets currently rendering this map; a DM
+    // wiping drawings on a preview map shouldn't flash-clear the
+    // player ribbon.
+    const mapRecipients = socketsOnMap(ctx.room, mapId);
     if (scope === 'all') {
       for (const [id, d] of ctx.room.drawings) {
         if (d.mapId === mapId) ctx.room.drawings.delete(id);
       }
       try { await pool.query('DELETE FROM drawings WHERE map_id = $1', [mapId]); }
       catch (err) { console.warn('[drawing:clear-all] DB wipe failed:', err); }
-      io.to(ctx.room.sessionId).emit('drawing:cleared', { scope: 'all' });
+      for (const sid of mapRecipients) {
+        io.to(sid).emit('drawing:cleared', { scope: 'all', mapId });
+      }
     } else {
       for (const [id, d] of ctx.room.drawings) {
         if (d.mapId === mapId && d.creatorUserId === userId) ctx.room.drawings.delete(id);
       }
       try { await pool.query('DELETE FROM drawings WHERE map_id = $1 AND creator_user_id = $2', [mapId, userId]); }
       catch (err) { console.warn('[drawing:clear-all mine] DB wipe failed:', err); }
-      io.to(ctx.room.sessionId).emit('drawing:cleared', { scope: 'mine', userId });
+      for (const sid of mapRecipients) {
+        io.to(sid).emit('drawing:cleared', { scope: 'mine', userId, mapId });
+      }
     }
   }));
 
@@ -187,6 +205,9 @@ export function registerDrawingEvents(io: Server, socket: Socket): void {
     const ctx = getPlayerBySocketId(socket.id);
     if (!ctx) return;
 
+    const mapId = resolveViewingMapId(ctx.room, ctx.player.userId, ctx.player.role);
+    if (!mapId) return;
+
     const creatorUserId = ctx.player.userId;
     const isDM = ctx.player.role === 'dm';
     let visibility: DrawingVisibility = parsed.data.visibility;
@@ -195,10 +216,10 @@ export function registerDrawingEvents(io: Server, socket: Socket): void {
     const payload = {
       tempId: parsed.data.tempId, creatorUserId, kind: parsed.data.kind,
       visibility, color: parsed.data.color, strokeWidth: parsed.data.strokeWidth,
-      geometry: parsed.data.geometry,
+      geometry: parsed.data.geometry, mapId,
     };
 
-    const recipients = socketsForVisibility(ctx.room, visibility, creatorUserId);
+    const recipients = socketsForVisibility(ctx.room, visibility, creatorUserId, mapId);
     for (const sid of recipients) {
       if (sid === socket.id) continue;
       io.to(sid).emit('drawing:streamed', payload);
@@ -210,7 +231,13 @@ export function registerDrawingEvents(io: Server, socket: Socket): void {
     if (!parsed.success) return;
     const ctx = getPlayerBySocketId(socket.id);
     if (!ctx) return;
-    socket.to(ctx.room.sessionId).emit('drawing:stream-end', { tempId: parsed.data.tempId });
+    const mapId = resolveViewingMapId(ctx.room, ctx.player.userId, ctx.player.role);
+    if (!mapId) return;
+    // Map-scoped: only notify clients rendering the same map.
+    for (const sid of socketsOnMap(ctx.room, mapId)) {
+      if (sid === socket.id) continue;
+      io.to(sid).emit('drawing:stream-end', { tempId: parsed.data.tempId, mapId });
+    }
   }));
 
   socket.on('disconnect', () => { streamCounters.delete(socket.id); });

@@ -1,4 +1,4 @@
-import type { Token, Condition, Drawing } from '@dnd-vtt/shared';
+import type { Token, Drawing } from '@dnd-vtt/shared';
 import type { CombatState, ActionEconomy } from '@dnd-vtt/shared';
 
 export interface RoomPlayer {
@@ -40,6 +40,16 @@ export interface RoomState {
   roomCode: string;
   dmUserId: string;
   players: Map<string, RoomPlayer>;
+  /**
+   * All active sockets for each userId — populated by addPlayerToRoom
+   * and drained by removeSocketFromRoom. A user with two browser tabs
+   * has two entries in the inner set. This exists so an older tab
+   * disconnecting doesn't remove the user from the room entirely when
+   * their newer tab is still connected — the pre-fix behaviour was to
+   * look up the user's "primary" socketId and nuke presence the moment
+   * any of their tabs closed.
+   */
+  userSockets: Map<string, Set<string>>;
   gameMode: 'free-roam' | 'combat';
   /**
    * Active ready check state. Non-null while a DM-initiated ready
@@ -126,6 +136,7 @@ export function createRoom(
     roomCode,
     dmUserId,
     players: new Map(),
+    userSockets: new Map(),
     gameMode: 'free-roam',
     readyCheck: null,
     playerMapId: null,
@@ -158,31 +169,90 @@ export function addPlayerToRoom(
 ): void {
   const room = rooms.get(sessionId);
   if (!room) return;
+  // Union sockets: a second tab for the same user adds its socketId
+  // without evicting the first tab's entry.
+  const existingSockets = room.userSockets.get(player.userId) ?? new Set<string>();
+  existingSockets.add(player.socketId);
+  room.userSockets.set(player.userId, existingSockets);
+  // `players` stays keyed by userId. Its `socketId` is the "primary"
+  // addressed for targeted unicasts — we always pick the most-recently-
+  // added one so new tabs win (room-level broadcasts still reach every
+  // tab because each socket joined the socket.io room).
   room.players.set(player.userId, player);
   socketIndex.set(player.socketId, { sessionId, userId: player.userId });
 }
 
+/**
+ * Remove a SINGLE socket for a user. Called from the disconnect
+ * handler. If the user has other sockets still open (another tab),
+ * the user stays in the room; otherwise they're fully removed.
+ *
+ * Returns info about what actually happened so the caller knows
+ * whether to broadcast session:player-left.
+ */
+export function removeSocketFromRoom(
+  sessionId: string,
+  socketId: string,
+): { userId: string; userFullyLeft: boolean } | null {
+  const room = rooms.get(sessionId);
+  if (!room) return null;
+  const entry = socketIndex.get(socketId);
+  if (!entry || entry.sessionId !== sessionId) return null;
+  const { userId } = entry;
+  socketIndex.delete(socketId);
+
+  // Clean up per-socket rate-limit counters.
+  for (const [key] of _rateLimitCounters) {
+    if (key.startsWith(socketId + ':')) _rateLimitCounters.delete(key);
+  }
+
+  const sockets = room.userSockets.get(userId);
+  if (sockets) {
+    sockets.delete(socketId);
+    if (sockets.size > 0) {
+      // Another tab is still connected; keep presence. Repoint the
+      // "primary" socketId on the RoomPlayer at any remaining tab so
+      // future unicasts still land.
+      const stillOpen = sockets.values().next().value;
+      const player = room.players.get(userId);
+      if (player && stillOpen) player.socketId = stillOpen;
+      return { userId, userFullyLeft: false };
+    }
+    room.userSockets.delete(userId);
+  }
+
+  room.players.delete(userId);
+  if (room.players.size === 0) {
+    rooms.delete(sessionId);
+    roomCodeIndex.delete(room.roomCode);
+  }
+  return { userId, userFullyLeft: true };
+}
+
+/**
+ * Fully remove a user from a room regardless of how many sockets
+ * they have open. Used for kick/leave where the server really does
+ * want the user gone. Individual disconnects should use
+ * `removeSocketFromRoom` so other tabs survive.
+ */
 export function removePlayerFromRoom(
   sessionId: string,
   userId: string,
 ): void {
   const room = rooms.get(sessionId);
   if (!room) return;
+  const sockets = room.userSockets.get(userId) ?? new Set<string>();
   const player = room.players.get(userId);
-  if (player) {
-    const socketId = player.socketId;
-    socketIndex.delete(socketId);
-
-    // Clean up rate limit counters for this socket
+  if (player) sockets.add(player.socketId);
+  for (const sid of sockets) {
+    socketIndex.delete(sid);
     for (const [key] of _rateLimitCounters) {
-      if (key.startsWith(socketId + ':')) {
-        _rateLimitCounters.delete(key);
-      }
+      if (key.startsWith(sid + ':')) _rateLimitCounters.delete(key);
     }
   }
   room.players.delete(userId);
+  room.userSockets.delete(userId);
 
-  // If room is empty, clean up
   if (room.players.size === 0) {
     rooms.delete(sessionId);
     roomCodeIndex.delete(room.roomCode);
@@ -318,6 +388,25 @@ export function socketsOnMap(room: RoomState, mapId: string): string[] {
     } else {
       // Player
       if (room.playerMapId === mapId) out.push(player.socketId);
+    }
+  }
+  return out;
+}
+
+/**
+ * DM-only variant of `socketsOnMap`. Use for broadcasts that leak DM
+ * planning data (encounter zones, prep notes, hidden tokens) so
+ * players never even receive the payload.
+ */
+export function dmSocketsOnMap(room: RoomState, mapId: string): string[] {
+  const out: string[] = [];
+  for (const player of room.players.values()) {
+    if (player.role !== 'dm') continue;
+    const preview = room.dmViewingMap.get(player.userId);
+    if (preview) {
+      if (preview === mapId) out.push(player.socketId);
+    } else if (room.playerMapId === mapId) {
+      out.push(player.socketId);
     }
   }
   return out;

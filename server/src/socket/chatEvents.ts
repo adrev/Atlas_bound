@@ -44,6 +44,18 @@ export function registerChatEvents(io: Server, socket: Socket): void {
     if (!ctx) return;
 
     const { targetUserId, content } = parsed.data;
+
+    // Authorize target: must be an actual member of this session
+    // (anyone in session_players, not just currently-connected). Without
+    // this, a malicious client could whisper to any UUID and the message
+    // would be persisted even though no one in the session will ever see
+    // it legitimately. Persisting spoof whispers also bloats chat_messages.
+    const { rows: memberRows } = await pool.query(
+      'SELECT 1 FROM session_players WHERE session_id = $1 AND user_id = $2',
+      [ctx.room.sessionId, targetUserId],
+    );
+    if (memberRows.length === 0) return;
+
     const messageId = uuidv4();
     const now = new Date().toISOString();
 

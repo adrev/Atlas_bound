@@ -74,10 +74,52 @@ export function registerCharacterEvents(io: Server, socket: Socket): void {
     const existing = existingRows[0];
 
     const charUserId = existing.user_id as string;
+    const isDM = playerIsDM(ctx);
+
     if (charUserId === 'npc') {
-      if (!playerIsDM(ctx)) return;
+      // NPCs are DM-only. Still require the NPC to be present IN THIS
+      // session — otherwise a DM in room A could mutate NPCs owned by
+      // room B just by guessing UUIDs.
+      if (!isDM) return;
+      const { rows: sessionTokenRows } = await pool.query(
+        `SELECT 1 FROM tokens t
+           JOIN maps m ON m.id = t.map_id
+          WHERE t.character_id = $1 AND m.session_id = $2
+          LIMIT 1`,
+        [characterId, ctx.room.sessionId],
+      );
+      if (sessionTokenRows.length === 0) return;
     } else {
-      if (charUserId !== ctx.player.userId && !playerIsDM(ctx)) return;
+      // PCs: either owner-writes-their-own, OR a DM of THIS session
+      // writing a PC that's actually linked to this session (via
+      // session_players.character_id) or has a token on one of this
+      // session's maps. Raw "DM in any session" is not enough — that
+      // would let a DM in session A mutate a PC whose only link is
+      // to session B.
+      if (charUserId === ctx.player.userId) {
+        // owner — allow
+      } else if (isDM) {
+        const { rows: linkRows } = await pool.query(
+          `SELECT 1 FROM session_players
+            WHERE session_id = $1 AND character_id = $2
+            LIMIT 1`,
+          [ctx.room.sessionId, characterId],
+        );
+        if (linkRows.length === 0) {
+          // Fall back: is there a token for this character on a map
+          // in this session?
+          const { rows: tokRows } = await pool.query(
+            `SELECT 1 FROM tokens t
+               JOIN maps m ON m.id = t.map_id
+              WHERE t.character_id = $1 AND m.session_id = $2
+              LIMIT 1`,
+            [characterId, ctx.room.sessionId],
+          );
+          if (tokRows.length === 0) return;
+        }
+      } else {
+        return;
+      }
     }
 
     const setClauses: string[] = [];

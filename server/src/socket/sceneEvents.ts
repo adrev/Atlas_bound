@@ -96,9 +96,15 @@ export function registerSceneEvents(io: Server, socket: Socket): void {
     const mapRow = mapRows[0] as Record<string, unknown> | undefined;
     if (!mapRow) { socket.emit('session:error', { message: 'Map not found in this session' }); return; }
 
+    // Preview is per-DM and in-memory only. Previously we also wrote
+    // `sessions.current_map_id` here, which was the single
+    // player-facing "what map should I load" pointer used at
+    // session:join. That meant a reconnecting player would hydrate
+    // onto the DM's prep map, breaking isolation and leaking NPC
+    // placements on a map the party hadn't arrived at yet.
+    // The DM's preview is now kept purely in `room.dmViewingMap`;
+    // `player_map_id` stays the source of truth for player hydration.
     ctx.room.dmViewingMap.set(ctx.player.userId, mapId);
-    try { await pool.query('UPDATE sessions SET current_map_id = $1 WHERE id = $2', [mapId, ctx.room.sessionId]); }
-    catch (err) { console.warn('[scene:preview] current_map_id update failed:', err); }
 
     const { rows: tokenRows } = await pool.query('SELECT * FROM tokens WHERE map_id = $1', [mapId]);
     const tokens: Token[] = tokenRows.map(t => ({

@@ -5,12 +5,13 @@ import { v4 as uuidv4 } from 'uuid';
 import pool from '../db/connection.js';
 import {
   createRoom, getRoom,
-  addPlayerToRoom, removePlayerFromRoom, getPlayerBySocketId,
+  addPlayerToRoom, removePlayerFromRoom, removeSocketFromRoom, getPlayerBySocketId,
   type RoomPlayer,
 } from '../utils/roomState.js';
 import { sessionJoinSchema, sessionKickSchema, sessionUpdateSettingsSchema, sessionViewingSchema, musicChangeSchema, musicActionSchema, handoutSchema } from '../utils/validation.js';
 import { safeHandler } from '../utils/socketHelpers.js';
 import { dbRowToCharacter } from '../utils/characterMapper.js';
+import { shouldDeliverChatRow } from '../utils/chatHistoryFilter.js';
 
 export function registerSessionEvents(io: Server, socket: Socket): void {
 
@@ -137,12 +138,21 @@ export function registerSessionEvents(io: Server, socket: Socket): void {
       role: isDM ? 'dm' : 'player', characterId: currentPlayer.character_id, connected: true,
     });
 
-    // Auto-load current map
-    if (room.currentMapId) {
-      const { rows: mapRows } = await pool.query('SELECT * FROM maps WHERE id = $1', [room.currentMapId]);
+    // Auto-load map on join.
+    //   Players → always the ribbon (player_map_id). No more hydrating
+    //               onto a DM's prep/preview map.
+    //   DM     → their last preview map if they had one in-memory,
+    //               else the ribbon. DM preview is per-DM, never
+    //               persisted to sessions.current_map_id any more.
+    const hydrationMapId = isDM
+      ? (room.dmViewingMap.get(userId) ?? room.playerMapId ?? room.currentMapId)
+      : room.playerMapId;
+
+    if (hydrationMapId) {
+      const { rows: mapRows } = await pool.query('SELECT * FROM maps WHERE id = $1', [hydrationMapId]);
       const mapRow = mapRows[0] as Record<string, unknown> | undefined;
       if (mapRow) {
-        const { rows: tokenRows } = await pool.query('SELECT * FROM tokens WHERE map_id = $1', [room.currentMapId]);
+        const { rows: tokenRows } = await pool.query('SELECT * FROM tokens WHERE map_id = $1', [hydrationMapId]);
         const tokens = tokenRows.map((t: Record<string, unknown>) => ({
           id: t.id as string, mapId: t.map_id as string,
           characterId: t.character_id as string | null, name: t.name as string,
@@ -160,7 +170,7 @@ export function registerSessionEvents(io: Server, socket: Socket): void {
         }
 
         const { loadDrawingsForMapAsync, filterDrawingsForPlayer } = await import('./drawingEvents.js');
-        const allDrawings = await loadDrawingsForMapAsync(room.currentMapId);
+        const allDrawings = await loadDrawingsForMapAsync(hydrationMapId);
         if (room.drawings.size === 0) {
           for (const d of allDrawings) room.drawings.set(d.id, d);
         }
@@ -172,7 +182,7 @@ export function registerSessionEvents(io: Server, socket: Socket): void {
         // Zones are DM planning data \u2014 only load them for DM rejoins
         // so player reconnects don't receive zone coordinates/names.
         const { loadZonesForMap } = await import('./mapEvents.js');
-        const zones = isDM ? await loadZonesForMap(room.currentMapId) : [];
+        const zones = isDM ? await loadZonesForMap(hydrationMapId) : [];
         socket.emit('map:loaded', {
           map: {
             id: mapRow.id as string, name: mapRow.name as string,
@@ -241,16 +251,24 @@ export function registerSessionEvents(io: Server, socket: Socket): void {
       }
     }
 
-    // Send chat history
+    // Send chat history — filter per-user so whispers stay private and
+    // DM-only hidden rolls don't leak to players. Without this filter
+    // every session member who joined after a whisper was sent would
+    // receive the full private message history on reconnect.
     const { rows: chatHistory } = await pool.query(`
       SELECT * FROM chat_messages WHERE session_id = $1 ORDER BY created_at DESC LIMIT 100
     `, [session.id]);
 
     socket.emit('chat:history', chatHistory.reverse()
-      .filter(m => {
-        if ((m.hidden as number) === 1 && !isDM) return false;
-        return true;
-      })
+      .filter((m) => shouldDeliverChatRow(
+        {
+          type: m.type as string,
+          user_id: m.user_id as string,
+          whisper_to: m.whisper_to as string | null,
+          hidden: (m.hidden as number | boolean | null),
+        },
+        { userId, isDM },
+      ))
       .map(m => ({
         id: m.id, sessionId: m.session_id, userId: m.user_id, displayName: m.display_name,
         type: m.type, content: m.content, characterName: m.character_name,
@@ -399,10 +417,16 @@ export function registerSessionEvents(io: Server, socket: Socket): void {
   socket.on('disconnect', () => { handleDisconnect(io, socket); });
 }
 
-function handleDisconnect(io: Server, socket: Socket): void {
+function handleDisconnect(_io: Server, socket: Socket): void {
   const ctx = getPlayerBySocketId(socket.id);
   if (!ctx) return;
-  removePlayerFromRoom(ctx.room.sessionId, ctx.player.userId);
-  socket.to(ctx.room.sessionId).emit('session:player-left', { userId: ctx.player.userId });
+  // Multi-tab-aware: only broadcast session:player-left when this was
+  // the LAST socket for the user. An old tab closing while a newer
+  // one is still active used to yank the user's presence + stop their
+  // live socket events, even though they were still in the app.
+  const result = removeSocketFromRoom(ctx.room.sessionId, socket.id);
+  if (result?.userFullyLeft) {
+    socket.to(ctx.room.sessionId).emit('session:player-left', { userId: result.userId });
+  }
   socket.leave(ctx.room.sessionId);
 }

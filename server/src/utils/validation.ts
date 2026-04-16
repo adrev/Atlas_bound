@@ -626,6 +626,36 @@ export const createLootSchema = z.object({
 });
 
 // --- Custom content schemas ---
+// Action/ability shape matches what CreateMonsterForm sends. Keep loose
+// on the inside (descriptions can be long) and capped on the outside
+// (can't flood the DB with a 10k-item action list).
+const customActionEntrySchema = z.object({
+  name: z.string().min(1).max(200),
+  desc: z.string().max(10000).optional(),
+  attackBonus: z.number().int().min(-20).max(30).optional(),
+  damageDice: z.string().max(50).optional(),
+  damageType: z.string().max(50).optional(),
+}).passthrough();
+
+// Standard 5e ability score block. Individual scores can legitimately
+// reach 30 for artifacts and epic-tier monsters.
+const customAbilityScoresSchema = z.object({
+  str: z.number().int().min(0).max(30).optional(),
+  dex: z.number().int().min(0).max(30).optional(),
+  con: z.number().int().min(0).max(30).optional(),
+  int: z.number().int().min(0).max(30).optional(),
+  wis: z.number().int().min(0).max(30).optional(),
+  cha: z.number().int().min(0).max(30).optional(),
+}).passthrough();
+
+// Speed block: keys like walk/fly/climb/swim/burrow. Stringly-typed
+// values ("30 ft.") also accepted because some DDB-imported monsters
+// ship them that way.
+const customSpeedSchema = z.record(z.string().max(20), z.union([
+  z.number().min(0).max(1000),
+  z.string().max(50),
+]));
+
 export const createCustomMonsterSchema = z.object({
   sessionId: z.string().min(1),
   name: z.string().min(1).max(200),
@@ -635,13 +665,15 @@ export const createCustomMonsterSchema = z.object({
   armorClass: z.number().int().min(0).max(99).optional(),
   hitPoints: z.number().int().min(0).max(99999).optional(),
   hitDice: z.string().max(50).optional(),
-  speed: z.string().max(200).optional(),
-  abilityScores: z.string().max(500).optional(),
+  // CreateMonsterForm sends an object (`{walk:30, fly:60}`); legacy
+  // imports may send the raw string. Accept both.
+  speed: z.union([z.string().max(200), customSpeedSchema]).optional(),
+  abilityScores: z.union([z.string().max(500), customAbilityScoresSchema]).optional(),
   challengeRating: z.string().max(20).optional(),
   crNumeric: z.number().min(0).max(30).optional(),
-  actions: z.string().max(10000).optional(),
-  specialAbilities: z.string().max(10000).optional(),
-  legendaryActions: z.string().max(10000).optional(),
+  actions: z.union([z.string().max(10000), z.array(customActionEntrySchema).max(40)]).optional(),
+  specialAbilities: z.union([z.string().max(10000), z.array(customActionEntrySchema).max(40)]).optional(),
+  legendaryActions: z.union([z.string().max(10000), z.array(customActionEntrySchema).max(40)]).optional(),
   description: z.string().max(5000).optional(),
   imageUrl: safeImageUrlSchema.nullable().optional(),
   senses: z.string().max(500).optional(),

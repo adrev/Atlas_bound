@@ -2,6 +2,18 @@ import pool from './connection.js';
 
 export async function initDatabase(): Promise<void> {
   await pool.query(`
+    -- users FIRST — session_bans below references it, and so do
+    -- several other tables. A fresh / cold Cloud SQL restore would
+    -- fail this block entirely if users doesn't exist by the time
+    -- session_bans' foreign key is declared.
+    CREATE TABLE IF NOT EXISTS users (
+      id TEXT PRIMARY KEY,
+      display_name TEXT NOT NULL,
+      avatar_url TEXT,
+      auth_user_id TEXT,
+      created_at TEXT NOT NULL DEFAULT (NOW()::text)
+    );
+
     CREATE TABLE IF NOT EXISTS sessions (
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
@@ -39,14 +51,6 @@ export async function initDatabase(): Promise<void> {
       PRIMARY KEY (session_id, user_id)
     );
     CREATE INDEX IF NOT EXISTS idx_session_bans_session ON session_bans(session_id);
-
-    CREATE TABLE IF NOT EXISTS users (
-      id TEXT PRIMARY KEY,
-      display_name TEXT NOT NULL,
-      avatar_url TEXT,
-      auth_user_id TEXT,
-      created_at TEXT NOT NULL DEFAULT (NOW()::text)
-    );
 
     CREATE TABLE IF NOT EXISTS session_players (
       session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
@@ -392,7 +396,7 @@ export async function initDatabase(): Promise<void> {
 
     CREATE TABLE IF NOT EXISTS encounter_presets (
       id TEXT PRIMARY KEY,
-      session_id TEXT NOT NULL,
+      session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
       name TEXT NOT NULL,
       creatures TEXT NOT NULL DEFAULT '[]',
       created_at TEXT DEFAULT (NOW()::text)
@@ -400,9 +404,32 @@ export async function initDatabase(): Promise<void> {
 
     CREATE INDEX IF NOT EXISTS idx_encounter_presets_session ON encounter_presets(session_id);
 
+    -- Back-fill cascade for DBs created before the FK was declared.
+    -- DROP + ADD is the only portable way to change a FK in Postgres.
+    -- Guarded with a DO $$ so re-running doesn't fail on either side.
+    DO $$
+    BEGIN
+      IF EXISTS (
+        SELECT 1 FROM information_schema.table_constraints
+         WHERE table_name = 'encounter_presets'
+           AND constraint_name = 'encounter_presets_session_id_fkey'
+      ) THEN
+        ALTER TABLE encounter_presets DROP CONSTRAINT encounter_presets_session_id_fkey;
+      END IF;
+      IF NOT EXISTS (
+        SELECT 1 FROM information_schema.table_constraints
+         WHERE table_name = 'encounter_presets'
+           AND constraint_name = 'encounter_presets_session_cascade_fk'
+      ) THEN
+        ALTER TABLE encounter_presets
+          ADD CONSTRAINT encounter_presets_session_cascade_fk
+          FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE;
+      END IF;
+    END $$;
+
     CREATE TABLE IF NOT EXISTS session_notes (
       id TEXT PRIMARY KEY,
-      session_id TEXT NOT NULL,
+      session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
       title TEXT NOT NULL DEFAULT 'Untitled',
       content TEXT NOT NULL DEFAULT '',
       category TEXT NOT NULL DEFAULT 'general',
@@ -413,6 +440,26 @@ export async function initDatabase(): Promise<void> {
     );
 
     CREATE INDEX IF NOT EXISTS idx_session_notes_session ON session_notes(session_id);
+
+    DO $$
+    BEGIN
+      IF EXISTS (
+        SELECT 1 FROM information_schema.table_constraints
+         WHERE table_name = 'session_notes'
+           AND constraint_name = 'session_notes_session_id_fkey'
+      ) THEN
+        ALTER TABLE session_notes DROP CONSTRAINT session_notes_session_id_fkey;
+      END IF;
+      IF NOT EXISTS (
+        SELECT 1 FROM information_schema.table_constraints
+         WHERE table_name = 'session_notes'
+           AND constraint_name = 'session_notes_session_cascade_fk'
+      ) THEN
+        ALTER TABLE session_notes
+          ADD CONSTRAINT session_notes_session_cascade_fk
+          FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE;
+      END IF;
+    END $$;
 
     CREATE TABLE IF NOT EXISTS map_zones (
       id TEXT PRIMARY KEY,
