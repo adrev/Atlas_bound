@@ -31,7 +31,7 @@ const CLASS_PRIMARY_ABILITY: Record<string, AbilityName> = {
 export function computeSpellSaveDC(character: Character | null | undefined): number {
   if (!character) return 10;
 
-  const explicit = (character as any).spellcastingAbility as string | undefined;
+  const explicit = (character as { spellcastingAbility?: string }).spellcastingAbility;
   let ability: AbilityName | null = null;
 
   if (explicit && ['str', 'dex', 'con', 'int', 'wis', 'cha'].includes(explicit)) {
@@ -65,7 +65,7 @@ export function computeSpellSaveDC(character: Character | null | undefined): num
 export function computeSpellAttackBonus(character: Character | null | undefined): number {
   if (!character) return 0;
 
-  const explicit = (character as any).spellcastingAbility as string | undefined;
+  const explicit = (character as { spellcastingAbility?: string }).spellcastingAbility;
   let ability: AbilityName | null = null;
 
   if (explicit && ['str', 'dex', 'con', 'int', 'wis', 'cha'].includes(explicit)) {
@@ -101,7 +101,7 @@ export function computeSpellAttackBonus(character: Character | null | undefined)
  */
 export function effectiveSpellSaveDC(character: Character | null | undefined): number {
   if (!character) return 10;
-  const stored = (character as any).spellSaveDC as number | undefined;
+  const stored = (character as { spellSaveDC?: number }).spellSaveDC;
   // If stored is null/undefined or looks like a default placeholder, recompute
   if (stored == null || stored <= 10) {
     const computed = computeSpellSaveDC(character);
@@ -115,7 +115,7 @@ export function effectiveSpellSaveDC(character: Character | null | undefined): n
  */
 export function effectiveSpellAttackBonus(character: Character | null | undefined): number {
   if (!character) return 0;
-  const stored = (character as any).spellAttackBonus as number | undefined;
+  const stored = (character as { spellAttackBonus?: number }).spellAttackBonus;
   if (stored == null || stored === 0) {
     return computeSpellAttackBonus(character);
   }

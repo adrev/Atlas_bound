@@ -4,6 +4,7 @@ import pool from '../db/connection.js';
 import { mapUpload, validateAndSaveUpload } from './uploads.js';
 import { createMapSchema } from '../utils/validation.js';
 import { getAuthUserId, assertSessionDM, assertSessionMember } from '../utils/authorization.js';
+import { safeParseJSON } from '../utils/safeJson.js';
 
 const router = Router();
 
@@ -56,8 +57,8 @@ router.post(
           gridType: existing.grid_type,
           gridOffsetX: existing.grid_offset_x,
           gridOffsetY: existing.grid_offset_y,
-          walls: JSON.parse(existing.walls as string),
-          fogState: JSON.parse(existing.fog_state as string),
+          walls: safeParseJSON<unknown[]>(existing.walls, [], 'maps.walls'),
+          fogState: safeParseJSON<unknown[]>(existing.fog_state, [], 'maps.fog_state'),
           createdAt: existing.created_at,
           reused: true,
         });
@@ -97,8 +98,8 @@ router.post(
       gridType: map.grid_type,
       gridOffsetX: map.grid_offset_x,
       gridOffsetY: map.grid_offset_y,
-      walls: JSON.parse(map.walls as string),
-      fogState: JSON.parse(map.fog_state as string),
+      walls: safeParseJSON<unknown[]>(map.walls, [], 'maps.walls'),
+      fogState: safeParseJSON<unknown[]>(map.fog_state, [], 'maps.fog_state'),
       createdAt: map.created_at,
       reused: false,
     });
@@ -214,8 +215,8 @@ router.get('/maps/:id', async (req: Request, res: Response) => {
     gridType: map.grid_type,
     gridOffsetX: map.grid_offset_x,
     gridOffsetY: map.grid_offset_y,
-    walls: JSON.parse(map.walls as string),
-    fogState: JSON.parse(map.fog_state as string),
+    walls: safeParseJSON<unknown[]>(map.walls, [], 'maps.walls'),
+    fogState: safeParseJSON<unknown[]>(map.fog_state, [], 'maps.fog_state'),
     createdAt: map.created_at,
     tokens: tokens.map(t => ({
       id: t.id,
@@ -233,7 +234,7 @@ router.get('/maps/:id', async (req: Request, res: Response) => {
       lightRadius: t.light_radius,
       lightDimRadius: t.light_dim_radius,
       lightColor: t.light_color,
-      conditions: JSON.parse(t.conditions as string),
+      conditions: safeParseJSON<string[]>(t.conditions, [], 'tokens.conditions'),
       ownerUserId: t.owner_user_id,
       createdAt: t.created_at,
     })),

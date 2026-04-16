@@ -10,6 +10,7 @@ import {
   drawingStreamSchema, drawingStreamEndSchema,
 } from '../utils/validation.js';
 import { safeHandler } from '../utils/socketHelpers.js';
+import { safeParseJSON } from '../utils/safeJson.js';
 
 const STREAM_EVENTS_PER_SECOND = 60;
 const streamCounters = new Map<string, { count: number; windowStart: number }>();
@@ -54,7 +55,7 @@ function rowToDrawing(row: Record<string, unknown>): Drawing {
     kind: row.kind as Drawing['kind'],
     visibility: row.visibility as DrawingVisibility,
     color: row.color as string, strokeWidth: row.stroke_width as number,
-    geometry: JSON.parse(row.geometry as string),
+    geometry: safeParseJSON<Drawing['geometry']>(row.geometry, { points: [] } as Drawing['geometry'], 'drawings.geometry'),
     gridSnapped: Boolean(row.grid_snapped),
     createdAt: row.created_at as number,
     fadeAfterMs: row.fade_after_ms as number | null,

@@ -83,7 +83,9 @@ export async function assertSessionMember(
 }
 
 /**
- * Assert the user is the DM of the session.
+ * Assert the user is *a* DM of the session. This passes for both the
+ * owner and any co-DM \u2014 use it to gate kick/ban/settings operations
+ * where co-DMs have full authority.
  */
 export async function assertSessionDM(
   sessionId: string,
@@ -98,4 +100,41 @@ export async function assertSessionDM(
     err.status = 403;
     throw err;
   }
+}
+
+/**
+ * Assert the user is the *owner* \u2014 the original creator recorded in
+ * `sessions.dm_user_id`. Ownership-scoped actions (promote/demote,
+ * transfer, delete session) go through this gate so co-DMs can't
+ * reshuffle the hierarchy or hand the session away.
+ */
+export async function assertSessionOwner(
+  sessionId: string,
+  userId: string,
+): Promise<void> {
+  const { rows } = await pool.query(
+    'SELECT 1 FROM sessions WHERE id = $1 AND dm_user_id = $2',
+    [sessionId, userId],
+  );
+  if (rows.length === 0) {
+    const err = new Error('Only the session owner can perform this action') as Error & { status: number };
+    err.status = 403;
+    throw err;
+  }
+}
+
+/**
+ * True if the given user is the owner of this session. Use in code
+ * paths that need a boolean rather than a throwing assertion (e.g.
+ * deciding whether to show the Promote button in a payload).
+ */
+export async function isSessionOwner(
+  sessionId: string,
+  userId: string,
+): Promise<boolean> {
+  const { rows } = await pool.query(
+    'SELECT 1 FROM sessions WHERE id = $1 AND dm_user_id = $2',
+    [sessionId, userId],
+  );
+  return rows.length > 0;
 }

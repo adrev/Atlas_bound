@@ -50,6 +50,8 @@ export type {
 export { ToastHost, showToast, dismissToast, useToast } from './Toast';
 export type { ToastOptions, ToastVariant } from './Toast';
 
+export { DialogHost, askConfirm, askPrompt, showInfo } from './Dialog';
+
 export { Tabs } from './Tabs';
 export type { TabsProps, TabItem, TabsVariant } from './Tabs';
 

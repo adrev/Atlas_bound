@@ -2,12 +2,14 @@ import { useState, useEffect } from 'react';
 import { useSessionStore } from '../../stores/useSessionStore';
 import { useMapStore } from '../../stores/useMapStore';
 import { useCombatStore } from '../../stores/useCombatStore';
+import { useCharacterStore } from '../../stores/useCharacterStore';
 import { useDrawStore } from '../../stores/useDrawStore';
 import {
   emitPing, emitTokenAdd, emitStartCombat, emitEndCombat,
   emitDrawingClearAll,
 } from '../../socket/emitters';
 import { theme } from '../../styles/theme';
+import { askConfirm } from '../ui';
 
 const C = {
   bg: theme.bg.deep,
@@ -29,9 +31,19 @@ interface MenuState {
 export function MapContextMenu() {
   const [menu, setMenu] = useState<MenuState | null>(null);
   const isDM = useSessionStore((s) => s.isDM);
+  const userId = useSessionStore((s) => s.userId);
   const combatActive = useCombatStore((s) => s.active);
   const tokens = useMapStore((s) => s.tokens);
   const currentMap = useMapStore((s) => s.currentMap);
+  const myCharacter = useCharacterStore((s) => s.myCharacter);
+
+  // A linked character that isn't already on the map is the user's
+  // cue to drop themselves in. This is the only player-accessible
+  // placement path today \u2014 the DM's preview-mode staging only works
+  // when previewing a *different* map than the players.
+  const myHeroAlreadyOnMap = !!myCharacter
+    && Object.values(tokens).some((t) => t.characterId === myCharacter.id);
+  const canPlaceMyHero = !!currentMap && !!myCharacter && !myHeroAlreadyOnMap;
 
   useEffect(() => {
     const handler = (e: Event) => {
@@ -128,6 +140,35 @@ export function MapContextMenu() {
           close();
         }} />
 
+        {/* Place My Hero — available to anyone (DM or player) with a
+            linked character that isn't already on the map. This is the
+            primary path for dropping your own PC onto the board without
+            going through the DM preview-mode staging flow. */}
+        {canPlaceMyHero && (
+          <Item icon="🧍" label={`Place ${myCharacter!.name} Here`} onClick={() => {
+            if (!currentMap || !myCharacter) { close(); return; }
+            emitTokenAdd({
+              mapId: currentMap.id,
+              characterId: myCharacter.id,
+              name: myCharacter.name,
+              x: menu.mapX,
+              y: menu.mapY,
+              size: 1,
+              imageUrl: myCharacter.portraitUrl ?? null,
+              color: '#666',
+              layer: 'token',
+              visible: true,
+              hasLight: false,
+              lightRadius: (currentMap.gridSize ?? 70) * 4,
+              lightDimRadius: (currentMap.gridSize ?? 70) * 8,
+              lightColor: '#ffcc66',
+              conditions: [],
+              ownerUserId: userId,
+            });
+            close();
+          }} />
+        )}
+
         {isDM && (
           <>
             <div style={{ height: 1, background: C.border, margin: '2px 0' }} />
@@ -138,13 +179,21 @@ export function MapContextMenu() {
               close();
             }} />
 
+            {/* Encounter zones — drag a rectangle to define a spawn region */}
+            <Item icon="🎯" label="Draw Encounter Zone" onClick={() => {
+              useMapStore.getState().setTool('zone');
+              close();
+            }} />
+
             {/* Clear all drawings on the current map (DM only) */}
             <Item icon="🗑️" label="Clear All Drawings" onClick={() => {
-              // eslint-disable-next-line no-alert
-              if (confirm('Clear all drawings on this map? This cannot be undone.')) {
-                emitDrawingClearAll('all');
-              }
               close();
+              void askConfirm({
+                title: 'Clear all drawings',
+                message: 'Clear all drawings on this map? This cannot be undone.',
+                tone: 'danger',
+                confirmLabel: 'Clear',
+              }).then((ok) => { if (ok) emitDrawingClearAll('all'); });
             }} />
 
             {/* Quick place token */}
@@ -208,11 +257,28 @@ export function MapContextMenu() {
 
 function Item({ icon, label, onClick }: { icon: string; label: string; onClick: () => void }) {
   return (
-    <div onClick={onClick} style={{ padding: '7px 12px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8, fontSize: 12 }}
+    <button
+      type="button"
+      onClick={onClick}
       onMouseEnter={e => (e.currentTarget.style.background = C.bgHover)}
-      onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}>
-      <span style={{ fontSize: 13, width: 18, textAlign: 'center' }}>{icon}</span>
+      onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
+      style={{
+        padding: '7px 12px',
+        cursor: 'pointer',
+        display: 'flex',
+        alignItems: 'center',
+        gap: 8,
+        fontSize: 12,
+        width: '100%',
+        background: 'transparent',
+        border: 'none',
+        color: 'inherit',
+        textAlign: 'left' as const,
+        font: 'inherit',
+      }}
+    >
+      <span style={{ fontSize: 13, width: 18, textAlign: 'center' }} aria-hidden>{icon}</span>
       <span>{label}</span>
-    </div>
+    </button>
   );
 }

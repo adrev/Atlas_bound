@@ -10,8 +10,17 @@ describe('safeImageUrlSchema', () => {
     expect(safeImageUrlSchema.safeParse('/maps/forest.png').success).toBe(true);
   });
 
-  it('accepts data: image URI', () => {
-    expect(safeImageUrlSchema.safeParse('data:image/svg+xml,<svg></svg>').success).toBe(true);
+  it('accepts raster data: image URIs (PNG, JPEG, GIF, WebP, AVIF)', () => {
+    expect(safeImageUrlSchema.safeParse('data:image/png;base64,AAAA').success).toBe(true);
+    expect(safeImageUrlSchema.safeParse('data:image/jpeg;base64,AAAA').success).toBe(true);
+    expect(safeImageUrlSchema.safeParse('data:image/jpg;base64,AAAA').success).toBe(true);
+    expect(safeImageUrlSchema.safeParse('data:image/gif;base64,AAAA').success).toBe(true);
+    expect(safeImageUrlSchema.safeParse('data:image/webp;base64,AAAA').success).toBe(true);
+  });
+
+  it('rejects data:image/svg+xml (SVG can embed script) — hardening', () => {
+    expect(safeImageUrlSchema.safeParse('data:image/svg+xml,<svg></svg>').success).toBe(false);
+    expect(safeImageUrlSchema.safeParse('data:image/svg+xml;base64,PHN2Zy8+').success).toBe(false);
   });
 
   it('accepts https URL on our GCS bucket', () => {
@@ -25,6 +34,15 @@ describe('safeImageUrlSchema', () => {
 
   it('accepts https URL on DnDBeyond', () => {
     expect(safeImageUrlSchema.safeParse('https://www.dndbeyond.com/avatars/abc.png').success).toBe(true);
+  });
+
+  it('accepts the DDB proxy-image path (so imported PC portraits survive token-add validation)', () => {
+    const url = '/api/dndbeyond/proxy-image?url=' + encodeURIComponent('https://www.dndbeyond.com/avatars/abc.png');
+    expect(safeImageUrlSchema.safeParse(url).success).toBe(true);
+  });
+
+  it('rejects a non-DDB /api/ path (no accidental allowlist widening)', () => {
+    expect(safeImageUrlSchema.safeParse('/api/some-other-endpoint?evil=1').success).toBe(false);
   });
 
   it('rejects http (non-TLS) URL', () => {

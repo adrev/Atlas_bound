@@ -64,7 +64,12 @@ export interface RollModifiers {
   notes: string[];
 }
 
-const EMPTY_MODS: RollModifiers = {
+/**
+ * Default empty-modifier bundle. Kept around because call-sites may
+ * want to seed a `RollModifiers` before layering condition/feat logic
+ * on top \u2014 even though no current caller uses it directly.
+ */
+export const EMPTY_MODS: RollModifiers = {
   attackAdvantage: 'normal',
   saveAdvantage: {},
   checkAdvantage: {},
@@ -88,7 +93,7 @@ export function hasMagicResistance(character: unknown): boolean {
   const c = character as { features?: unknown; specialAbilities?: unknown };
 
   // Check the features array (PCs)
-  let features: any[] = [];
+  let features: Array<{ name?: string; description?: string; desc?: string }> = [];
   if (typeof c.features === 'string') {
     try { features = JSON.parse(c.features); } catch { /* ignore */ }
   } else if (Array.isArray(c.features)) {
@@ -103,7 +108,7 @@ export function hasMagicResistance(character: unknown): boolean {
   }
 
   // Check special abilities (creatures from compendium)
-  let specials: any[] = [];
+  let specials: Array<{ name?: string; desc?: string; description?: string }> = [];
   if (typeof c.specialAbilities === 'string') {
     try { specials = JSON.parse(c.specialAbilities); } catch { /* ignore */ }
   } else if (Array.isArray(c.specialAbilities)) {

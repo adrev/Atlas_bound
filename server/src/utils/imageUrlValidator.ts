@@ -37,7 +37,20 @@ export const safeImageUrlSchema = z
       if (!value) return true; // empty allowed — let caller use .optional()/.nullable()
       if (value.startsWith('/uploads/')) return true;
       if (value.startsWith('/maps/')) return true;
-      if (value.startsWith('data:image/')) return true;
+      // data:image URIs are allowed only for raster formats we know
+      // the browser renders without script execution. SVG in
+      // particular would let an attacker smuggle <script> into the
+      // token portrait pipeline — so even though we HAVE an inline
+      // SVG letter-avatar shipped by the client, those are
+      // regenerated at the server boundary, not persisted here.
+      if (/^data:image\/(png|jpe?g|gif|webp|avif);/i.test(value)) return true;
+      // DDB portraits are stored as `/api/dndbeyond/proxy-image?url=...`
+      // so the browser loads them through our origin (fixes CORS +
+      // keeps the user's IP from leaking to DDB). The proxy endpoint
+      // itself validates the target hostname, so allowing this prefix
+      // here doesn't widen the attack surface. Without it, tokens with
+      // a DDB-proxied portrait silently fail map:token-add validation.
+      if (value.startsWith('/api/dndbeyond/proxy-image?')) return true;
       try {
         const url = new URL(value);
         if (url.protocol !== 'https:') return false;

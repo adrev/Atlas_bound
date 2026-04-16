@@ -8,6 +8,7 @@ import { useSessionStore } from '../../stores/useSessionStore';
 import { emitDrawingClearAll } from '../../socket/emitters';
 import { theme } from '../../styles/theme';
 import { InfoTooltip } from '../ui/InfoTooltip';
+import { askConfirm } from '../ui';
 import type { DrawingVisibility } from '@dnd-vtt/shared';
 
 /**
@@ -108,12 +109,17 @@ export function DrawToolbar() {
 
   if (!isDrawMode) return null;
 
-  const handleClearAll = () => {
+  const handleClearAll = async () => {
     const msg = isDM
       ? 'Clear ALL drawings on this map? This cannot be undone.'
       : 'Clear all of YOUR drawings on this map? This cannot be undone.';
-    // eslint-disable-next-line no-alert
-    if (!confirm(msg)) return;
+    const ok = await askConfirm({
+      title: 'Clear drawings',
+      message: msg,
+      tone: 'danger',
+      confirmLabel: 'Clear',
+    });
+    if (!ok) return;
     emitDrawingClearAll(isDM ? 'all' : 'mine');
   };
 
@@ -369,6 +375,8 @@ function ToolButton({
       disabled={disabled}
       onClick={onClick}
       title={title}
+      aria-label={title}
+      aria-pressed={active}
       style={{
         ...styles.toolBtn,
         background: active ? theme.gold.bg : 'transparent',

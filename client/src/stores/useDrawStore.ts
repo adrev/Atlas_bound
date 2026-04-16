@@ -333,7 +333,7 @@ export const useDrawStore = create<DrawStore>((set, get) => ({
     });
   },
 
-  commitStroke: (opts) => {
+  commitStroke: (_opts) => {
     const state = get();
     const inProg = state.drawingInProgress;
     if (!inProg && state.activeTool !== 'text') return;

@@ -2,8 +2,11 @@ import type { Request, Response, NextFunction } from 'express';
 import type { Session, User } from 'lucia';
 import { lucia } from './lucia.js';
 
-// Augment Express Request with auth fields
+// Augment Express Request with auth fields. The `namespace` is
+// required by Express's own typings \u2014 there's no ES2015 module
+// equivalent for merging into `Express.Request`.
 declare global {
+  // eslint-disable-next-line @typescript-eslint/no-namespace
   namespace Express {
     interface Request {
       user: User | null;

@@ -187,8 +187,13 @@ app.use('/uploads', async (req, res, next) => {
     return;
   }
 
-  // Any other /uploads subpath: fall through to static (authenticated only).
-  next();
+  // Default-deny any /uploads subpath we don't recognise. Adding a new
+  // upload folder must be an explicit decision — otherwise a future
+  // /uploads/private/ folder (e.g. for handout images scoped to a
+  // specific player) would be silently readable by every logged-in
+  // user.
+  res.status(404).json({ error: 'Not found' });
+  return;
 }, express.static(UPLOAD_DIR, {
   maxAge: '1h',
   setHeaders: (res) => {

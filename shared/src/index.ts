@@ -1,5 +1,8 @@
 // Types
-export type { Session, SessionSettings, Player, GameMode } from './types/session.js';
+export type {
+  Session, SessionSettings, Player, GameMode,
+  SessionVisibility, SessionBan,
+} from './types/session.js';
 export { DEFAULT_SESSION_SETTINGS } from './types/session.js';
 export type {
   AbilityScores, AbilityName, SkillProficiency, Skills, SpellSlot,
@@ -11,7 +14,7 @@ export type {
 export { abilityModifier, proficiencyBonusForLevel, SKILL_ABILITY_MAP } from './types/character.js';
 export type {
   GameMap, WallSegment, FogPolygon, Token, TokenAura, TokenFaction,
-  LightSource, Condition,
+  LightSource, Condition, MapZone,
   PrebuiltMap, MapPing, MapSummary,
 } from './types/map.js';
 export type {

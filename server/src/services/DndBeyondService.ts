@@ -1,11 +1,11 @@
 import type {
   Character, AbilityScores, Skills, SkillProficiency,
-  SpellSlot, Spell, InventoryItem, DeathSaves, Feature,
+  SpellSlot, Spell, InventoryItem, Feature,
   CharacterBackground, CharacterCharacteristics, CharacterPersonality,
   CharacterNotes, CharacterProficiencies, CharacterSenses,
   CharacterDefenses, CharacterCurrency,
 } from '@dnd-vtt/shared';
-import { proficiencyBonusForLevel, abilityModifier, SKILL_ABILITY_MAP } from '@dnd-vtt/shared';
+import { proficiencyBonusForLevel, abilityModifier } from '@dnd-vtt/shared';
 
 /**
  * Parse a D&D Beyond character JSON export into our Character type.
@@ -424,7 +424,6 @@ function extractSpellSlots(data: Record<string, unknown>): Record<number, SpellS
     const spellCasting = def.spellCastingAbilityId as number | undefined;
     if (canCastSpells || spellCasting != null) {
       // Full caster
-      const spellRules = cls.subclassDefinition as Record<string, unknown> | undefined;
       const isHalfCaster = def.name === 'Paladin' || def.name === 'Ranger';
       const level = cls.level as number ?? 1;
       casterLevel += isHalfCaster ? Math.floor(level / 2) : level;
@@ -809,7 +808,6 @@ function extractInventory(data: Record<string, unknown>): InventoryItem[] {
 
     // Build slug from DDB name for compendium matching
     const ddbName = (def.name as string) ?? 'Unknown Item';
-    const ddbId = def.id as number | undefined;
     const nameSlug = ddbName.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '').replace(/'/g, '');
 
     // DDB name → compendium slug mapping for known mismatches
@@ -846,7 +844,7 @@ function extractInventory(data: Record<string, unknown>): InventoryItem[] {
       rarity: 'common',
       slug,
       imageUrl,
-    } as any);
+    });
   }
 
   return items;

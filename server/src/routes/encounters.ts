@@ -3,6 +3,9 @@ import { v4 as uuidv4 } from 'uuid';
 import pool from '../db/connection.js';
 import { getAuthUserId, assertSessionDM } from '../utils/authorization.js';
 import { createEncounterSchema } from '../utils/validation.js';
+import { safeParseJSON } from '../utils/safeJson.js';
+
+type EncounterCreature = { slug: string; name: string; count: number };
 
 const router = Router();
 
@@ -22,7 +25,7 @@ router.get('/sessions/:sessionId/encounters', async (req: Request, res: Response
     id: row.id,
     sessionId: row.session_id,
     name: row.name,
-    creatures: JSON.parse(row.creatures as string),
+    creatures: safeParseJSON<EncounterCreature[]>(row.creatures, [], 'encounter_presets.creatures'),
     createdAt: row.created_at,
   }));
 
@@ -96,11 +99,11 @@ router.post('/encounters/:id/deploy', async (req: Request, res: Response) => {
   const preset = rows[0];
   await assertSessionDM(preset.session_id as string, userId);
 
-  const creatures = JSON.parse(preset.creatures as string) as Array<{
-    slug: string;
-    name: string;
-    count: number;
-  }>;
+  const creatures = safeParseJSON<EncounterCreature[]>(
+    preset.creatures,
+    [],
+    'encounter_presets.creatures',
+  );
 
   res.json({
     id: preset.id,

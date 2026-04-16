@@ -1,3 +1,5 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
+// Test mocks use `any` for hoisted vi helpers and handler shims.
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 // ---------------------------------------------------------------------------
@@ -182,9 +184,12 @@ describe('session:kick handler', () => {
     expect(mockQuery).not.toHaveBeenCalled();
   });
 
-  it('rejects kicking the last DM', async () => {
+  it('rejects a co-DM kicking another co-DM (owner must demote first)', async () => {
+    // With co-DMs, the hierarchy is explicit: one DM cannot kick their
+    // peer \u2014 the owner has to demote them before they can be kicked.
+    // The handler issues ONE combined role+owner lookup, sees role=dm
+    // on someone who isn't the session owner, and bails without a DELETE.
     const { handlers } = setupHandler('sock-dm', 'sess-2', 'ROOM5678');
-    // Add a target DM player in the in-memory room.
     roomState.addPlayerToRoom('sess-2', {
       userId: '22222222-2222-2222-2222-222222222222',
       displayName: 'Other DM',
@@ -192,16 +197,33 @@ describe('session:kick handler', () => {
       role: 'dm',
       characterId: null,
     });
-    // First query: role lookup returns 'dm'. Second query: count is 1 (last DM).
-    mockQuery
-      .mockResolvedValueOnce({ rows: [{ role: 'dm' }] })
-      .mockResolvedValueOnce({ rows: [{ count: 1 }] });
+    mockQuery.mockResolvedValueOnce({
+      rows: [{ role: 'dm', dm_user_id: '99999999-9999-9999-9999-999999999999' }],
+    });
 
     const kick = handlers.get('session:kick')!;
     await kick({ targetUserId: '22222222-2222-2222-2222-222222222222' });
 
-    // Only the two reads should have happened — no DELETE.
-    expect(mockQuery).toHaveBeenCalledTimes(2);
+    expect(mockQuery).toHaveBeenCalledTimes(1);
+    expect(mockQuery.mock.calls.every(c => !/DELETE/i.test(c[0] as string))).toBe(true);
+  });
+
+  it('rejects kicking the session owner', async () => {
+    const { handlers } = setupHandler('sock-dm', 'sess-2b', 'ROOM9999');
+    const ownerId = '77777777-7777-7777-7777-777777777777';
+    roomState.addPlayerToRoom('sess-2b', {
+      userId: ownerId,
+      displayName: 'Owner',
+      socketId: 'sock-owner',
+      role: 'dm',
+      characterId: null,
+    });
+    mockQuery.mockResolvedValueOnce({ rows: [{ role: 'dm', dm_user_id: ownerId }] });
+
+    const kick = handlers.get('session:kick')!;
+    await kick({ targetUserId: ownerId });
+
+    expect(mockQuery).toHaveBeenCalledTimes(1);
     expect(mockQuery.mock.calls.every(c => !/DELETE/i.test(c[0] as string))).toBe(true);
   });
 

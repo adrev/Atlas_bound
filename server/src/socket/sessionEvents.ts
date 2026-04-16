@@ -1,5 +1,5 @@
 import type { Server, Socket } from 'socket.io';
-import type { Player, GameMode } from '@dnd-vtt/shared';
+import type { Player, GameMode, Combatant } from '@dnd-vtt/shared';
 import { DEFAULT_SESSION_SETTINGS } from '@dnd-vtt/shared';
 import { v4 as uuidv4 } from 'uuid';
 import pool from '../db/connection.js';
@@ -12,6 +12,7 @@ import { sessionJoinSchema, sessionKickSchema, sessionUpdateSettingsSchema, sess
 import { safeHandler } from '../utils/socketHelpers.js';
 import { dbRowToCharacter } from '../utils/characterMapper.js';
 import { shouldDeliverChatRow } from '../utils/chatHistoryFilter.js';
+import { safeParseJSON } from '../utils/safeJson.js';
 
 export function registerSessionEvents(io: Server, socket: Socket): void {
 
@@ -91,7 +92,7 @@ export function registerSessionEvents(io: Server, socket: Socket): void {
       };
     });
 
-    const settings = JSON.parse(session.settings || '{}');
+    const settings = safeParseJSON<Record<string, unknown>>(session.settings, {}, 'sessions.settings');
 
     // Bans are public \u2014 every member sees the list. Non-DMs see the
     // same payload so they know who's been excluded (they just don't
@@ -165,7 +166,7 @@ export function registerSessionEvents(io: Server, socket: Socket): void {
           layer: t.layer as string, visible: Boolean(t.visible),
           hasLight: Boolean(t.has_light), lightRadius: t.light_radius as number,
           lightDimRadius: t.light_dim_radius as number, lightColor: t.light_color as string,
-          conditions: JSON.parse(t.conditions as string || '[]'),
+          conditions: safeParseJSON<string[]>(t.conditions, [], 'tokens.conditions'),
           ownerUserId: t.owner_user_id as string | null, createdAt: t.created_at as string,
         }));
 
@@ -194,8 +195,8 @@ export function registerSessionEvents(io: Server, socket: Socket): void {
             width: mapRow.width as number, height: mapRow.height as number,
             gridSize: mapRow.grid_size as number, gridType: mapRow.grid_type as string,
             gridOffsetX: mapRow.grid_offset_x as number, gridOffsetY: mapRow.grid_offset_y as number,
-            walls: JSON.parse(mapRow.walls as string || '[]'),
-            fogState: JSON.parse(mapRow.fog_state as string || '[]'),
+            walls: safeParseJSON<unknown[]>(mapRow.walls, [], 'maps.walls'),
+            fogState: safeParseJSON<unknown[]>(mapRow.fog_state, [], 'maps.fog_state'),
             zones,
           },
           tokens, drawings: visibleDrawings,
@@ -213,15 +214,15 @@ export function registerSessionEvents(io: Server, socket: Socket): void {
         );
         const row = combatRows[0];
         if (row) {
-          try {
-            const combatants = JSON.parse(row.combatants);
+          const combatants = safeParseJSON<Combatant[] | null>(row.combatants, null, 'combat_state.combatants');
+          if (combatants) {
             combatState = {
               sessionId: session.id, active: true, roundNumber: row.round_number,
               currentTurnIndex: row.current_turn_index, combatants, startedAt: row.started_at,
             };
             room.combatState = combatState;
             room.gameMode = 'combat';
-          } catch { /* malformed */ }
+          }
         }
       }
 
@@ -276,7 +277,7 @@ export function registerSessionEvents(io: Server, socket: Socket): void {
       .map(m => ({
         id: m.id, sessionId: m.session_id, userId: m.user_id, displayName: m.display_name,
         type: m.type, content: m.content, characterName: m.character_name,
-        whisperTo: m.whisper_to, rollData: m.roll_data ? JSON.parse(m.roll_data) : null,
+        whisperTo: m.whisper_to, rollData: safeParseJSON<unknown | null>(m.roll_data, null, 'chat_messages.roll_data'),
         hidden: (m.hidden as number) === 1, createdAt: m.created_at,
       })));
   }));
@@ -348,7 +349,9 @@ export function registerSessionEvents(io: Server, socket: Socket): void {
       'SELECT settings, discord_webhook_url FROM sessions WHERE id = $1',
       [ctx.room.sessionId],
     );
-    const currentSettings = sessionRows[0] ? JSON.parse(sessionRows[0].settings) : {};
+    const currentSettings = sessionRows[0]
+      ? safeParseJSON<Record<string, unknown>>(sessionRows[0].settings, {}, 'sessions.settings')
+      : {};
     const newSettings = { ...DEFAULT_SESSION_SETTINGS, ...currentSettings, ...settingsPatch };
     const currentWebhook = (sessionRows[0]?.discord_webhook_url as string | null) ?? null;
 

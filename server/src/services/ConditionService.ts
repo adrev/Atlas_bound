@@ -1,6 +1,9 @@
 import type { ConditionMetadata } from '../utils/roomState.js';
 import { getRoom } from '../utils/roomState.js';
 import pool from '../db/connection.js';
+import { safeParseJSON } from '../utils/safeJson.js';
+
+const DEFAULT_ABILITY_SCORES = { str: 10, dex: 10, con: 10, int: 10, wis: 10, cha: 10 };
 
 function metaForToken(sessionId: string, tokenId: string): Map<string, ConditionMetadata> {
   const room = getRoom(sessionId);
@@ -87,8 +90,8 @@ export async function tickEndOfTurnConditions(
       const row = rows[0] as Record<string, unknown> | undefined;
       if (row) {
         try {
-          const scores = JSON.parse(row.ability_scores as string);
-          const profSet = new Set(JSON.parse(row.saving_throws as string) as string[]);
+          const scores = safeParseJSON<Record<string, number>>(row.ability_scores, DEFAULT_ABILITY_SCORES, 'character.ability_scores');
+          const profSet = new Set(safeParseJSON<string[]>(row.saving_throws, [], 'character.saving_throws'));
           saveMod = Math.floor((scores[ability] - 10) / 2);
           if (profSet.has(ability)) saveMod += (row.proficiency_bonus as number) || 2;
         } catch { /* ignore */ }
@@ -115,7 +118,7 @@ export async function tickEndOfTurnConditions(
 }
 
 export function tickConditionsForToken(
-  sessionId: string, tokenId: string, _currentRound: number,
+  _sessionId: string, _tokenId: string, _currentRound: number,
 ): { removed: string[]; messages: string[] } {
   // Sync wrapper for backward compat - returns empty for async tick
   // The actual logic runs in tickEndOfTurnConditions (async)
@@ -150,9 +153,9 @@ export async function processDamageSideEffects(
       const dc = Math.max(10, Math.floor(damageAmount / 2));
       let conMod = 0, isProficient = false;
       try {
-        const scores = JSON.parse(charRow!.ability_scores as string);
+        const scores = safeParseJSON<Record<string, number>>(charRow!.ability_scores, DEFAULT_ABILITY_SCORES, 'character.ability_scores');
         conMod = Math.floor(((scores.con ?? 10) - 10) / 2);
-        const profSaves = JSON.parse(charRow!.saving_throws as string) as string[];
+        const profSaves = safeParseJSON<string[]>(charRow!.saving_throws, [], 'character.saving_throws');
         isProficient = profSaves.includes('con');
       } catch { /* ignore */ }
       const profBonus = (charRow!.proficiency_bonus as number) || 2;

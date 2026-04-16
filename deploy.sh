@@ -118,7 +118,7 @@ gcloud run deploy atlas-bound \
   --port 8080 \
   --memory 1Gi \
   --cpu 1 \
-  --min-instances 0 \
+  --min-instances 1 \
   --max-instances 3 \
   --session-affinity \
   --timeout 3600 \

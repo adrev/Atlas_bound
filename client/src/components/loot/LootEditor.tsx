@@ -4,6 +4,7 @@ import { useSessionStore } from '../../stores/useSessionStore';
 import { useMapStore } from '../../stores/useMapStore';
 import { emitTokenAdd, emitSystemMessage, emitCharacterUpdate } from '../../socket/emitters';
 import { getItemIconUrl, getCreatureIconUrl } from '../../utils/compendiumIcons';
+import { showInfo } from '../ui';
 
 const RARITY_COLORS: Record<string, string> = {
   common: '#9d9d9d', uncommon: '#1eff00', rare: '#0070dd',
@@ -177,7 +178,12 @@ export function LootEditor({ characterId, tokenName, onClose, canEdit = true }: 
           lootEntryId: entry.id,
         }),
       });
-      if (!resp.ok) { console.error('Transfer failed'); return; }
+      if (!resp.ok) {
+        const detail = await resp.text().catch(() => '');
+        console.error('Transfer failed:', resp.status, detail);
+        showInfo(`Couldn\u2019t transfer item (${resp.status}).`, 'danger');
+        return;
+      }
       const data = await resp.json();
 
       // Emit system chat message announcing the transfer
@@ -191,6 +197,7 @@ export function LootEditor({ characterId, tokenName, onClose, canEdit = true }: 
       setTransferEntryId(null);
     } catch (err) {
       console.error('Transfer failed:', err);
+      showInfo('Couldn\u2019t reach the server. Try again.', 'danger');
     } finally {
       setLoadingTransfer(false);
     }
@@ -281,7 +288,7 @@ export function LootEditor({ characterId, tokenName, onClose, canEdit = true }: 
     try {
       const mapState = useMapStore.getState();
       const currentMap = mapState.currentMap;
-      if (!currentMap) { alert('No map loaded'); return; }
+      if (!currentMap) { showInfo('No map loaded.', 'warning'); return; }
       const tokens = mapState.tokens;
       const creatureToken = Object.values(tokens).find((t: any) => t.characterId === characterId);
       const dropX = creatureToken ? (creatureToken as any).x + 70 : currentMap.width / 2;
@@ -302,7 +309,11 @@ export function LootEditor({ characterId, tokenName, onClose, canEdit = true }: 
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ userId: 'npc', name: entry.item_name, race: 'loot', class: 'bag', level: 1, hitPoints: 0, maxHitPoints: 1, armorClass: 0 }),
       });
-      if (!charResp.ok) { console.error('Failed to create loot char'); return; }
+      if (!charResp.ok) {
+        console.error('Failed to create loot char:', await charResp.text().catch(() => ''));
+        showInfo('Couldn\u2019t drop item \u2014 server rejected the request.', 'danger');
+        return;
+      }
       const charData = await charResp.json();
       if (!charData?.id) return;
 
@@ -325,7 +336,10 @@ export function LootEditor({ characterId, tokenName, onClose, canEdit = true }: 
       fetchLoot();
       notifyLootChange();
       emitCharacterUpdate(characterId, { _lootUpdated: Date.now() });
-    } catch (err) { console.error('Drop failed:', err); }
+    } catch (err) {
+      console.error('Drop failed:', err);
+      showInfo('Couldn\u2019t drop item. Try again.', 'danger');
+    }
   };
 
   const toggleEquipped = async (entryId: string, currentlyEquipped: boolean) => {

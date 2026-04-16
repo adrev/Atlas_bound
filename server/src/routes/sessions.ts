@@ -3,9 +3,20 @@ import { v4 as uuidv4 } from 'uuid';
 import { randomBytes } from 'crypto';
 import rateLimit from 'express-rate-limit';
 import pool from '../db/connection.js';
-import { createSessionSchema, joinSessionSchema } from '../utils/validation.js';
+import {
+  createSessionSchema, joinSessionSchema, patchSessionSchema,
+  transferOwnershipSchema, sessionPromoteSchema, sessionDemoteSchema,
+} from '../utils/validation.js';
 import { DEFAULT_SESSION_SETTINGS } from '@dnd-vtt/shared';
-import { getAuthUserId, assertSessionMember, assertSessionDM } from '../utils/authorization.js';
+import {
+  getAuthUserId, assertSessionMember, assertSessionDM, assertSessionOwner,
+} from '../utils/authorization.js';
+import {
+  hashSessionPassword, verifySessionPassword, generateInviteCode,
+} from '../utils/sessionPassword.js';
+import { getIO } from '../socket/ioInstance.js';
+import { getRoom } from '../utils/roomState.js';
+import { safeParseJSON } from '../utils/safeJson.js';
 
 const router = Router();
 
@@ -51,18 +62,38 @@ router.post('/', async (req: Request, res: Response) => {
     return;
   }
 
-  const { name } = parsed.data;
+  const { name, visibility: rawVisibility, password } = parsed.data;
+  const visibility = rawVisibility ?? 'public';
+
+  // A private session without a password is allowed (invite-only mode),
+  // but if the client DID send a password it must meet the min-length
+  // requirement already enforced by the schema. Reject the obviously
+  // confused case of a public session with a password \u2014 the password
+  // would never be checked and the UI would lie to users.
+  if (visibility === 'public' && password !== undefined && password !== '') {
+    res.status(400).json({ error: 'Public sessions cannot have a password' });
+    return;
+  }
+
   const userId = req.user!.id;
   const sessionId = uuidv4();
   const roomCode = await getUniqueRoomCode();
   const settings = JSON.stringify(DEFAULT_SESSION_SETTINGS);
+  const passwordHash = password && visibility === 'private'
+    ? await hashSessionPassword(password)
+    : null;
+  // Every session gets an invite code up-front so the DM can share the
+  // link later without a second round-trip. Public sessions just don't
+  // display it prominently.
+  const inviteCode = generateInviteCode();
 
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
     await client.query(
-      'INSERT INTO sessions (id, name, room_code, dm_user_id, settings) VALUES ($1, $2, $3, $4, $5)',
-      [sessionId, name, roomCode, userId, settings],
+      `INSERT INTO sessions (id, name, room_code, dm_user_id, settings, visibility, password_hash, invite_code)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+      [sessionId, name, roomCode, userId, settings, visibility, passwordHash, inviteCode],
     );
     await client.query(
       'INSERT INTO session_players (session_id, user_id, role) VALUES ($1, $2, $3)',
@@ -80,10 +111,22 @@ router.post('/', async (req: Request, res: Response) => {
     sessionId,
     roomCode,
     userId,
+    visibility,
+    hasPassword: passwordHash !== null,
+    inviteCode,
   });
 });
 
-// POST /api/sessions/join - Join a session by room code
+// POST /api/sessions/join - Join a session by room code.
+// Decision tree (in order):
+//   1. Session missing              \u2192 404
+//   2. Requester is banned          \u2192 403 with reason
+//   3. Requester already a member   \u2192 OK (role-independent; no pw needed)
+//   4. visibility === 'public'      \u2192 OK, insert as player
+//   5. visibility === 'private':
+//        a. valid inviteToken       \u2192 OK, insert as player
+//        b. password matches        \u2192 OK, insert as player
+//        c. otherwise               \u2192 401 { requiresPassword: true }
 router.post('/join', joinLimiter, async (req: Request, res: Response) => {
   const parsed = joinSessionSchema.safeParse(req.body);
   if (!parsed.success) {
@@ -91,14 +134,19 @@ router.post('/join', joinLimiter, async (req: Request, res: Response) => {
     return;
   }
 
+  const { password, inviteToken } = parsed.data;
   // Normalize so lowercase input still matches (codes are generated uppercase).
   const roomCode = parsed.data.roomCode.toUpperCase();
 
   const { rows: sessionRows } = await pool.query(
-    'SELECT id, name, room_code, dm_user_id FROM sessions WHERE room_code = $1',
+    `SELECT id, name, room_code, dm_user_id, visibility, password_hash, invite_code
+       FROM sessions WHERE room_code = $1`,
     [roomCode],
   );
-  const session = sessionRows[0] as { id: string; name: string; room_code: string; dm_user_id: string } | undefined;
+  const session = sessionRows[0] as {
+    id: string; name: string; room_code: string; dm_user_id: string;
+    visibility: string; password_hash: string | null; invite_code: string | null;
+  } | undefined;
 
   if (!session) {
     res.status(404).json({ error: 'Session not found with that room code' });
@@ -107,12 +155,55 @@ router.post('/join', joinLimiter, async (req: Request, res: Response) => {
 
   const userId = req.user!.id;
 
-  const { rows: existingRows } = await pool.query(
-    'SELECT sp.user_id, sp.role FROM session_players sp WHERE sp.session_id = $1 AND sp.user_id = $2',
+  // Ban check first \u2014 banned users get the most specific error so they
+  // know why they can't get in (rather than fumbling with a password).
+  const { rows: banRows } = await pool.query(
+    `SELECT b.banned_at, b.reason, bu.display_name AS banned_by_name
+       FROM session_bans b
+       LEFT JOIN users bu ON bu.id = b.banned_by
+       WHERE b.session_id = $1 AND b.user_id = $2`,
     [session.id, userId],
   );
+  if (banRows.length > 0) {
+    const b = banRows[0] as { banned_at: string; reason: string | null; banned_by_name: string | null };
+    res.status(403).json({
+      error: 'banned',
+      reason: b.reason,
+      bannedBy: b.banned_by_name,
+      bannedAt: b.banned_at,
+    });
+    return;
+  }
 
-  if (existingRows.length === 0) {
+  const { rows: existingRows } = await pool.query(
+    'SELECT user_id, role FROM session_players WHERE session_id = $1 AND user_id = $2',
+    [session.id, userId],
+  );
+  const isAlreadyMember = existingRows.length > 0;
+
+  if (!isAlreadyMember) {
+    if (session.visibility === 'private') {
+      // Try invite token first (it's a cheaper equality check than
+      // the bcrypt compare and lets invite-link users skip the prompt).
+      const validInvite = !!inviteToken
+        && !!session.invite_code
+        && inviteToken === session.invite_code;
+
+      let validPassword = false;
+      if (!validInvite && password && session.password_hash) {
+        validPassword = await verifySessionPassword(password, session.password_hash);
+      }
+
+      if (!validInvite && !validPassword) {
+        res.status(401).json({
+          error: 'Password required',
+          requiresPassword: true,
+          hasPassword: !!session.password_hash,
+        });
+        return;
+      }
+    }
+
     await pool.query(
       'INSERT INTO session_players (session_id, user_id, role) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING',
       [session.id, userId, 'player'],
@@ -127,9 +218,31 @@ router.post('/join', joinLimiter, async (req: Request, res: Response) => {
   });
 });
 
+// GET /api/invites/:token - Look up a session by invite token. Used by the
+// /join/:token frontend route to resolve the invite before the user hits
+// the join form. Doesn't add the user to the session \u2014 the actual
+// insertion happens on the subsequent POST /join with the token.
+router.get('/invites/:token', async (req: Request, res: Response) => {
+  const token = String(req.params.token);
+  if (token.length < 10 || token.length > 64) {
+    res.status(404).json({ error: 'Invite not found' });
+    return;
+  }
+  const { rows } = await pool.query(
+    'SELECT id, name, room_code FROM sessions WHERE invite_code = $1',
+    [token],
+  );
+  const row = rows[0] as { id: string; name: string; room_code: string } | undefined;
+  if (!row) {
+    res.status(404).json({ error: 'Invite not found' });
+    return;
+  }
+  res.json({ sessionId: row.id, sessionName: row.name, roomCode: row.room_code });
+});
+
 // GET /api/sessions/mine - List sessions the current user belongs to
 router.get('/mine', async (req: Request, res: Response) => {
-  const userId = (req as any).user?.id;
+  const userId = req.user?.id;
   if (!userId) { res.json([]); return; }
 
   const { rows } = await pool.query(`
@@ -148,10 +261,52 @@ router.get('/mine', async (req: Request, res: Response) => {
   })));
 });
 
+// DELETE /api/sessions/:id - Delete a session (Owner-only). Cascades to
+// session_players, maps, tokens, bans, notes, etc. via FK cascades.
+// Broadcasts a terminal event so every connected client redirects home.
+router.delete('/:id', async (req: Request, res: Response) => {
+  const userId = getAuthUserId(req);
+  const sessionId = String(req.params.id);
+  await assertSessionOwner(sessionId, userId);
+
+  // Broadcast BEFORE the row is gone so the event can carry context.
+  const io = getIO();
+  if (io) io.to(sessionId).emit('session:deleted', { sessionId });
+
+  // Kick every connected socket out of the room so their next action
+  // doesn't race with a half-deleted session.
+  if (io) {
+    const room = getRoom(sessionId);
+    if (room) {
+      for (const player of room.players.values()) {
+        const sock = io.sockets.sockets.get(player.socketId);
+        if (sock) sock.leave(sessionId);
+      }
+    }
+  }
+
+  await pool.query('DELETE FROM sessions WHERE id = $1', [sessionId]);
+  res.json({ success: true });
+});
+
 // DELETE /api/sessions/:id/leave - Leave a session
 router.delete('/:id/leave', async (req: Request, res: Response) => {
-  const userId = (req as any).user?.id;
+  const userId = req.user?.id;
   if (!userId) { res.status(401).json({ error: 'Not authenticated' }); return; }
+
+  // Owner must transfer first (or delete the session). Otherwise leaving
+  // would orphan every co-DM and player without an authority figure.
+  const { rows: ownerRows } = await pool.query(
+    'SELECT 1 FROM sessions WHERE id = $1 AND dm_user_id = $2',
+    [req.params.id, userId],
+  );
+  if (ownerRows.length > 0) {
+    res.status(409).json({
+      error: 'Transfer ownership to another DM before leaving, or delete the session.',
+    });
+    return;
+  }
+
   await pool.query('DELETE FROM session_players WHERE session_id = $1 AND user_id = $2',
     [req.params.id, userId]);
   res.json({ success: true });
@@ -206,7 +361,8 @@ router.get('/:id', async (req: Request, res: Response) => {
   await assertSessionMember(String(id), userId);
 
   const { rows: sessionRows } = await pool.query(`
-    SELECT id, name, room_code, dm_user_id, current_map_id, combat_active, game_mode, settings, created_at, updated_at
+    SELECT id, name, room_code, dm_user_id, current_map_id, combat_active, game_mode, settings,
+           visibility, password_hash, invite_code, created_at, updated_at
     FROM sessions WHERE id = $1
   `, [id]);
   const session = sessionRows[0] as Record<string, unknown> | undefined;
@@ -229,6 +385,12 @@ router.get('/:id', async (req: Request, res: Response) => {
     ORDER BY created_at DESC
   `, [id]);
 
+  // The invite token is DM planning data — a curious player can't see
+  // it in the socket state-sync, so we must not leak it via REST either.
+  const requesterIsDM = players.some(
+    (p) => p.user_id === userId && p.role === 'dm',
+  );
+
   res.json({
     id: session.id,
     name: session.name,
@@ -237,7 +399,10 @@ router.get('/:id', async (req: Request, res: Response) => {
     currentMapId: session.current_map_id,
     combatActive: Boolean(session.combat_active),
     gameMode: session.game_mode,
-    settings: JSON.parse(session.settings as string),
+    settings: safeParseJSON(session.settings, DEFAULT_SESSION_SETTINGS, 'sessions.settings'),
+    visibility: (session.visibility as string) ?? 'public',
+    hasPassword: session.password_hash !== null,
+    inviteCode: requesterIsDM ? ((session.invite_code as string | null) ?? null) : null,
     createdAt: session.created_at,
     updatedAt: session.updated_at,
     players: players.map(p => ({
@@ -250,6 +415,379 @@ router.get('/:id', async (req: Request, res: Response) => {
     })),
     maps,
   });
+});
+
+// PATCH /api/sessions/:id  (DM-only)
+// Updates name / visibility / password. `regenerateInvite: true` rotates
+// the invite_code so the old shareable link stops resolving.
+router.patch('/:id', async (req: Request, res: Response) => {
+  const userId = getAuthUserId(req);
+  const sessionId = String(req.params.id);
+  await assertSessionDM(sessionId, userId);
+
+  const parsed = patchSessionSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: 'Invalid request', details: parsed.error.issues });
+    return;
+  }
+  const patch = parsed.data;
+
+  const sets: string[] = [];
+  const params: unknown[] = [];
+  let i = 1;
+  if (patch.name !== undefined) { sets.push(`name = $${i++}`); params.push(patch.name); }
+  if (patch.visibility !== undefined) { sets.push(`visibility = $${i++}`); params.push(patch.visibility); }
+
+  if (patch.password !== undefined) {
+    if (patch.password === '') {
+      sets.push(`password_hash = NULL`);
+    } else {
+      const hash = await hashSessionPassword(patch.password);
+      sets.push(`password_hash = $${i++}`); params.push(hash);
+    }
+  }
+
+  if (patch.regenerateInvite) {
+    // Extremely small collision window — try once, retry on unique-violation.
+    let newCode = generateInviteCode();
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        await pool.query('UPDATE sessions SET invite_code = $1 WHERE id = $2', [newCode, sessionId]);
+        break;
+      } catch (err) {
+        if (attempt === 2) throw err;
+        newCode = generateInviteCode();
+      }
+    }
+  }
+
+  if (sets.length > 0) {
+    sets.push(`updated_at = NOW()::text`);
+    params.push(sessionId);
+    await pool.query(`UPDATE sessions SET ${sets.join(', ')} WHERE id = $${i}`, params);
+  }
+
+  const { rows } = await pool.query(
+    'SELECT visibility, password_hash, invite_code FROM sessions WHERE id = $1',
+    [sessionId],
+  );
+  const row = rows[0] as { visibility: string; password_hash: string | null; invite_code: string | null } | undefined;
+
+  // Broadcast to the room so DM clients pick up invite rotation / password
+  // toggle without refetching. Invite tokens are DM-only; players only need
+  // the visibility/password flags because their membership already survives.
+  const io = getIO();
+  if (io && row) {
+    const room = getRoom(sessionId);
+    if (room) {
+      for (const player of room.players.values()) {
+        io.to(player.socketId).emit('session:settings-changed', {
+          visibility: row.visibility,
+          hasPassword: row.password_hash !== null,
+          inviteCode: player.role === 'dm' ? row.invite_code : null,
+        });
+      }
+    }
+  }
+
+  res.json({
+    visibility: row?.visibility ?? 'public',
+    hasPassword: row?.password_hash != null,
+    inviteCode: row?.invite_code ?? null,
+  });
+});
+
+// ---- Bans -----------------------------------------------------------------
+
+// GET /api/sessions/:id/bans  (member-only)
+router.get('/:id/bans', async (req: Request, res: Response) => {
+  const userId = getAuthUserId(req);
+  const sessionId = String(req.params.id);
+  await assertSessionMember(sessionId, userId);
+  const { rows } = await pool.query(`
+    SELECT b.user_id, b.banned_by, b.banned_at, b.reason,
+           u.display_name, u.avatar_url,
+           bu.display_name AS banned_by_name
+    FROM session_bans b
+    JOIN users u ON u.id = b.user_id
+    LEFT JOIN users bu ON bu.id = b.banned_by
+    WHERE b.session_id = $1
+    ORDER BY b.banned_at DESC
+  `, [sessionId]);
+  res.json(rows.map(r => ({
+    userId: r.user_id,
+    displayName: r.display_name,
+    avatarUrl: r.avatar_url,
+    bannedBy: r.banned_by_name,
+    bannedByUserId: r.banned_by,
+    bannedAt: r.banned_at,
+    reason: r.reason,
+  })));
+});
+
+// POST /api/sessions/:id/bans  (DM-only)
+// Co-DM hierarchy: any DM can ban a player, but cannot ban another DM
+// (demote them first). Owner can't be banned by anyone.
+router.post('/:id/bans', async (req: Request, res: Response) => {
+  const userId = getAuthUserId(req);
+  const sessionId = String(req.params.id);
+  await assertSessionDM(sessionId, userId);
+
+  const parsed = (await import('../utils/validation.js')).sessionBanSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: 'Invalid request', details: parsed.error.issues });
+    return;
+  }
+  const { targetUserId, reason } = parsed.data;
+
+  if (targetUserId === userId) {
+    res.status(400).json({ error: 'Cannot ban yourself' });
+    return;
+  }
+
+  const { rows: targetRows } = await pool.query(
+    `SELECT sp.role, s.dm_user_id
+       FROM session_players sp
+       JOIN sessions s ON s.id = sp.session_id
+       WHERE sp.session_id = $1 AND sp.user_id = $2`,
+    [sessionId, targetUserId],
+  );
+  const target = targetRows[0] as { role: string; dm_user_id: string } | undefined;
+  if (target) {
+    if (target.dm_user_id === targetUserId) {
+      res.status(403).json({ error: 'The session owner cannot be banned' });
+      return;
+    }
+    if (target.role === 'dm') {
+      res.status(403).json({ error: 'Demote this DM before banning them' });
+      return;
+    }
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query(
+      `INSERT INTO session_bans (session_id, user_id, banned_by, reason)
+       VALUES ($1, $2, $3, $4)
+       ON CONFLICT (session_id, user_id) DO NOTHING`,
+      [sessionId, targetUserId, userId, reason ?? null],
+    );
+    await client.query(
+      'DELETE FROM session_players WHERE session_id = $1 AND user_id = $2',
+      [sessionId, targetUserId],
+    );
+    await client.query('COMMIT');
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
+
+  // Notify the banned user (so their client shows a modal + disconnects)
+  // and broadcast the updated ban list to everyone else.
+  const io = getIO();
+  if (io) {
+    const { rows: banRows } = await pool.query(`
+      SELECT b.user_id, b.banned_by, b.banned_at, b.reason,
+             u.display_name, u.avatar_url,
+             bu.display_name AS banned_by_name
+      FROM session_bans b
+      JOIN users u ON u.id = b.user_id
+      LEFT JOIN users bu ON bu.id = b.banned_by
+      WHERE b.session_id = $1
+      ORDER BY b.banned_at DESC
+    `, [sessionId]);
+    const bans = banRows.map(r => ({
+      userId: r.user_id, displayName: r.display_name, avatarUrl: r.avatar_url,
+      bannedBy: r.banned_by_name, bannedByUserId: r.banned_by,
+      bannedAt: r.banned_at, reason: r.reason,
+    }));
+    // Send the fatal `player-banned` event to the target first so their
+    // client has the reason and can redirect. Then broadcast the
+    // updated ban list to everyone EXCEPT the banned user \u2014 otherwise
+    // they'd briefly see themselves listed as banned before the 1.5s
+    // redirect fires.
+    const { getRoom } = await import('../utils/roomState.js');
+    const room = getRoom(sessionId);
+    const targetPlayer = room?.players.get(targetUserId);
+    if (targetPlayer) {
+      io.to(targetPlayer.socketId).emit('session:player-banned', { userId: targetUserId, reason: reason ?? null });
+    }
+    // Everyone else gets the list update.
+    const emitter = targetPlayer
+      ? io.to(sessionId).except(targetPlayer.socketId)
+      : io.to(sessionId);
+    emitter.emit('session:bans-updated', { bans });
+
+    // Force the banned user's sockets out of the room so they can't
+    // keep reading in-flight broadcasts even if their client ignores
+    // the banned event.
+    if (targetPlayer) {
+      const sock = io.sockets.sockets.get(targetPlayer.socketId);
+      if (sock) sock.leave(sessionId);
+    }
+  }
+
+  res.status(204).send();
+});
+
+// DELETE /api/sessions/:id/bans/:userId  (DM-only)
+router.delete('/:id/bans/:userId', async (req: Request, res: Response) => {
+  const userId = getAuthUserId(req);
+  const sessionId = String(req.params.id);
+  const targetUserId = String(req.params.userId);
+  await assertSessionDM(sessionId, userId);
+
+  await pool.query(
+    'DELETE FROM session_bans WHERE session_id = $1 AND user_id = $2',
+    [sessionId, targetUserId],
+  );
+
+  const io = getIO();
+  if (io) {
+    const { rows: banRows } = await pool.query(`
+      SELECT b.user_id, b.banned_by, b.banned_at, b.reason,
+             u.display_name, u.avatar_url,
+             bu.display_name AS banned_by_name
+      FROM session_bans b
+      JOIN users u ON u.id = b.user_id
+      LEFT JOIN users bu ON bu.id = b.banned_by
+      WHERE b.session_id = $1
+      ORDER BY b.banned_at DESC
+    `, [sessionId]);
+    const bans = banRows.map(r => ({
+      userId: r.user_id, displayName: r.display_name, avatarUrl: r.avatar_url,
+      bannedBy: r.banned_by_name, bannedByUserId: r.banned_by,
+      bannedAt: r.banned_at, reason: r.reason,
+    }));
+    io.to(sessionId).emit('session:bans-updated', { bans });
+  }
+
+  res.status(204).send();
+});
+
+// ---- Role changes (Owner-only) -------------------------------------------
+
+router.post('/:id/promote', async (req: Request, res: Response) => {
+  const userId = getAuthUserId(req);
+  const sessionId = String(req.params.id);
+  await assertSessionOwner(sessionId, userId);
+
+  const parsed = sessionPromoteSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: 'Invalid request', details: parsed.error.issues });
+    return;
+  }
+  const { targetUserId } = parsed.data;
+
+  const { rows } = await pool.query(
+    'UPDATE session_players SET role = $1 WHERE session_id = $2 AND user_id = $3 RETURNING role',
+    ['dm', sessionId, targetUserId],
+  );
+  if (rows.length === 0) {
+    res.status(404).json({ error: 'Player not in session' });
+    return;
+  }
+
+  const io = getIO();
+  if (io) {
+    io.to(sessionId).emit('session:role-changed', { userId: targetUserId, role: 'dm' });
+  }
+  res.status(204).send();
+});
+
+router.post('/:id/demote', async (req: Request, res: Response) => {
+  const userId = getAuthUserId(req);
+  const sessionId = String(req.params.id);
+  await assertSessionOwner(sessionId, userId);
+
+  const parsed = sessionDemoteSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: 'Invalid request', details: parsed.error.issues });
+    return;
+  }
+  const { targetUserId } = parsed.data;
+
+  // The owner cannot demote themselves \u2014 would leave the session in an
+  // invalid state (owner with role='player'). They must transfer first.
+  if (targetUserId === userId) {
+    res.status(400).json({ error: 'Transfer ownership before demoting yourself' });
+    return;
+  }
+
+  const { rows } = await pool.query(
+    'UPDATE session_players SET role = $1 WHERE session_id = $2 AND user_id = $3 RETURNING role',
+    ['player', sessionId, targetUserId],
+  );
+  if (rows.length === 0) {
+    res.status(404).json({ error: 'Player not in session' });
+    return;
+  }
+
+  const io = getIO();
+  if (io) {
+    io.to(sessionId).emit('session:role-changed', { userId: targetUserId, role: 'player' });
+  }
+  res.status(204).send();
+});
+
+// POST /api/sessions/:id/transfer-ownership  (Owner-only)
+// Designates a new owner; the old owner stays as a co-DM.
+router.post('/:id/transfer-ownership', async (req: Request, res: Response) => {
+  const userId = getAuthUserId(req);
+  const sessionId = String(req.params.id);
+  await assertSessionOwner(sessionId, userId);
+
+  const parsed = transferOwnershipSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: 'Invalid request', details: parsed.error.issues });
+    return;
+  }
+  const { newOwnerId } = parsed.data;
+
+  if (newOwnerId === userId) {
+    res.status(400).json({ error: 'You are already the owner' });
+    return;
+  }
+
+  const { rows: targetRows } = await pool.query(
+    'SELECT role FROM session_players WHERE session_id = $1 AND user_id = $2',
+    [sessionId, newOwnerId],
+  );
+  const target = targetRows[0] as { role: string } | undefined;
+  if (!target) {
+    res.status(404).json({ error: 'New owner must be a current member' });
+    return;
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    // Promote the new owner to DM (idempotent for an already-co-DM).
+    await client.query(
+      "UPDATE session_players SET role = 'dm' WHERE session_id = $1 AND user_id = $2",
+      [sessionId, newOwnerId],
+    );
+    // Previous owner stays as a co-DM (role='dm').
+    await client.query('UPDATE sessions SET dm_user_id = $1, updated_at = NOW()::text WHERE id = $2', [newOwnerId, sessionId]);
+    await client.query('COMMIT');
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
+
+  const io = getIO();
+  if (io) {
+    io.to(sessionId).emit('session:owner-changed', { oldOwnerId: userId, newOwnerId });
+    if (target.role !== 'dm') {
+      io.to(sessionId).emit('session:role-changed', { userId: newOwnerId, role: 'dm' });
+    }
+  }
+  res.status(204).send();
 });
 
 export default router;

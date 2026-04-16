@@ -10,6 +10,9 @@ const SessionLobby = lazy(() =>
 const AppShell = lazy(() =>
   import('./components/layout/AppShell').then((m) => ({ default: m.AppShell })),
 );
+const InviteLanding = lazy(() =>
+  import('./components/session/InviteLanding').then((m) => ({ default: m.InviteLanding })),
+);
 
 function RouteLoadingFallback() {
   return (
@@ -90,6 +93,7 @@ export function App() {
       <Routes>
         <Route path="/" element={<SessionLobby />} />
         <Route path="/session/:roomCode" element={<AppShell />} />
+        <Route path="/join/:token" element={<InviteLanding />} />
       </Routes>
     </Suspense>
   );

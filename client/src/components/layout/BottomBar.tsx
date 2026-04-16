@@ -80,6 +80,8 @@ export function BottomBar() {
           onClick={() => setShowAudioPopover((v) => !v)}
           onContextMenu={(e) => { e.preventDefault(); toggleMasterMute(); }}
           title="Audio Controls (right-click to quick-mute)"
+          aria-label={masterMuted ? 'Unmute audio and open controls' : 'Open audio controls (right-click to mute)'}
+          aria-pressed={!masterMuted}
           style={{
             display: 'flex',
             flexDirection: 'column' as const,

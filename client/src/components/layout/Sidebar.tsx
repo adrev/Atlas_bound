@@ -49,7 +49,7 @@ function TabLoadingFallback() {
 }
 import { Check, Circle } from 'lucide-react';
 import { theme } from '../../styles/theme';
-import { Button } from '../ui';
+import { Button, askConfirm } from '../ui';
 
 type TabId = 'combat' | 'character' | 'compendium' | 'notes' | 'chat' | 'players' | 'dm';
 
@@ -94,6 +94,14 @@ export function Sidebar() {
     window.addEventListener('switch-to-character-tab', handler);
     return () => window.removeEventListener('switch-to-character-tab', handler);
   }, []);
+
+  // If the DM gets demoted while the Tools tab is open, the tab
+  // disappears from the bar but the active-tab state would otherwise
+  // stay 'dm' and leave the user staring at an empty panel. Bounce
+  // them back to Chat on the role flip.
+  useEffect(() => {
+    if (!isDM && activeTab === 'dm') setActiveTab('chat');
+  }, [isDM, activeTab]);
 
   const visibleTabs = TABS.filter((t) => !t.dmOnly || isDM);
 
@@ -490,9 +498,15 @@ function HeroTab() {
                     )}
                     <button
                       title="Delete character"
-                      onClick={(e) => {
+                      onClick={async (e) => {
                         e.stopPropagation();
-                        if (!confirm(`Delete "${c.name}"? This cannot be undone.`)) return;
+                        const ok = await askConfirm({
+                          title: 'Delete character',
+                          message: `Delete "${c.name}"? This cannot be undone.`,
+                          tone: 'danger',
+                          confirmLabel: 'Delete',
+                        });
+                        if (!ok) return;
                         fetch(`/api/characters/${c.id}`, { method: 'DELETE', credentials: 'include' })
                           .then((r) => {
                             if (r.ok) {

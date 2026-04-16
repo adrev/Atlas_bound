@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Swords, Users, History, Trash2, LogOut, Shield, User, AlertTriangle } from 'lucide-react';
 import { createSession, joinSession } from '../../services/api';
 import { useSessionStore } from '../../stores/useSessionStore';
@@ -51,12 +51,18 @@ function removeSavedSession(roomCode: string) {
 
 export function SessionLobby() {
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const setDisplayName = useSessionStore((s) => s.setDisplayName);
   const authUser = useAuthStore((s) => s.user);
   const authLogout = useAuthStore((s) => s.logout);
 
   const [createName, setCreateName] = useState('');
+  const [createVisibility, setCreateVisibility] = useState<'public' | 'private'>('public');
+  const [createPassword, setCreatePassword] = useState('');
   const [joinCode, setJoinCode] = useState('');
+  const [joinPassword, setJoinPassword] = useState('');
+  const [joinRequiresPassword, setJoinRequiresPassword] = useState(false);
+  const [banModal, setBanModal] = useState<{ reason: string | null; bannedBy: string | null } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [savedSessions, setSavedSessions] = useState<SavedSession[]>([]);
@@ -110,6 +116,33 @@ export function SessionLobby() {
     }
   }, [authUser]);
 
+  // Resume an invite-link bounce after login: InviteLanding routes
+  // unauthenticated users here with `?next=/join/<token>`. Once we
+  // have an auth user we redirect back.
+  useEffect(() => {
+    const next = searchParams.get('next');
+    if (authUser && next && next.startsWith('/')) {
+      // Clear the param so refreshes don't re-trigger, then go.
+      searchParams.delete('next');
+      setSearchParams(searchParams, { replace: true });
+      navigate(next, { replace: true });
+    }
+  }, [authUser, searchParams, setSearchParams, navigate]);
+
+  // Pre-fill the Join form from `?roomCode=`. InviteLanding bounces
+  // here when an invite token was rotated so the user still has a
+  // one-click path to the password prompt.
+  useEffect(() => {
+    const code = searchParams.get('roomCode');
+    if (code) {
+      setJoinCode(code.toUpperCase());
+      searchParams.delete('roomCode');
+      setSearchParams(searchParams, { replace: true });
+    }
+    // Intentionally run once on mount \u2014 further edits come from the user.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const handleLeaveGame = async (gameId: string) => {
     try {
       await fetch(`/api/sessions/${gameId}/leave`, {
@@ -144,10 +177,19 @@ export function SessionLobby() {
 
   const handleCreate = async () => {
     if (!createName.trim() || !authUser) return;
+    if (createVisibility === 'private' && createPassword && createPassword.length < 4) {
+      setError('Password must be at least 4 characters');
+      return;
+    }
     setLoading(true);
     setError(null);
     try {
-      const result = await createSession(createName.trim(), authUser.displayName);
+      const result = await createSession({
+        name: createName.trim(),
+        displayName: authUser.displayName,
+        visibility: createVisibility,
+        password: createVisibility === 'private' && createPassword ? createPassword : undefined,
+      });
       setDisplayName(authUser.displayName);
       saveSession({
         roomCode: result.roomCode,
@@ -168,17 +210,39 @@ export function SessionLobby() {
     if (!joinCode.trim() || !authUser) return;
     setLoading(true);
     setError(null);
+    const code = joinCode.trim().toUpperCase();
     try {
-      const result = await joinSession(joinCode.trim().toUpperCase(), authUser.displayName);
-      setDisplayName(authUser.displayName);
-      saveSession({
-        roomCode: joinCode.trim().toUpperCase(),
-        name: (result as any).sessionName || joinCode.trim().toUpperCase(),
+      const result = await joinSession({
+        roomCode: code,
         displayName: authUser.displayName,
-        role: 'player',
-        joinedAt: new Date().toISOString(),
+        password: joinRequiresPassword ? joinPassword : undefined,
       });
-      navigate(`/session/${joinCode.trim().toUpperCase()}`);
+      if (result.ok) {
+        setDisplayName(authUser.displayName);
+        saveSession({
+          roomCode: code,
+          name: result.sessionName || code,
+          displayName: authUser.displayName,
+          role: 'player',
+          joinedAt: new Date().toISOString(),
+        });
+        // Reset privacy prompts for next time.
+        setJoinRequiresPassword(false);
+        setJoinPassword('');
+        navigate(`/session/${code}`);
+        return;
+      }
+      // Structured failures \u2014 pick the right UX without parsing strings.
+      if (result.kind === 'requires-password') {
+        setJoinRequiresPassword(true);
+        setError(joinRequiresPassword ? 'Wrong password \u2014 try again.' : null);
+      } else if (result.kind === 'banned') {
+        setBanModal({ reason: result.reason, bannedBy: result.bannedBy });
+      } else if (result.kind === 'not-found') {
+        setError('No session with that room code.');
+      } else {
+        setError(result.message);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to join session');
     } finally {
@@ -375,6 +439,34 @@ export function SessionLobby() {
                 onChange={(e) => setCreateName(e.target.value)}
                 onKeyDown={(e) => e.key === 'Enter' && handleCreate()}
               />
+              {/* Public / private toggle */}
+              <div style={styles.visibilityToggle} role="radiogroup" aria-label="Session visibility">
+                {(['public', 'private'] as const).map((v) => (
+                  <button
+                    key={v}
+                    type="button"
+                    role="radio"
+                    aria-checked={createVisibility === v}
+                    onClick={() => setCreateVisibility(v)}
+                    style={{
+                      ...styles.visibilityButton,
+                      ...(createVisibility === v ? styles.visibilityButtonActive : {}),
+                    }}
+                  >
+                    {v === 'public' ? '\uD83C\uDF10 Public' : '\uD83D\uDD12 Private'}
+                  </button>
+                ))}
+              </div>
+              {createVisibility === 'private' && (
+                <input
+                  type="password"
+                  placeholder="Password (4+ chars, optional for invite-only)"
+                  value={createPassword}
+                  onChange={(e) => setCreatePassword(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && handleCreate()}
+                  autoComplete="new-password"
+                />
+              )}
               <button
                 className="btn-primary"
                 onClick={handleCreate}
@@ -400,19 +492,35 @@ export function SessionLobby() {
               <input
                 placeholder="Room Code (e.g., ABC123)"
                 value={joinCode}
-                onChange={(e) => setJoinCode(e.target.value.toUpperCase())}
+                onChange={(e) => {
+                  setJoinCode(e.target.value.toUpperCase());
+                  // Changing the code invalidates the prior private-session
+                  // prompt \u2014 reset so we fall back to the first-try path.
+                  if (joinRequiresPassword) { setJoinRequiresPassword(false); setJoinPassword(''); }
+                }}
                 onKeyDown={(e) => e.key === 'Enter' && handleJoin()}
                 maxLength={8}
                 style={{ textTransform: 'uppercase', letterSpacing: '2px' }}
               />
+              {joinRequiresPassword && (
+                <input
+                  type="password"
+                  placeholder="Session password"
+                  value={joinPassword}
+                  onChange={(e) => setJoinPassword(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && handleJoin()}
+                  autoFocus
+                  autoComplete="off"
+                />
+              )}
               <button
                 className="btn-primary"
                 onClick={handleJoin}
-                disabled={loading || !joinCode.trim()}
+                disabled={loading || !joinCode.trim() || (joinRequiresPassword && !joinPassword)}
                 style={{ width: '100%' }}
               >
                 <Users size={16} />
-                Join Game
+                {joinRequiresPassword ? 'Enter Password' : 'Join Game'}
               </button>
             </div>
           </div>
@@ -469,6 +577,34 @@ export function SessionLobby() {
           KBRT.AI — Your adventure awaits.
         </p>
       </div>
+
+      {/* Banned modal \u2014 blocking, no retry. */}
+      {banModal && (
+        <div style={styles.bannedOverlay} role="dialog" aria-modal="true" aria-label="You were banned">
+          <div style={styles.bannedCard}>
+            <AlertTriangle size={32} color={theme.state.danger} />
+            <h2 style={styles.bannedTitle}>You were banned from this session</h2>
+            {banModal.bannedBy && (
+              <p style={styles.bannedMeta}>Banned by {banModal.bannedBy}</p>
+            )}
+            {banModal.reason && (
+              <p style={styles.bannedReason}>&ldquo;{banModal.reason}&rdquo;</p>
+            )}
+            <button
+              className="btn-primary"
+              onClick={() => {
+                setBanModal(null);
+                setJoinCode('');
+                setJoinPassword('');
+                setJoinRequiresPassword(false);
+              }}
+              style={{ marginTop: 16 }}
+            >
+              OK
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -827,5 +963,63 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 14,
     fontWeight: 600,
     color: theme.text.primary,
+  },
+  visibilityToggle: {
+    display: 'flex',
+    gap: 6,
+  },
+  visibilityButton: {
+    flex: 1,
+    padding: '8px 12px',
+    fontSize: 13,
+    fontWeight: 600,
+    background: theme.bg.deep,
+    color: theme.text.secondary,
+    border: `1px solid ${theme.border.default}`,
+    borderRadius: theme.radius.sm,
+    cursor: 'pointer',
+    transition: 'all 0.15s',
+  },
+  visibilityButtonActive: {
+    background: theme.gold.bg,
+    color: theme.gold.primary,
+    borderColor: theme.gold.border,
+  },
+  bannedOverlay: {
+    position: 'fixed' as const,
+    inset: 0,
+    background: 'rgba(0,0,0,0.85)',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 9999,
+  },
+  bannedCard: {
+    maxWidth: 480,
+    padding: '32px 28px',
+    background: theme.bg.deep,
+    border: `1px solid ${theme.state.danger}`,
+    borderRadius: theme.radius.lg,
+    textAlign: 'center' as const,
+    display: 'flex',
+    flexDirection: 'column' as const,
+    alignItems: 'center',
+    gap: 8,
+  },
+  bannedTitle: {
+    ...theme.type.h2,
+    color: theme.state.danger,
+    margin: 0,
+  },
+  bannedMeta: {
+    fontSize: 13,
+    color: theme.text.muted,
+    margin: 0,
+  },
+  bannedReason: {
+    fontSize: 14,
+    color: theme.text.primary,
+    fontStyle: 'italic' as const,
+    margin: '8px 0 0',
   },
 };

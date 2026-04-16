@@ -20,6 +20,49 @@ const updateLootSchema = z.object({
   equipped: z.boolean().optional(),
 });
 
+// Local DB row shapes. We don't exhaustively list every column; the
+// handler only reads the fields it needs. Keeps the route typed
+// without duplicating the full `characters`/`loot_entries` schema.
+interface LootEntryRow {
+  id: string;
+  character_id: string;
+  item_slug: string | null;
+  custom_item_id: string | null;
+  item_name: string;
+  item_rarity: string;
+  quantity: number;
+  equipped: number;
+}
+interface CharacterInventoryRow {
+  id: string;
+  inventory: string | null;
+  user_id?: string;
+}
+interface CompendiumItemRow {
+  description: string | null;
+  rarity: string | null;
+  requires_attunement: number;
+  type: string | null;
+  raw_json: string | null;
+}
+interface CustomItemRow {
+  description: string | null;
+  rarity: string | null;
+  requires_attunement: number;
+  type: string | null;
+  weight: number | null;
+  value_gp: number | null;
+  damage: string | null;
+  damage_type: string | null;
+  properties: string | null;
+  range: string | null;
+  ac: number | null;
+  ac_type: string | null;
+  magic_bonus: number | null;
+  image_url: string | null;
+  stat_effects: string | null;
+}
+
 const router = Router();
 
 // GET /api/characters/:id/loot
@@ -135,7 +178,7 @@ router.post('/characters/:id/loot/take', async (req: Request, res: Response) => 
       'SELECT * FROM loot_entries WHERE id = $1 AND character_id = $2 FOR UPDATE',
       [entryId, creatureCharId],
     );
-    const entry = entryRows[0] as any;
+    const entry = entryRows[0] as LootEntryRow | undefined;
     if (!entry) {
       await client.query('ROLLBACK');
       res.status(404).json({ error: 'Loot entry not found' });
@@ -153,7 +196,7 @@ router.post('/characters/:id/loot/take', async (req: Request, res: Response) => 
       'SELECT id, inventory FROM characters WHERE id = $1 FOR UPDATE',
       [targetCharacterId],
     );
-    const targetChar = targetRows[0] as any;
+    const targetChar = targetRows[0] as CharacterInventoryRow | undefined;
     if (!targetChar) {
       await client.query('ROLLBACK');
       res.status(404).json({ error: 'Target character not found' });
@@ -189,7 +232,7 @@ router.post('/characters/:id/loot/take', async (req: Request, res: Response) => 
 
     if (slug) {
       const { rows: compRows } = await client.query('SELECT * FROM compendium_items WHERE slug = $1', [slug]);
-      const compItem = compRows[0] as any;
+      const compItem = compRows[0] as CompendiumItemRow | undefined;
       if (compItem) {
         description = compItem.description || '';
         rarity = compItem.rarity || rarity;
@@ -215,7 +258,7 @@ router.post('/characters/:id/loot/take', async (req: Request, res: Response) => 
 
     if (customItemId) {
       const { rows: ciRows } = await client.query('SELECT * FROM custom_items WHERE id = $1', [customItemId]);
-      const ci = ciRows[0] as any;
+      const ci = ciRows[0] as CustomItemRow | undefined;
       if (ci) {
         description = ci.description || '';
         rarity = ci.rarity || rarity;
@@ -229,7 +272,7 @@ router.post('/characters/:id/loot/take', async (req: Request, res: Response) => 
       }
     }
 
-    const existingIdx = inventory.findIndex((i: any) =>
+    const existingIdx = inventory.findIndex((i: { slug?: string; name?: string; type?: string }) =>
       (slug && i.slug === slug) || (!slug && i.name === entry.item_name && i.type === itemType)
     );
 
@@ -287,7 +330,7 @@ router.post('/characters/:id/inventory/enrich', async (req: Request, res: Respon
   const charId = String(req.params.id);
   await assertCharacterOwnerOrDM(charId, userId);
   const { rows: charRows } = await pool.query('SELECT id, inventory FROM characters WHERE id = $1', [charId]);
-  const char = charRows[0] as any;
+  const char = charRows[0] as CharacterInventoryRow | undefined;
   if (!char) { res.status(404).json({ error: 'Character not found' }); return; }
 
   const inventory = JSON.parse(char.inventory || '[]');
@@ -310,7 +353,7 @@ router.post('/characters/:id/inventory/enrich', async (req: Request, res: Respon
     if (item.slug) continue;
     const nameLower = item.name.toLowerCase().trim();
 
-    let match: any = null;
+    let match: { slug: string; type: string | null; rarity: string | null; raw_json: string | null } | undefined;
     const { rows: r1 } = await pool.query('SELECT slug, type, rarity, raw_json FROM compendium_items WHERE LOWER(name) = $1 LIMIT 1', [nameLower]);
     match = r1[0];
 
@@ -389,7 +432,7 @@ router.post('/loot/transfer', async (req: Request, res: Response) => {
       'SELECT * FROM loot_entries WHERE id = $1 AND character_id = $2 FOR UPDATE',
       [lootEntryId, String(fromCharacterId)],
     );
-    const entry = entryRows[0] as any;
+    const entry = entryRows[0] as LootEntryRow | undefined;
     if (!entry) {
       await client.query('ROLLBACK');
       res.status(404).json({ error: 'Loot entry not found' });
@@ -400,7 +443,7 @@ router.post('/loot/transfer', async (req: Request, res: Response) => {
       'SELECT id, name FROM characters WHERE id = $1',
       [String(toCharacterId)],
     );
-    const targetChar = targetRows[0] as any;
+    const targetChar = targetRows[0] as { id: string; name: string } | undefined;
     if (!targetChar) {
       await client.query('ROLLBACK');
       res.status(404).json({ error: 'Target character not found' });
