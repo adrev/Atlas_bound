@@ -234,6 +234,27 @@ export function BattleMap() {
     return () => window.removeEventListener('canvas-center-on', handler as EventListener);
   }, [setCanvasViewport]);
 
+  // Global Escape → clear token selection. Skip while the user is
+  // typing into an input/textarea/contenteditable so we don't wipe
+  // selection when they're just bailing on a chat message or a rename.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      const active = document.activeElement;
+      if (active) {
+        const tag = active.tagName.toLowerCase();
+        const editable = (active as HTMLElement).isContentEditable;
+        if (tag === 'input' || tag === 'textarea' || tag === 'select' || editable) return;
+      }
+      const mapState = useMapStore.getState();
+      if (mapState.selectedTokenIds.length > 0 || mapState.selectedTokenId) {
+        mapState.selectToken(null);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
   // ── Draw-mode mouse pipeline ─────────────────────────────────
   // When isDrawMode is on, stage clicks/drags drive the draw store
   // instead of panning / selecting tokens. isDrawing.current tracks
