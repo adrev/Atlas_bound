@@ -151,10 +151,16 @@ export async function initDatabase(): Promise<void> {
       conditions TEXT DEFAULT '[]',
       owner_user_id TEXT,
       faction TEXT NOT NULL DEFAULT 'neutral',
+      aura TEXT,
       created_at TEXT NOT NULL DEFAULT (NOW()::text)
     );
 
     ALTER TABLE tokens ADD COLUMN IF NOT EXISTS faction TEXT NOT NULL DEFAULT 'neutral';
+    -- aura is a JSON blob ({radiusFeet,color,opacity,shape}) or NULL.
+    -- Stored as TEXT because we don't query its fields server-side; the
+    -- client renders it. Added post-MVP so older sessions get NULL and
+    -- the aura UI simply shows "no aura" until the DM sets one.
+    ALTER TABLE tokens ADD COLUMN IF NOT EXISTS aura TEXT;
 
     CREATE TABLE IF NOT EXISTS combat_state (
       session_id TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,

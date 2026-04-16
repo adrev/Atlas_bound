@@ -10,7 +10,7 @@ import {
   tokenMoveSchema, tokenAddSchema, tokenRemoveSchema, tokenUpdateSchema,
 } from '../utils/validation.js';
 import { safeHandler } from '../utils/socketHelpers.js';
-import { safeParseJSON } from '../utils/safeJson.js';
+import { rowToToken } from '../utils/tokenMapper.js';
 
 /**
  * All token-lifecycle socket events (add / move / remove / update).
@@ -37,18 +37,7 @@ export function registerTokenEvents(io: Server, socket: Socket): void {
       // Verify token's map belongs to this session
       const { rows: mapCheck } = await pool.query('SELECT 1 FROM maps WHERE id = $1 AND session_id = $2', [row.map_id, ctx.room.sessionId]);
       if (mapCheck.length === 0) return;
-      token = {
-        id: row.id as string, mapId: row.map_id as string,
-        characterId: row.character_id as string | null, name: row.name as string,
-        x: row.x as number, y: row.y as number, size: row.size as number,
-        imageUrl: row.image_url as string | null, color: row.color as string,
-        layer: row.layer as Token['layer'], visible: Boolean(row.visible),
-        hasLight: Boolean(row.has_light), lightRadius: row.light_radius as number,
-        lightDimRadius: row.light_dim_radius as number, lightColor: row.light_color as string,
-        conditions: safeParseJSON(row.conditions, [], 'token.conditions'), ownerUserId: row.owner_user_id as string | null,
-        faction: ((row.faction as string | null) ?? 'neutral') as Token['faction'],
-        createdAt: row.created_at as string,
-      };
+      token = rowToToken(row);
     }
 
     if (ctx.room.gameMode === 'combat' && ctx.player.role !== 'dm') {
@@ -233,18 +222,7 @@ export function registerTokenEvents(io: Server, socket: Socket): void {
       const row = rows[0] as Record<string, unknown> | undefined;
       if (!row) return;
       tokenMapId = row.map_id as string;
-      token = {
-        id: row.id as string, mapId: row.map_id as string,
-        characterId: row.character_id as string | null, name: row.name as string,
-        x: row.x as number, y: row.y as number, size: row.size as number,
-        imageUrl: row.image_url as string | null, color: row.color as string,
-        layer: row.layer as Token['layer'], visible: Boolean(row.visible),
-        hasLight: Boolean(row.has_light), lightRadius: row.light_radius as number,
-        lightDimRadius: row.light_dim_radius as number, lightColor: row.light_color as string,
-        conditions: safeParseJSON(row.conditions, [], 'token.conditions'), ownerUserId: row.owner_user_id as string | null,
-        faction: ((row.faction as string | null) ?? 'neutral') as Token['faction'],
-        createdAt: row.created_at as string,
-      };
+      token = rowToToken(row);
     }
 
     const isDM = ctx.player.role === 'dm';
@@ -288,6 +266,13 @@ export function registerTokenEvents(io: Server, socket: Socket): void {
     if (changes.conditions !== undefined) { setClauses.push(`conditions = $${paramIdx++}`); params.push(JSON.stringify(changes.conditions)); }
     if (changes.ownerUserId !== undefined) { setClauses.push(`owner_user_id = $${paramIdx++}`); params.push(changes.ownerUserId); }
     if (changes.faction !== undefined) { setClauses.push(`faction = $${paramIdx++}`); params.push(changes.faction); }
+    if (changes.aura !== undefined) {
+      setClauses.push(`aura = $${paramIdx++}`);
+      // aura is either {radiusFeet,color,opacity,shape} or null
+      // (explicitly clearing the aura). JSON.stringify(null) = "null"
+      // which is valid JSON — safeParseJSON round-trips it correctly.
+      params.push(changes.aura === null ? null : JSON.stringify(changes.aura));
+    }
 
     if (setClauses.length > 0) {
       params.push(tokenId);

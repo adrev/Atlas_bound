@@ -13,6 +13,7 @@ import { safeHandler } from '../utils/socketHelpers.js';
 import { dbRowToCharacter } from '../utils/characterMapper.js';
 import { shouldDeliverChatRow } from '../utils/chatHistoryFilter.js';
 import { safeParseJSON } from '../utils/safeJson.js';
+import { rowToToken } from '../utils/tokenMapper.js';
 
 export function registerSessionEvents(io: Server, socket: Socket): void {
 
@@ -176,20 +177,10 @@ export function registerSessionEvents(io: Server, socket: Socket): void {
         // the client sends a map:load round-trip.
         room.mapGridSizes.set(hydrationMapId, Number(mapRow.grid_size) || 70);
         const { rows: tokenRows } = await pool.query('SELECT * FROM tokens WHERE map_id = $1', [hydrationMapId]);
-        const tokens = tokenRows.map((t: Record<string, unknown>) => ({
-          id: t.id as string, mapId: t.map_id as string,
-          characterId: t.character_id as string | null, name: t.name as string,
-          x: t.x as number, y: t.y as number, size: t.size as number,
-          imageUrl: t.image_url as string | null, color: t.color as string,
-          layer: t.layer as string, visible: Boolean(t.visible),
-          hasLight: Boolean(t.has_light), lightRadius: t.light_radius as number,
-          lightDimRadius: t.light_dim_radius as number, lightColor: t.light_color as string,
-          conditions: safeParseJSON<string[]>(t.conditions, [], 'tokens.conditions'),
-          ownerUserId: t.owner_user_id as string | null, createdAt: t.created_at as string,
-        }));
+        const tokens = tokenRows.map(rowToToken);
 
         if (room.tokens.size === 0) {
-          for (const t of tokens) room.tokens.set(t.id, t as never);
+          for (const t of tokens) room.tokens.set(t.id, t);
         }
 
         const { loadDrawingsForMapAsync, filterDrawingsForPlayer } = await import('./drawingEvents.js');

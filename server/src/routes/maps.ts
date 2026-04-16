@@ -5,6 +5,7 @@ import { mapUpload, validateAndSaveUpload } from './uploads.js';
 import { createMapSchema } from '../utils/validation.js';
 import { getAuthUserId, assertSessionDM, assertSessionMember } from '../utils/authorization.js';
 import { safeParseJSON } from '../utils/safeJson.js';
+import { rowToToken } from '../utils/tokenMapper.js';
 
 const router = Router();
 
@@ -218,26 +219,7 @@ router.get('/maps/:id', async (req: Request, res: Response) => {
     walls: safeParseJSON<unknown[]>(map.walls, [], 'maps.walls'),
     fogState: safeParseJSON<unknown[]>(map.fog_state, [], 'maps.fog_state'),
     createdAt: map.created_at,
-    tokens: tokens.map(t => ({
-      id: t.id,
-      mapId: t.map_id,
-      characterId: t.character_id,
-      name: t.name,
-      x: t.x,
-      y: t.y,
-      size: t.size,
-      imageUrl: t.image_url,
-      color: t.color,
-      layer: t.layer,
-      visible: Boolean(t.visible),
-      hasLight: Boolean(t.has_light),
-      lightRadius: t.light_radius,
-      lightDimRadius: t.light_dim_radius,
-      lightColor: t.light_color,
-      conditions: safeParseJSON<string[]>(t.conditions, [], 'tokens.conditions'),
-      ownerUserId: t.owner_user_id,
-      createdAt: t.created_at,
-    })),
+    tokens: tokens.map(rowToToken),
   });
 });
 

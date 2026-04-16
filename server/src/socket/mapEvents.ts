@@ -6,6 +6,7 @@ import { loadDrawingsForMapAsync, filterDrawingsForPlayer } from './drawingEvent
 import { mapLoadSchema, mapPingSchema } from '../utils/validation.js';
 import { safeHandler } from '../utils/socketHelpers.js';
 import { safeParseJSON } from '../utils/safeJson.js';
+import { rowToToken } from '../utils/tokenMapper.js';
 
 import { registerTokenEvents } from './tokenEvents.js';
 import { registerFogEvents } from './fogEvents.js';
@@ -43,16 +44,7 @@ export function registerMapEvents(io: Server, socket: Socket): void {
     if (!mapRow) return;
 
     const { rows: tokenRows } = await pool.query('SELECT * FROM tokens WHERE map_id = $1', [mapId]);
-    const tokens: Token[] = tokenRows.map(t => ({
-      id: t.id, mapId: t.map_id, characterId: t.character_id, name: t.name,
-      x: t.x, y: t.y, size: t.size, imageUrl: t.image_url, color: t.color,
-      layer: t.layer as Token['layer'], visible: Boolean(t.visible),
-      hasLight: Boolean(t.has_light), lightRadius: t.light_radius,
-      lightDimRadius: t.light_dim_radius, lightColor: t.light_color,
-      conditions: safeParseJSON(t.conditions, [], 'token.conditions'), ownerUserId: t.owner_user_id,
-      faction: (t.faction as Token['faction']) ?? 'neutral',
-      createdAt: t.created_at,
-    }));
+    const tokens: Token[] = tokenRows.map(rowToToken);
 
     ctx.room.currentMapId = mapId;
     // Cache grid size so OA / other sync reach calculations can read

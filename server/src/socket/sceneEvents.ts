@@ -11,6 +11,7 @@ import { safeHandler } from '../utils/socketHelpers.js';
 import { loadDrawingsForMapAsync, filterDrawingsForPlayer } from './drawingEvents.js';
 import { loadZonesForMap } from './mapEvents.js';
 import { safeParseJSON } from '../utils/safeJson.js';
+import { rowToToken } from '../utils/tokenMapper.js';
 
 const MAP_SUMMARY_SELECT = `
   SELECT m.id, m.name, m.image_url, m.width, m.height, m.grid_size, m.created_at, m.display_order,
@@ -108,15 +109,7 @@ export function registerSceneEvents(io: Server, socket: Socket): void {
     ctx.room.mapGridSizes.set(mapId, Number(mapRow.grid_size) || 70);
 
     const { rows: tokenRows } = await pool.query('SELECT * FROM tokens WHERE map_id = $1', [mapId]);
-    const tokens: Token[] = tokenRows.map(t => ({
-      id: t.id, mapId: t.map_id, characterId: t.character_id, name: t.name,
-      x: t.x, y: t.y, size: t.size, imageUrl: t.image_url, color: t.color,
-      layer: t.layer as Token['layer'], visible: Boolean(t.visible),
-      hasLight: Boolean(t.has_light), lightRadius: t.light_radius,
-      lightDimRadius: t.light_dim_radius, lightColor: t.light_color,
-      conditions: safeParseJSON(t.conditions, [], 'token.conditions'), ownerUserId: t.owner_user_id,
-      createdAt: t.created_at,
-    }));
+    const tokens: Token[] = tokenRows.map(rowToToken);
 
     const drawings = await loadDrawingsForMapAsync(mapId);
     const visibleDrawings = filterDrawingsForPlayer(drawings, ctx.player);
@@ -222,15 +215,7 @@ export function registerSceneEvents(io: Server, socket: Socket): void {
 
     // Load tokens + drawings for new ribbon map
     const { rows: tokenRows } = await pool.query('SELECT * FROM tokens WHERE map_id = $1', [mapId]);
-    const tokens: Token[] = tokenRows.map(t => ({
-      id: t.id, mapId: t.map_id, characterId: t.character_id, name: t.name,
-      x: t.x, y: t.y, size: t.size, imageUrl: t.image_url, color: t.color,
-      layer: t.layer as Token['layer'], visible: Boolean(t.visible),
-      hasLight: Boolean(t.has_light), lightRadius: t.light_radius,
-      lightDimRadius: t.light_dim_radius, lightColor: t.light_color,
-      conditions: safeParseJSON(t.conditions, [], 'token.conditions'), ownerUserId: t.owner_user_id,
-      createdAt: t.created_at,
-    }));
+    const tokens: Token[] = tokenRows.map(rowToToken);
     ctx.room.tokens.clear();
     for (const t of tokens) ctx.room.tokens.set(t.id, t);
 
