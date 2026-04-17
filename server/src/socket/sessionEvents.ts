@@ -213,7 +213,9 @@ export function registerSessionEvents(io: Server, socket: Socket): void {
             fogState: safeParseJSON<unknown[]>(mapRow.fog_state, [], 'maps.fog_state'),
             zones,
           },
-          tokens, drawings: visibleDrawings,
+          // Filter hidden tokens for players — DMs see everything.
+          tokens: isDM ? tokens : tokens.filter(t => t.visible !== false && t.visible !== 0 as unknown),
+          drawings: visibleDrawings,
         });
       }
     }
@@ -455,12 +457,17 @@ export function registerSessionEvents(io: Server, socket: Socket): void {
       io.to(ctx.room.sessionId).emit('session:handout-received', payload);
     }
 
-    // Auto-save handout as a shared note
+    // Auto-save handout as a note. Targeted handouts (sent to specific
+    // players) must NOT be is_shared=true — otherwise a supposedly
+    // private DM→rogue handout shows up in the shared notes tab for
+    // the entire party. Only broadcast handouts (no targetUserIds)
+    // are truly shared.
+    const isShared = !targetUserIds || targetUserIds.length === 0;
     const noteId = uuidv4();
     await pool.query(
       `INSERT INTO session_notes (id, session_id, title, content, category, is_shared, created_by)
        VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-      [noteId, ctx.room.sessionId, title, content || '', 'general', true, ctx.player.userId]
+      [noteId, ctx.room.sessionId, title, content || '', 'general', isShared, ctx.player.userId]
     );
   }));
 

@@ -76,15 +76,22 @@ export function registerMapEvents(io: Server, socket: Socket): void {
       fogState: safeParseJSON<FogPolygon[]>(mapRow.fog_state, [], 'map.fog_state'),
     };
 
-    // Zones are DM-only planning data. Send the full zone list to DMs,
-    // an empty array to players so nothing leaks into their browser.
+    // Per-recipient filtering: DMs see everything, players get only
+    // visible tokens and no zones. Without this, a player opening
+    // devtools could inspect the socket payload and see hidden NPC
+    // names, positions, and character data for ambush creatures the
+    // DM placed with visible=false.
     for (const player of ctx.room.players.values()) {
       const visibleDrawings = filterDrawingsForPlayer(persistedDrawings, player);
+      const isDM = player.role === 'dm';
+      const playerTokens = isDM
+        ? tokens
+        : tokens.filter(t => t.visible !== false && t.visible !== 0 as unknown);
       const mapData = {
         ...baseMapData,
-        zones: player.role === 'dm' ? zones : [],
+        zones: isDM ? zones : [],
       };
-      io.to(player.socketId).emit('map:loaded', { map: mapData, tokens, drawings: visibleDrawings });
+      io.to(player.socketId).emit('map:loaded', { map: mapData, tokens: playerTokens, drawings: visibleDrawings });
     }
   }));
 

@@ -3,7 +3,7 @@ import { Plus, X } from 'lucide-react';
 import { theme } from '../../styles/theme';
 import { useSessionStore } from '../../stores/useSessionStore';
 import { useMapStore } from '../../stores/useMapStore';
-import { emitLoadMap } from '../../socket/emitters';
+import { emitLoadMap, emitPreviewLoadMap } from '../../socket/emitters';
 import { PrebuiltMapGallery } from './PrebuiltMapGallery';
 import { MapUpload } from './MapUpload';
 import { getMapThumbnail } from '../../utils/prebuiltMapImages';
@@ -43,6 +43,9 @@ export function MapBrowser({ onMapLoaded, onClose }: MapBrowserProps) {
       .catch(() => {});
   }, [sessionId, uploadOpen]); // refetch when upload modal closes
 
+  const isDM = useSessionStore((s) => s.isDM);
+  const playerMapId = useMapStore((s) => s.playerMapId);
+
   const handleLoadSaved = (map: SavedMap) => {
     setCurrentMapId(map.id);
     setMap({
@@ -56,7 +59,14 @@ export function MapBrowser({ onMapLoaded, onClose }: MapBrowserProps) {
       gridOffsetX: 0,
       gridOffsetY: 0,
     });
-    emitLoadMap(map.id);
+    // Use the same routing as PrebuiltMapGallery: DM with an existing
+    // ribbon → preview load (don't yank players off their current map).
+    // DM with no ribbon → activate (first map of the session).
+    if (isDM && playerMapId) {
+      emitPreviewLoadMap(map.id);
+    } else {
+      emitLoadMap(map.id);
+    }
     onMapLoaded?.();
   };
 

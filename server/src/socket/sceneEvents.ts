@@ -255,7 +255,10 @@ export function registerSceneEvents(io: Server, socket: Socket): void {
         // Only DMs receive zone planning data \u2014 players see an empty list.
         zones: player.role === 'dm' ? zones : [],
       };
-      io.to(player.socketId).emit('map:loaded', { map: mapData, tokens, drawings: visibleDrawings, isPreview: false });
+      const playerTokens = player.role === 'dm'
+        ? tokens
+        : tokens.filter(t => t.visible !== false && t.visible !== 0 as unknown);
+      io.to(player.socketId).emit('map:loaded', { map: mapData, tokens: playerTokens, drawings: visibleDrawings, isPreview: false });
     }
 
     io.to(ctx.room.sessionId).emit('map:player-map-changed', { mapId });

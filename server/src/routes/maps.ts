@@ -237,6 +237,12 @@ router.get('/maps/:id', async (req: Request, res: Response) => {
   }
 
   const { rows: tokens } = await pool.query('SELECT * FROM tokens WHERE map_id = $1', [id]);
+  const allTokens = tokens.map(rowToToken);
+  // Filter hidden tokens for non-DMs so they can't inspect the REST
+  // response and discover hidden NPC positions / names.
+  const visibleTokens = isDM
+    ? allTokens
+    : allTokens.filter(t => t.visible !== false && t.visible !== 0 as unknown);
 
   res.json({
     id: map.id,
@@ -253,7 +259,7 @@ router.get('/maps/:id', async (req: Request, res: Response) => {
     walls: safeParseJSON<unknown[]>(map.walls, [], 'maps.walls'),
     fogState: safeParseJSON<unknown[]>(map.fog_state, [], 'maps.fog_state'),
     createdAt: map.created_at,
-    tokens: tokens.map(rowToToken),
+    tokens: visibleTokens,
   });
 });
 
