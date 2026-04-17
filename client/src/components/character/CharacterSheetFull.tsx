@@ -2329,19 +2329,11 @@ function InventoryTab({
               >{item.equipped ? 'E' : ''}</span>
               {/* Item image */}
               <img
-                src={(item as any).imageUrl || getItemImageUrl((item as any).slug || item.name)}
+                src={(item as any).imageUrl || getItemIconUrl(item.name, (item as any).type)}
                 alt=""
                 loading="lazy"
                 style={{ width: 28, height: 28, borderRadius: '50%', objectFit: 'cover', flexShrink: 0,
                   border: `1.5px solid ${RARITY_COLORS[(item.rarity || 'common').toLowerCase()] || C.borderDim}` }}
-                onError={e => {
-                  const img = e.target as HTMLImageElement;
-                  // Only fallback to letter SVG if this was a GCS URL attempt.
-                  // Don't clobber DDB/proxy imageUrls that may just be slow.
-                  if (!img.src.includes('/uploads/') && !img.src.includes('dndbeyond') && !img.src.includes('proxy-image')) {
-                    img.src = getItemIconUrl(item.name, (item as any).type);
-                  }
-                }}
               />
               <div
                 style={{ flex: 1, minWidth: 0, cursor: (item as any).slug ? 'pointer' : 'default' }}
