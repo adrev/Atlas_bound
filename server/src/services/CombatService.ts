@@ -237,15 +237,18 @@ export async function addCombatantAsync(sessionId: string, tokenId: string): Pro
   };
 
   // Insert into the sorted list while keeping the existing turn
-  // pointer aligned to the same combatant. If we insert before the
-  // current turn index we need to bump it so play doesn't jump.
-  const currentName = room.combatState.combatants[room.combatState.currentTurnIndex]?.name;
+  // pointer aligned to the same combatant. Use tokenId (unique) instead
+  // of name to find the current combatant after re-sort — duplicate
+  // names are common in encounters (Goblin ×3, Guard ×2, etc.) and
+  // the old name-based lookup would silently shift the turn to the
+  // wrong creature when names collided.
+  const currentTokenId = room.combatState.combatants[room.combatState.currentTurnIndex]?.tokenId;
   room.combatState.combatants.push(combatant);
   room.combatState.combatants.sort((a, b) => {
     if (b.initiative !== a.initiative) return b.initiative - a.initiative;
     return b.initiativeBonus - a.initiativeBonus;
   });
-  const newIdx = room.combatState.combatants.findIndex((c) => c.name === currentName);
+  const newIdx = room.combatState.combatants.findIndex((c) => c.tokenId === currentTokenId);
   if (newIdx >= 0) room.combatState.currentTurnIndex = newIdx;
 
   await pool.query(
@@ -402,6 +405,11 @@ export function addCondition(sessionId: string, tokenId: string, condition: Cond
   const token = room.tokens.get(tokenId);
   if (token && !token.conditions.includes(condition)) token.conditions.push(condition);
   persistCombatState(room.combatState);
+  // Persist to the token DB row so conditions survive a server restart
+  // or map reload. Without this, condition badges disappear on refresh
+  // because the token row still has the old conditions array.
+  const conditionsJson = JSON.stringify(combatant.conditions);
+  pool.query('UPDATE tokens SET conditions = $1 WHERE id = $2', [conditionsJson, tokenId]).catch(() => {});
   return combatant.conditions;
 }
 
@@ -414,6 +422,8 @@ export function removeCondition(sessionId: string, tokenId: string, condition: C
   const token = room.tokens.get(tokenId);
   if (token) token.conditions = token.conditions.filter(c => c !== condition);
   persistCombatState(room.combatState);
+  const conditionsJson = JSON.stringify(combatant.conditions);
+  pool.query('UPDATE tokens SET conditions = $1 WHERE id = $2', [conditionsJson, tokenId]).catch(() => {});
   return combatant.conditions;
 }
 

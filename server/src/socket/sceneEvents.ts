@@ -286,8 +286,30 @@ export function registerSceneEvents(io: Server, socket: Socket): void {
       return;
     }
 
+    // Find any DMs who were previewing the deleted map and bounce them
+    // back to the player ribbon. Without this, the DM's client stays
+    // on a stale map while the server resolves future edits against
+    // the ribbon — causing accidental edits on the live scene.
+    const affectedDMs: string[] = [];
     for (const [userId, viewing] of Array.from(ctx.room.dmViewingMap.entries())) {
-      if (viewing === mapId) ctx.room.dmViewingMap.delete(userId);
+      if (viewing === mapId) {
+        ctx.room.dmViewingMap.delete(userId);
+        affectedDMs.push(userId);
+      }
+    }
+
+    // Tell affected DMs to reload onto the ribbon map (or show empty
+    // state if no ribbon exists). This fires BEFORE the list refresh
+    // so the client doesn't try to render the deleted map's data.
+    if (affectedDMs.length > 0 && ctx.room.playerMapId) {
+      for (const dmUserId of affectedDMs) {
+        const dmPlayer = ctx.room.players.get(dmUserId);
+        if (dmPlayer) {
+          io.to(dmPlayer.socketId).emit('map:preview-exited', {
+            fallbackMapId: ctx.room.playerMapId,
+          });
+        }
+      }
     }
 
     await broadcastMapListToDMs(io, ctx.room);
