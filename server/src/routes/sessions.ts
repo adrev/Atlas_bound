@@ -15,7 +15,7 @@ import {
   hashSessionPassword, verifySessionPassword, generateInviteCode,
 } from '../utils/sessionPassword.js';
 import { getIO } from '../socket/ioInstance.js';
-import { getRoom } from '../utils/roomState.js';
+import { getRoom, removePlayerFromRoom } from '../utils/roomState.js';
 import { safeParseJSON } from '../utils/safeJson.js';
 
 const router = Router();
@@ -309,6 +309,30 @@ router.delete('/:id/leave', async (req: Request, res: Response) => {
 
   await pool.query('DELETE FROM session_players WHERE session_id = $1 AND user_id = $2',
     [req.params.id, userId]);
+
+  // Evict all live sockets for this user from the Socket.IO room +
+  // room state. Without this, the user's connected tabs keep receiving
+  // broadcasts and can perform socket actions until they refresh —
+  // the DB membership is gone but the in-memory state is stale.
+  const sessionId = String(req.params.id);
+  const room = getRoom(sessionId);
+  if (room) {
+    const io = getIO();
+    if (io) {
+      const allSockets: string[] = [];
+      const userSocks = room.userSockets.get(userId);
+      if (userSocks) for (const sid of userSocks) allSockets.push(sid);
+      const primary = room.players.get(userId);
+      if (primary && !allSockets.includes(primary.socketId)) allSockets.push(primary.socketId);
+      for (const sid of allSockets) {
+        io.to(sid).emit('session:kicked', { userId });
+        const sock = io.sockets.sockets.get(sid);
+        if (sock) sock.leave(sessionId);
+      }
+    }
+    removePlayerFromRoom(sessionId, userId);
+  }
+
   res.json({ success: true });
 });
 
@@ -748,6 +772,14 @@ router.post('/:id/promote', async (req: Request, res: Response) => {
     return;
   }
 
+  // Sync the in-memory room state so socket handlers that check
+  // ctx.player.role see the new role immediately, not on next reconnect.
+  const room = getRoom(sessionId);
+  if (room) {
+    const p = room.players.get(targetUserId);
+    if (p) p.role = 'dm';
+  }
+
   const io = getIO();
   if (io) {
     io.to(sessionId).emit('session:role-changed', { userId: targetUserId, role: 'dm' });
@@ -781,6 +813,14 @@ router.post('/:id/demote', async (req: Request, res: Response) => {
   if (rows.length === 0) {
     res.status(404).json({ error: 'Player not in session' });
     return;
+  }
+
+  // Sync room state immediately so the demoted user loses DM socket
+  // powers without needing to reconnect.
+  const room = getRoom(sessionId);
+  if (room) {
+    const p = room.players.get(targetUserId);
+    if (p) p.role = 'player';
   }
 
   const io = getIO();
@@ -835,6 +875,14 @@ router.post('/:id/transfer-ownership', async (req: Request, res: Response) => {
     throw err;
   } finally {
     client.release();
+  }
+
+  // Sync room state: owner pointer + the new owner's role.
+  const room = getRoom(sessionId);
+  if (room) {
+    room.dmUserId = newOwnerId;
+    const p = room.players.get(newOwnerId);
+    if (p) p.role = 'dm';
   }
 
   const io = getIO();

@@ -540,6 +540,18 @@ export function registerCombatEvents(io: Server, socket: Socket): void {
     if (!ctx) return;
     if (!isTokenOwnerOrDM(ctx, parsed.data.tokenId)) return;
 
+    // Non-DMs can only drop conditions that are voluntarily ended
+    // (concentration, dodge) — not save-or-suck effects that should
+    // expire through the combat duration system or DM override.
+    // Without this, a player could strip paralyzed/restrained/stunned
+    // from their own token instantly.
+    if (ctx.player.role !== 'dm') {
+      const VOLUNTARY_CONDITIONS = new Set([
+        'concentrating', 'dodging', 'raging', 'hiding',
+      ]);
+      if (!VOLUNTARY_CONDITIONS.has(parsed.data.condition.toLowerCase())) return;
+    }
+
     try {
       const conditions = CombatService.removeCondition(
         ctx.room.sessionId, parsed.data.tokenId, parsed.data.condition,
@@ -827,24 +839,16 @@ export function registerCombatEvents(io: Server, socket: Socket): void {
     const ctx = getPlayerBySocketId(socket.id);
     if (!ctx) return;
 
-    // Ownership check: DM is always allowed. Players must either
-    // provide a counterCasterTokenId they own, or — for backward
-    // compatibility with older clients — own at least one PC token
-    // in this room so the event can't be spoofed by a lurker.
+    // Ownership: DM always allowed. Players MUST provide their own
+    // counterCasterTokenId — the old "owns any token" fallback let a
+    // bystander spoof counterspells against any cast by knowing the
+    // broadcast castId.
     const isDM = ctx.player.role === 'dm';
     if (!isDM) {
       const counterTokenId = parsed.data.counterCasterTokenId;
-      if (counterTokenId) {
-        const t = ctx.room.tokens.get(counterTokenId);
-        if (!t || t.ownerUserId !== ctx.player.userId) return;
-      } else {
-        // Fallback: require the emitter to own at least one token.
-        let ownsAnyToken = false;
-        for (const t of ctx.room.tokens.values()) {
-          if (t.ownerUserId === ctx.player.userId) { ownsAnyToken = true; break; }
-        }
-        if (!ownsAnyToken) return;
-      }
+      if (!counterTokenId) return;
+      const t = ctx.room.tokens.get(counterTokenId);
+      if (!t || t.ownerUserId !== ctx.player.userId) return;
     }
 
     io.to(ctx.room.sessionId).emit('combat:spell-counterspelled', parsed.data);
@@ -894,24 +898,16 @@ export function registerCombatEvents(io: Server, socket: Socket): void {
     const ctx = getPlayerBySocketId(socket.id);
     if (!ctx) return;
 
-    // Ownership check: DM is always allowed. Players must either
-    // provide a defenderTokenId they own, or — for backward
-    // compatibility with older clients — own at least one PC token
-    // in this room. Prevents bystanders from faking Shield casts
-    // that would reduce another player's damage.
+    // Ownership: DM always allowed. Players MUST provide their own
+    // defenderTokenId — the old "owns any token" fallback let a
+    // bystander forge a Shield response for another player's
+    // incoming attack.
     const isDM = ctx.player.role === 'dm';
     if (!isDM) {
       const defenderTokenId = parsed.data.defenderTokenId;
-      if (defenderTokenId) {
-        const t = ctx.room.tokens.get(defenderTokenId);
-        if (!t || t.ownerUserId !== ctx.player.userId) return;
-      } else {
-        let ownsAnyToken = false;
-        for (const t of ctx.room.tokens.values()) {
-          if (t.ownerUserId === ctx.player.userId) { ownsAnyToken = true; break; }
-        }
-        if (!ownsAnyToken) return;
-      }
+      if (!defenderTokenId) return;
+      const t = ctx.room.tokens.get(defenderTokenId);
+      if (!t || t.ownerUserId !== ctx.player.userId) return;
     }
 
     io.to(ctx.room.sessionId).emit('combat:shield-cast', parsed.data);

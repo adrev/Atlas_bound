@@ -253,16 +253,14 @@ export function registerTokenEvents(io: Server, socket: Socket): void {
     if (!isDM) {
       if (isOwner && changes.conditions !== undefined) return;
       if (!isOwner) {
-        // Non-owner players can ONLY flip `conditions` on an unowned
-        // NPC token (used for "I hit the goblin — mark it bloodied").
-        // Movement (x/y) has its own rate-limited, owner-gated
-        // handler at map:token-move; letting players push it through
-        // map:token-update was a grief vector (anyone could yank an
-        // enemy across the map).
-        const isUnownedNpc = token.ownerUserId === null;
-        const allowedFields = new Set(['conditions']);
-        const onlyAllowed = Object.keys(changes).every((k) => allowedFields.has(k));
-        if (!isUnownedNpc || !onlyAllowed) return;
+        // Non-owner, non-DM players cannot modify other tokens through
+        // this path at all. The old rule allowed `conditions` writes on
+        // unowned NPCs ("mark the goblin bloodied"), but that let
+        // players overwrite the full conditions array — adding dead,
+        // stunned, paralyzed, etc. bypassing the combat system.
+        // Legitimate condition changes go through combat:condition-add
+        // and condition:apply-with-meta which have proper auth checks.
+        return;
       }
     }
 
