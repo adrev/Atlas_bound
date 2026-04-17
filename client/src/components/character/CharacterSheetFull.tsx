@@ -31,7 +31,7 @@ import { InfoTooltip } from '../ui/InfoTooltip';
 import { lookupWeaponProperty } from '../../utils/rules-text';
 import { theme } from '../../styles/theme';
 import { HPBar, askConfirm, showInfo } from '../ui';
-import { getSpellIconUrl, getItemIconUrl } from '../../utils/compendiumIcons';
+import { getSpellIconUrl, getSpellImageUrl, getItemIconUrl, getItemImageUrl } from '../../utils/compendiumIcons';
 import { NotesTab } from './tabs/NotesTab';
 import { BackgroundTab } from './tabs/BackgroundTab';
 
@@ -1697,8 +1697,9 @@ function AddSpellDialog({ existingSpellNames, onAdd, onClose }: {
                 borderBottom: `1px solid ${C.borderDim}`,
                 background: alreadyKnown ? 'rgba(212,168,67,0.06)' : 'transparent',
               }}>
-                <img src={getSpellIconUrl(r.name)} alt="" loading="lazy"
+                <img src={getSpellImageUrl(r.slug || r.name)} alt="" loading="lazy"
                   style={{ width: 32, height: 32, borderRadius: '50%', objectFit: 'cover', border: `1.5px solid ${schoolColor}`, flexShrink: 0 }}
+                  onError={e => { (e.target as HTMLImageElement).src = getSpellIconUrl(r.name); }}
                 />
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontSize: 13, fontWeight: 600, color: alreadyKnown ? C.textMuted : C.textPrimary }}>
@@ -1950,8 +1951,9 @@ function SpellsTab({ spells: rawSpells, spellSlots, spellcastingAbility, spellAt
             </label>
           )}
           {/* Spell image */}
-          <img src={getSpellIconUrl(spell.name, spell.school)} alt="" loading="lazy"
+          <img src={getSpellImageUrl(spell.name)} alt="" loading="lazy"
             style={{ width: 28, height: 28, borderRadius: '50%', objectFit: 'cover', flexShrink: 0, border: `1.5px solid ${schoolColor}`, filter: isSpent ? 'grayscale(60%)' : 'none' }}
+            onError={e => { (e.target as HTMLImageElement).src = getSpellIconUrl(spell.name, spell.school); }}
           />
           {/* Name + badges */}
           <div
@@ -2327,11 +2329,12 @@ function InventoryTab({
               >{item.equipped ? 'E' : ''}</span>
               {/* Item image */}
               <img
-                src={(item as any).imageUrl || getItemIconUrl(item.name, (item as any).type)}
+                src={(item as any).imageUrl || getItemImageUrl((item as any).slug || item.name)}
                 alt=""
                 loading="lazy"
                 style={{ width: 28, height: 28, borderRadius: '50%', objectFit: 'cover', flexShrink: 0,
                   border: `1.5px solid ${RARITY_COLORS[(item.rarity || 'common').toLowerCase()] || C.borderDim}` }}
+                onError={e => { (e.target as HTMLImageElement).src = getItemIconUrl(item.name, (item as any).type); }}
               />
               <div
                 style={{ flex: 1, minWidth: 0, cursor: (item as any).slug ? 'pointer' : 'default' }}

@@ -3,7 +3,7 @@ import { theme } from '../../styles/theme';
 import { useSessionStore } from '../../stores/useSessionStore';
 import { useMapStore } from '../../stores/useMapStore';
 import { emitTokenAdd, emitSystemMessage, emitCharacterUpdate } from '../../socket/emitters';
-import { getItemIconUrl, getCreatureIconUrl, getCreatureImageUrl } from '../../utils/compendiumIcons';
+import { getItemIconUrl, getItemImageUrl, getCreatureIconUrl, getCreatureImageUrl } from '../../utils/compendiumIcons';
 import { showInfo } from '../ui';
 
 const RARITY_COLORS: Record<string, string> = {
@@ -411,8 +411,9 @@ export function LootEditor({ characterId, tokenName, onClose, canEdit = true }: 
                   onMouseEnter={e => (e.currentTarget.style.background = theme.bg.hover)}
                   onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
                 >
-                  <img src={getItemIconUrl(r.name, r.type)} alt="" loading="lazy"
+                  <img src={getItemImageUrl(r.slug || r.name)} alt="" loading="lazy"
                     style={S.searchItemImg}
+                    onError={e => { (e.target as HTMLImageElement).src = getItemIconUrl(r.name, r.type); }}
                   />
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ fontSize: 12, fontWeight: 600, color: RARITY_COLORS[r.rarity?.toLowerCase() || 'common'] || theme.text.primary }}>
@@ -702,8 +703,9 @@ export function LootEditor({ characterId, tokenName, onClose, canEdit = true }: 
                     {entry.equipped ? 'E' : ''}
                   </div>
                 )}
-                <img src={getItemIconUrl(entry.item_name)} alt="" loading="lazy"
+                <img src={getItemImageUrl(entry.item_slug || entry.item_name)} alt="" loading="lazy"
                   style={S.lootItemImg}
+                  onError={e => { (e.target as HTMLImageElement).src = getItemIconUrl(entry.item_name); }}
                 />
                 <div
                   style={{ flex: 1, minWidth: 0, cursor: entry.item_slug ? 'pointer' : 'default' }}
