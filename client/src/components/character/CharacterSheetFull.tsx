@@ -2329,7 +2329,7 @@ function InventoryTab({
               >{item.equipped ? 'E' : ''}</span>
               {/* Item image */}
               <img
-                src={(item as any).imageUrl || getItemImageUrl((item as any).slug || item.name)}
+                src={(item as any).imageUrl || getItemImageUrl((item as any).slug || (item as any).compendiumSlug || item.name)}
                 alt=""
                 loading="lazy"
                 style={{ width: 28, height: 28, borderRadius: '50%', objectFit: 'cover', flexShrink: 0,
