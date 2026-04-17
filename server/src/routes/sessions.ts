@@ -273,16 +273,29 @@ router.delete('/:id', async (req: Request, res: Response) => {
   const io = getIO();
   if (io) io.to(sessionId).emit('session:deleted', { sessionId });
 
-  // Kick every connected socket out of the room so their next action
-  // doesn't race with a half-deleted session.
-  if (io) {
-    const room = getRoom(sessionId);
-    if (room) {
-      for (const player of room.players.values()) {
-        const sock = io.sockets.sockets.get(player.socketId);
+  // Evict EVERY socket for EVERY user — not just primary socketIds.
+  // Without this, secondary tabs stay subscribed and stale room state
+  // lets getPlayerBySocketId resolve against a deleted session.
+  const room = getRoom(sessionId);
+  if (room && io) {
+    for (const [_userId, sockets] of room.userSockets) {
+      for (const sid of sockets) {
+        const sock = io.sockets.sockets.get(sid);
         if (sock) sock.leave(sessionId);
       }
     }
+    // Also catch any primary socketIds not in userSockets (shouldn't
+    // happen, but defense-in-depth).
+    for (const player of room.players.values()) {
+      const sock = io.sockets.sockets.get(player.socketId);
+      if (sock) sock.leave(sessionId);
+    }
+  }
+  // Wipe the room from in-memory state entirely so no socket handler
+  // can resolve against it after the DB row is gone.
+  if (room) {
+    const { deleteRoom } = await import('../utils/roomState.js');
+    deleteRoom(sessionId);
   }
 
   await pool.query('DELETE FROM sessions WHERE id = $1', [sessionId]);

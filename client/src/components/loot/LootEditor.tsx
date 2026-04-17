@@ -3,7 +3,7 @@ import { theme } from '../../styles/theme';
 import { useSessionStore } from '../../stores/useSessionStore';
 import { useMapStore } from '../../stores/useMapStore';
 import { emitTokenAdd, emitSystemMessage, emitCharacterUpdate } from '../../socket/emitters';
-import { getItemIconUrl, getCreatureIconUrl } from '../../utils/compendiumIcons';
+import { getItemIconUrl, getCreatureIconUrl, getCreatureImageUrl } from '../../utils/compendiumIcons';
 import { showInfo } from '../ui';
 
 const RARITY_COLORS: Record<string, string> = {
@@ -363,8 +363,10 @@ export function LootEditor({ characterId, tokenName, onClose, canEdit = true }: 
         {/* Header */}
         <div style={S.header}>
           <div style={S.headerIcon}>
-            <img src={getCreatureIconUrl(tokenName || 'Loot')}
-              alt="" style={{ width: 32, height: 32, borderRadius: '50%', objectFit: 'cover' }}
+            <img src={getCreatureImageUrl(tokenName || 'Loot')}
+              alt=""
+              style={{ width: 32, height: 32, borderRadius: '50%', objectFit: 'cover' }}
+              onError={(e) => { (e.target as HTMLImageElement).src = getCreatureIconUrl(tokenName || 'Loot'); }}
             />
           </div>
           <div style={{ flex: 1 }}>

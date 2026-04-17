@@ -493,6 +493,20 @@ export function registerCombatEvents(io: Server, socket: Socket): void {
 
     if (!isTokenOwnerOrDM(ctx, parsed.data.tokenId)) return;
 
+    // During active combat, non-DMs can only heal on their own turn
+    // (same restriction as damage). Outside combat, healing is
+    // unrestricted (potions, short/long rest, etc.).
+    const isDMHeal = ctx.player.role === 'dm';
+    if (!isDMHeal) {
+      const combatState = ctx.room.combatState;
+      if (combatState?.active) {
+        const currentCombatant = combatState.combatants[combatState.currentTurnIndex];
+        if (!currentCombatant) return;
+        const turnToken = ctx.room.tokens.get(currentCombatant.tokenId);
+        if (!turnToken || turnToken.ownerUserId !== ctx.player.userId) return;
+      }
+    }
+
     try {
       const result = await CombatService.applyHeal(ctx.room.sessionId, parsed.data.tokenId, parsed.data.amount);
       io.to(ctx.room.sessionId).emit('combat:hp-changed', {
@@ -578,6 +592,12 @@ export function registerCombatEvents(io: Server, socket: Socket): void {
     const { tokenId } = parsed.data;
     const combatant = CombatService.getCombatant(ctx.room.sessionId, tokenId);
     if (!combatant) return;
+
+    // Only tokens at 0 HP can roll death saves. Without this check,
+    // a player could spam death saves on a conscious token until they
+    // hit a nat 20 (which heals 1 HP) or manipulate the death save
+    // counters outside the intended game state.
+    if (combatant.hp > 0) return;
 
     const result = DiceService.rollDeathSave();
 
@@ -743,6 +763,18 @@ export function registerCombatEvents(io: Server, socket: Socket): void {
     const isDM = ctx.player.role === 'dm';
     const isOwner = attacker.ownerUserId === ctx.player.userId;
     if (!isDM && !isOwner) return;
+
+    // Combat must be active — OA only happens during combat.
+    if (!ctx.room.combatState?.active) return;
+
+    // The mover must exist and be hostile to the attacker. Without
+    // this, a player could manufacture a free attack against any
+    // token in the room by crafting an oa-execute payload.
+    const mover = ctx.room.tokens.get(parsed.data.moverTokenId);
+    if (!mover) return;
+    const attackerFaction = attacker.faction ?? 'neutral';
+    const moverFaction = mover.faction ?? 'neutral';
+    if (attackerFaction === moverFaction) return; // same faction, no OA
 
     const result = await OpportunityAttackService.executeOpportunityAttack(
       ctx.room.sessionId,

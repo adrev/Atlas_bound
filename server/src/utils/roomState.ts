@@ -303,6 +303,30 @@ export function getAllRooms(): Map<string, RoomState> {
   return rooms;
 }
 
+/**
+ * Completely destroy a room and all its index entries. Used when a
+ * session is deleted — after this, no socket handler can resolve
+ * against the dead session via getPlayerBySocketId.
+ */
+export function deleteRoom(sessionId: string): void {
+  const room = rooms.get(sessionId);
+  if (!room) return;
+  // Clean up all socket index entries for every user in the room.
+  for (const [userId, sockets] of room.userSockets) {
+    for (const sid of sockets) {
+      socketIndex.delete(sid);
+      for (const [key] of _rateLimitCounters) {
+        if (key.startsWith(sid + ':')) _rateLimitCounters.delete(key);
+      }
+    }
+    // Also clean up the primary socketId if not in userSockets.
+    const player = room.players.get(userId);
+    if (player) socketIndex.delete(player.socketId);
+  }
+  rooms.delete(sessionId);
+  roomCodeIndex.delete(room.roomCode);
+}
+
 // ── Permission helpers ──────────────────────────────────────
 // Used by socket event handlers to enforce server-side access
 // control. All return booleans — callers should silently return
