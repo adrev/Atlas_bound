@@ -176,7 +176,7 @@ router.get('/sessions/:sessionId/maps', async (req: Request, res: Response) => {
       return;
     }
     const { rows } = await pool.query(`
-      SELECT id, session_id, name, image_url, width, height, grid_size, grid_type, created_at
+      SELECT id, session_id, name, image_url, thumbnail_url, width, height, grid_size, grid_type, created_at
       FROM maps WHERE id = $1 AND session_id = $2
     `, [playerMapId, sessionId]);
     maps = rows;

@@ -1002,6 +1002,23 @@ export function registerCombatEvents(io: Server, socket: Socket): void {
       if (!casterTokenId) return;
       const casterToken = room.tokens.get(casterTokenId);
       if (!casterToken || casterToken.ownerUserId !== ctx.player.userId) return;
+
+      // Block conditions that are game-state-destructive when applied
+      // by players. "dead" / "unconscious" / "petrified" are outcomes
+      // of HP reduction or powerful save-or-suck effects — they should
+      // only come from the server-side damage pipeline or the DM.
+      // Standard saveable conditions (frightened, charmed, stunned,
+      // restrained, etc.) are fine for players to apply from their
+      // spells — the DM can always undo them.
+      const DESTRUCTIVE_CONDITIONS = new Set([
+        'dead', 'unconscious', 'petrified', 'stable',
+      ]);
+      if (DESTRUCTIVE_CONDITIONS.has(parsed.data.conditionName.toLowerCase())) return;
+
+      // Players can only target unowned NPCs or their own tokens —
+      // not other players' PCs (anti-grief: can't "charm" a teammate
+      // to troll them).
+      if (targetToken.ownerUserId && targetToken.ownerUserId !== ctx.player.userId) return;
     }
 
     // Apply via the service which handles both the conditions array AND
@@ -1046,20 +1063,27 @@ export function registerCombatEvents(io: Server, socket: Socket): void {
 
     // Ownership: DM, OR the token's owner (concentration / Sleep
     // side-effects on their own token), OR the current-turn attacker
-    // (triggering side-effects on a token they just hit).
+    // targeting an unowned NPC. The old rule let the current attacker
+    // trigger side-effects on ANY token — which meant a player could
+    // force concentration saves on enemy casters without actually
+    // dealing damage. Now non-DM attackers can only trigger side-
+    // effects on unowned NPCs (the standard "I hit the goblin" case).
     const isDM = ctx.player.role === 'dm';
     if (!isDM) {
       const ownsTarget = targetToken.ownerUserId === ctx.player.userId;
-      let isCurrentAttacker = false;
-      const combatState = ctx.room.combatState;
-      if (combatState?.active) {
-        const currentCombatant = combatState.combatants[combatState.currentTurnIndex];
-        if (currentCombatant) {
-          const turnToken = ctx.room.tokens.get(currentCombatant.tokenId);
-          if (turnToken?.ownerUserId === ctx.player.userId) isCurrentAttacker = true;
+      let isAttackingNPC = false;
+      if (!targetToken.ownerUserId) {
+        // Target is an unowned NPC — check current-turn ownership
+        const combatState = ctx.room.combatState;
+        if (combatState?.active) {
+          const currentCombatant = combatState.combatants[combatState.currentTurnIndex];
+          if (currentCombatant) {
+            const turnToken = ctx.room.tokens.get(currentCombatant.tokenId);
+            if (turnToken?.ownerUserId === ctx.player.userId) isAttackingNPC = true;
+          }
         }
       }
-      if (!ownsTarget && !isCurrentAttacker) return;
+      if (!ownsTarget && !isAttackingNPC) return;
     }
 
     const result = await ConditionService.processDamageSideEffects(

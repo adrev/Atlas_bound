@@ -127,13 +127,17 @@ router.get('/:id', async (req: Request, res: Response) => {
     return;
   }
 
-  // Player-owned character owned by someone else: require a shared session.
+  // Player-owned character owned by someone else: require the specific
+  // character to be linked in a session the caller shares. The old
+  // query only checked "do these two users share ANY session", which
+  // meant a tablemate from Campaign A could read your characters from
+  // Campaign B by guessing the character ID.
   const { rows: shared } = await pool.query(
     `SELECT 1 FROM session_players sp1
      JOIN session_players sp2 ON sp1.session_id = sp2.session_id
-     WHERE sp1.user_id = $1 AND sp2.user_id = $2
+     WHERE sp1.user_id = $1 AND sp2.character_id = $2
      LIMIT 1`,
-    [userId, row.user_id],
+    [userId, req.params.id],
   );
   if (shared.length === 0) {
     res.status(403).json({ error: 'Not authorized' });

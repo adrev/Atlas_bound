@@ -72,7 +72,12 @@ export function registerSessionEvents(io: Server, socket: Socket): void {
     if (!room) {
       room = createRoom(session.id, session.room_code, session.dm_user_id);
       room.currentMapId = session.current_map_id;
-      room.playerMapId = session.player_map_id ?? session.current_map_id;
+      // Player ribbon is ONLY set from player_map_id. The old fallback
+      // to current_map_id leaked DM prep maps to players on legacy
+      // sessions (same fix we applied to the REST routes). current_map_id
+      // is still set on room.currentMapId for DM-side use (preview
+      // navigation, OA grid cache) but never surfaces to players.
+      room.playerMapId = session.player_map_id ?? null;
       room.gameMode = session.game_mode as GameMode;
     }
 
@@ -326,13 +331,25 @@ export function registerSessionEvents(io: Server, socket: Socket): void {
       [ctx.room.sessionId, targetUserId],
     );
 
-    const targetPlayer = ctx.room.players.get(targetUserId);
-    if (targetPlayer) {
-      io.to(targetPlayer.socketId).emit('session:kicked', { userId: targetUserId });
-      removePlayerFromRoom(ctx.room.sessionId, targetUserId);
-      const kickedSocket = io.sockets.sockets.get(targetPlayer.socketId);
-      if (kickedSocket) kickedSocket.leave(ctx.room.sessionId);
+    // Collect ALL socket IDs for the target BEFORE removing from room
+    // state. Multi-tab users have secondary sockets in userSockets
+    // that must also leave the Socket.IO room, otherwise they keep
+    // passively receiving broadcasts even after the kick.
+    const allTargetSockets: string[] = [];
+    const userSocks = ctx.room.userSockets.get(targetUserId);
+    if (userSocks) for (const sid of userSocks) allTargetSockets.push(sid);
+    const primaryPlayer = ctx.room.players.get(targetUserId);
+    if (primaryPlayer && !allTargetSockets.includes(primaryPlayer.socketId)) {
+      allTargetSockets.push(primaryPlayer.socketId);
     }
+
+    // Emit + evict on every socket, then clean room state.
+    for (const sid of allTargetSockets) {
+      io.to(sid).emit('session:kicked', { userId: targetUserId });
+      const sock = io.sockets.sockets.get(sid);
+      if (sock) sock.leave(ctx.room.sessionId);
+    }
+    removePlayerFromRoom(ctx.room.sessionId, targetUserId);
     socket.to(ctx.room.sessionId).emit('session:player-left', { userId: targetUserId });
   }));
 

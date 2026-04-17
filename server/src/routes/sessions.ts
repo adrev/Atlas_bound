@@ -651,25 +651,40 @@ router.post('/:id/bans', async (req: Request, res: Response) => {
     // updated ban list to everyone EXCEPT the banned user \u2014 otherwise
     // they'd briefly see themselves listed as banned before the 1.5s
     // redirect fires.
-    const { getRoom } = await import('../utils/roomState.js');
+    const { getRoom, removePlayerFromRoom } = await import('../utils/roomState.js');
     const room = getRoom(sessionId);
-    const targetPlayer = room?.players.get(targetUserId);
-    if (targetPlayer) {
-      io.to(targetPlayer.socketId).emit('session:player-banned', { userId: targetUserId, reason: reason ?? null });
+
+    // Collect ALL socket IDs for the banned user BEFORE removing them
+    // from room state. Multi-tab users have entries in room.userSockets
+    // — if we only evict the primary socketId, secondary tabs keep
+    // receiving broadcasts silently.
+    const allTargetSockets: string[] = [];
+    if (room) {
+      const userSocks = room.userSockets.get(targetUserId);
+      if (userSocks) for (const sid of userSocks) allTargetSockets.push(sid);
+      const primary = room.players.get(targetUserId);
+      if (primary && !allTargetSockets.includes(primary.socketId)) {
+        allTargetSockets.push(primary.socketId);
+      }
     }
-    // Everyone else gets the list update.
-    const emitter = targetPlayer
-      ? io.to(sessionId).except(targetPlayer.socketId)
-      : io.to(sessionId);
+
+    // Emit the ban event to every socket the target has open.
+    for (const sid of allTargetSockets) {
+      io.to(sid).emit('session:player-banned', { userId: targetUserId, reason: reason ?? null });
+    }
+
+    // Everyone else gets the updated ban list.
+    let emitter = io.to(sessionId);
+    for (const sid of allTargetSockets) emitter = emitter.except(sid);
     emitter.emit('session:bans-updated', { bans });
 
-    // Force the banned user's sockets out of the room so they can't
-    // keep reading in-flight broadcasts even if their client ignores
-    // the banned event.
-    if (targetPlayer) {
-      const sock = io.sockets.sockets.get(targetPlayer.socketId);
+    // Force every socket out of the Socket.IO room AND remove from
+    // room state so they can't passively read broadcasts.
+    for (const sid of allTargetSockets) {
+      const sock = io.sockets.sockets.get(sid);
       if (sock) sock.leave(sessionId);
     }
+    if (room) removePlayerFromRoom(sessionId, targetUserId);
   }
 
   res.status(204).send();

@@ -45,6 +45,9 @@ export function registerChatEvents(io: Server, socket: Socket): void {
     const ctx = getPlayerBySocketId(socket.id);
     if (!ctx) return;
 
+    // Same rate window as chat:message — 5 per 5 seconds.
+    if (!checkRateLimit(socket.id, 'chat:whisper', 5, 5000)) return;
+
     const { targetUserId, content } = parsed.data;
 
     // Authorize target: must be an actual member of this session
@@ -95,6 +98,12 @@ export function registerChatEvents(io: Server, socket: Socket): void {
 
     const ctx = getPlayerBySocketId(socket.id);
     if (!ctx) return;
+
+    // Rolls write to chat_messages and trigger 3D dice animations for
+    // every connected client — rate-limit to 10 per 5 seconds (more
+    // generous than chat:message since a single combat turn can
+    // legitimately fire attack + damage + save rolls in quick sequence).
+    if (!checkRateLimit(socket.id, 'chat:roll', 10, 5000)) return;
 
     const hidden = parsed.data.hidden && ctx.player.role === 'dm';
     const { notation, reason, reported } = parsed.data;

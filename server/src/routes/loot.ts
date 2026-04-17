@@ -11,8 +11,8 @@ import type { Token } from '@dnd-vtt/shared';
 const lootDropSchema = z.object({
   itemIndex: z.number().int().min(0),
   mapId: z.string().min(1),
-  x: z.number().optional(),
-  y: z.number().optional(),
+  x: z.number().finite().min(-10000).max(10000).optional(),
+  y: z.number().finite().min(-10000).max(10000).optional(),
 });
 
 const updateLootSchema = z.object({
@@ -525,12 +525,28 @@ router.post('/characters/:id/loot/drop', async (req: Request, res: Response) => 
   const targetSessionId = mapRows[0].session_id as string;
 
   const { rows: memberRows } = await pool.query(
-    'SELECT 1 FROM session_players WHERE session_id = $1 AND user_id = $2',
+    'SELECT role FROM session_players WHERE session_id = $1 AND user_id = $2',
     [targetSessionId, authUserId],
   );
   if (memberRows.length === 0) {
     res.status(403).json({ error: 'Not a member of the target session' });
     return;
+  }
+
+  // Non-DMs can only drop loot onto the active player ribbon map.
+  // Without this, a player who guesses a prep-map ID can create
+  // loot-bag characters + tokens on a DM-only scene.
+  const callerIsDM = memberRows[0].role === 'dm';
+  if (!callerIsDM) {
+    const { rows: sessionRows } = await pool.query(
+      'SELECT player_map_id FROM sessions WHERE id = $1',
+      [targetSessionId],
+    );
+    const ribbonMapId = sessionRows[0]?.player_map_id as string | null;
+    if (!ribbonMapId || ribbonMapId !== mapId) {
+      res.status(403).json({ error: 'Can only drop loot on the active map' });
+      return;
+    }
   }
 
   const client = await pool.connect();
