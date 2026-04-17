@@ -2332,10 +2332,22 @@ function InventoryTab({
                 src={(() => {
                   const url = (item as any).imageUrl as string | undefined;
                   if (!url) return getItemIconUrl(item.name, (item as any).type);
-                  // DDB imports store just the filename (e.g. "dagger.png") —
-                  // prepend the GCS CDN prefix if it's not already a full URL.
-                  if (url.startsWith('http') || url.startsWith('/') || url.startsWith('data:')) return url;
-                  return `https://storage.googleapis.com/atlas-bound-data/items/${url}`;
+                  // DDB imports set imageUrl to "/uploads/items/{slug}.png" which
+                  // works in local dev but 404s on Cloud Run (items live on GCS).
+                  // Rewrite to the GCS CDN URL for production compatibility.
+                  if (url.startsWith('/uploads/items/')) {
+                    const filename = url.replace('/uploads/items/', '');
+                    return `https://storage.googleapis.com/atlas-bound-data/items/${filename}`;
+                  }
+                  if (url.startsWith('/uploads/spells/')) {
+                    const filename = url.replace('/uploads/spells/', '');
+                    return `https://storage.googleapis.com/atlas-bound-data/spells/${filename}`;
+                  }
+                  // Bare filename without path prefix
+                  if (!url.startsWith('http') && !url.startsWith('/') && !url.startsWith('data:')) {
+                    return `https://storage.googleapis.com/atlas-bound-data/items/${url}`;
+                  }
+                  return url;
                 })()}
                 alt=""
                 loading="lazy"
