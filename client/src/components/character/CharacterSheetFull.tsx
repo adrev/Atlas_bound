@@ -2329,11 +2329,19 @@ function InventoryTab({
               >{item.equipped ? 'E' : ''}</span>
               {/* Item image */}
               <img
-                src={(item as any).imageUrl || getItemIconUrl(item.name, (item as any).type)}
+                src={(() => {
+                  const url = (item as any).imageUrl as string | undefined;
+                  if (!url) return getItemIconUrl(item.name, (item as any).type);
+                  // DDB imports store just the filename (e.g. "dagger.png") —
+                  // prepend the GCS CDN prefix if it's not already a full URL.
+                  if (url.startsWith('http') || url.startsWith('/') || url.startsWith('data:')) return url;
+                  return `https://storage.googleapis.com/atlas-bound-data/items/${url}`;
+                })()}
                 alt=""
                 loading="lazy"
                 style={{ width: 28, height: 28, borderRadius: '50%', objectFit: 'cover', flexShrink: 0,
                   border: `1.5px solid ${RARITY_COLORS[(item.rarity || 'common').toLowerCase()] || C.borderDim}` }}
+                onError={e => { (e.target as HTMLImageElement).src = getItemIconUrl(item.name, (item as any).type); }}
               />
               <div
                 style={{ flex: 1, minWidth: 0, cursor: (item as any).slug ? 'pointer' : 'default' }}
