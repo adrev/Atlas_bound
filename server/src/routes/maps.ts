@@ -1,6 +1,7 @@
 import { Router, type Request, type Response, type NextFunction } from 'express';
 import path from 'path';
 import { v4 as uuidv4 } from 'uuid';
+import rateLimit from 'express-rate-limit';
 import pool from '../db/connection.js';
 import { mapUpload, validateAndSaveUpload, saveMapThumbnail } from './uploads.js';
 import { createMapSchema } from '../utils/validation.js';
@@ -10,9 +11,20 @@ import { rowToToken } from '../utils/tokenMapper.js';
 
 const router = Router();
 
+// 10 map uploads per 5 minutes per IP — generous for normal DM use,
+// blocks scripted file-spray attacks.
+const mapUploadLimiter = rateLimit({
+  windowMs: 5 * 60 * 1000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many map uploads — try again in a few minutes' },
+});
+
 // POST /api/sessions/:sessionId/maps
 router.post(
   '/sessions/:sessionId/maps',
+  mapUploadLimiter,
   (req: Request, res: Response, next: NextFunction) => {
     const contentType = req.headers['content-type'] || '';
     if (contentType.includes('multipart/form-data')) {

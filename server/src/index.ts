@@ -25,6 +25,7 @@ import { registerSocketHandler } from './socket/handler.js';
 import { setIO } from './socket/ioInstance.js';
 import { setupStaticServing } from './static.js';
 import { tokenUpload, portraitUpload, validateAndSaveUpload } from './routes/uploads.js';
+import rateLimit from 'express-rate-limit';
 import authRouter from './auth/routes.js';
 import discordAuth from './auth/oauth/discord.js';
 import googleAuth from './auth/oauth/google.js';
@@ -258,8 +259,18 @@ app.use('/api/custom', requireAuth, customContentRouter);
 app.use('/api', requireAuth, notesRouter);
 app.use('/api', requireAuth, encountersRouter);
 
-// Upload endpoints (authenticated, with magic-byte validation)
-app.post('/api/uploads/token-image', requireAuth, tokenUpload.single('image'), (req, res) => {
+// Upload endpoints (authenticated, magic-byte validated, rate-limited).
+// Without a per-user cap any logged-in account could repeatedly store
+// 5 MB orphan files. 10 uploads per 5 minutes per IP is generous for
+// normal play (token portrait + map upload) while blocking scripts.
+const uploadLimiter = rateLimit({
+  windowMs: 5 * 60 * 1000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many uploads — try again in a few minutes' },
+});
+app.post('/api/uploads/token-image', requireAuth, uploadLimiter, tokenUpload.single('image'), (req, res) => {
   if (!req.file) { res.status(400).json({ error: 'No image file' }); return; }
   try {
     const filename = validateAndSaveUpload(req.file, 'tokens');
@@ -269,7 +280,7 @@ app.post('/api/uploads/token-image', requireAuth, tokenUpload.single('image'), (
     res.status(400).json({ error: msg });
   }
 });
-app.post('/api/uploads/portrait', requireAuth, portraitUpload.single('image'), (req, res) => {
+app.post('/api/uploads/portrait', requireAuth, uploadLimiter, portraitUpload.single('image'), (req, res) => {
   if (!req.file) { res.status(400).json({ error: 'No image file' }); return; }
   try {
     const filename = validateAndSaveUpload(req.file, 'portraits');
