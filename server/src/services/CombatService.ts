@@ -114,12 +114,23 @@ export async function startCombatAsync(sessionId: string, tokenIds: string[]): P
         ac = (charRow.armor_class as number) ?? 10;
         speed = (charRow.speed as number) ?? 30;
         portrait = charRow.portrait_url as string | null;
-        try {
-          const rawAbilities = charRow.ability_scores;
-          const abilities = typeof rawAbilities === 'string' ? JSON.parse(rawAbilities) : (rawAbilities ?? {});
-          const dex = Number(abilities?.dex ?? abilities?.dexterity ?? 10);
-          initBonus = Number.isFinite(dex) ? Math.floor((dex - 10) / 2) : 0;
-        } catch { initBonus = 0; }
+        // Prefer the character's precomputed initiative bonus — it's
+        // what the character sheet shows and it already includes Alert
+        // (+5), Jack of All Trades (half prof), and any other feat
+        // modifiers applied during the import pipeline. Fall back to
+        // DEX mod when the column is unset (missing / 0 / NaN), which
+        // matches the old behaviour for unimported characters.
+        const storedInit = Number(charRow.initiative);
+        if (Number.isFinite(storedInit) && storedInit !== 0) {
+          initBonus = storedInit;
+        } else {
+          try {
+            const rawAbilities = charRow.ability_scores;
+            const abilities = typeof rawAbilities === 'string' ? JSON.parse(rawAbilities) : (rawAbilities ?? {});
+            const dex = Number(abilities?.dex ?? abilities?.dexterity ?? 10);
+            initBonus = Number.isFinite(dex) ? Math.floor((dex - 10) / 2) : 0;
+          } catch { initBonus = 0; }
+        }
         const charUserId = charRow.user_id as string | null;
         isNPC = !token.ownerUserId || charUserId === 'npc';
       }
@@ -215,12 +226,19 @@ export async function addCombatantAsync(sessionId: string, tokenId: string): Pro
       ac = (charRow.armor_class as number) ?? 10;
       speed = (charRow.speed as number) ?? 30;
       portrait = charRow.portrait_url as string | null;
-      try {
-        const rawAbilities = charRow.ability_scores;
-        const abilities = typeof rawAbilities === 'string' ? JSON.parse(rawAbilities) : (rawAbilities ?? {});
-        const dex = Number(abilities?.dex ?? abilities?.dexterity ?? 10);
-        initBonus = Number.isFinite(dex) ? Math.floor((dex - 10) / 2) : 0;
-      } catch { initBonus = 0; }
+      // Prefer precomputed character.initiative (includes Alert +5, etc.)
+      // Fall back to DEX mod when unset.
+      const storedInit = Number(charRow.initiative);
+      if (Number.isFinite(storedInit) && storedInit !== 0) {
+        initBonus = storedInit;
+      } else {
+        try {
+          const rawAbilities = charRow.ability_scores;
+          const abilities = typeof rawAbilities === 'string' ? JSON.parse(rawAbilities) : (rawAbilities ?? {});
+          const dex = Number(abilities?.dex ?? abilities?.dexterity ?? 10);
+          initBonus = Number.isFinite(dex) ? Math.floor((dex - 10) / 2) : 0;
+        } catch { initBonus = 0; }
+      }
       const charUserId = charRow.user_id as string | null;
       isNPC = !token.ownerUserId || charUserId === 'npc';
     }
@@ -358,7 +376,17 @@ export function nextTurn(sessionId: string): {
   return { currentTurnIndex: state.currentTurnIndex, roundNumber: state.roundNumber, actionEconomy: economy, skippedTokenIds, currentCombatant };
 }
 
-export async function applyDamage(sessionId: string, tokenId: string, amount: number): Promise<{ hp: number; tempHp: number; change: number }> {
+export interface HpChangeResult {
+  hp: number;
+  tempHp: number;
+  change: number;
+  /** Populated when the combatant is backed by a player character.
+   *  Callers should fan out `character:updated` so character sheet
+   *  views stay in sync with the combat tracker. */
+  characterId: string | null;
+}
+
+export async function applyDamage(sessionId: string, tokenId: string, amount: number): Promise<HpChangeResult> {
   const room = getRoom(sessionId);
   if (!room?.combatState) throw new Error('No active combat');
   const combatant = room.combatState.combatants.find(c => c.tokenId === tokenId);
@@ -377,10 +405,10 @@ export async function applyDamage(sessionId: string, tokenId: string, amount: nu
       [combatant.hp, combatant.tempHp, combatant.characterId]);
   }
   persistCombatState(room.combatState);
-  return { hp: combatant.hp, tempHp: combatant.tempHp, change: -amount };
+  return { hp: combatant.hp, tempHp: combatant.tempHp, change: -amount, characterId: combatant.characterId ?? null };
 }
 
-export async function applyHeal(sessionId: string, tokenId: string, amount: number): Promise<{ hp: number; tempHp: number; change: number }> {
+export async function applyHeal(sessionId: string, tokenId: string, amount: number): Promise<HpChangeResult> {
   const room = getRoom(sessionId);
   if (!room?.combatState) throw new Error('No active combat');
   const combatant = room.combatState.combatants.find(c => c.tokenId === tokenId);
@@ -393,7 +421,7 @@ export async function applyHeal(sessionId: string, tokenId: string, amount: numb
     await pool.query('UPDATE characters SET hit_points = $1 WHERE id = $2', [combatant.hp, combatant.characterId]);
   }
   persistCombatState(room.combatState);
-  return { hp: combatant.hp, tempHp: combatant.tempHp, change: amount };
+  return { hp: combatant.hp, tempHp: combatant.tempHp, change: amount, characterId: combatant.characterId ?? null };
 }
 
 export function addCondition(sessionId: string, tokenId: string, condition: Condition): Condition[] {

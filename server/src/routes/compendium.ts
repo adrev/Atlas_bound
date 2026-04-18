@@ -92,9 +92,9 @@ router.get('/search', async (req: Request, res: Response) => {
       `SELECT slug, name, description, challenge_rating, source FROM (
         SELECT *, ROW_NUMBER() OVER (PARTITION BY name ORDER BY
           CASE source WHEN '5e Core Rules' THEN 0 WHEN 'Systems Reference Document' THEN 1 WHEN 'SRD' THEN 1 ELSE 2 END
-        ) as rn FROM compendium_monsters WHERE name LIKE $1 OR description LIKE $2
+        ) as rn FROM compendium_monsters WHERE name ILIKE $1 OR description ILIKE $2
       ) sub WHERE rn = 1
-      ORDER BY CASE WHEN name LIKE $3 THEN 0 ELSE 1 END, name ASC LIMIT $4`,
+      ORDER BY CASE WHEN name ILIKE $3 THEN 0 ELSE 1 END, name ASC LIMIT $4`,
       [pattern, pattern, pattern, limit],
     );
     for (const m of monsters) {
@@ -107,9 +107,9 @@ router.get('/search', async (req: Request, res: Response) => {
       `SELECT slug, name, description, level FROM (
         SELECT *, ROW_NUMBER() OVER (PARTITION BY name ORDER BY
           CASE source WHEN '5e Core Rules' THEN 0 WHEN 'SRD' THEN 1 ELSE 2 END
-        ) as rn FROM compendium_spells WHERE name LIKE $1 OR description LIKE $2
+        ) as rn FROM compendium_spells WHERE name ILIKE $1 OR description ILIKE $2
       ) sub WHERE rn = 1
-      ORDER BY CASE WHEN name LIKE $3 THEN 0 ELSE 1 END, name ASC LIMIT $4`,
+      ORDER BY CASE WHEN name ILIKE $3 THEN 0 ELSE 1 END, name ASC LIMIT $4`,
       [pattern, pattern, pattern, limit],
     );
     for (const s of spells) {
@@ -122,9 +122,9 @@ router.get('/search', async (req: Request, res: Response) => {
       `SELECT slug, name, description, rarity FROM (
         SELECT *, ROW_NUMBER() OVER (PARTITION BY name ORDER BY
           CASE source WHEN '5e Core Rules' THEN 0 WHEN 'SRD' THEN 1 ELSE 2 END
-        ) as rn FROM compendium_items WHERE name LIKE $1 OR description LIKE $2
+        ) as rn FROM compendium_items WHERE name ILIKE $1 OR description ILIKE $2
       ) sub WHERE rn = 1
-      ORDER BY CASE WHEN name LIKE $3 THEN 0 ELSE 1 END, name ASC LIMIT $4`,
+      ORDER BY CASE WHEN name ILIKE $3 THEN 0 ELSE 1 END, name ASC LIMIT $4`,
       [pattern, pattern, pattern, limit],
     );
     for (const i of items) {

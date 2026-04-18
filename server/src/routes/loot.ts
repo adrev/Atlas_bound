@@ -69,7 +69,41 @@ const router = Router();
 router.get('/characters/:id/loot', async (req: Request, res: Response) => {
   const userId = getAuthUserId(req);
   const charId = String(req.params.id);
-  await assertCharacterOwnerOrDM(charId, userId);
+
+  // Loot bags (NPC-owned dropped items or dead-creature remains) have
+  // user_id = 'npc' and no session_players link, so the default
+  // owner-or-DM check rejects every caller. Any session member who can
+  // see a token backed by this character should be able to read its
+  // loot, otherwise dropped items become unlootable (the bug reported
+  // from live play).
+  const { rows: ownerRows } = await pool.query(
+    'SELECT user_id FROM characters WHERE id = $1',
+    [charId],
+  );
+  if (ownerRows.length === 0) {
+    res.status(404).json({ error: 'Character not found' });
+    return;
+  }
+  const ownerUserId = ownerRows[0].user_id as string | null;
+
+  if (ownerUserId === 'npc' || ownerUserId === null) {
+    // Loot bag: require session membership via a token link.
+    const { rows: accessRows } = await pool.query(
+      `SELECT 1 FROM tokens t
+       JOIN maps m ON m.id = t.map_id
+       JOIN session_players sp ON sp.session_id = m.session_id
+       WHERE t.character_id = $1 AND sp.user_id = $2
+       LIMIT 1`,
+      [charId, userId],
+    );
+    if (accessRows.length === 0) {
+      res.status(403).json({ error: 'Not authorized' });
+      return;
+    }
+  } else {
+    await assertCharacterOwnerOrDM(charId, userId);
+  }
+
   const { rows: entries } = await pool.query('SELECT * FROM loot_entries WHERE character_id = $1 ORDER BY sort_order', [charId]);
   res.json(entries);
 });
@@ -346,6 +380,33 @@ router.post('/characters/:id/loot/take', async (req: Request, res: Response) => 
   }
 
   res.json({ success: true, itemName: responseItemName, inventory: responseInventory, targetCharacterId });
+
+  // Fan out the inventory change to everyone in the target character's
+  // session. Without this the receiving player's inventory panel keeps
+  // showing stale data until they refresh — even though the DB is
+  // already updated and the response returned the new inventory.
+  //
+  // Fire-and-forget: failures here should NEVER roll back the take.
+  try {
+    const { rows: sessionRows } = await pool.query(
+      `SELECT DISTINCT m.session_id AS session_id
+       FROM tokens t JOIN maps m ON m.id = t.map_id
+       WHERE t.character_id = $1
+       LIMIT 1`,
+      [targetCharacterId],
+    );
+    const sessionId = sessionRows[0]?.session_id as string | undefined;
+    const io = getIO();
+    if (sessionId && io) {
+      io.to(sessionId).emit('character:updated', {
+        characterId: targetCharacterId,
+        changes: { inventory: responseInventory },
+      });
+    }
+  } catch (err) {
+    // Log but don't throw — the HTTP response has already been sent.
+    console.warn('[loot/take] inventory broadcast failed:', err);
+  }
 });
 
 // POST /api/characters/:id/inventory/enrich

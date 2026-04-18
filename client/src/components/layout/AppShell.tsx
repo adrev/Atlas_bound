@@ -194,16 +194,29 @@ export function AppShell() {
       const tab = detail?.tab as string | undefined;
       if (!charId) return;
 
+      // DM visibility gates — both respect the "off by default" rule
+      // so existing campaigns behave the same as before:
+      //   - showPlayersToPlayers: let a non-DM open another PC's sheet
+      //   - showCreatureStatsToPlayers: let a non-DM open an NPC sheet
+      // The DM can always open anything. Own character is always OK.
+      const session = useSessionStore.getState();
+      const currentMyChar = useCharacterStore.getState().myCharacter;
+      const currentAllChars = useCharacterStore.getState().allCharacters;
+      const isOwn = currentMyChar?.id === charId;
+      const target = isOwn ? currentMyChar : currentAllChars[charId];
+      const targetIsNPC = target && 'userId' in target && target.userId === 'npc';
+      const showPlayersToPlayers = session.settings.showPlayersToPlayers ?? true;
+      const showCreatureStats = session.settings.showCreatureStatsToPlayers ?? true;
+      if (!session.isDM && !isOwn) {
+        if (targetIsNPC && !showCreatureStats) return;
+        if (!targetIsNPC && !showPlayersToPlayers) return;
+      }
+
       // Store the requested tab for when the sheet opens
       if (tab) setRequestedTab(tab);
 
       // Ensure the character is in the store, then open the modal.
-      const currentMyChar = useCharacterStore.getState().myCharacter;
-      const currentAllChars = useCharacterStore.getState().allCharacters;
-      const inStore =
-        (currentMyChar && currentMyChar.id === charId)
-          ? currentMyChar
-          : currentAllChars[charId];
+      const inStore = isOwn ? currentMyChar : currentAllChars[charId];
 
       if (inStore) {
         // Make sure myCharacter is also mirrored into allCharacters so

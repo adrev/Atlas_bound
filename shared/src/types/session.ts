@@ -59,6 +59,26 @@ export interface SessionSettings {
    * to turn on notifications.
    */
   discordWebhookUrl?: string | null;
+  /**
+   * When false, players can't self-trigger Short / Long Rest from the
+   * bottom bar — only the DM can start a rest (which still broadcasts
+   * to everyone). Defaults to true so existing sessions keep their
+   * prior behaviour.
+   */
+  allowPlayerRest?: boolean;
+  /**
+   * When false, players see only the name + portrait of creature
+   * (NPC) tokens — stats, attacks, spells, and inventory are hidden.
+   * The DM always sees everything. Defaults to true (visible) so
+   * existing campaigns don't silently lose information.
+   */
+  showCreatureStatsToPlayers?: boolean;
+  /**
+   * When false, players can only open their own character sheet;
+   * other players' sheets are blocked. Defaults to true so party
+   * members can cross-reference stats during play.
+   */
+  showPlayersToPlayers?: boolean;
 }
 
 export const DEFAULT_SESSION_SETTINGS: SessionSettings = {
@@ -67,6 +87,9 @@ export const DEFAULT_SESSION_SETTINGS: SessionSettings = {
   gridOpacity: 0.15,
   enableFogOfWar: true,
   enableDynamicLighting: false,
+  allowPlayerRest: true,
+  showCreatureStatsToPlayers: true,
+  showPlayersToPlayers: true,
 };
 
 export interface Player {

@@ -980,16 +980,39 @@ export function TokenLayer() {
 
   // For non-DM players with fog enabled, filter tokens to only those within vision
   const tokenList = useMemo(() => {
-    if (isDM || !enableFog) return visibleTokens;
+    const base = !isDM && enableFog
+      ? (() => {
+          const myTokens = visibleTokens.filter((t) => t.ownerUserId === userId);
+          return visibleTokens.filter((token) => {
+            if (token.ownerUserId === userId) return true;
+            return isWithinVision(token, myTokens, gridSize);
+          });
+        })()
+      : visibleTokens;
 
-    const myTokens = visibleTokens.filter((t) => t.ownerUserId === userId);
-    return visibleTokens.filter((token) => {
-      // Always show own tokens
-      if (token.ownerUserId === userId) return true;
-      // Show other tokens only if within vision range of any owned token
-      return isWithinVision(token, myTokens, gridSize);
-    });
-  }, [visibleTokens, isDM, enableFog, userId, gridSize]);
+    // Stable render-order sort so Konva click resolution routes to the
+    // token the player most likely wants to interact with when two
+    // tokens overlap. Last in the array = on top in the stacking order.
+    //
+    //   0. Loot bags first (bottom) — they're small pickup markers
+    //      that shouldn't eat clicks from creatures standing on them.
+    //   1. Opposing-faction / unowned NPC tokens above loot.
+    //   2. The current player's own tokens above that — so a creature
+    //      standing on your hero never swallows the drag-to-move.
+    //   3. The selected token always last (on top) so re-selecting
+    //      and dragging the active token is reliable even in a pile.
+    //
+    // DMs effectively fall into bucket 1 (they don't own tokens) but
+    // still get the selected-token boost, which preserves the old
+    // behaviour of "click what you selected last" for DM workflows.
+    const rank = (t: Token): number => {
+      if (t.id === selectedTokenId) return 3;
+      if (t.ownerUserId && t.ownerUserId === userId) return 2;
+      const isLoot = t.imageUrl?.includes('/uploads/items/') ?? false;
+      return isLoot ? 0 : 1;
+    };
+    return [...base].sort((a, b) => rank(a) - rank(b));
+  }, [visibleTokens, isDM, enableFog, userId, gridSize, selectedTokenId]);
 
   return (
     <>

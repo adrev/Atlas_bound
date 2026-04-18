@@ -217,12 +217,16 @@ export function registerTokenEvents(io: Server, socket: Socket): void {
 
     await pool.query('DELETE FROM tokens WHERE id = $1', [tokenId]);
 
-    if (tokenMapId) {
-      const recipients = socketsOnMap(ctx.room, tokenMapId);
-      for (const sid of recipients) io.to(sid).emit('map:token-removed', { tokenId, mapId: tokenMapId });
-    } else {
-      io.to(ctx.room.sessionId).emit('map:token-removed', { tokenId });
-    }
+    // Broadcast removal to the whole room, not just sockets currently on
+    // the token's map. Players on other maps still need the update
+    // so their combat tracker, character portraits, and any cached
+    // token references stop rendering a dead creature as alive.
+    // The `mapId` in the payload lets map-scoped UI decide whether to
+    // animate the removal or silently drop it.
+    io.to(ctx.room.sessionId).emit('map:token-removed', {
+      tokenId,
+      ...(tokenMapId ? { mapId: tokenMapId } : {}),
+    });
   }));
 
   socket.on('map:token-update', safeHandler(socket, async (data) => {

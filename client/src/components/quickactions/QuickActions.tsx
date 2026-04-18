@@ -1,5 +1,5 @@
 import type { CSSProperties } from 'react';
-import { emitSystemMessage } from '../../socket/emitters';
+import { emitSystemMessage, emitUseAction, emitRoll, emitDash } from '../../socket/emitters';
 import { useSessionStore } from '../../stores/useSessionStore';
 import { useCharacterStore } from '../../stores/useCharacterStore';
 import { useMapStore } from '../../stores/useMapStore';
@@ -63,6 +63,42 @@ function announce(verb: string, ctx: QuickActionContext, suffix = '') {
   emitSystemMessage(msg);
 }
 
+/**
+ * Add a condition to the currently selected token (if any) and consume
+ * the Action slot. Used by Dodge and Disengage below. Falls back to
+ * just announcing when no token is selected — this keeps the button
+ * useful for a DM who hasn't clicked a creature yet without
+ * silently appearing broken.
+ *
+ * `dodging` and `disengaged` are app-internal pseudo-conditions, not
+ * in the shared `Condition` type. The canvas combat code already uses
+ * the same string tags, so we follow its lead and cast through string.
+ *
+ * Returns true if the effect was applied to a token; false if the
+ * handler only emitted a chat announcement.
+ */
+function applySelfEffect(
+  ctx: QuickActionContext,
+  condition: 'dodging' | 'disengaged',
+): boolean {
+  if (!ctx.selectedTokenId) return false;
+  const token = useMapStore.getState().tokens[ctx.selectedTokenId];
+  if (!token) return false;
+  const current = [...((token.conditions as string[]) || [])];
+  if (!current.includes(condition)) current.push(condition);
+  useMapStore.getState().updateToken(token.id, {
+    conditions: current as unknown as typeof token.conditions,
+  });
+  if (ctx.inCombat) emitUseAction('action');
+  return true;
+}
+
+function abilityMod(character: Character | null, ability: 'str' | 'dex'): number {
+  const score = character?.abilityScores?.[ability];
+  if (typeof score !== 'number') return 0;
+  return Math.floor((score - 10) / 2);
+}
+
 const COMBAT_ACTIONS: QuickAction[] = [
   {
     id: 'dodge',
@@ -71,8 +107,16 @@ const COMBAT_ACTIONS: QuickAction[] = [
     description: 'Take the Dodge action. Attacks against you have disadvantage until your next turn.',
     cost: 'action',
     onClick: (ctx) => {
+      const applied = applySelfEffect(ctx, 'dodging');
       announce('takes the **Dodge** action', ctx);
-      showToast({ emoji: EMOJI.combat.dodge, message: 'Dodge — attacks against you have disadvantage', variant: 'info', duration: 3500 });
+      showToast({
+        emoji: EMOJI.combat.dodge,
+        message: applied
+          ? 'Dodge — attacks against you have disadvantage'
+          : 'Dodge announced — select a token to apply the condition',
+        variant: 'info',
+        duration: 3500,
+      });
     },
   },
   {
@@ -82,6 +126,11 @@ const COMBAT_ACTIONS: QuickAction[] = [
     description: 'Take the Dash action. Your movement speed is doubled for this turn.',
     cost: 'action',
     onClick: (ctx) => {
+      // Server-side emitDash doubles the current combatant's movement
+      // AND spends the Action slot in one round-trip. That matches
+      // TokenActionPanel's Dash button so both entry points behave
+      // identically. Outside combat it's still just an announcement.
+      if (ctx.inCombat) emitDash();
       announce('takes the **Dash** action', ctx);
       showToast({ emoji: '🏃', message: 'Dash — movement doubled this turn', variant: 'info', duration: 3500 });
     },
@@ -93,8 +142,16 @@ const COMBAT_ACTIONS: QuickAction[] = [
     description: 'Take the Disengage action. Your movement does not provoke opportunity attacks for the rest of your turn.',
     cost: 'action',
     onClick: (ctx) => {
+      const applied = applySelfEffect(ctx, 'disengaged');
       announce('takes the **Disengage** action', ctx);
-      showToast({ emoji: '🚶', message: 'Disengage — no opportunity attacks this turn', variant: 'info', duration: 3500 });
+      showToast({
+        emoji: '🚶',
+        message: applied
+          ? 'Disengage — no opportunity attacks this turn'
+          : 'Disengage announced — select a token to apply the condition',
+        variant: 'info',
+        duration: 3500,
+      });
     },
   },
   {
@@ -115,8 +172,21 @@ const COMBAT_ACTIONS: QuickAction[] = [
     description: 'Shove a creature up to one size larger prone or 5 ft away. Athletics vs target\'s Athletics/Acrobatics.',
     cost: 'action',
     onClick: (ctx) => {
+      // Roll the caller's Athletics check; the opposed roll is the
+      // target's problem (they roll back via their own quick-action
+      // or the DM adjudicates). If we have a character with athletics
+      // proficiency, include prof bonus; otherwise just STR mod.
+      const strMod = abilityMod(ctx.character, 'str');
+      const athleticsProf = ctx.character?.skills?.athletics ?? 'none';
+      const profBonus = athleticsProf === 'expertise' ? (ctx.character?.proficiencyBonus ?? 0) * 2
+        : athleticsProf === 'proficient' ? (ctx.character?.proficiencyBonus ?? 0)
+        : 0;
+      const total = strMod + profBonus;
+      const actor = ctx.characterName ?? (ctx.isDM ? 'The DM' : 'The actor');
+      emitRoll(`1d20${total >= 0 ? '+' : ''}${total}`, `${actor} Shove (Athletics, contested)`);
+      if (ctx.selectedTokenId && ctx.inCombat) emitUseAction('action');
       announce('attempts to **Shove**', ctx, '— contested Athletics vs Athletics/Acrobatics');
-      showToast({ emoji: '🫸', message: 'Shove — roll Athletics (contested)', variant: 'info', duration: 3500 });
+      showToast({ emoji: '🫸', message: 'Shove — Athletics roll sent to chat', variant: 'info', duration: 3500 });
     },
   },
   {
@@ -140,8 +210,20 @@ const UTILITY_ACTIONS: QuickAction[] = [
     description: 'Take the Hide action. Roll a Dexterity (Stealth) check to become hidden.',
     cost: 'action',
     onClick: (ctx) => {
+      // Roll Stealth automatically so the DM and other players see the
+      // result in chat. If we have a character, pull DEX mod + stealth
+      // proficiency; otherwise a blank d20.
+      const dexMod = abilityMod(ctx.character, 'dex');
+      const stealthProf = ctx.character?.skills?.stealth ?? 'none';
+      const profBonus = stealthProf === 'expertise' ? (ctx.character?.proficiencyBonus ?? 0) * 2
+        : stealthProf === 'proficient' ? (ctx.character?.proficiencyBonus ?? 0)
+        : 0;
+      const total = dexMod + profBonus;
+      const actor = ctx.characterName ?? (ctx.isDM ? 'The DM' : 'The actor');
+      emitRoll(`1d20${total >= 0 ? '+' : ''}${total}`, `${actor} Hide (Stealth)`);
+      if (ctx.selectedTokenId && ctx.inCombat) emitUseAction('action');
       announce('attempts to **Hide**', ctx, '— roll Stealth');
-      showToast({ emoji: '🫥', message: 'Hide — roll Dex (Stealth)', variant: 'info', duration: 3500 });
+      showToast({ emoji: '🫥', message: 'Hide — Stealth roll sent to chat', variant: 'info', duration: 3500 });
     },
   },
   {
@@ -232,13 +314,24 @@ export function QuickActions() {
   const renderTiles = (actions: QuickAction[]) =>
     actions.map((a) => <QuickActionTile key={a.id} action={a} ctx={ctx} />);
 
+  // Rest buttons only make sense for a player with a loaded character,
+  // AND only when the DM hasn't disabled self-rest via the session
+  // settings toggle. The DM never rests via this bar (no myCharacter)
+  // and gets their own rest-for-everyone flow elsewhere.
+  const allowPlayerRest = useSessionStore((s) => s.settings.allowPlayerRest ?? true);
+  const showRestActions = !!character && !isDM && allowPlayerRest;
+
   return (
     <div style={styles.container}>
       {renderTiles(COMBAT_ACTIONS)}
       <div aria-hidden style={styles.separator} />
       {renderTiles(UTILITY_ACTIONS)}
-      <div aria-hidden style={styles.separator} />
-      {renderTiles(REST_ACTIONS)}
+      {showRestActions && (
+        <>
+          <div aria-hidden style={styles.separator} />
+          {renderTiles(REST_ACTIONS)}
+        </>
+      )}
     </div>
   );
 }

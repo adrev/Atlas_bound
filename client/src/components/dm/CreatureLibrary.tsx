@@ -220,13 +220,37 @@ export function CreatureLibrary() {
     setLoading(false);
   }, [loading, search, typeFilter, crFilter, monsters.length]);
 
+  // Listen for creature drops dispatched by the BattleMap. We fetch
+  // the monster by slug (not always in the current paginated list)
+  // and route through the shared handleAddToMap below with the drop
+  // coordinates in map-space.
+  useEffect(() => {
+    const onDrop = async (e: Event) => {
+      const detail = (e as CustomEvent).detail as { slug: string; x: number; y: number } | undefined;
+      if (!detail?.slug) return;
+      try {
+        const r = await fetch(`/api/compendium/monsters/${detail.slug}`);
+        if (!r.ok) return;
+        const monster = (await r.json()) as CompendiumMonster;
+        handleAddToMap(monster, { x: detail.x, y: detail.y });
+      } catch {
+        // Non-fatal — user can retry via the Add to Map button.
+      }
+    };
+    window.addEventListener('kbrt-creature-drop', onDrop);
+    return () => window.removeEventListener('kbrt-creature-drop', onDrop);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentMap?.id]);
+
   const handleAddToMap = useCallback(
-    async (monster: CompendiumMonster) => {
+    async (monster: CompendiumMonster, dropPos?: { x: number; y: number }) => {
       if (!currentMap) return;
 
       const walkSpeed = monster.speed?.walk ?? 30;
       const tokenColor = getTokenColor(monster.type);
       const gridSize = SIZE_MAP[monster.size] ?? 1;
+      const tokenX = dropPos?.x ?? currentMap.width / 2;
+      const tokenY = dropPos?.y ?? currentMap.height / 2;
 
       try {
         // Create character record from compendium data
@@ -264,8 +288,8 @@ export function CreatureLibrary() {
           mapId: currentMap.id,
           characterId,
           name: monster.name,
-          x: currentMap.width / 2,
-          y: currentMap.height / 2,
+          x: tokenX,
+          y: tokenY,
           size: gridSize,
           imageUrl: getCreatureTokenUrl(monster),
           color: tokenColor,
@@ -285,8 +309,8 @@ export function CreatureLibrary() {
           mapId: currentMap.id,
           characterId: null,
           name: monster.name,
-          x: currentMap.width / 2,
-          y: currentMap.height / 2,
+          x: tokenX,
+          y: tokenY,
           size: gridSize,
           imageUrl: getCreatureTokenUrl(monster),
           color: getTokenColor(monster.type),
@@ -391,7 +415,7 @@ function CreatureCard({
   disabled,
 }: {
   monster: CompendiumMonster;
-  onAdd: (m: CompendiumMonster) => void;
+  onAdd: (m: CompendiumMonster, dropPos?: { x: number; y: number }) => void;
   disabled: boolean;
 }) {
   const [expanded, setExpanded] = useState(false);
@@ -399,8 +423,24 @@ function CreatureCard({
   const walkSpeed = monster.speed?.walk ?? 30;
   const [imgSrc, setImgSrc] = useState(getCreatureImagePng(monster.slug));
 
+  // Drag-to-map: set the slug on the dataTransfer so BattleMap's
+  // drop handler can look it up. We intentionally use an app-specific
+  // MIME type so stray drags from other pages / apps don't trigger
+  // an accidental creature spawn.
+  const handleDragStart = (e: React.DragEvent<HTMLDivElement>) => {
+    if (disabled) { e.preventDefault(); return; }
+    e.dataTransfer.effectAllowed = 'copy';
+    e.dataTransfer.setData('application/x-kbrt-creature', monster.slug);
+    e.dataTransfer.setData('text/plain', monster.name);
+  };
+
   return (
-    <div style={styles.card}>
+    <div
+      style={styles.card}
+      draggable={!disabled}
+      onDragStart={handleDragStart}
+      title={disabled ? '' : 'Drag onto the map to place'}
+    >
       <div style={styles.cardHeader} onClick={() => setExpanded(!expanded)}>
         {/* Token image: try PNG (real art) -> SVG (generated) -> initial fallback */}
         <div style={{ ...styles.tokenCircle, overflow: 'hidden', padding: 0, position: 'relative' }}>

@@ -1,5 +1,13 @@
 /**
- * Snap a pixel position to the nearest grid cell center
+ * Snap a pixel position to the nearest grid cell CENTER.
+ *
+ * Tokens in this app use center-origin rendering (the Group at token.x,y
+ * places the circle at 0,0 inside it), so the snap target must be the
+ * cell center, not the cell corner. Previously this rounded to a
+ * multiple of `gridSize`, which landed tokens on the corner where four
+ * cells meet — that's why a character appeared straddling four tiles
+ * after drag-and-drop. The StagedHeroGhost component had its own
+ * correct local copy; this brings the shared util in line.
  */
 export function snapToGrid(
   pixelX: number,
@@ -8,11 +16,12 @@ export function snapToGrid(
   offsetX = 0,
   offsetY = 0
 ): { x: number; y: number } {
-  const adjX = pixelX - offsetX;
-  const adjY = pixelY - offsetY;
+  const half = gridSize / 2;
+  const adjX = pixelX - offsetX - half;
+  const adjY = pixelY - offsetY - half;
   return {
-    x: Math.round(adjX / gridSize) * gridSize + offsetX,
-    y: Math.round(adjY / gridSize) * gridSize + offsetY,
+    x: Math.round(adjX / gridSize) * gridSize + offsetX + half,
+    y: Math.round(adjY / gridSize) * gridSize + offsetY + half,
   };
 }
 

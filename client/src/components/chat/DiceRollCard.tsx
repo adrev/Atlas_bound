@@ -36,10 +36,14 @@ function detectRollType(content: string, rollData: DiceRollData): { label: strin
   if (combined.includes('save') || combined.includes('saving')) return { label: 'SAVING', sub: 'THROW' };
   if (combined.includes('initiative')) return { label: 'INITIATIVE', sub: 'ROLL' };
   if (combined.includes('death')) return { label: 'DEATH', sub: 'SAVE' };
-
-  // If no d20 in the roll, it's probably damage
-  const hasD20 = rollData.dice.some((d) => d.type === 20);
-  if (!hasD20) return { label: 'DAMAGE', sub: undefined };
+  // Only label a roll as DAMAGE when the reason explicitly says so —
+  // e.g. when the attack flow dispatches "<weapon> Damage" as the
+  // reason string. The old "no d20 in the roll → probably damage"
+  // heuristic mis-labeled generic 2d6 / 1d8 dice-tray rolls the
+  // moment the user just wanted to roll some dice, which is why the
+  // report said 'Rolls should not say damage we should be able to
+  // check what [they are]'.
+  if (combined.includes('damage')) return { label: 'DAMAGE', sub: undefined };
 
   return { label: 'DICE', sub: 'ROLL' };
 }

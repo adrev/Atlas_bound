@@ -470,6 +470,16 @@ export function registerCombatEvents(io: Server, socket: Socket): void {
         change: result.change,
         type: 'damage',
       });
+      // Fan out a character update so sheet views stay in sync with the
+      // combat tracker. Without this the character store keeps the old
+      // HP and the owning player sees themselves alive even after the
+      // combatant is at 0.
+      if (result.characterId) {
+        io.to(ctx.room.sessionId).emit('character:updated', {
+          characterId: result.characterId,
+          changes: { hitPoints: result.hp, tempHitPoints: result.tempHp },
+        });
+      }
     } catch (err) {
       socket.emit('session:error', {
         message: err instanceof Error ? err.message : 'Failed to apply damage',
@@ -516,6 +526,12 @@ export function registerCombatEvents(io: Server, socket: Socket): void {
         change: result.change,
         type: 'heal',
       });
+      if (result.characterId) {
+        io.to(ctx.room.sessionId).emit('character:updated', {
+          characterId: result.characterId,
+          changes: { hitPoints: result.hp, tempHitPoints: result.tempHp },
+        });
+      }
     } catch (err) {
       socket.emit('session:error', {
         message: err instanceof Error ? err.message : 'Failed to apply healing',

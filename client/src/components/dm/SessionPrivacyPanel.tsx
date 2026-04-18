@@ -2,6 +2,7 @@ import { useState } from 'react';
 import type { CSSProperties } from 'react';
 import { patchSession, deleteSession } from '../../services/api';
 import { useSessionStore } from '../../stores/useSessionStore';
+import { emitUpdateSettings } from '../../socket/emitters';
 import { theme } from '../../styles/theme';
 import { Button, FieldGroup, TextInput, showToast, askConfirm } from '../ui';
 
@@ -12,6 +13,10 @@ export function SessionPrivacyPanel() {
   const inviteCode = useSessionStore((s) => s.inviteCode);
   const isOwner = useSessionStore((s) => s.isOwner);
   const updatePrivacy = useSessionStore((s) => s.updatePrivacy);
+  const settings = useSessionStore((s) => s.settings);
+  const allowPlayerRest = settings.allowPlayerRest ?? true;
+  const showCreatureStatsToPlayers = settings.showCreatureStatsToPlayers ?? true;
+  const showPlayersToPlayers = settings.showPlayersToPlayers ?? true;
   const [password, setPassword] = useState('');
   const [saving, setSaving] = useState(false);
 
@@ -174,6 +179,28 @@ export function SessionPrivacyPanel() {
         </Button>
       )}
 
+      <div style={styles.permissionsGroup}>
+        <div style={styles.permissionsHeader}>Player Permissions</div>
+        <PermissionToggle
+          label="Allow player rests"
+          helper="Players can trigger Short / Long Rest from the bottom bar."
+          checked={allowPlayerRest}
+          onChange={(v) => emitUpdateSettings({ allowPlayerRest: v })}
+        />
+        <PermissionToggle
+          label="Show creature stats to players"
+          helper="Players can open NPC character sheets to inspect attacks and spells."
+          checked={showCreatureStatsToPlayers}
+          onChange={(v) => emitUpdateSettings({ showCreatureStatsToPlayers: v })}
+        />
+        <PermissionToggle
+          label="Show player sheets to other players"
+          helper="Party members can open each other's character sheets."
+          checked={showPlayersToPlayers}
+          onChange={(v) => emitUpdateSettings({ showPlayersToPlayers: v })}
+        />
+      </div>
+
       {isOwner && (
         <div style={styles.dangerZone}>
           <p style={styles.dangerHint}>
@@ -191,6 +218,33 @@ export function SessionPrivacyPanel() {
         </div>
       )}
     </div>
+  );
+}
+
+function PermissionToggle({
+  label,
+  helper,
+  checked,
+  onChange,
+}: {
+  label: string;
+  helper: string;
+  checked: boolean;
+  onChange: (v: boolean) => void;
+}) {
+  return (
+    <label style={styles.permissionRow}>
+      <input
+        type="checkbox"
+        checked={checked}
+        onChange={(e) => onChange(e.target.checked)}
+        style={styles.permissionCheckbox}
+      />
+      <span style={styles.permissionText}>
+        <span style={styles.permissionLabel}>{label}</span>
+        <span style={styles.permissionHelper}>{helper}</span>
+      </span>
+    </label>
   );
 }
 
@@ -233,6 +287,55 @@ const styles: Record<string, CSSProperties> = {
     gridTemplateColumns: 'minmax(0, 1fr) auto',
     gap: theme.space.sm,
     alignItems: 'center',
+  },
+  permissionsGroup: {
+    display: 'flex',
+    flexDirection: 'column' as const,
+    gap: theme.space.sm,
+    padding: `${theme.space.sm}px 0`,
+    borderTop: `1px solid ${theme.border.default}`,
+    borderBottom: `1px solid ${theme.border.default}`,
+  },
+  permissionsHeader: {
+    fontSize: 11,
+    fontWeight: 700,
+    textTransform: 'uppercase' as const,
+    letterSpacing: '0.08em',
+    color: theme.gold.primary,
+    marginBottom: theme.space.xs,
+  },
+  permissionRow: {
+    display: 'flex',
+    alignItems: 'flex-start',
+    gap: theme.space.sm,
+    padding: `${theme.space.xs}px ${theme.space.sm}px`,
+    borderRadius: theme.radius.sm,
+    background: theme.bg.deep,
+    cursor: 'pointer',
+  },
+  permissionCheckbox: {
+    width: 16,
+    height: 16,
+    marginTop: 2,
+    accentColor: theme.gold.primary,
+    cursor: 'pointer',
+    flexShrink: 0,
+  },
+  permissionText: {
+    display: 'flex',
+    flexDirection: 'column' as const,
+    gap: 2,
+    minWidth: 0,
+  },
+  permissionLabel: {
+    fontSize: 12,
+    fontWeight: 600,
+    color: theme.text.primary,
+  },
+  permissionHelper: {
+    fontSize: 10,
+    color: theme.text.muted,
+    lineHeight: 1.4,
   },
   dangerZone: {
     marginTop: theme.space.md,

@@ -308,8 +308,46 @@ export function BattleMap() {
     }, DRAW_STREAM_INTERVAL_MS - since);
   }, [streamInProgressNow]);
 
+  // Drag-drop from the DM creature / compendium panels. The card
+  // writes the monster slug to dataTransfer under a custom MIME type;
+  // on drop we convert the container-relative pixel position into
+  // map-space and dispatch a window event. The CreatureLibrary (DM
+  // tab) listens for that event, fetches the full monster row, and
+  // routes through its existing placement flow. Library has to be
+  // mounted (DM Tools → Creatures) for the event to land — this is
+  // v1, good enough for the workflow where a DM drags creatures in
+  // while the library is open.
+  const handleMapDragOver = useCallback((e: React.DragEvent<HTMLDivElement>) => {
+    if (!Array.from(e.dataTransfer.types).includes('application/x-kbrt-creature')) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'copy';
+  }, []);
+  const handleMapDrop = useCallback(
+    (e: React.DragEvent<HTMLDivElement>) => {
+      const slug = e.dataTransfer.getData('application/x-kbrt-creature');
+      if (!slug) return;
+      e.preventDefault();
+      const container = containerRef.current;
+      if (!container) return;
+      const rect = container.getBoundingClientRect();
+      const px = e.clientX - rect.left;
+      const py = e.clientY - rect.top;
+      const mapX = (px - stageProps.x) / stageProps.scaleX;
+      const mapY = (py - stageProps.y) / stageProps.scaleY;
+      window.dispatchEvent(
+        new CustomEvent('kbrt-creature-drop', { detail: { slug, x: mapX, y: mapY } }),
+      );
+    },
+    [stageProps.x, stageProps.y, stageProps.scaleX, stageProps.scaleY],
+  );
+
   return (
-    <div ref={containerRef} style={styles.container}>
+    <div
+      ref={containerRef}
+      style={styles.container}
+      onDragOver={handleMapDragOver}
+      onDrop={handleMapDrop}
+    >
       <Stage
         width={dimensions.width}
         height={dimensions.height}

@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Plus, Eye, EyeOff, Trash2 } from 'lucide-react';
 import { useSessionStore } from '../../stores/useSessionStore';
+import { useAuthStore } from '../../stores/useAuthStore';
 import { theme } from '../../styles/theme';
 import { Button } from '../ui';
 
@@ -47,6 +48,7 @@ const FILTER_TABS: { id: CategoryFilter; label: string }[] = [
 export function NotesPanel() {
   const sessionId = useSessionStore((s) => s.sessionId);
   const isDM = useSessionStore((s) => s.isDM);
+  const currentUserId = useAuthStore((s) => s.user?.id ?? null);
   const [notes, setNotes] = useState<Note[]>([]);
   const [filter, setFilter] = useState<CategoryFilter>('all');
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -144,8 +146,10 @@ export function NotesPanel() {
         ))}
       </div>
 
-      {/* New Note button (DM only) */}
-      {isDM && !creating && (
+      {/* New Note button — any session member can create a note.
+          Players' notes are private to themselves + the DM; the DM's
+          notes default to private until they flip share on. */}
+      {!creating && (
         <div style={{ padding: '8px 12px 0' }}>
           <Button
             variant="primary"
@@ -198,7 +202,7 @@ export function NotesPanel() {
         {filtered.length === 0 && (
           <div style={styles.empty}>
             <p style={{ color: theme.text.muted, fontSize: 12, margin: 0 }}>
-              {isDM ? 'No notes yet. Create one to get started.' : 'No shared notes from the DM yet.'}
+              No notes yet. Create one to get started.
             </p>
           </div>
         )}
@@ -238,24 +242,32 @@ export function NotesPanel() {
                     )}
                   </div>
                 </div>
-                {isDM && (
-                  <div style={styles.noteActions} onClick={(e) => e.stopPropagation()}>
-                    <button
-                      style={styles.iconBtn}
-                      title={note.isShared ? 'Make private' : 'Share with players'}
-                      onClick={() => handleToggleShare(note.id)}
-                    >
-                      {note.isShared ? <Eye size={14} color={theme.state.success} /> : <EyeOff size={14} color={theme.text.muted} />}
-                    </button>
-                    <button
-                      style={styles.iconBtn}
-                      title="Delete note"
-                      onClick={() => handleDelete(note.id)}
-                    >
-                      <Trash2 size={14} color={theme.danger} />
-                    </button>
-                  </div>
-                )}
+                {(() => {
+                  const canEdit = isDM || note.createdBy === currentUserId;
+                  if (!canEdit) return null;
+                  return (
+                    <div style={styles.noteActions} onClick={(e) => e.stopPropagation()}>
+                      {/* Share toggle — DM only, players can't promote
+                          a private note to shared. */}
+                      {isDM && (
+                        <button
+                          style={styles.iconBtn}
+                          title={note.isShared ? 'Make private' : 'Share with players'}
+                          onClick={() => handleToggleShare(note.id)}
+                        >
+                          {note.isShared ? <Eye size={14} color={theme.state.success} /> : <EyeOff size={14} color={theme.text.muted} />}
+                        </button>
+                      )}
+                      <button
+                        style={styles.iconBtn}
+                        title="Delete note"
+                        onClick={() => handleDelete(note.id)}
+                      >
+                        <Trash2 size={14} color={theme.danger} />
+                      </button>
+                    </div>
+                  );
+                })()}
               </div>
 
               {/* Preview (collapsed) */}
@@ -269,34 +281,38 @@ export function NotesPanel() {
                 </div>
               )}
 
-              {/* Expanded editor / viewer */}
-              {isExpanded && (
-                <div style={styles.expandedContent}>
-                  {isDM ? (
-                    <>
-                      <textarea
-                        value={editContent}
-                        onChange={(e) => setEditContent(e.target.value)}
-                        style={styles.textarea}
-                        rows={6}
-                        placeholder="Write your notes here..."
-                      />
-                      <Button
-                        variant="primary"
-                        size="sm"
-                        onClick={() => handleSave(note.id)}
-                        style={{ alignSelf: 'flex-end' }}
-                      >
-                        Save
-                      </Button>
-                    </>
-                  ) : (
-                    <div style={styles.readOnlyContent}>
-                      {note.content || 'No content yet.'}
-                    </div>
-                  )}
-                </div>
-              )}
+              {/* Expanded editor / viewer. Edit access: DM for any
+                  note; players only for notes they authored. */}
+              {isExpanded && (() => {
+                const canEdit = isDM || note.createdBy === currentUserId;
+                return (
+                  <div style={styles.expandedContent}>
+                    {canEdit ? (
+                      <>
+                        <textarea
+                          value={editContent}
+                          onChange={(e) => setEditContent(e.target.value)}
+                          style={styles.textarea}
+                          rows={6}
+                          placeholder="Write your notes here..."
+                        />
+                        <Button
+                          variant="primary"
+                          size="sm"
+                          onClick={() => handleSave(note.id)}
+                          style={{ alignSelf: 'flex-end' }}
+                        >
+                          Save
+                        </Button>
+                      </>
+                    ) : (
+                      <div style={styles.readOnlyContent}>
+                        {note.content || 'No content yet.'}
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
             </div>
           );
         })}
