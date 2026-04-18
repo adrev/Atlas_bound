@@ -314,12 +314,12 @@ export function QuickActions() {
   const renderTiles = (actions: QuickAction[]) =>
     actions.map((a) => <QuickActionTile key={a.id} action={a} ctx={ctx} />);
 
-  // Rest buttons only make sense for a player with a loaded character.
-  // DMs don't have a "myCharacter" so clicking rest previously fired a
-  // confusing "No characters loaded" toast; players whose character
-  // hadn't finished loading yet hit the same message. Hide the group
-  // entirely in those cases so the user-facing error disappears.
-  const showRestActions = !!character && !isDM;
+  // Rest buttons only make sense for a player with a loaded character,
+  // AND only when the DM hasn't disabled self-rest via the session
+  // settings toggle. The DM never rests via this bar (no myCharacter)
+  // and gets their own rest-for-everyone flow elsewhere.
+  const allowPlayerRest = useSessionStore((s) => s.settings.allowPlayerRest ?? true);
+  const showRestActions = !!character && !isDM && allowPlayerRest;
 
   return (
     <div style={styles.container}>

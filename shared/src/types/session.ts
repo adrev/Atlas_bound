@@ -59,6 +59,13 @@ export interface SessionSettings {
    * to turn on notifications.
    */
   discordWebhookUrl?: string | null;
+  /**
+   * When false, players can't self-trigger Short / Long Rest from the
+   * bottom bar — only the DM can start a rest (which still broadcasts
+   * to everyone). Defaults to true so existing sessions keep their
+   * prior behaviour.
+   */
+  allowPlayerRest?: boolean;
 }
 
 export const DEFAULT_SESSION_SETTINGS: SessionSettings = {
@@ -67,6 +74,7 @@ export const DEFAULT_SESSION_SETTINGS: SessionSettings = {
   gridOpacity: 0.15,
   enableFogOfWar: true,
   enableDynamicLighting: false,
+  allowPlayerRest: true,
 };
 
 export interface Player {
