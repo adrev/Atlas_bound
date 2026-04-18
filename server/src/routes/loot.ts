@@ -346,6 +346,33 @@ router.post('/characters/:id/loot/take', async (req: Request, res: Response) => 
   }
 
   res.json({ success: true, itemName: responseItemName, inventory: responseInventory, targetCharacterId });
+
+  // Fan out the inventory change to everyone in the target character's
+  // session. Without this the receiving player's inventory panel keeps
+  // showing stale data until they refresh — even though the DB is
+  // already updated and the response returned the new inventory.
+  //
+  // Fire-and-forget: failures here should NEVER roll back the take.
+  try {
+    const { rows: sessionRows } = await pool.query(
+      `SELECT DISTINCT m.session_id AS session_id
+       FROM tokens t JOIN maps m ON m.id = t.map_id
+       WHERE t.character_id = $1
+       LIMIT 1`,
+      [targetCharacterId],
+    );
+    const sessionId = sessionRows[0]?.session_id as string | undefined;
+    const io = getIO();
+    if (sessionId && io) {
+      io.to(sessionId).emit('character:updated', {
+        characterId: targetCharacterId,
+        changes: { inventory: responseInventory },
+      });
+    }
+  } catch (err) {
+    // Log but don't throw — the HTTP response has already been sent.
+    console.warn('[loot/take] inventory broadcast failed:', err);
+  }
 });
 
 // POST /api/characters/:id/inventory/enrich

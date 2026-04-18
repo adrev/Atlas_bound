@@ -358,7 +358,17 @@ export function nextTurn(sessionId: string): {
   return { currentTurnIndex: state.currentTurnIndex, roundNumber: state.roundNumber, actionEconomy: economy, skippedTokenIds, currentCombatant };
 }
 
-export async function applyDamage(sessionId: string, tokenId: string, amount: number): Promise<{ hp: number; tempHp: number; change: number }> {
+export interface HpChangeResult {
+  hp: number;
+  tempHp: number;
+  change: number;
+  /** Populated when the combatant is backed by a player character.
+   *  Callers should fan out `character:updated` so character sheet
+   *  views stay in sync with the combat tracker. */
+  characterId: string | null;
+}
+
+export async function applyDamage(sessionId: string, tokenId: string, amount: number): Promise<HpChangeResult> {
   const room = getRoom(sessionId);
   if (!room?.combatState) throw new Error('No active combat');
   const combatant = room.combatState.combatants.find(c => c.tokenId === tokenId);
@@ -377,10 +387,10 @@ export async function applyDamage(sessionId: string, tokenId: string, amount: nu
       [combatant.hp, combatant.tempHp, combatant.characterId]);
   }
   persistCombatState(room.combatState);
-  return { hp: combatant.hp, tempHp: combatant.tempHp, change: -amount };
+  return { hp: combatant.hp, tempHp: combatant.tempHp, change: -amount, characterId: combatant.characterId ?? null };
 }
 
-export async function applyHeal(sessionId: string, tokenId: string, amount: number): Promise<{ hp: number; tempHp: number; change: number }> {
+export async function applyHeal(sessionId: string, tokenId: string, amount: number): Promise<HpChangeResult> {
   const room = getRoom(sessionId);
   if (!room?.combatState) throw new Error('No active combat');
   const combatant = room.combatState.combatants.find(c => c.tokenId === tokenId);
@@ -393,7 +403,7 @@ export async function applyHeal(sessionId: string, tokenId: string, amount: numb
     await pool.query('UPDATE characters SET hit_points = $1 WHERE id = $2', [combatant.hp, combatant.characterId]);
   }
   persistCombatState(room.combatState);
-  return { hp: combatant.hp, tempHp: combatant.tempHp, change: amount };
+  return { hp: combatant.hp, tempHp: combatant.tempHp, change: amount, characterId: combatant.characterId ?? null };
 }
 
 export function addCondition(sessionId: string, tokenId: string, condition: Condition): Condition[] {
