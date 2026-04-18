@@ -155,11 +155,12 @@ export function useDragToken(tokenId: string) {
 
       // ── Enforce movement limit ────────────────────────────────
       // In combat, the current combatant can't exceed their remaining
-      // movement. If they try, snap the token back to its start
-      // position and pop a warning toast so they can see why. This
-      // applies even to the DM when controlling the current combatant
-      // — play Dash to get more movement, or End Turn to reset.
-      if (isActiveCombatant && feet > combat.actionEconomy.movementRemaining) {
+      // movement. DMs are exempt: they often need to teleport an NPC
+      // across the map for scripted positioning or correct mistakes
+      // mid-turn, and enforcing the limit on them just wastes their
+      // time with a Dash workaround. Players still hit the ceiling.
+      const dmMovementOverride = useSessionStore.getState().isDM;
+      if (isActiveCombatant && !dmMovementOverride && feet > combat.actionEconomy.movementRemaining) {
         node.position({ x: prevX, y: prevY });
         showMovementDeniedToast(
           feet,
