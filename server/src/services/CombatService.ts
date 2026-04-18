@@ -114,12 +114,23 @@ export async function startCombatAsync(sessionId: string, tokenIds: string[]): P
         ac = (charRow.armor_class as number) ?? 10;
         speed = (charRow.speed as number) ?? 30;
         portrait = charRow.portrait_url as string | null;
-        try {
-          const rawAbilities = charRow.ability_scores;
-          const abilities = typeof rawAbilities === 'string' ? JSON.parse(rawAbilities) : (rawAbilities ?? {});
-          const dex = Number(abilities?.dex ?? abilities?.dexterity ?? 10);
-          initBonus = Number.isFinite(dex) ? Math.floor((dex - 10) / 2) : 0;
-        } catch { initBonus = 0; }
+        // Prefer the character's precomputed initiative bonus — it's
+        // what the character sheet shows and it already includes Alert
+        // (+5), Jack of All Trades (half prof), and any other feat
+        // modifiers applied during the import pipeline. Fall back to
+        // DEX mod when the column is unset (missing / 0 / NaN), which
+        // matches the old behaviour for unimported characters.
+        const storedInit = Number(charRow.initiative);
+        if (Number.isFinite(storedInit) && storedInit !== 0) {
+          initBonus = storedInit;
+        } else {
+          try {
+            const rawAbilities = charRow.ability_scores;
+            const abilities = typeof rawAbilities === 'string' ? JSON.parse(rawAbilities) : (rawAbilities ?? {});
+            const dex = Number(abilities?.dex ?? abilities?.dexterity ?? 10);
+            initBonus = Number.isFinite(dex) ? Math.floor((dex - 10) / 2) : 0;
+          } catch { initBonus = 0; }
+        }
         const charUserId = charRow.user_id as string | null;
         isNPC = !token.ownerUserId || charUserId === 'npc';
       }
@@ -215,12 +226,19 @@ export async function addCombatantAsync(sessionId: string, tokenId: string): Pro
       ac = (charRow.armor_class as number) ?? 10;
       speed = (charRow.speed as number) ?? 30;
       portrait = charRow.portrait_url as string | null;
-      try {
-        const rawAbilities = charRow.ability_scores;
-        const abilities = typeof rawAbilities === 'string' ? JSON.parse(rawAbilities) : (rawAbilities ?? {});
-        const dex = Number(abilities?.dex ?? abilities?.dexterity ?? 10);
-        initBonus = Number.isFinite(dex) ? Math.floor((dex - 10) / 2) : 0;
-      } catch { initBonus = 0; }
+      // Prefer precomputed character.initiative (includes Alert +5, etc.)
+      // Fall back to DEX mod when unset.
+      const storedInit = Number(charRow.initiative);
+      if (Number.isFinite(storedInit) && storedInit !== 0) {
+        initBonus = storedInit;
+      } else {
+        try {
+          const rawAbilities = charRow.ability_scores;
+          const abilities = typeof rawAbilities === 'string' ? JSON.parse(rawAbilities) : (rawAbilities ?? {});
+          const dex = Number(abilities?.dex ?? abilities?.dexterity ?? 10);
+          initBonus = Number.isFinite(dex) ? Math.floor((dex - 10) / 2) : 0;
+        } catch { initBonus = 0; }
+      }
       const charUserId = charRow.user_id as string | null;
       isNPC = !token.ownerUserId || charUserId === 'npc';
     }
