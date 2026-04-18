@@ -161,6 +161,11 @@ export function registerCharacterEvents(io: Server, socket: Socket): void {
     const { rows } = await pool.query('SELECT * FROM characters WHERE id = $1', [characterId]);
     if (rows.length === 0) return;
 
-    socket.emit('character:synced', { character: dbRowToCharacter(rows[0]) });
+    // Broadcast to the whole session room (requester included) so the
+    // DM and every other connected player refresh their copy of this
+    // character. Previously only the requester got the synced data,
+    // which left the DM viewing stale stats after a player re-imported
+    // from D&D Beyond.
+    io.to(ctx.room.sessionId).emit('character:synced', { character: dbRowToCharacter(rows[0]) });
   }));
 }

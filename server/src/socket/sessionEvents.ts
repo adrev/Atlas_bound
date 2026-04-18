@@ -263,13 +263,25 @@ export function registerSessionEvents(io: Server, socket: Socket): void {
       }
     }
 
-    // Auto-load character
-    if (currentPlayer.character_id) {
-      const { rows: charRows } = await pool.query('SELECT * FROM characters WHERE id = $1', [currentPlayer.character_id]);
-      const charRow = charRows[0] as Record<string, unknown> | undefined;
-      if (charRow) {
-        socket.emit('character:synced', { character: dbRowToCharacter(charRow) });
-      }
+    // Auto-load characters. The joiner needs their OWN character (to
+    // populate myCharacter) AND every other linked character in the
+    // session (so the DM can open any player's sheet, and players can
+    // see tooltips / portraits on each other's tokens).
+    //
+    // We send all of them via character:synced — the client's
+    // applyRemoteSync adds to allCharacters and mirrors into
+    // myCharacter when the id matches the joiner's own. Previously
+    // only the joiner's own character was pushed, which is why a DM
+    // who joined after a player imported from D&D Beyond still saw
+    // stale / missing data for that player.
+    const { rows: sessionCharRows } = await pool.query(
+      `SELECT c.* FROM characters c
+       JOIN session_players sp ON sp.character_id = c.id
+       WHERE sp.session_id = $1`,
+      [session.id],
+    );
+    for (const charRow of sessionCharRows) {
+      socket.emit('character:synced', { character: dbRowToCharacter(charRow as Record<string, unknown>) });
     }
 
     // Send chat history — filter per-user so whispers stay private and
