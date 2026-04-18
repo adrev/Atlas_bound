@@ -310,13 +310,24 @@ export function QuickActions() {
   const renderTiles = (actions: QuickAction[]) =>
     actions.map((a) => <QuickActionTile key={a.id} action={a} ctx={ctx} />);
 
+  // Rest buttons only make sense for a player with a loaded character.
+  // DMs don't have a "myCharacter" so clicking rest previously fired a
+  // confusing "No characters loaded" toast; players whose character
+  // hadn't finished loading yet hit the same message. Hide the group
+  // entirely in those cases so the user-facing error disappears.
+  const showRestActions = !!character && !isDM;
+
   return (
     <div style={styles.container}>
       {renderTiles(COMBAT_ACTIONS)}
       <div aria-hidden style={styles.separator} />
       {renderTiles(UTILITY_ACTIONS)}
-      <div aria-hidden style={styles.separator} />
-      {renderTiles(REST_ACTIONS)}
+      {showRestActions && (
+        <>
+          <div aria-hidden style={styles.separator} />
+          {renderTiles(REST_ACTIONS)}
+        </>
+      )}
     </div>
   );
 }
