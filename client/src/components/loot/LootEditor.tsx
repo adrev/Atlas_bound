@@ -381,26 +381,38 @@ export function LootEditor({ characterId, tokenName, onClose, canEdit = true }: 
 
         {/* Search Section — only shown when user can edit */}
         {canEdit && <div style={S.searchSection}>
-          <div style={{ display: 'flex', gap: 6 }}>
-            <input
-              type="text"
-              value={searchQuery}
-              onChange={e => { setSearchQuery(e.target.value); setShowCustom(false); }}
-              placeholder="Search compendium items..."
-              style={{ ...S.searchInput, flex: 1 }}
-            />
-            <button
-              onClick={() => setShowCustom(!showCustom)}
-              title="Create custom item"
-              style={{
-                padding: '8px 12px', fontSize: 14, fontWeight: 700,
-                background: showCustom ? theme.gold.bg : theme.bg.elevated,
-                border: `1px solid ${showCustom ? theme.gold.border : theme.border.default}`,
-                borderRadius: 8, color: showCustom ? theme.gold.primary : theme.text.secondary,
-                cursor: 'pointer', fontFamily: theme.font.body, flexShrink: 0,
-              }}
-            >+</button>
-          </div>
+          {!showCustom && (
+            <div style={{ display: 'flex', gap: 6 }}>
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={e => setSearchQuery(e.target.value)}
+                placeholder="Search compendium items..."
+                style={{ ...S.searchInput, flex: 1 }}
+              />
+              <button
+                onClick={() => setShowCustom(true)}
+                title="Create a custom item"
+                style={{
+                  padding: '8px 14px',
+                  fontSize: 11,
+                  fontFamily: theme.font.display,
+                  fontWeight: 700,
+                  letterSpacing: '1.5px',
+                  textTransform: 'uppercase' as const,
+                  background: theme.bg.elevated,
+                  border: `1px solid ${theme.gold.border}`,
+                  borderRadius: theme.radius.sm,
+                  color: theme.gold.primary,
+                  cursor: 'pointer',
+                  flexShrink: 0,
+                  whiteSpace: 'nowrap' as const,
+                }}
+              >
+                + Custom Item
+              </button>
+            </div>
+          )}
 
           {/* Search results dropdown */}
           {searchResults.length > 0 && !showCustom && (
@@ -439,11 +451,41 @@ export function LootEditor({ characterId, tokenName, onClose, canEdit = true }: 
           {/* Custom item creation panel */}
           {showCustom && (
             <div style={{
-              marginTop: 8, padding: 12, borderRadius: 8,
-              background: theme.bg.card, border: `1px solid ${theme.border.default}`,
+              marginTop: 0, padding: 12, borderRadius: theme.radius.md,
+              background: theme.bg.card, border: `1px solid ${theme.gold.border}`,
             }}>
-              <div style={{ fontSize: 10, fontWeight: 700, color: theme.gold.dim, marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-                Create Custom Item
+              <div style={{
+                display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                marginBottom: 10,
+              }}>
+                <div style={{
+                  fontSize: 11,
+                  fontFamily: theme.font.display,
+                  fontWeight: 700,
+                  color: theme.gold.primary,
+                  textTransform: 'uppercase',
+                  letterSpacing: '2px',
+                }}>
+                  Create Custom Item
+                </div>
+                <button
+                  onClick={resetCustomForm}
+                  title="Cancel and close the custom-item form"
+                  style={{
+                    padding: '4px 10px',
+                    fontSize: 10,
+                    fontFamily: theme.font.display,
+                    letterSpacing: '1.5px',
+                    textTransform: 'uppercase' as const,
+                    background: 'transparent',
+                    border: `1px solid ${theme.border.default}`,
+                    borderRadius: theme.radius.sm,
+                    color: theme.text.secondary,
+                    cursor: 'pointer',
+                  }}
+                >
+                  Cancel
+                </button>
               </div>
               <input
                 type="text" value={customName} onChange={e => setCustomName(e.target.value)}
