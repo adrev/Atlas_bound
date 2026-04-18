@@ -77,7 +77,7 @@ export function LoginPage() {
         {/* Separator */}
         <div style={styles.separator}>
           <div style={styles.separatorLine} />
-          <span style={styles.separatorText}>or sign in</span>
+          <span style={styles.separatorText}>or by inked quill</span>
           <div style={styles.separatorLine} />
         </div>
 
@@ -118,7 +118,7 @@ export function LoginPage() {
               disabled={submitting}
               loading={submitting}
             >
-              {mode === 'login' ? 'Login' : 'Register'}
+              {mode === 'login' ? 'Enter the Tavern' : 'Forge a Character'}
             </Button>
           </div>
 
@@ -144,7 +144,7 @@ export function LoginPage() {
         </div>
 
         <p style={styles.footer}>
-          KBRT.AI — Your adventure awaits.
+          KBRT.AI · Your adventure awaits.
         </p>
       </div>
     </div>
@@ -253,19 +253,24 @@ const styles: Record<string, React.CSSProperties> = {
     background: theme.border.default,
   },
   separatorText: {
-    fontSize: 13,
-    color: theme.text.muted,
+    fontSize: 11,
+    fontFamily: theme.font.display,
+    letterSpacing: '3px',
+    textTransform: 'uppercase' as const,
+    color: theme.gold.dim,
     whiteSpace: 'nowrap' as const,
   },
   formCard: {
     width: '100%',
     background: theme.bg.card,
-    border: `1px solid ${theme.border.default}`,
-    borderRadius: theme.radius.lg,
+    border: `1px solid ${theme.border.light}`,
+    borderRadius: theme.radius.md,
     padding: 24,
     display: 'flex',
     flexDirection: 'column' as const,
     gap: 16,
+    position: 'relative' as const,
+    boxShadow: '0 20px 60px rgba(0,0,0,0.5)',
   },
   form: {
     display: 'flex',
@@ -305,9 +310,11 @@ const styles: Record<string, React.CSSProperties> = {
     textAlign: 'center' as const,
   },
   footer: {
-    fontSize: 13,
+    fontSize: 12,
+    fontFamily: theme.font.body,
     color: theme.text.muted,
     fontStyle: 'italic',
     margin: 0,
+    letterSpacing: '2px',
   },
 };
