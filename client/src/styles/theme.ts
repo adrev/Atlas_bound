@@ -1,65 +1,71 @@
 /**
  * Atlas Bound — "Illuminated Tome" design tokens.
  *
- * Rebased onto the KBRT Tome palette during the design overhaul.
- * Legacy token shapes (`bg.deepest`, `gold.primary`, etc.) are preserved
- * so every component that spreads these through inline styles picks up
- * the new look automatically. The expanded tokens (`space`, `type`,
- * `motion`, `parchment`, `goldGlow`, `ornate`, `state`) were already
- * used for "DM Vibe" accents and keep their meaning under the new palette.
+ * Values that have a CSS-variable equivalent in globals.css /
+ * kbrt/theme.css return the `var(--token)` REFERENCE instead of a
+ * literal hex. That means `style={{ color: theme.gold.primary }}`
+ * renders as `color: var(--gold)`, which re-cascades whenever the
+ * user flips a theme via the Tweaks panel. No component migration
+ * required.
  *
- * Cross-reference: `styles/globals.css` exposes the same palette as CSS
- * variables for class-based styling, and `kbrt/theme.css` layers the full
- * 5-theme system (Tome / Parchment / Noir / Grove / Codex) inside any
- * `.kbrt` subtree.
+ * Derived values (shadows, gradients, rgba overlays) stay as literal
+ * strings — they compose from multiple sources, and the browser can
+ * safely reference `var(...)` inside a shadow / gradient anyway.
+ *
+ * Shape is preserved so existing call sites keep working: `theme.bg`,
+ * `theme.gold`, `theme.text`, `theme.state`, etc.
+ *
+ * A 5-theme variant (Tome / Parchment / Noir / Grove / Codex) is
+ * layered on top by kbrt/theme.css overriding the same variables
+ * inside each `[data-theme=…]` block.
  */
 export const theme = {
   // ── Surfaces (Tome "ink" ladder) ────────────────────────────
   bg: {
-    deepest: '#0a0604',
-    deep: '#140e07',
-    base: '#1a120a',
-    card: '#1e1509',
-    elevated: '#241810',
-    hover: '#2f2216',
+    deepest: 'var(--bg-deepest)',
+    deep: 'var(--bg-deep)',
+    base: 'var(--bg-base)',
+    card: 'var(--bg-card)',
+    elevated: 'var(--bg-elevated)',
+    hover: 'var(--bg-hover)',
   },
 
   // ── Gilt (primary brand accent) ─────────────────────────────
   gold: {
-    primary: '#e0b44f',
-    dim: '#c79632',
-    bright: '#f2d27a',
-    bg: 'rgba(224, 180, 79, 0.12)',
-    border: 'rgba(224, 180, 79, 0.35)',
+    primary: 'var(--gold)',
+    dim: 'var(--gold-dim)',
+    bright: 'var(--gold-bright)',
+    bg: 'var(--gold-bg)',
+    border: 'var(--gold-border)',
   },
 
   // ── Text — warm parchment cream ─────────────────────────────
   text: {
-    primary: '#ead6a8',
-    secondary: '#a89271',
-    muted: '#6b5a3f',
-    gold: '#e0b44f',
+    primary: 'var(--text-primary)',
+    secondary: 'var(--text-secondary)',
+    muted: 'var(--text-muted)',
+    gold: 'var(--text-gold)',
   },
 
   // ── Borders ─────────────────────────────────────────────────
   border: {
-    default: 'rgba(199, 150, 50, 0.30)',
-    light: 'rgba(199, 150, 50, 0.55)',
-    gold: 'rgba(224, 180, 79, 0.55)',
+    default: 'var(--border)',
+    light: 'var(--border-light)',
+    gold: 'var(--border-gold)',
   },
 
-  // ── Semantic colors (legacy — prefer `state` below) ─────────
-  danger: '#c9423a',
-  dangerDim: '#9d2a23',
-  heal: '#7aa266',
-  healDim: '#4c6c3f',
-  purple: '#9e7bc6',
-  blue: '#6aa9d1',
-  whisper: '#9e7bc6',
+  // ── Semantic colors ─────────────────────────────────────────
+  danger: 'var(--danger)',
+  dangerDim: 'var(--danger-dim)',
+  heal: 'var(--heal)',
+  healDim: 'var(--heal-dim)',
+  purple: 'var(--accent-purple)',
+  blue: 'var(--accent-blue)',
+  whisper: 'var(--whisper-purple)',
   hp: {
-    full: '#7aa266',
-    half: '#d4a843',
-    low: '#c9423a',
+    full: 'var(--hp-full)',
+    half: 'var(--hp-half)',
+    low: 'var(--hp-low)',
   },
 
   // ── Corners ─────────────────────────────────────────────────
@@ -78,10 +84,10 @@ export const theme = {
     gold: '0 0 14px rgba(224, 180, 79, 0.35)',
   },
 
-  // ── Typography (Tome display + body) ────────────────────────
+  // ── Typography (reads live from the themed CSS vars) ────────
   font: {
-    body: "'Spectral', 'Georgia', serif",
-    display: "'Cinzel', 'Trajan Pro', serif",
+    body: 'var(--font-body)',
+    display: 'var(--font-display)',
   },
 
   // ═══════════════════════════════════════════════════════════
@@ -101,42 +107,42 @@ export const theme = {
   },
 
   // ── Type scale ──────────────────────────────────────────────
-  // h3 is the "section label" style — uppercase, gold, letter-spaced.
+  // Uses `var(--font-…)` so Cinzel / Spectral swap on theme change.
   type: {
     display: {
       fontSize: 22,
       fontWeight: 700,
-      fontFamily: "'Cinzel', 'Trajan Pro', serif",
+      fontFamily: 'var(--font-display)',
       letterSpacing: '0.12em',
     } as const,
     h1: {
       fontSize: 18,
       fontWeight: 700,
-      fontFamily: "'Cinzel', 'Trajan Pro', serif",
+      fontFamily: 'var(--font-display)',
       letterSpacing: '0.08em',
     } as const,
     h2: {
       fontSize: 14,
       fontWeight: 700,
-      fontFamily: "'Cinzel', 'Trajan Pro', serif",
+      fontFamily: 'var(--font-display)',
       letterSpacing: '0.05em',
     } as const,
     h3: {
       fontSize: 11,
       fontWeight: 700,
-      fontFamily: "'Cinzel', 'Trajan Pro', serif",
+      fontFamily: 'var(--font-display)',
       textTransform: 'uppercase' as const,
       letterSpacing: '0.18em',
     } as const,
     body: {
       fontSize: 13,
       fontWeight: 400,
-      fontFamily: "'Spectral', 'Georgia', serif",
+      fontFamily: 'var(--font-body)',
     } as const,
     small: {
       fontSize: 11,
       fontWeight: 400,
-      fontFamily: "'Spectral', 'Georgia', serif",
+      fontFamily: 'var(--font-body)',
     } as const,
     micro: {
       fontSize: 10,
@@ -181,12 +187,16 @@ export const theme = {
   },
 
   // ── Consolidated state colors ───────────────────────────────
+  // Each has a BG pair. Non-gilt states keep their semantic color
+  // across themes (success = green, danger = red) so HP / combat
+  // cues don't invert visually when the Parchment / Codex theme
+  // swaps the surface palette.
   state: {
     success: '#7aa266',
     successBg: 'rgba(122, 162, 102, 0.18)',
     warning: '#d4a843',
     warningBg: 'rgba(212, 168, 67, 0.18)',
-    danger: '#c9423a',
+    danger: 'var(--danger)',
     dangerBg: 'rgba(201, 66, 58, 0.18)',
     info: '#6aa9d1',
     infoBg: 'rgba(106, 169, 209, 0.18)',
