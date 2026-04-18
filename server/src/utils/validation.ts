@@ -46,6 +46,9 @@ export const sessionUpdateSettingsSchema = z.object({
     z.literal(''),
     z.null(),
   ]).optional(),
+  allowPlayerRest: z.boolean().optional(),
+  showCreatureStatsToPlayers: z.boolean().optional(),
+  showPlayersToPlayers: z.boolean().optional(),
 });
 
 // --- Map event schemas ---
