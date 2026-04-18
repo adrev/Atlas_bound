@@ -23,3 +23,6 @@ server/data/*.db-wal
 scripts/__pycache__/
 tmp-gemini-maps/
 new-maps/
+
+# Claude Design handoff screenshots (30MB of PNGs); HTML/JSX source is tracked
+design-handoff/project/uploads/

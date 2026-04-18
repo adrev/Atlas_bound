@@ -3,6 +3,7 @@ import { BrowserRouter } from 'react-router-dom';
 import { App } from './App';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import './styles/globals.css';
+import './kbrt/theme.css';
 
 const root = createRoot(document.getElementById('root')!);
 root.render(
