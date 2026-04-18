@@ -9,7 +9,7 @@ import { useKbrtTheme } from './useKbrtTheme';
  * Until legacy components are fully migrated, this wrapper stays scoped so
  * the rest of the app keeps its current look.
  */
-export function KbrtRoot({ children }: { children: ReactNode }): JSX.Element {
+export function KbrtRoot({ children }: { children: ReactNode }) {
   const { theme } = useKbrtTheme();
   return (
     <div className="kbrt" data-theme={theme}>

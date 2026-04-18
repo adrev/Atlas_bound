@@ -205,14 +205,11 @@ export interface IconProps {
  * Named-icon wrapper. Falls back to a neutral placeholder square if the
  * name isn't mapped, so a typo never blows up the UI.
  */
-export function Icon({ name, size = 16, className, style }: IconProps): JSX.Element {
+export function Icon({ name, size = 16, className, style }: IconProps) {
   const lucide = LUCIDE_ICONS[name];
   if (lucide) {
-    return <>{/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
-      {((): JSX.Element => {
-        const Component = lucide;
-        return <Component size={size} className={className} style={style} aria-hidden />;
-      })()}</>;
+    const Component = lucide;
+    return <Component size={size} className={className} style={style} aria-hidden />;
   }
   const die = DIE_ICONS[name];
   if (die) {
