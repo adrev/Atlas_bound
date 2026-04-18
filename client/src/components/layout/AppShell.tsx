@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef, lazy, Suspense } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { Copy, PanelRightClose, PanelRightOpen, X, LogOut, Home, UserCog, ChevronDown, Menu } from 'lucide-react';
+import { Copy, PanelRightClose, PanelRightOpen, X, LogOut, Home, UserCog, ChevronDown, Menu, Settings } from 'lucide-react';
+import { TweaksPanel } from '../../kbrt/TweaksPanel';
 import { useSocket } from '../../hooks/useSocket';
 import { useIsMobile } from '../../hooks/useIsMobile';
 import { useSessionStore } from '../../stores/useSessionStore';
@@ -76,6 +77,7 @@ export function AppShell() {
   // Hold only the character ID — the actual character object is read live
   // from useCharacterStore so updates (e.g. adding a spell, healing) appear
   // immediately without needing to re-open the sheet.
+  const [tweaksOpen, setTweaksOpen] = useState(false);
   const [fullSheetCharId, setFullSheetCharId] = useState<string | null>(null);
   const fullSheetCharacter = useCharacterStore(
     (s) => fullSheetCharId ? (s.allCharacters[fullSheetCharId] ?? null) : null,
@@ -527,6 +529,7 @@ export function AppShell() {
         )}
 
         {sharedModals}
+        <TweaksPanel open={tweaksOpen} onClose={() => setTweaksOpen(false)} />
         <Suspense fallback={null}><Dice3DOverlay /></Suspense>
       </div>
     );
@@ -620,6 +623,14 @@ export function AppShell() {
           )}
           <button
             className="btn-icon"
+            onClick={() => setTweaksOpen((v) => !v)}
+            title="Theme tweaks"
+            aria-pressed={tweaksOpen}
+          >
+            <Settings size={16} />
+          </button>
+          <button
+            className="btn-icon"
             onClick={() => setSidebarOpen(!sidebarOpen)}
             title={sidebarOpen ? 'Close sidebar' : 'Open sidebar'}
           >
@@ -653,6 +664,7 @@ export function AppShell() {
       </div>
 
       {sharedModals}
+      <TweaksPanel open={tweaksOpen} onClose={() => setTweaksOpen(false)} />
       <Suspense fallback={null}><Dice3DOverlay /></Suspense>
     </div>
   );
