@@ -48,7 +48,15 @@
   --leather-tex: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='300' height='300'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.6' numOctaves='3' seed='7'/><feColorMatrix values='0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0.35 0'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>");
 }
 
-/* ============ THEMES ============ */
+/* ============ THEMES ============
+ * Each data-theme block overrides BOTH the Tome-scoped CSS vars
+ * (--bg-body, --accent, --parch-100, ...) AND the legacy globals.css
+ * vars (--gold, --bg-deep, --text-primary, --border, --font-body,
+ * --font-display, --hp-*, ...) so every component in the app
+ * re-cascades its palette when the DM flips a theme — not just the
+ * Tome-wrapped shell. Without this, only fonts + the handful of
+ * components that read .kbrt-only vars would change.
+ */
 .kbrt[data-theme='tome'] {
   --bg-body: #0a0604;
   --bg-panel: #140e07;
@@ -61,11 +69,28 @@
   --border-line-strong: rgba(199, 150, 50, 0.55);
   --font-display: 'Cinzel', serif;
   --font-body: 'Spectral', serif;
+  /* Legacy token overrides */
+  --bg-deepest: #0a0604;
+  --bg-deep: #140e07;
+  --bg-base: #1a120a;
+  --bg-card: #1e1509;
+  --bg-elevated: #241810;
+  --bg-hover: #2f2216;
+  --gold: #e0b44f;
+  --gold-dim: #c79632;
+  --gold-bright: #f2d27a;
+  --gold-bg: rgba(224, 180, 79, 0.12);
+  --gold-border: rgba(224, 180, 79, 0.35);
+  --text-muted: #6b5a3f;
+  --text-gold: #e0b44f;
+  --border: rgba(199, 150, 50, 0.3);
+  --border-light: rgba(199, 150, 50, 0.55);
+  --border-gold: rgba(224, 180, 79, 0.55);
 }
 .kbrt[data-theme='parchment'] {
-  --bg-body: #1a0d0a;
-  --bg-panel: #f3e3bc;
-  --bg-panel-raised: #ecd79d;
+  --bg-body: #f3e3bc;
+  --bg-panel: #ecd79d;
+  --bg-panel-raised: #e6c98a;
   --text-primary: #2a1a0c;
   --text-secondary: #5a3e1f;
   --accent: #8a1e1a;
@@ -76,6 +101,23 @@
   --font-body: 'IM Fell English', serif;
   --gilt-400: #8a1e1a;
   --gilt-300: #b83e37;
+  /* Legacy overrides — parchment inverts dark→light backgrounds */
+  --bg-deepest: #f3e3bc;
+  --bg-deep: #ecd79d;
+  --bg-base: #e6c98a;
+  --bg-card: #f5e7c3;
+  --bg-elevated: #eedfae;
+  --bg-hover: #e9d8a3;
+  --gold: #8a1e1a;
+  --gold-dim: #6b1612;
+  --gold-bright: #b83e37;
+  --gold-bg: rgba(138, 30, 26, 0.1);
+  --gold-border: rgba(138, 30, 26, 0.3);
+  --text-muted: #80583a;
+  --text-gold: #8a1e1a;
+  --border: rgba(90, 60, 20, 0.35);
+  --border-light: rgba(90, 60, 20, 0.55);
+  --border-gold: rgba(138, 30, 26, 0.5);
 }
 .kbrt[data-theme='noir'] {
   --bg-body: #060606;
@@ -90,6 +132,23 @@
   --font-display: 'Cinzel', serif;
   --font-body: 'Spectral', serif;
   --gilt-400: #b0b0b0;
+  /* Legacy overrides */
+  --bg-deepest: #060606;
+  --bg-deep: #0e0c0c;
+  --bg-base: #141414;
+  --bg-card: #181414;
+  --bg-elevated: #1f1919;
+  --bg-hover: #281f1f;
+  --gold: #b0b0b0;
+  --gold-dim: #8e8e8e;
+  --gold-bright: #d0d0d0;
+  --gold-bg: rgba(176, 176, 176, 0.08);
+  --gold-border: rgba(176, 176, 176, 0.28);
+  --text-muted: #6a625a;
+  --text-gold: #b0b0b0;
+  --border: rgba(180, 50, 44, 0.25);
+  --border-light: rgba(180, 50, 44, 0.55);
+  --border-gold: rgba(176, 176, 176, 0.4);
 }
 .kbrt[data-theme='grove'] {
   --bg-body: #0a1109;
@@ -104,6 +163,23 @@
   --font-display: 'Marcellus', serif;
   --font-body: 'Spectral', serif;
   --gilt-400: #d48a3d;
+  /* Legacy overrides */
+  --bg-deepest: #0a1109;
+  --bg-deep: #0e1a0d;
+  --bg-base: #152412;
+  --bg-card: #1a2e17;
+  --bg-elevated: #223c1f;
+  --bg-hover: #2c4d27;
+  --gold: #d48a3d;
+  --gold-dim: #a87030;
+  --gold-bright: #e8a455;
+  --gold-bg: rgba(212, 138, 61, 0.12);
+  --gold-border: rgba(212, 138, 61, 0.4);
+  --text-muted: #6a804f;
+  --text-gold: #d48a3d;
+  --border: rgba(212, 138, 61, 0.28);
+  --border-light: rgba(212, 138, 61, 0.55);
+  --border-gold: rgba(212, 138, 61, 0.55);
 }
 .kbrt[data-theme='codex'] {
   --bg-body: #06061a;
@@ -118,6 +194,23 @@
   --font-display: 'Cinzel', serif;
   --font-body: 'Cormorant Garamond', serif;
   --gilt-400: #9d7dff;
+  /* Legacy overrides */
+  --bg-deepest: #06061a;
+  --bg-deep: #0b0b22;
+  --bg-base: #14143a;
+  --bg-card: #1a1a4a;
+  --bg-elevated: #242460;
+  --bg-hover: #2f2f78;
+  --gold: #9d7dff;
+  --gold-dim: #7b5ce0;
+  --gold-bright: #b89dff;
+  --gold-bg: rgba(157, 125, 255, 0.12);
+  --gold-border: rgba(157, 125, 255, 0.4);
+  --text-muted: #6a63a0;
+  --text-gold: #9d7dff;
+  --border: rgba(157, 125, 255, 0.28);
+  --border-light: rgba(157, 125, 255, 0.55);
+  --border-gold: rgba(157, 125, 255, 0.55);
 }
 
 .kbrt,
@@ -125,17 +218,16 @@
   box-sizing: border-box;
 }
 
-.kbrt {
-  position: fixed;
-  inset: 0;
+/* Scoped usage of .kbrt (subtree wrapper, not the document root) gets
+ * a fixed full-screen positioning. When applied to <html> via main.tsx
+ * the body + #root already fill the viewport — we intentionally skip
+ * layout on html.kbrt to avoid double-positioning. */
+.kbrt:not(html) {
   background: var(--bg-body);
   color: var(--text-primary);
   font-family: var(--font-body);
-  overflow: hidden;
   font-size: 14px;
   line-height: 1.5;
-  display: flex;
-  flex-direction: column;
 }
 
 /* ============ TOP BAR ============ */
