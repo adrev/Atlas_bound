@@ -1,5 +1,5 @@
 import type { CSSProperties } from 'react';
-import { emitSystemMessage, emitUseAction, emitRoll } from '../../socket/emitters';
+import { emitSystemMessage, emitUseAction, emitRoll, emitDash } from '../../socket/emitters';
 import { useSessionStore } from '../../stores/useSessionStore';
 import { useCharacterStore } from '../../stores/useCharacterStore';
 import { useMapStore } from '../../stores/useMapStore';
@@ -126,7 +126,11 @@ const COMBAT_ACTIONS: QuickAction[] = [
     description: 'Take the Dash action. Your movement speed is doubled for this turn.',
     cost: 'action',
     onClick: (ctx) => {
-      if (ctx.selectedTokenId && ctx.inCombat) emitUseAction('action');
+      // Server-side emitDash doubles the current combatant's movement
+      // AND spends the Action slot in one round-trip. That matches
+      // TokenActionPanel's Dash button so both entry points behave
+      // identically. Outside combat it's still just an announcement.
+      if (ctx.inCombat) emitDash();
       announce('takes the **Dash** action', ctx);
       showToast({ emoji: '🏃', message: 'Dash — movement doubled this turn', variant: 'info', duration: 3500 });
     },
