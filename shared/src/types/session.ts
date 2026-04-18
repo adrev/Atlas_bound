@@ -66,6 +66,19 @@ export interface SessionSettings {
    * prior behaviour.
    */
   allowPlayerRest?: boolean;
+  /**
+   * When false, players see only the name + portrait of creature
+   * (NPC) tokens — stats, attacks, spells, and inventory are hidden.
+   * The DM always sees everything. Defaults to true (visible) so
+   * existing campaigns don't silently lose information.
+   */
+  showCreatureStatsToPlayers?: boolean;
+  /**
+   * When false, players can only open their own character sheet;
+   * other players' sheets are blocked. Defaults to true so party
+   * members can cross-reference stats during play.
+   */
+  showPlayersToPlayers?: boolean;
 }
 
 export const DEFAULT_SESSION_SETTINGS: SessionSettings = {
@@ -75,6 +88,8 @@ export const DEFAULT_SESSION_SETTINGS: SessionSettings = {
   enableFogOfWar: true,
   enableDynamicLighting: false,
   allowPlayerRest: true,
+  showCreatureStatsToPlayers: true,
+  showPlayersToPlayers: true,
 };
 
 export interface Player {
