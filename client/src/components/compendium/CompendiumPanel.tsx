@@ -56,6 +56,7 @@ export function CompendiumPanel() {
   const [refreshKey, setRefreshKey] = useState(0);
 
   const sessionId = useSessionStore((s) => s.sessionId);
+  const isDM = useSessionStore((s) => s.isDM);
 
   // Load default entries when no search
   useEffect(() => {
@@ -307,11 +308,25 @@ export function CompendiumPanel() {
           <p style={styles.hintText}>No results found.</p>
         )}
 
-        {results.map((r) => (
+        {results.map((r) => {
+          // DMs can drag monster entries onto the battlemap. BattleMap
+          // listens for application/x-kbrt-creature drops (see the
+          // handler in BattleMap.tsx) and dispatches kbrt-creature-drop;
+          // CreatureLibrary fetches by slug and calls handleAddToMap.
+          // We reuse that exact plumbing here — nothing else needed.
+          const isDraggable = isDM && r.category === 'monsters';
+          return (
           <button
             key={`${r.category}-${r.slug}`}
             style={styles.resultItem}
             onClick={() => setSelected(r)}
+            draggable={isDraggable}
+            onDragStart={isDraggable ? (e) => {
+              e.dataTransfer.effectAllowed = 'copy';
+              e.dataTransfer.setData('application/x-kbrt-creature', r.slug);
+              e.dataTransfer.setData('text/plain', r.name);
+            } : undefined}
+            title={isDraggable ? 'Drag onto the map to place' : undefined}
             onMouseEnter={(e) => {
               (e.currentTarget as HTMLButtonElement).style.background = theme.bg.hover;
             }}
@@ -356,7 +371,8 @@ export function CompendiumPanel() {
               </div>
             </div>
           </button>
-        ))}
+          );
+        })}
       </div>
 
       {/* Detail popup */}
