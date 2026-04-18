@@ -614,6 +614,16 @@ export function BattleMap() {
       <CompendiumOverlay />
       <LootEditorOverlay />
       <DrawToolbar />
+
+      {/* Tome map-frame chrome — vignette + four corner filigrees +
+          decorative inset border. Pointer-events:none so nothing in
+          this layer intercepts Konva events. */}
+      <MapFrameVignette />
+      <MapFrameCorner position="tl" />
+      <MapFrameCorner position="tr" />
+      <MapFrameCorner position="bl" />
+      <MapFrameCorner position="br" />
+
       <style>{`
         @keyframes pingExpand {
           0% { transform: scale(0.5); opacity: 1; }
@@ -624,11 +634,75 @@ export function BattleMap() {
   );
 }
 
+/**
+ * Soft radial vignette sitting on top of the Konva stage. Never
+ * intercepts pointer events — it's purely cosmetic to match the
+ * Tome map-frame look (see design-handoff KBRT.html .map-frame::before).
+ */
+function MapFrameVignette() {
+  return (
+    <div
+      aria-hidden
+      style={{
+        position: 'absolute',
+        inset: 0,
+        pointerEvents: 'none',
+        zIndex: 5,
+        background: 'radial-gradient(ellipse at center, transparent 55%, rgba(0,0,0,0.55) 100%)',
+        boxShadow: 'inset 0 0 60px rgba(0,0,0,0.8), inset 0 0 0 1px rgba(0,0,0,0.4)',
+      }}
+    />
+  );
+}
+
+/**
+ * Gilt corner filigree from design-handoff KBRT.html. Renders as a
+ * 64x64 SVG in one of the four corners; CSS transforms mirror it so
+ * a single path looks symmetric across all four. pointer-events:none
+ * so clicks pass through to the Konva stage.
+ */
+function MapFrameCorner({ position }: { position: 'tl' | 'tr' | 'bl' | 'br' }) {
+  const basePos: React.CSSProperties = (() => {
+    switch (position) {
+      case 'tl': return { top: 0, left: 0 };
+      case 'tr': return { top: 0, right: 0, transform: 'scaleX(-1)' };
+      case 'bl': return { bottom: 0, left: 0, transform: 'scaleY(-1)' };
+      case 'br': return { bottom: 0, right: 0, transform: 'scale(-1, -1)' };
+    }
+  })();
+  return (
+    <svg
+      aria-hidden
+      viewBox="0 0 64 64"
+      fill="none"
+      stroke="var(--gold)"
+      strokeWidth="1.2"
+      style={{
+        position: 'absolute',
+        width: 64,
+        height: 64,
+        pointerEvents: 'none',
+        zIndex: 8,
+        opacity: 0.7,
+        ...basePos,
+      }}
+    >
+      <path d="M0 8 Q6 8 10 14 Q14 20 14 28 Q14 34 10 38 Q6 42 0 42" />
+      <path d="M8 0 Q8 6 14 10 Q20 14 28 14 Q34 14 38 10 Q42 6 42 0" />
+      <circle cx="18" cy="18" r="2.5" />
+      <path d="M18 18 Q24 24 30 24 Q36 24 36 18" />
+      <path d="M18 18 Q24 24 24 30 Q24 36 18 36" />
+      <path d="M4 4 Q10 10 18 18" />
+    </svg>
+  );
+}
+
 const styles: Record<string, React.CSSProperties> = {
   container: {
     width: '100%',
     height: '100%',
     background: theme.bg.deepest,
     cursor: 'default',
+    position: 'relative',
   },
 };
