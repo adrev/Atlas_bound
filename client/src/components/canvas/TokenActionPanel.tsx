@@ -1309,11 +1309,22 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
           const casterCharIdForDrop = wCasterToken?.characterId;
           const mapId = useMapStore.getState().currentMap?.id;
           if (casterCharIdForDrop && mapId) {
-            // Place the weapon a small offset toward the caster (in front
-            // of the target) — looks like the weapon stuck in the ground
-            // near the victim.
-            const dropX = (targetToken as any).x;
-            const dropY = (targetToken as any).y;
+            // Place the weapon one half-cell in front of the target
+            // (toward the caster) so it doesn't land on top of the
+            // victim's token. Prior code used the target's own
+            // position, which left the thrown weapon visually
+            // embedded in the creature.
+            const gridSizeLocal = useMapStore.getState().currentMap?.gridSize ?? 70;
+            const tgtX = (targetToken as any).x as number;
+            const tgtY = (targetToken as any).y as number;
+            const casterX = (wCasterToken as any).x as number;
+            const casterY = (wCasterToken as any).y as number;
+            const dx = casterX - tgtX;
+            const dy = casterY - tgtY;
+            const dist = Math.hypot(dx, dy) || 1;
+            const offset = gridSizeLocal * 0.5;
+            const dropX = tgtX + (dx / dist) * offset;
+            const dropY = tgtY + (dy / dist) * offset;
             fetch(`/api/characters/${casterCharIdForDrop}/loot/drop`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
