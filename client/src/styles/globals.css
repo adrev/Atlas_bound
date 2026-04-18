@@ -1,64 +1,76 @@
+/*
+ * Global tokens, rebased onto the KBRT Illuminated Tome palette.
+ *
+ * The legacy variable NAMES (--bg-deepest, --gold, --text-primary, …) are
+ * preserved so every component using them just picks up the new palette.
+ * The five swappable themes (tome / parchment / noir / grove / codex) live
+ * in kbrt/theme.css and are activated by toggling `data-theme` on any
+ * `.kbrt` ancestor — for the shell we drop `.kbrt` + `data-theme` on the
+ * document root so the whole app is themeable. Because .kbrt scoped vars
+ * (--ink-900, --parch-100, --gilt-500, etc.) cascade down too, panels can
+ * opt into Tome-specific tokens without forking the global palette.
+ */
 :root {
-  /* Backgrounds */
-  --bg-deepest: #0a0a12;
-  --bg-deep: #12121e;
-  --bg-base: #1a1a2e;
-  --bg-card: #1e1e32;
-  --bg-elevated: #252540;
-  --bg-hover: #2e2e4a;
+  /* Backgrounds — Tome "ink" ladder */
+  --bg-deepest: #0a0604;
+  --bg-deep: #140e07;
+  --bg-base: #1a120a;
+  --bg-card: #1e1509;
+  --bg-elevated: #241810;
+  --bg-hover: #2f2216;
 
-  /* Primary / Gold */
-  --gold: #d4a843;
-  --gold-dim: #c9952a;
-  --gold-bright: #e8c455;
-  --gold-bg: rgba(212, 168, 67, 0.1);
-  --gold-border: rgba(212, 168, 67, 0.3);
+  /* Primary / Gilt */
+  --gold: #e0b44f;
+  --gold-dim: #c79632;
+  --gold-bright: #f2d27a;
+  --gold-bg: rgba(224, 180, 79, 0.12);
+  --gold-border: rgba(224, 180, 79, 0.35);
 
-  /* Text */
-  --text-primary: #e8e6e3;
-  --text-secondary: #a09b94;
-  --text-muted: #6b6660;
-  --text-gold: #d4a843;
+  /* Text — warm parchment cream */
+  --text-primary: #ead6a8;
+  --text-secondary: #a89271;
+  --text-muted: #6b5a3f;
+  --text-gold: #e0b44f;
 
   /* Borders */
-  --border: #3a3a52;
-  --border-light: #4a4a62;
-  --border-gold: rgba(212, 168, 67, 0.4);
+  --border: rgba(199, 150, 50, 0.30);
+  --border-light: rgba(199, 150, 50, 0.55);
+  --border-gold: rgba(224, 180, 79, 0.55);
 
   /* Semantic colors */
-  --danger: #c0392b;
-  --danger-dim: #a0301f;
-  --heal: #27ae60;
-  --heal-dim: #1e8449;
-  --accent-purple: #9b59b6;
-  --accent-blue: #3498db;
-  --whisper-purple: #8e44ad;
+  --danger: #c9423a;
+  --danger-dim: #9d2a23;
+  --heal: #7aa266;
+  --heal-dim: #4c6c3f;
+  --accent-purple: #9e7bc6;
+  --accent-blue: #6aa9d1;
+  --whisper-purple: #9e7bc6;
 
   /* HP bar */
-  --hp-full: #27ae60;
-  --hp-half: #f39c12;
-  --hp-low: #c0392b;
+  --hp-full: #7aa266;
+  --hp-half: #d4a843;
+  --hp-low: #c9423a;
 
   /* Spacing */
-  --sidebar-width: 360px;
-  --bottombar-height: 80px;
-  --topbar-height: 48px;
+  --sidebar-width: 400px;
+  --bottombar-height: 64px;
+  --topbar-height: 56px;
 
   /* Radius */
-  --radius-sm: 4px;
-  --radius-md: 8px;
-  --radius-lg: 12px;
-  --radius-xl: 16px;
+  --radius-sm: 2px;
+  --radius-md: 4px;
+  --radius-lg: 6px;
+  --radius-xl: 10px;
 
   /* Shadows */
-  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.4);
-  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.5);
-  --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.6);
-  --shadow-gold: 0 0 12px rgba(212, 168, 67, 0.3);
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.5);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.55);
+  --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.65);
+  --shadow-gold: 0 0 14px rgba(224, 180, 79, 0.35);
 
-  /* Font */
-  --font-body: 'Segoe UI', system-ui, -apple-system, sans-serif;
-  --font-display: Georgia, 'Times New Roman', serif;
+  /* Font — Tome display + body */
+  --font-body: 'Spectral', 'Georgia', serif;
+  --font-display: 'Cinzel', 'Trajan Pro', serif;
 }
 
 /* Reset */
@@ -88,21 +100,21 @@ body {
 
 /* Scrollbar */
 ::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+  width: 8px;
+  height: 8px;
 }
 
 ::-webkit-scrollbar-track {
-  background: var(--bg-deep);
+  background: transparent;
 }
 
 ::-webkit-scrollbar-thumb {
   background: var(--border-light);
-  border-radius: 3px;
+  border-radius: 4px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: var(--text-muted);
+  background: var(--gold-dim);
 }
 
 /* Buttons */
@@ -127,18 +139,22 @@ button:disabled {
   justify-content: center;
   gap: 8px;
   padding: 10px 20px;
-  background: linear-gradient(135deg, var(--gold-dim), var(--gold));
-  color: #1a1a2e;
-  font-weight: 600;
-  border-radius: var(--radius-md);
-  transition: all 0.2s ease;
-  border: 1px solid var(--gold);
+  background: linear-gradient(180deg, var(--gold), var(--gold-dim));
+  color: var(--bg-deepest);
+  font-family: var(--font-display);
+  font-weight: 700;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  border-radius: var(--radius-sm);
+  transition: all 0.15s ease;
+  border: 1px solid #6b4a0f;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.3), inset 0 -1px 0 rgba(0, 0, 0, 0.3), 0 2px 6px rgba(0, 0, 0, 0.4);
 }
 
 .btn-primary:hover:not(:disabled) {
-  background: linear-gradient(135deg, var(--gold), var(--gold-bright));
-  box-shadow: var(--shadow-gold);
+  background: linear-gradient(180deg, var(--gold-bright), var(--gold));
   transform: translateY(-1px);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.4), 0 4px 10px rgba(0, 0, 0, 0.5);
 }
 
 .btn-primary:active:not(:disabled) {
@@ -151,17 +167,20 @@ button:disabled {
   justify-content: center;
   gap: 8px;
   padding: 10px 20px;
-  background: var(--bg-elevated);
-  color: var(--text-primary);
-  font-weight: 500;
-  border-radius: var(--radius-md);
-  border: 1px solid var(--border);
-  transition: all 0.2s ease;
+  background: transparent;
+  color: var(--gold);
+  font-family: var(--font-display);
+  font-weight: 600;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--gold);
+  transition: all 0.15s ease;
 }
 
 .btn-secondary:hover:not(:disabled) {
-  background: var(--bg-hover);
-  border-color: var(--border-light);
+  background: var(--gold);
+  color: var(--bg-deepest);
 }
 
 .btn-danger {
@@ -170,16 +189,20 @@ button:disabled {
   justify-content: center;
   gap: 8px;
   padding: 10px 20px;
-  background: var(--danger);
-  color: var(--text-primary);
+  background: transparent;
+  color: var(--danger);
+  font-family: var(--font-display);
   font-weight: 600;
-  border-radius: var(--radius-md);
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  border-radius: var(--radius-sm);
   border: 1px solid var(--danger);
-  transition: all 0.2s ease;
+  transition: all 0.15s ease;
 }
 
 .btn-danger:hover:not(:disabled) {
-  background: var(--danger-dim);
+  background: var(--danger);
+  color: #fff;
 }
 
 .btn-icon {
@@ -191,12 +214,14 @@ button:disabled {
   border-radius: var(--radius-sm);
   background: transparent;
   color: var(--text-secondary);
+  border: 1px solid transparent;
   transition: all 0.15s ease;
 }
 
 .btn-icon:hover {
-  background: var(--bg-hover);
-  color: var(--text-primary);
+  background: var(--bg-elevated);
+  color: var(--gold);
+  border-color: var(--border);
 }
 
 .btn-icon.active {
@@ -211,7 +236,7 @@ input, textarea, select {
   color: var(--text-primary);
   background: var(--bg-deep);
   border: 1px solid var(--border);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-sm);
   padding: 10px 14px;
   outline: none;
   transition: border-color 0.2s ease;
@@ -224,7 +249,7 @@ input::placeholder, textarea::placeholder {
 
 input:focus, textarea:focus, select:focus {
   border-color: var(--gold-dim);
-  box-shadow: 0 0 0 2px rgba(212, 168, 67, 0.15);
+  box-shadow: 0 0 0 2px rgba(224, 180, 79, 0.18);
 }
 
 select {
@@ -236,14 +261,14 @@ select {
 .card {
   background: var(--bg-card);
   border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
+  border-radius: var(--radius-md);
   padding: 24px;
 }
 
 .card-elevated {
   background: var(--bg-elevated);
   border: 1px solid var(--border-light);
-  border-radius: var(--radius-lg);
+  border-radius: var(--radius-md);
   padding: 24px;
   box-shadow: var(--shadow-md);
 }
@@ -291,15 +316,15 @@ select {
 }
 
 .badge-danger {
-  background: rgba(192, 57, 43, 0.15);
+  background: rgba(201, 66, 58, 0.18);
   color: var(--danger);
-  border-color: rgba(192, 57, 43, 0.3);
+  border-color: rgba(201, 66, 58, 0.4);
 }
 
 .badge-purple {
-  background: rgba(155, 89, 182, 0.15);
+  background: rgba(158, 123, 198, 0.18);
   color: var(--accent-purple);
-  border-color: rgba(155, 89, 182, 0.3);
+  border-color: rgba(158, 123, 198, 0.4);
 }
 
 /* Tooltip */
@@ -355,8 +380,8 @@ select {
 }
 
 @keyframes goldGlow {
-  0%, 100% { box-shadow: 0 0 8px rgba(212, 168, 67, 0.3); }
-  50% { box-shadow: 0 0 20px rgba(212, 168, 67, 0.6); }
+  0%, 100% { box-shadow: 0 0 8px rgba(224, 180, 79, 0.3); }
+  50% { box-shadow: 0 0 20px rgba(224, 180, 79, 0.6); }
 }
 
 @keyframes scaleIn {

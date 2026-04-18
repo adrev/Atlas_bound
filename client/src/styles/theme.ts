@@ -1,93 +1,94 @@
 /**
- * Atlas Bound — "Dungeon Master Vibe" design tokens.
+ * Atlas Bound — "Illuminated Tome" design tokens.
  *
- * This is the single source of truth for all colors, spacing, type,
- * motion, and elevation in the app. Components should never hardcode
- * hex values or pixel sizes — always import from here.
+ * Rebased onto the KBRT Tome palette during the design overhaul.
+ * Legacy token shapes (`bg.deepest`, `gold.primary`, etc.) are preserved
+ * so every component that spreads these through inline styles picks up
+ * the new look automatically. The expanded tokens (`space`, `type`,
+ * `motion`, `parchment`, `goldGlow`, `ornate`, `state`) were already
+ * used for "DM Vibe" accents and keep their meaning under the new palette.
  *
- * The legacy `bg`, `gold`, `text`, `border`, `danger`, `hp`, `radius`,
- * `shadow`, `font` tokens remain UNCHANGED for backward compatibility
- * with components that haven't been migrated to the new primitives yet.
- * New code should prefer the expanded tokens (`space`, `type`, `motion`,
- * `focus`, `parchment`, `goldGlow`, `dangerGlow`, `ornate`, `state`).
+ * Cross-reference: `styles/globals.css` exposes the same palette as CSS
+ * variables for class-based styling, and `kbrt/theme.css` layers the full
+ * 5-theme system (Tome / Parchment / Noir / Grove / Codex) inside any
+ * `.kbrt` subtree.
  */
 export const theme = {
-  // ── Surfaces ────────────────────────────────────────────────
+  // ── Surfaces (Tome "ink" ladder) ────────────────────────────
   bg: {
-    deepest: '#0a0a12',
-    deep: '#12121e',
-    base: '#1a1a2e',
-    card: '#1e1e32',
-    elevated: '#252540',
-    hover: '#2e2e4a',
+    deepest: '#0a0604',
+    deep: '#140e07',
+    base: '#1a120a',
+    card: '#1e1509',
+    elevated: '#241810',
+    hover: '#2f2216',
   },
 
-  // ── Gold (primary brand accent) ─────────────────────────────
+  // ── Gilt (primary brand accent) ─────────────────────────────
   gold: {
-    primary: '#d4a843',
-    dim: '#c9952a',
-    bright: '#e8c455',
-    bg: 'rgba(212, 168, 67, 0.1)',
-    border: 'rgba(212, 168, 67, 0.3)',
+    primary: '#e0b44f',
+    dim: '#c79632',
+    bright: '#f2d27a',
+    bg: 'rgba(224, 180, 79, 0.12)',
+    border: 'rgba(224, 180, 79, 0.35)',
   },
 
-  // ── Text ────────────────────────────────────────────────────
+  // ── Text — warm parchment cream ─────────────────────────────
   text: {
-    primary: '#e8e6e3',
-    secondary: '#a09b94',
-    muted: '#6b6660',
-    gold: '#d4a843',
+    primary: '#ead6a8',
+    secondary: '#a89271',
+    muted: '#6b5a3f',
+    gold: '#e0b44f',
   },
 
   // ── Borders ─────────────────────────────────────────────────
   border: {
-    default: '#3a3a52',
-    light: '#4a4a62',
-    gold: 'rgba(212, 168, 67, 0.4)',
+    default: 'rgba(199, 150, 50, 0.30)',
+    light: 'rgba(199, 150, 50, 0.55)',
+    gold: 'rgba(224, 180, 79, 0.55)',
   },
 
   // ── Semantic colors (legacy — prefer `state` below) ─────────
-  danger: '#c0392b',
-  dangerDim: '#a0301f',
-  heal: '#27ae60',
-  healDim: '#1e8449',
-  purple: '#9b59b6',
-  blue: '#3498db',
-  whisper: '#8e44ad',
+  danger: '#c9423a',
+  dangerDim: '#9d2a23',
+  heal: '#7aa266',
+  healDim: '#4c6c3f',
+  purple: '#9e7bc6',
+  blue: '#6aa9d1',
+  whisper: '#9e7bc6',
   hp: {
-    full: '#27ae60',
-    half: '#f39c12',
-    low: '#c0392b',
+    full: '#7aa266',
+    half: '#d4a843',
+    low: '#c9423a',
   },
 
   // ── Corners ─────────────────────────────────────────────────
   radius: {
-    sm: 4,
-    md: 8,
-    lg: 12,
-    xl: 16,
+    sm: 2,
+    md: 4,
+    lg: 6,
+    xl: 10,
   },
 
   // ── Elevation (box shadows) ─────────────────────────────────
   shadow: {
-    sm: '0 1px 3px rgba(0, 0, 0, 0.4)',
-    md: '0 4px 12px rgba(0, 0, 0, 0.5)',
-    lg: '0 8px 24px rgba(0, 0, 0, 0.6)',
-    gold: '0 0 12px rgba(212, 168, 67, 0.3)',
+    sm: '0 1px 3px rgba(0, 0, 0, 0.5)',
+    md: '0 4px 12px rgba(0, 0, 0, 0.55)',
+    lg: '0 8px 24px rgba(0, 0, 0, 0.65)',
+    gold: '0 0 14px rgba(224, 180, 79, 0.35)',
   },
 
-  // ── Typography (legacy) ─────────────────────────────────────
+  // ── Typography (Tome display + body) ────────────────────────
   font: {
-    body: "'Segoe UI', system-ui, -apple-system, sans-serif",
-    display: "Georgia, 'Times New Roman', serif",
+    body: "'Spectral', 'Georgia', serif",
+    display: "'Cinzel', 'Trajan Pro', serif",
   },
 
   // ═══════════════════════════════════════════════════════════
-  //                   EXPANDED TOKENS (NEW)
+  //                   EXPANDED TOKENS
   // ═══════════════════════════════════════════════════════════
 
   // ── Spacing scale (4px base unit) ───────────────────────────
-  // Import as: theme.space.md, etc. Use in place of raw numbers.
   space: {
     xxs: 2,
     xs: 4,
@@ -100,104 +101,95 @@ export const theme = {
   },
 
   // ── Type scale ──────────────────────────────────────────────
-  // Each entry is a fully specified text style. Spread into a
-  // style object: `style={{ ...theme.type.h1, color: theme.gold.primary }}`
-  //
-  // `h3` is the "section label" style — uppercase, gold dim,
-  // letter-spaced — used across Sidebar tabs and DM Tools sections.
+  // h3 is the "section label" style — uppercase, gold, letter-spaced.
   type: {
     display: {
       fontSize: 22,
       fontWeight: 700,
-      fontFamily: "Georgia, 'Times New Roman', serif",
-      letterSpacing: '0.01em',
+      fontFamily: "'Cinzel', 'Trajan Pro', serif",
+      letterSpacing: '0.12em',
     } as const,
     h1: {
       fontSize: 18,
       fontWeight: 700,
-      fontFamily: "Georgia, 'Times New Roman', serif",
+      fontFamily: "'Cinzel', 'Trajan Pro', serif",
+      letterSpacing: '0.08em',
     } as const,
     h2: {
       fontSize: 14,
       fontWeight: 700,
-      fontFamily: "'Segoe UI', system-ui, -apple-system, sans-serif",
+      fontFamily: "'Cinzel', 'Trajan Pro', serif",
+      letterSpacing: '0.05em',
     } as const,
     h3: {
       fontSize: 11,
       fontWeight: 700,
-      fontFamily: "'Segoe UI', system-ui, -apple-system, sans-serif",
+      fontFamily: "'Cinzel', 'Trajan Pro', serif",
       textTransform: 'uppercase' as const,
-      letterSpacing: '0.08em',
+      letterSpacing: '0.18em',
     } as const,
     body: {
       fontSize: 13,
       fontWeight: 400,
-      fontFamily: "'Segoe UI', system-ui, -apple-system, sans-serif",
+      fontFamily: "'Spectral', 'Georgia', serif",
     } as const,
     small: {
       fontSize: 11,
       fontWeight: 400,
-      fontFamily: "'Segoe UI', system-ui, -apple-system, sans-serif",
+      fontFamily: "'Spectral', 'Georgia', serif",
     } as const,
     micro: {
       fontSize: 10,
       fontWeight: 600,
-      fontFamily: "'Segoe UI', system-ui, -apple-system, sans-serif",
+      fontFamily: "'Inter', system-ui, sans-serif",
+      letterSpacing: '0.1em',
+      textTransform: 'uppercase' as const,
     } as const,
   },
 
-  // ── Motion (animation timing) ───────────────────────────────
-  // Import as: `transition: theme.motion.normal`
+  // ── Motion ──────────────────────────────────────────────────
   motion: {
     fast: '0.12s ease',
-    normal: '0.18s ease',
+    normal: '0.15s ease',
     slow: '0.3s ease',
   },
 
   // ── Focus ring (a11y) ───────────────────────────────────────
-  // Apply to interactive elements on `:focus-visible`.
   focus: {
-    ring: '0 0 0 2px rgba(212, 168, 67, 0.5)',
-    ringDanger: '0 0 0 2px rgba(192, 57, 43, 0.5)',
+    ring: '0 0 0 2px rgba(224, 180, 79, 0.55)',
+    ringDanger: '0 0 0 2px rgba(201, 66, 58, 0.55)',
   },
 
-  // ── DM Vibe: warm parchment accents ─────────────────────────
-  parchment: '#2a2418',
-  parchmentEdge: '#3d3220',
+  // ── Warm parchment accents ──────────────────────────────────
+  parchment: '#2a1a0c',
+  parchmentEdge: '#3d2416',
 
-  // ── DM Vibe: layered gold glow ──────────────────────────────
-  // For primary buttons, ribbon cards, spell-slot highlights.
+  // ── Layered gilt glow ───────────────────────────────────────
   goldGlow: {
-    soft: '0 0 8px rgba(232, 196, 85, 0.25)',
-    medium: '0 0 16px rgba(232, 196, 85, 0.4)',
-    strong: '0 0 24px rgba(232, 196, 85, 0.55)',
+    soft: '0 0 8px rgba(242, 210, 122, 0.28)',
+    medium: '0 0 16px rgba(242, 210, 122, 0.42)',
+    strong: '0 0 24px rgba(242, 210, 122, 0.6)',
   },
 
-  // ── DM Vibe: danger glow ────────────────────────────────────
-  // For critical hit results, OA modal, end-combat confirmations.
-  dangerGlow: '0 0 14px rgba(192, 57, 43, 0.45)',
+  // ── Danger / blood glow ─────────────────────────────────────
+  dangerGlow: '0 0 14px rgba(201, 66, 58, 0.5)',
 
-  // ── DM Vibe: ornate dividers ────────────────────────────────
-  // Gradient divider used between sections for a more immersive
-  // fantasy feel. Use on dividers that separate major sections;
-  // don't overuse on dense screens.
+  // ── Ornate gold dividers ────────────────────────────────────
   ornate: {
     divider:
-      'linear-gradient(90deg, transparent, rgba(212,168,67,0.4) 30%, rgba(232,196,85,0.55) 50%, rgba(212,168,67,0.4) 70%, transparent)',
+      'linear-gradient(90deg, transparent, rgba(224, 180, 79, 0.4) 30%, rgba(242, 210, 122, 0.6) 50%, rgba(224, 180, 79, 0.4) 70%, transparent)',
   },
 
   // ── Consolidated state colors ───────────────────────────────
-  // Prefer these over the legacy top-level `danger`, `heal`, etc.
-  // Used by Toast variants, Badge colors, HP bar tiers.
   state: {
-    success: '#27ae60',
-    successBg: 'rgba(39, 174, 96, 0.15)',
-    warning: '#f39c12',
-    warningBg: 'rgba(243, 156, 18, 0.15)',
-    danger: '#c0392b',
-    dangerBg: 'rgba(192, 57, 43, 0.15)',
-    info: '#3498db',
-    infoBg: 'rgba(52, 152, 219, 0.15)',
-    dead: '#4a4040',
+    success: '#7aa266',
+    successBg: 'rgba(122, 162, 102, 0.18)',
+    warning: '#d4a843',
+    warningBg: 'rgba(212, 168, 67, 0.18)',
+    danger: '#c9423a',
+    dangerBg: 'rgba(201, 66, 58, 0.18)',
+    info: '#6aa9d1',
+    infoBg: 'rgba(106, 169, 209, 0.18)',
+    dead: '#4a3420',
   },
 } as const;
