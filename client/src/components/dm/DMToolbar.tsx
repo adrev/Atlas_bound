@@ -6,6 +6,7 @@ import { emitUpdateSettings } from '../../socket/emitters';
 import { CreatureLibrary } from './CreatureLibrary';
 import { SceneManager } from './SceneManager';
 import { EncounterBuilder } from './EncounterBuilder';
+import { CompendiumPanel } from '../compendium/CompendiumPanel';
 import { theme } from '../../styles/theme';
 import { EMOJI } from '../../styles/emoji';
 import { Section, Button, NumberInput, FieldGroup, Divider } from '../ui';
@@ -13,7 +14,7 @@ import { MusicPlayer } from './MusicPlayer';
 import { HandoutSender } from './HandoutSender';
 import { SessionPrivacyPanel } from './SessionPrivacyPanel';
 
-type DMView = 'maps' | 'creatures' | 'encounters' | 'settings' | 'handouts' | 'music';
+type DMView = 'maps' | 'creatures' | 'encounters' | 'settings' | 'handouts' | 'music' | 'homebrew';
 
 /** Panel definition for the 3x2 icon grid. */
 interface PanelDef {
@@ -29,6 +30,7 @@ const PANELS: PanelDef[] = [
   { id: 'settings', emoji: '⚙️', label: 'Settings' },
   { id: 'handouts', emoji: '📜', label: 'Handouts' },
   { id: 'music', emoji: '🎵', label: 'Music' },
+  { id: 'homebrew', emoji: '📚', label: 'Homebrew' },
 ];
 
 /**
@@ -163,6 +165,16 @@ export function DMToolbar() {
         {activePanel === 'handouts' && <HandoutSender />}
 
         {activePanel === 'music' && <MusicPlayer />}
+
+        {activePanel === 'homebrew' && (
+          <div style={{ height: '100%', minHeight: 360 }}>
+            {/* Reuse the compendium panel pinned to the homebrew scope.
+                lockCategory hides the monsters/spells/items pills so it
+                reads as a dedicated authoring view; the panel still
+                surfaces the "+ Create" monster/spell/item buttons. */}
+            <CompendiumPanel initialCategory="homebrew" lockCategory />
+          </div>
+        )}
       </div>
     </div>
   );
@@ -180,8 +192,10 @@ function SettingsPanel({
     turnTimerEnabled?: boolean;
     turnTimerSeconds?: number;
     discordWebhookUrl?: string | null;
+    fogVisionCells?: number;
   };
 }) {
+  const visionCells = settings.fogVisionCells ?? 8;
   return (
     <div style={styles.settingsContainer}>
       <h3 style={styles.settingsTitle}>Session Privacy</h3>
@@ -235,6 +249,23 @@ function SettingsPanel({
       <p style={styles.hint}>
         Players see fog around areas without their hero. GM always sees full map.
       </p>
+
+      {settings.enableFogOfWar && (
+        <FieldGroup
+          label="Vision Distance"
+          helperText={`${visionCells} cells / ${visionCells * 5} ft around each hero`}
+        >
+          <input
+            type="range"
+            min={2}
+            max={30}
+            step={1}
+            value={visionCells}
+            onChange={(e) => emitUpdateSettings({ fogVisionCells: Number(e.target.value) })}
+            style={styles.rangeInput}
+          />
+        </FieldGroup>
+      )}
 
       <div
         style={styles.settingRow}

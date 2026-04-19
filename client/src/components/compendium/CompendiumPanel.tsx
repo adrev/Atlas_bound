@@ -12,12 +12,15 @@ import { getCompendiumImageUrl, getCompendiumFallbackUrl } from '../../utils/com
 
 type FilterCategory = 'all' | 'monsters' | 'spells' | 'items' | 'homebrew';
 
+// Wiki is a lookup surface for both DM + players — Homebrew lives
+// under DM Tools (HomebrewPanel) so players don't see the authoring
+// affordance. `homebrew` stays in the FilterCategory union so we can
+// still pass it as the category programmatically from DM Tools.
 const CATEGORY_FILTERS: { value: FilterCategory; label: string }[] = [
   { value: 'all', label: 'All' },
   { value: 'monsters', label: 'Monsters' },
   { value: 'spells', label: 'Spells' },
   { value: 'items', label: 'Items' },
-  { value: 'homebrew', label: 'Homebrew' },
 ];
 
 const CATEGORY_BADGE_COLORS: Record<CompendiumCategory, string> = {
@@ -45,9 +48,17 @@ function spellLevelLabel(level: number): string {
   return `Lvl ${level}`;
 }
 
-export function CompendiumPanel() {
+export function CompendiumPanel({
+  initialCategory = 'all',
+  lockCategory = false,
+}: {
+  /** Start the panel on a specific tab (used by DM Tools → Homebrew). */
+  initialCategory?: FilterCategory;
+  /** Hide the category selector when the caller needs a fixed scope. */
+  lockCategory?: boolean;
+} = {}) {
   const [query, setQuery] = useState('');
-  const [category, setCategory] = useState<FilterCategory>('all');
+  const [category, setCategory] = useState<FilterCategory>(initialCategory);
   const [results, setResults] = useState<CompendiumSearchResult[]>([]);
   const [loading, setLoading] = useState(false);
   const [selected, setSelected] = useState<CompendiumSearchResult | null>(null);
@@ -220,21 +231,24 @@ export function CompendiumPanel() {
         />
       </div>
 
-      {/* Category filter pills */}
-      <div style={styles.pillRow}>
-        {CATEGORY_FILTERS.map((f) => (
-          <button
-            key={f.value}
-            style={{
-              ...styles.pill,
-              ...(category === f.value ? styles.pillActive : {}),
-            }}
-            onClick={() => setCategory(f.value)}
-          >
-            {f.label}
-          </button>
-        ))}
-      </div>
+      {/* Category filter pills — hidden when the caller (DM Tools
+          Homebrew entry) wants a fixed scope. */}
+      {!lockCategory && (
+        <div style={styles.pillRow}>
+          {CATEGORY_FILTERS.map((f) => (
+            <button
+              key={f.value}
+              style={{
+                ...styles.pill,
+                ...(category === f.value ? styles.pillActive : {}),
+              }}
+              onClick={() => setCategory(f.value)}
+            >
+              {f.label}
+            </button>
+          ))}
+        </div>
+      )}
 
       {/* Homebrew creation buttons */}
       {category === 'homebrew' && !createMode && (

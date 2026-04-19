@@ -2,6 +2,7 @@ import { useCallback } from 'react';
 import { QuickActions } from '../quickactions/QuickActions';
 import { DiceTray } from '../dice/DiceTray';
 import { useCharacterStore } from '../../stores/useCharacterStore';
+import { useSessionStore } from '../../stores/useSessionStore';
 import { emitCharacterUpdate } from '../../socket/emitters';
 import { theme } from '../../styles/theme';
 import type { SpellSlot } from '@dnd-vtt/shared';
@@ -21,7 +22,18 @@ import type { SpellSlot } from '@dnd-vtt/shared';
  * in one strip and the bottom bar stays focused on per-turn actions.
  */
 export function BottomBar() {
-  const myCharacter = useCharacterStore((s) => s.myCharacter);
+  // Mirror HeroTab's defensive ownership filter: a player must only
+  // ever see spell slots for a character they actually own. The DM
+  // (who swaps between party members via HeroTab) keeps the active
+  // character's slots without restriction. Prevents stale localStorage
+  // / socket sync from leaking another PC's slot tracker to a player.
+  const rawMyCharacter = useCharacterStore((s) => s.myCharacter);
+  const userId = useSessionStore((s) => s.userId);
+  const isDM = useSessionStore((s) => s.isDM);
+  const myCharacter =
+    rawMyCharacter && (isDM || rawMyCharacter.userId === userId)
+      ? rawMyCharacter
+      : null;
 
   const hasSpellSlots =
     myCharacter?.spellSlots &&

@@ -85,6 +85,13 @@ export interface SessionSettings {
    * Defaults to false — DMs traditionally see the whole map.
    */
   dmSeesPlayerFog?: boolean;
+  /**
+   * Per-token vision radius in grid cells (5 ft per cell). Defaults
+   * to 8 (40 ft) which matches basic D&D ambient torchlight + dim
+   * vision. DM may bump higher for outdoor scenes or lower for
+   * dark-vision-disabled modules.
+   */
+  fogVisionCells?: number;
 }
 
 export const DEFAULT_SESSION_SETTINGS: SessionSettings = {

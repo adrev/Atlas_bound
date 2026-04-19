@@ -665,6 +665,63 @@ function ItemDetail({ item, onClose }: { item: CompendiumItem & { rawJson?: Reco
   const isHomebrew = item.source === 'Homebrew' || item.source === 'Custom';
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // DM-gated grant flow — mirrors the spell grant above. Players
+  // should not be able to hand themselves compendium items either;
+  // the DM places loot / awards equipment.
+  const isDM = useSessionStore((s) => s.isDM);
+  const allCharacters = useCharacterStore((s) => s.allCharacters);
+  const tokens = useMapStore((s) => s.tokens);
+  const [showCharPicker, setShowCharPicker] = useState(false);
+  const [granting, setGranting] = useState<string | null>(null);
+  const grantTargets = useMemo(() => {
+    if (!isDM) return [];
+    const seen = new Set<string>();
+    const out: { id: string; name: string }[] = [];
+    for (const t of Object.values(tokens)) {
+      const cid = (t as any).characterId as string | null;
+      if (!cid || seen.has(cid)) continue;
+      const ch = allCharacters[cid];
+      if (!ch) continue;
+      out.push({ id: cid, name: ch.name || (t as any).name || 'Unnamed' });
+      seen.add(cid);
+    }
+    return out;
+  }, [tokens, allCharacters, isDM]);
+
+  async function grantItemToCharacter(characterId: string) {
+    setGranting(characterId);
+    try {
+      const ch = allCharacters[characterId];
+      if (!ch) return;
+      const existingInventory = (
+        typeof ch.inventory === 'string' ? JSON.parse(ch.inventory as unknown as string) : ch.inventory
+      ) || [];
+      const nextItem: Record<string, unknown> = {
+        name: item.name,
+        quantity: 1,
+        type: item.type || 'gear',
+        rarity: item.rarity || 'common',
+        description: item.description || '',
+        slug: item.slug,
+        imageUrl: item.slug ? `/uploads/items/${item.slug}.png` : null,
+        weight: (raw.weight as number) ?? 0,
+        cost: (raw.costGp ?? raw.valueGp ?? 0),
+      };
+      if (raw.damage) nextItem.damage = raw.damage;
+      if (raw.damageType) nextItem.damageType = raw.damageType;
+      if (Array.isArray(raw.properties) && (raw.properties as string[]).length > 0) nextItem.properties = raw.properties;
+      if (raw.range) nextItem.range = raw.range;
+      if (raw.ac || raw.acBonus) nextItem.acBonus = raw.ac ?? raw.acBonus;
+      if (item.requiresAttunement) nextItem.attunement = true;
+      const nextInventory = [...existingInventory, nextItem];
+      emitCharacterUpdate(characterId, { inventory: nextInventory });
+      useCharacterStore.getState().applyRemoteUpdate(characterId, { inventory: nextInventory });
+      setShowCharPicker(false);
+    } finally {
+      setGranting(null);
+    }
+  }
+
   // Parse raw_json for structured stats
   const raw = (item.rawJson && typeof item.rawJson === 'object') ? item.rawJson : {};
   const damage = raw.damage as string || '';
@@ -721,7 +778,7 @@ function ItemDetail({ item, onClose }: { item: CompendiumItem & { rawJson?: Reco
             style={{ width: 56, height: 56, borderRadius: '50%', objectFit: 'cover', border: `3px solid ${rarityColor}`, flexShrink: 0 }}
           />
         )}
-        <div>
+        <div style={{ flex: 1 }}>
           <h2 style={{ ...detailStyles.itemName, color: rarityColor, margin: 0 }}>{item.name}</h2>
           <p style={{ ...detailStyles.itemSubtitle, margin: '2px 0 0' }}>
             {item.type}
@@ -730,6 +787,54 @@ function ItemDetail({ item, onClose }: { item: CompendiumItem & { rawJson?: Reco
             )}
           </p>
         </div>
+
+        {/* DM-only: grant this item to a character on the map. Mirrors
+            the spell "Add to character" button so the DM can award
+            loot without opening each character sheet. */}
+        {grantTargets.length > 0 && (
+          <div style={{ position: 'relative' }}>
+            <button onClick={() => setShowCharPicker((v) => !v)} style={{
+              padding: '6px 12px', fontSize: 11, fontWeight: 700,
+              background: theme.gold.bg, color: theme.gold.primary,
+              border: `1px solid ${theme.gold.border}`, borderRadius: 4,
+              cursor: 'pointer', fontFamily: 'inherit',
+              textTransform: 'uppercase', letterSpacing: '0.04em',
+              whiteSpace: 'nowrap',
+            }}>
+              + Add to character
+            </button>
+            {showCharPicker && (
+              <div style={{
+                position: 'absolute', top: '100%', right: 0, marginTop: 4,
+                background: theme.bg.card, border: `1px solid ${theme.gold.border}`,
+                borderRadius: 6, padding: 4, zIndex: 100,
+                boxShadow: '0 4px 16px rgba(0,0,0,0.6)',
+                minWidth: 160, maxHeight: 240, overflowY: 'auto',
+              }}>
+                <div style={{
+                  fontSize: 9, color: theme.text.muted, padding: '4px 8px',
+                  textTransform: 'uppercase', letterSpacing: '0.04em',
+                }}>
+                  Grant to:
+                </div>
+                {grantTargets.map((t) => (
+                  <button key={t.id} onClick={() => grantItemToCharacter(t.id)} disabled={granting === t.id} style={{
+                    display: 'block', width: '100%', textAlign: 'left',
+                    padding: '6px 10px', fontSize: 11, fontWeight: 600,
+                    background: 'transparent', color: theme.text.primary,
+                    border: 'none', cursor: 'pointer', fontFamily: 'inherit',
+                    borderRadius: 3,
+                  }}
+                    onMouseEnter={(e) => { e.currentTarget.style.background = theme.gold.bg; }}
+                    onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
+                  >
+                    {granting === t.id ? '...' : t.name}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {item.requiresAttunement && (

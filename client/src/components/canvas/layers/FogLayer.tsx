@@ -61,8 +61,11 @@ export function FogLayer({ mapWidth, mapHeight }: FogLayerProps) {
     ) ?? null;
   }, [tokens, fogPreviewCharacterId]);
 
-  // Vision radius in pixels (8 grid cells = 40ft vision by default)
-  const visionRadius = gridSize * 8;
+  // Vision radius in pixels. DM configurable via the session
+  // fogVisionCells setting — stored in cells (5 ft each) so the
+  // slider reads in D&D-native units. Defaults to 8 cells = 40 ft.
+  const visionCells = useSessionStore((s) => s.settings.fogVisionCells ?? 8);
+  const visionRadius = gridSize * visionCells;
 
   // DM vision-preview overlay — rendered even when fog is off, because
   // the DM might want to see what a player *would* see.
