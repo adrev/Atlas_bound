@@ -9,9 +9,10 @@ import { chatMessageSchema, chatWhisperSchema, chatRollSchema } from '../utils/v
 import { safeHandler } from '../utils/socketHelpers.js';
 import { validateReportedRoll } from '../utils/rollValidator.js';
 import { tryHandleChatCommand } from '../services/ChatCommands.js';
-// Side-effect import — registers the !gmnote / !pcnote / !note
-// handlers into the central ChatCommands registry at module load.
+// Side-effect imports — register slash-command handlers into the
+// central ChatCommands registry at module load.
 import '../services/chatCommands/noteHandlers.js';
+import '../services/chatCommands/hpHandlers.js';
 
 export function registerChatEvents(io: Server, socket: Socket): void {
 
