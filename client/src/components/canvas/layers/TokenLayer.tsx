@@ -218,6 +218,10 @@ function TokenSprite({ token, isSelected, isCurrentTurn, showTokenLabels }: Toke
   const selectToken = useMapStore((s) => s.selectToken);
   const setHoveredToken = useMapStore((s) => s.setHoveredToken);
   const gridSize = useMapStore((s) => s.currentMap?.gridSize ?? 70);
+  // Hover lift — match the KBRT.html .portrait / .token-body
+  // transform: scale(1.08) on hover. Konva has no CSS :hover so we
+  // track it in React and feed the Group's scale props.
+  const [isHovered, setIsHovered] = useState(false);
 
   const tokenSize = gridSize * token.size;
   const allChars = useCharacterStore((s) => s.allCharacters);
@@ -310,10 +314,17 @@ function TokenSprite({ token, isSelected, isCurrentTurn, showTokenLabels }: Toke
   else if (isDM && !token.visible) groupOpacity = 0.3;
   else if (isDM && isInvisible) groupOpacity = 0.5;
 
+  // Tome hover lift: bump scale to 1.08 when hovered (unless being
+  // dragged). Scale is centered via offset so the token doesn't
+  // drift off its grid cell during the animation.
+  const hoverScale = isHovered && !isDead ? 1.08 : 1;
+
   return (
     <Group
       x={token.x}
       y={token.y}
+      scaleX={hoverScale}
+      scaleY={hoverScale}
       opacity={groupOpacity}
       draggable={draggable && !isDead}
       onDragStart={onDragStart}
@@ -401,6 +412,7 @@ function TokenSprite({ token, isSelected, isCurrentTurn, showTokenLabels }: Toke
         if (node.__longPressTimer) { clearTimeout(node.__longPressTimer); node.__longPressTimer = undefined; }
       }}
       onMouseEnter={(e) => {
+        setIsHovered(true);
         if (useMapStore.getState().isTargeting) {
           const container = e.target.getStage()?.container();
           if (container) container.style.cursor = 'crosshair';
@@ -418,6 +430,7 @@ function TokenSprite({ token, isSelected, isCurrentTurn, showTokenLabels }: Toke
         }
       }}
       onMouseLeave={() => {
+        setIsHovered(false);
         setHoveredToken(null);
       }}
     >

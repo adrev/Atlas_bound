@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef, lazy, Suspense } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { Copy, PanelRightClose, PanelRightOpen, X, LogOut, Home, UserCog, ChevronDown, Menu } from 'lucide-react';
+import { Copy, PanelRightClose, PanelRightOpen, X, LogOut, Home, UserCog, ChevronDown, Menu, Settings } from 'lucide-react';
+import { TweaksPanel } from '../../kbrt/TweaksPanel';
 import { useSocket } from '../../hooks/useSocket';
 import { useIsMobile } from '../../hooks/useIsMobile';
 import { useSessionStore } from '../../stores/useSessionStore';
@@ -76,6 +77,7 @@ export function AppShell() {
   // Hold only the character ID — the actual character object is read live
   // from useCharacterStore so updates (e.g. adding a spell, healing) appear
   // immediately without needing to re-open the sheet.
+  const [tweaksOpen, setTweaksOpen] = useState(false);
   const [fullSheetCharId, setFullSheetCharId] = useState<string | null>(null);
   const fullSheetCharacter = useCharacterStore(
     (s) => fullSheetCharId ? (s.allCharacters[fullSheetCharId] ?? null) : null,
@@ -425,11 +427,14 @@ export function AppShell() {
   if (isMobile) {
     return (
       <div style={styles.container}>
-        {/* Simplified top bar */}
+        {/* Mobile Tome topbar */}
         <div style={styles.topBar}>
           <div style={styles.topLeft}>
+            <div style={{ ...styles.sigil, width: 32, height: 32 }} aria-hidden>
+              <img src="/kbrt-logo.svg" alt="KBRT" style={styles.sigilImg} />
+            </div>
             <button style={styles.codeButton} onClick={handleCopyCode} title="Copy room code">
-              <Copy size={14} />
+              <Copy size={12} />
               <span style={styles.codeText}>
                 {storedRoomCode || roomCode || '---'}
               </span>
@@ -524,6 +529,7 @@ export function AppShell() {
         )}
 
         {sharedModals}
+        <TweaksPanel open={tweaksOpen} onClose={() => setTweaksOpen(false)} />
         <Suspense fallback={null}><Dice3DOverlay /></Suspense>
       </div>
     );
@@ -534,16 +540,23 @@ export function AppShell() {
   // -----------------------------------------------------------------------
   return (
     <div style={styles.container}>
-      {/* Top bar */}
+      {/* Top bar — KBRT Illuminated Tome */}
       <div style={styles.topBar}>
         <div style={styles.topLeft}>
+          <div style={styles.sigil} aria-hidden>
+            <img src="/kbrt-logo.svg" alt="KBRT" style={styles.sigilImg} />
+          </div>
+          <div style={styles.wordmark}>
+            KBRT<span style={styles.wordmarkAccent}>.AI</span>
+          </div>
+          <div style={styles.topDivider} aria-hidden />
           <button style={styles.codeButton} onClick={handleCopyCode} title="Copy invite link for players">
-            <Copy size={14} />
+            <Copy size={12} />
+            <span>Room</span>
             <span style={styles.codeText}>
               {storedRoomCode || roomCode || '---'}
             </span>
-            <span style={{ fontSize: 10, color: theme.text.muted, marginLeft: 4 }}>Invite</span>
-            {copied && <span style={styles.copiedBadge}>Room code copied!</span>}
+            {copied && <span style={styles.copiedBadge}>Copied!</span>}
           </button>
           <div
             style={{
@@ -610,6 +623,14 @@ export function AppShell() {
           )}
           <button
             className="btn-icon"
+            onClick={() => setTweaksOpen((v) => !v)}
+            title="Theme tweaks"
+            aria-pressed={tweaksOpen}
+          >
+            <Settings size={16} />
+          </button>
+          <button
+            className="btn-icon"
             onClick={() => setSidebarOpen(!sidebarOpen)}
             title={sidebarOpen ? 'Close sidebar' : 'Open sidebar'}
           >
@@ -643,6 +664,7 @@ export function AppShell() {
       </div>
 
       {sharedModals}
+      <TweaksPanel open={tweaksOpen} onClose={() => setTweaksOpen(false)} />
       <Suspense fallback={null}><Dice3DOverlay /></Suspense>
     </div>
   );
@@ -658,40 +680,79 @@ const styles: Record<string, React.CSSProperties> = {
     overflow: 'hidden',
   },
   topBar: {
-    height: 48,
+    height: 56,
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'space-between',
-    padding: '0 12px',
-    background: theme.bg.deep,
-    borderBottom: `1px solid ${theme.border.default}`,
+    padding: '0 16px',
+    gap: 12,
+    background: `linear-gradient(180deg, ${theme.bg.elevated} 0%, ${theme.bg.deep} 100%)`,
+    borderBottom: `1px solid ${theme.border.light}`,
     flexShrink: 0,
     zIndex: 10,
+    position: 'relative' as const,
+    boxShadow: `0 2px 0 rgba(224, 180, 79, 0.15)`,
   },
   topLeft: {
     display: 'flex',
     alignItems: 'center',
     gap: 12,
   },
+  sigil: {
+    width: 38,
+    height: 38,
+    borderRadius: '50%',
+    display: 'grid',
+    placeItems: 'center',
+    overflow: 'hidden',
+    background: `radial-gradient(circle at 30% 30%, ${theme.gold.primary}, ${theme.bg.deepest} 70%)`,
+    boxShadow: `0 0 0 2px ${theme.bg.elevated}, 0 0 0 3px ${theme.border.light}, 0 4px 12px rgba(0,0,0,0.5)`,
+    flexShrink: 0,
+  },
+  sigilImg: {
+    width: '100%',
+    height: '100%',
+    objectFit: 'cover' as const,
+  },
+  wordmark: {
+    fontFamily: theme.font.display,
+    fontWeight: 700,
+    fontSize: 15,
+    letterSpacing: '3px',
+    color: theme.text.primary,
+    textTransform: 'uppercase' as const,
+  },
+  wordmarkAccent: {
+    color: theme.gold.primary,
+  },
+  topDivider: {
+    width: 1,
+    height: 24,
+    background: theme.border.light,
+    margin: '0 4px',
+  },
   codeButton: {
-    display: 'flex',
+    display: 'inline-flex',
     alignItems: 'center',
-    gap: 6,
-    padding: '4px 10px',
-    background: theme.bg.elevated,
+    gap: 8,
+    padding: '6px 12px',
+    background: theme.bg.deep,
     border: `1px solid ${theme.border.default}`,
     borderRadius: theme.radius.sm,
+    fontFamily: theme.font.display,
+    fontSize: 11,
+    letterSpacing: '2px',
     color: theme.text.secondary,
-    fontSize: 13,
     cursor: 'pointer',
     position: 'relative' as const,
-    transition: 'border-color 0.15s ease',
+    transition: `all ${theme.motion.fast}`,
+    textTransform: 'uppercase' as const,
   },
   codeText: {
-    fontFamily: 'monospace',
+    fontFamily: theme.font.display,
     letterSpacing: '2px',
-    fontWeight: 600,
-    color: theme.text.primary,
+    fontWeight: 700,
+    color: theme.gold.primary,
   },
   copiedBadge: {
     position: 'absolute' as const,
@@ -707,20 +768,21 @@ const styles: Record<string, React.CSSProperties> = {
     animation: 'fadeIn 0.15s ease',
   },
   modeBadge: {
-    padding: '3px 10px',
-    fontSize: 11,
+    padding: '4px 12px',
+    fontFamily: theme.font.display,
+    fontSize: 10,
     fontWeight: 700,
     textTransform: 'uppercase' as const,
-    letterSpacing: '1px',
+    letterSpacing: '2px',
     borderRadius: theme.radius.sm,
   },
   modeFreeRoam: {
     background: theme.state.infoBg,
     color: theme.blue,
-    border: `1px solid rgba(52, 152, 219, 0.3)`,
+    border: `1px solid rgba(106, 169, 209, 0.35)`,
   },
   modeCombat: {
-    background: `linear-gradient(135deg, ${theme.state.dangerBg}, rgba(192,57,43,0.25))`,
+    background: `linear-gradient(135deg, ${theme.state.dangerBg}, rgba(201, 66, 58, 0.3))`,
     color: theme.state.danger,
     border: `1px solid ${theme.state.danger}`,
     boxShadow: theme.dangerGlow,
@@ -739,20 +801,23 @@ const styles: Record<string, React.CSSProperties> = {
     minWidth: 0,
   },
   sidebar: {
-    width: 360,
+    width: 400,
     flexShrink: 0,
-    borderLeft: `1px solid ${theme.border.default}`,
-    background: theme.bg.deep,
+    borderLeft: `1px solid ${theme.border.light}`,
+    background: `linear-gradient(180deg, ${theme.bg.deep} 0%, ${theme.bg.base} 100%)`,
     overflow: 'hidden',
     display: 'flex',
     flexDirection: 'column',
     animation: 'fadeIn 0.2s ease',
+    position: 'relative' as const,
+    boxShadow: `inset 1px 0 0 rgba(224, 180, 79, 0.25)`,
   },
   bottomBar: {
     height: 64,
     flexShrink: 0,
-    borderTop: `1px solid ${theme.border.default}`,
-    background: theme.bg.deep,
+    borderTop: `1px solid ${theme.border.light}`,
+    background: `linear-gradient(0deg, #000 0%, ${theme.bg.deep} 100%)`,
+    boxShadow: `inset 0 1px 0 rgba(224, 180, 79, 0.25)`,
   },
   mapBrowserOverlay: {
     position: 'fixed' as const,
