@@ -271,12 +271,19 @@ export function registerListeners(socket: Socket): () => void {
   });
 
   // --- Combat ---
-  socket.on('combat:started', ({ combatants, roundNumber }) => {
+  socket.on('combat:started', ({ combatants, roundNumber, reviewPhase }) => {
     console.log('[COMBAT] combat:started received',
       combatants.map((c: Combatant) => `${c.name}${c.isNPC ? '' : ' (PC)'}=${c.initiative}(bonus ${c.initiativeBonus})`).join(', '),
+      reviewPhase ? '(review phase)' : '',
     );
-    useCombatStore.getState().startCombat(combatants, roundNumber);
+    useCombatStore.getState().startCombat(combatants, roundNumber, !!reviewPhase);
     useSessionStore.getState().setGameMode('combat');
+  });
+
+  // DM has confirmed the initiative order — clear the review banner /
+  // modal on every client so turn advancement feels synchronized.
+  socket.on('combat:review-complete', () => {
+    useCombatStore.getState().setReviewPhase(false);
   });
 
   // Sent once per session:join when combat is already active. Restores
@@ -542,6 +549,7 @@ export function registerListeners(socket: Socket): () => void {
     socket.off('map:zones-updated');
     socket.off('map:pinged');
     socket.off('combat:started');
+    socket.off('combat:review-complete');
     socket.off('combat:state-sync');
     socket.off('combat:ended');
     socket.off('combat:initiative-prompt');

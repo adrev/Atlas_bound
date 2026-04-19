@@ -34,6 +34,14 @@ interface CombatState {
   readyCheck: ReadyCheckState | null;
   damageLog: DamageLogEntry[];
   combatStartTime: number | null;
+  /**
+   * Combat is active and initiatives are rolled, but the DM is still
+   * reviewing / hand-editing the order before turns start advancing.
+   * DM sees a review modal; players see a "DM is setting initiative"
+   * banner until the DM clicks "Start Combat" (fires combat:lock-
+   * initiative → server broadcasts combat:review-complete).
+   */
+  reviewPhase: boolean;
   /** The final recap data, preserved after combat ends so "View Again" works. */
   lastRecap: {
     damageLog: DamageLogEntry[];
@@ -44,7 +52,8 @@ interface CombatState {
 }
 
 interface CombatActions {
-  startCombat: (combatants: Combatant[], roundNumber: number) => void;
+  startCombat: (combatants: Combatant[], roundNumber: number, reviewPhase?: boolean) => void;
+  setReviewPhase: (v: boolean) => void;
   /** Resync the entire combat state (used on reconnect/refresh). */
   syncCombatState: (args: {
     combatants: Combatant[];
@@ -90,6 +99,7 @@ const initialState: CombatState = {
   readyCheck: null,
   damageLog: [],
   combatStartTime: null,
+  reviewPhase: false,
   lastRecap: null,
   showRecap: false,
 };
@@ -97,7 +107,7 @@ const initialState: CombatState = {
 export const useCombatStore = create<CombatState & CombatActions>((set) => ({
   ...initialState,
 
-  startCombat: (combatants, roundNumber) =>
+  startCombat: (combatants, roundNumber, reviewPhase = false) =>
     set({
       active: true,
       combatants,
@@ -109,7 +119,10 @@ export const useCombatStore = create<CombatState & CombatActions>((set) => ({
       readyCheck: null,
       damageLog: [],
       combatStartTime: Date.now(),
+      reviewPhase,
     }),
+
+  setReviewPhase: (v) => set({ reviewPhase: v }),
 
   syncCombatState: ({ combatants, roundNumber, currentTurnIndex, actionEconomy }) =>
     set({

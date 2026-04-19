@@ -173,10 +173,18 @@ export interface ClientCombatEvents {
   'combat:use-action': { actionType: ActionType };
   'combat:use-movement': { feet: number };
   'combat:cast-spell': SpellCastEvent;
+  /**
+   * DM-only. Fired after the DM has reviewed / edited every combatant's
+   * rolled initiative in the review modal and is ready to actually
+   * begin turn advancement. Server flips reviewPhase off and broadcasts
+   * combat:review-complete to the rest of the room.
+   */
+  'combat:lock-initiative': NoPayload;
 }
 
 export interface ServerCombatEvents {
-  'combat:started': { combatants: Combatant[]; roundNumber: number };
+  'combat:started': { combatants: Combatant[]; roundNumber: number; reviewPhase?: boolean };
+  'combat:review-complete': NoPayload;
   'combat:ended': NoPayload;
   'combat:initiative-prompt': { tokenId: string; bonus: number };
   'combat:initiative-set': InitiativeRollResult;
@@ -227,6 +235,8 @@ export interface ServerDrawingEvents {
   'drawing:updated': { drawingId: string; geometry: Drawing['geometry'] };
 }
 
+// --- Initiative review (DM confirms rolls before turns advance) ---
+// (interfaces augmented below — scroll to the combat events block)
 // --- Character Events ---
 export interface ClientCharacterEvents {
   'character:update': { characterId: string; changes: Record<string, unknown> };

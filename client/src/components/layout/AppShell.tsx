@@ -14,6 +14,7 @@ import { BattleMap } from '../canvas/BattleMap';
 import { MapTransition } from '../canvas/MapTransition';
 import { PreviewModeBanner } from '../dm/PreviewModeBanner';
 import { InitiativeModal } from '../combat/InitiativeModal';
+import { InitiativeReviewModal, ReviewWaitingBanner } from '../combat/InitiativeReviewModal';
 import { OpportunityAttackModal } from '../combat/OpportunityAttackModal';
 import { CounterspellModal } from '../combat/CounterspellModal';
 import { ShieldModal } from '../combat/ShieldModal';
@@ -149,16 +150,22 @@ export function AppShell() {
   // useEffect runs after commit so the warning goes away.
   const combatActive = useCombatStore((s) => s.active);
   const combatantCount = useCombatStore((s) => s.combatants.length);
+  const reviewPhase = useCombatStore((s) => s.reviewPhase);
   const prevCombatActiveRef = useRef(false);
   useEffect(() => {
     const wasActive = prevCombatActiveRef.current;
-    if (combatActive && !wasActive && combatantCount > 0) {
+    // Skip the legacy d20-animation InitiativeModal while the DM is
+    // reviewing rolls — InitiativeReviewModal covers the same ground
+    // and showing both at once is noise. The legacy modal still fires
+    // for the (rare) "non-review" path, e.g. reconnect into an
+    // already-rolling combat.
+    if (combatActive && !wasActive && combatantCount > 0 && !reviewPhase) {
       setShowInitiativeModal(true);
     } else if (!combatActive && wasActive) {
       setShowInitiativeModal(false);
     }
     prevCombatActiveRef.current = combatActive;
-  }, [combatActive, combatantCount]);
+  }, [combatActive, combatantCount, reviewPhase]);
 
   // Listen for custom events from DMToolbar
   useEffect(() => {
@@ -692,6 +699,8 @@ export function AppShell() {
       </div>
 
       {sharedModals}
+      <InitiativeReviewModal />
+      <ReviewWaitingBanner />
       <TweaksPanel open={tweaksOpen} onClose={() => setTweaksOpen(false)} />
       {showAudioPopover && (
         <AudioPopover

@@ -30,9 +30,17 @@ import { safeHandler } from '../utils/socketHelpers.js';
 async function startCombat(io: Server, sessionId: string, tokenIds: string[]) {
   const combatState = await CombatService.startCombatAsync(sessionId, tokenIds);
 
+  // Initiative review phase — combat is technically active on the
+  // server so tokens / HP are locked in, but the DM gets to inspect
+  // and hand-edit every rolled initiative before turns start
+  // advancing. Clients receive reviewPhase=true on combat:started
+  // and hold the DM-facing review modal + the player-facing
+  // "DM reviewing" banner until the DM confirms (see the
+  // combat:lock-initiative handler below).
   io.to(sessionId).emit('combat:started', {
     combatants: combatState.combatants,
     roundNumber: combatState.roundNumber,
+    reviewPhase: true,
   });
 
   // Announce the initiative order in chat as a system message.
@@ -225,6 +233,17 @@ export function registerCombatEvents(io: Server, socket: Socket): void {
         console.error('[READY CHECK] all-ready combat start error:', err);
       }
     }
+  }));
+
+  // DM finishes reviewing/editing initiative rolls and wants the
+  // round to actually start. The server doesn't gate anything on
+  // reviewPhase itself (initiatives were already rolled at start);
+  // this event just lets every other client hide the review UI in
+  // lockstep with the DM so nobody sees turns advance out of sync.
+  socket.on('combat:lock-initiative', safeHandler(socket, async () => {
+    const ctx = getPlayerBySocketId(socket.id);
+    if (!ctx || ctx.player.role !== 'dm') return;
+    io.to(ctx.room.sessionId).emit('combat:review-complete', {});
   }));
 
   socket.on('combat:end', safeHandler(socket, async () => {

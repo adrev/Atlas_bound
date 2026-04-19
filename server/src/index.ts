@@ -88,7 +88,12 @@ app.use(helmet({
       // Explicit worker-src so the browser doesn't fall through to
       // the script-src fallback and still block the blob worker.
       workerSrc: ["'self'", 'blob:'],
-      styleSrc: ["'self'", "'unsafe-inline'"],
+      // Google Fonts sends its CSS from fonts.googleapis.com and
+      // pulls the actual font files from fonts.gstatic.com. Without
+      // the first, every @font-face link in index.html gets blocked
+      // and the UI falls back to system fonts mid-session.
+      styleSrc: ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com'],
+      fontSrc: ["'self'", 'data:', 'https://fonts.gstatic.com'],
       imgSrc: ["'self'", 'data:', 'blob:', '*.dndbeyond.com', '*.discordapp.com', '*.discord.com', '*.googleusercontent.com', 'https://storage.googleapis.com'],
       connectSrc: ["'self'", 'wss:', 'ws:', 'blob:', 'https://storage.googleapis.com'],
       mediaSrc: ["'self'", 'https://storage.googleapis.com'],

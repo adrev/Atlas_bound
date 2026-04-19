@@ -186,6 +186,15 @@ export function emitEndCombat() {
   getSocket().emit('combat:end', {});
 }
 
+/**
+ * DM confirmed the initiative review modal — tell the server the
+ * order is locked in so it can broadcast combat:review-complete and
+ * every client hides the review UI in lockstep.
+ */
+export function emitLockInitiative() {
+  getSocket().emit('combat:lock-initiative', {});
+}
+
 export function emitRollInitiative(tokenId: string, bonus: number) {
   getSocket().emit('combat:roll-initiative', { tokenId, bonus });
 }

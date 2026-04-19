@@ -861,6 +861,27 @@ function CombatPanel() {
     );
   }
 
+  // During the initiative review phase we suppress the tracker — the
+  // InitiativeReviewModal covers the same turn-order view with
+  // editable inputs, and showing both at once double-draws the same
+  // combatants. Falls back to a small placeholder for the DM so the
+  // Combat tab doesn't look empty mid-review.
+  const reviewPhase = useCombatStore((s) => s.reviewPhase);
+  if (reviewPhase) {
+    return (
+      <div style={styles.combatPanel}>
+        {combatButton}
+        <div style={{
+          padding: 16, textAlign: 'center', color: theme.text.muted, fontSize: 12,
+        }}>
+          {isDM
+            ? 'Reviewing initiative — confirm in the modal to begin.'
+            : 'Initiative rolled — waiting on DM to lock in the order.'}
+        </div>
+      </div>
+    );
+  }
+
   // The full initiative tracker (round counter, combatants list,
   // action economy, End Turn) lives inside the Combat tab content
   // only. This way other tabs (Chat, Players, DM Tools) aren't
