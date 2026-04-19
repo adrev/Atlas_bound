@@ -126,6 +126,45 @@ export function registerTokenEvents(io: Server, socket: Socket): void {
     const targetMapId = resolveViewingMapId(ctx.room, ctx.player.userId, ctx.player.role);
     if (!targetMapId) return;
 
+    // R6: Auto-number duplicate token names on the same map.
+    //   Existing: "Goblin"                → new becomes "Goblin 2"
+    //   Existing: "Goblin", "Goblin 2"    → new becomes "Goblin 3"
+    //   Existing: "Goblin 2" only         → new becomes "Goblin" (fills the slot)
+    //   No duplicates                     → keep the requested name
+    // The base name is untouched (we don't rename "Goblin" → "Goblin 1"
+    // retroactively — that would be disruptive for tokens already in
+    // play). This matches the TokenNameNumber script pattern from
+    // roll20-api-scripts.
+    const requestedName = parsed.data.name;
+    let finalName = requestedName;
+    {
+      const { rows: dupRows } = await pool.query(
+        'SELECT name FROM tokens WHERE map_id = $1 AND (name = $2 OR name LIKE $3)',
+        [targetMapId, requestedName, `${requestedName} %`],
+      );
+      if (dupRows.length > 0) {
+        const suffixRe = new RegExp(
+          `^${requestedName.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&')} (\\d+)$`,
+        );
+        const used = new Set<number>();
+        let hasBase = false;
+        for (const r of dupRows) {
+          const n = r.name as string;
+          if (n === requestedName) { hasBase = true; continue; }
+          const m = suffixRe.exec(n);
+          if (m) used.add(parseInt(m[1], 10));
+        }
+        if (!hasBase) {
+          // Base name free (only numbered dupes exist) — take it.
+          finalName = requestedName;
+        } else {
+          let next = 2;
+          while (used.has(next)) next += 1;
+          finalName = `${requestedName} ${next}`;
+        }
+      }
+    }
+
     const tokenId = uuidv4();
     const now = new Date().toISOString();
 
@@ -165,7 +204,7 @@ export function registerTokenEvents(io: Server, socket: Socket): void {
 
     const token: Token = {
       id: tokenId, mapId: targetMapId, characterId: parsed.data.characterId ?? null,
-      name: parsed.data.name, x: parsed.data.x, y: parsed.data.y, size: parsed.data.size,
+      name: finalName, x: parsed.data.x, y: parsed.data.y, size: parsed.data.size,
       imageUrl: parsed.data.imageUrl ?? null, color: parsed.data.color,
       layer: parsed.data.layer, visible: parsed.data.visible,
       hasLight: parsed.data.hasLight, lightRadius: parsed.data.lightRadius,
