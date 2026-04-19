@@ -415,8 +415,15 @@ export function emitWhisper(targetUserId: string, content: string) {
   getSocket().emit('chat:whisper', { targetUserId, content });
 }
 
-export function emitRoll(notation: string, reason?: string, hidden?: boolean) {
-  getSocket().emit('chat:roll', { notation, reason, hidden });
+export function emitRoll(
+  notation: string,
+  reason?: string,
+  hidden?: boolean,
+  template?: import('@dnd-vtt/shared').RollTemplate,
+) {
+  const payload: Record<string, unknown> = { notation, reason, hidden };
+  if (template) payload.template = template;
+  getSocket().emit('chat:roll', payload);
 }
 
 /**
@@ -435,11 +442,14 @@ export function emitPhysicalRoll(
   hidden: boolean | undefined,
   dice: Array<{ type: number; value: number }>,
   total: number,
+  template?: import('@dnd-vtt/shared').RollTemplate,
 ) {
-  getSocket().emit('chat:roll', {
+  const payload: Record<string, unknown> = {
     notation, reason, hidden,
     reported: { dice, total },
-  });
+  };
+  if (template) payload.template = template;
+  getSocket().emit('chat:roll', payload);
 }
 
 /**

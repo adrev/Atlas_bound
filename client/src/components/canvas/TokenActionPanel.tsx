@@ -634,8 +634,11 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
           const saved = total >= dc;
 
           setTimeout(() => {
-            emitRoll(`1d20+${conMod}`,
-              `${targetCharData.name} Concentration Save (DC ${dc}): ${total} — ${saved ? 'MAINTAINED!' : 'LOST!'}`
+            emitRoll(
+              `1d20+${conMod}`,
+              `${targetCharData.name} Concentration Save (DC ${dc}): ${total} — ${saved ? 'MAINTAINED!' : 'LOST!'}`,
+              undefined,
+              { kind: 'save', ability: 'CON', dc, target: targetCharData.name },
             );
             if (!saved) {
               emitCharacterUpdate(cid, { concentratingOn: null });
@@ -1859,7 +1862,12 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
               const mod = abilityModifier(score);
               return (
                 <div key={ab} style={{ textAlign: 'center', flex: 1, cursor: canAct ? 'pointer' : 'default' }}
-                  onClick={() => canAct && emitRoll(`1d20${fmtMod(mod)}`, `${token.name} ${ab.toUpperCase()}`)}
+                  onClick={() => canAct && emitRoll(
+                    `1d20${fmtMod(mod)}`,
+                    `${token.name} ${ab.toUpperCase()}`,
+                    undefined,
+                    { kind: 'check', ability: ab.toUpperCase() },
+                  )}
                   title={canAct ? `Roll ${ab.toUpperCase()} check` : undefined}>
                   <div style={{ fontSize: 7, fontWeight: 700, color: C.textMuted, textTransform: 'uppercase' }}>{ab}</div>
                   <div style={{ fontSize: 14, fontWeight: 700 }}>{fmtMod(mod)}</div>
@@ -2019,7 +2027,12 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
                   if (!canSpendActionSlot(selectedTokenId!, 'action', 'Hide')) return;
                   const dex = mergedScores.dex || 10;
                   const stealthMod = Math.floor((dex - 10) / 2) + (profBonus || 0);
-                  emitRoll(`1d20+${stealthMod}`, `${token.name} Hide (Stealth)`);
+                  emitRoll(
+                    `1d20+${stealthMod}`,
+                    `${token.name} Hide (Stealth)`,
+                    undefined,
+                    { kind: 'check', ability: 'DEX', skill: 'Stealth' },
+                  );
                   emitUseAction('action');
                 }}
               />
@@ -2030,7 +2043,12 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
                   if (!canSpendActionSlot(selectedTokenId!, 'action', 'Search')) return;
                   const wis = mergedScores.wis || 10;
                   const perMod = Math.floor((wis - 10) / 2) + (profBonus || 0);
-                  emitRoll(`1d20+${perMod}`, `${token.name} Search (Perception)`);
+                  emitRoll(
+                    `1d20+${perMod}`,
+                    `${token.name} Search (Perception)`,
+                    undefined,
+                    { kind: 'check', ability: 'WIS', skill: 'Perception' },
+                  );
                   emitUseAction('action');
                 }}
               />
@@ -2074,7 +2092,12 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
                   )}
                   {canAct && action.damage_dice && (
                     <ActionBtn label={action.damage_dice} color={C.gold}
-                      onClick={() => emitRoll(action.damage_dice, `${token.name} ${action.name} Damage`)} />
+                      onClick={() => emitRoll(
+                        action.damage_dice,
+                        `${token.name} ${action.name} Damage`,
+                        undefined,
+                        { kind: 'damage', damageType: action.damage_type || 'damage' },
+                      )} />
                   )}
                 </div>
                 <div style={{ fontSize: 9, color: C.textMuted, marginTop: 1, lineHeight: 1.3 }}>
@@ -2140,7 +2163,12 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
                         });
                       }} />
                     )}
-                    <ActionBtn label={w.damage} color={C.gold} onClick={() => emitRoll(`${w.damage}+${dmgMod}`, `${token.name} ${w.name} DMG`)} />
+                    <ActionBtn label={w.damage} color={C.gold} onClick={() => emitRoll(
+                      `${w.damage}+${dmgMod}`,
+                      `${token.name} ${w.name} DMG`,
+                      undefined,
+                      { kind: 'damage', damageType: w.damageType || 'damage' },
+                    )} />
                   </div>
                   <div style={{ fontSize: 9, color: C.textMuted, marginTop: 1, lineHeight: 1.3 }}>
                     {isRanged ? 'Ranged' : 'Melee'} Weapon Attack: +{atkMod} to hit{isRanged && w.range ? `, range ${w.range} ft.` : ', reach 5 ft.'}
@@ -2242,7 +2270,12 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
                     )}
 
                     {/* Direct damage roll (no targeting) */}
-                    <ActionBtn label={`${dmgDice}`} color={C.textMuted} onClick={() => emitRoll(`${dmgDice}+${meleeDmgMod}`, `${token.name} ${w.name} DMG`)} />
+                    <ActionBtn label={`${dmgDice}`} color={C.textMuted} onClick={() => emitRoll(
+                      `${dmgDice}+${meleeDmgMod}`,
+                      `${token.name} ${w.name} DMG`,
+                      undefined,
+                      { kind: 'damage', damageType: w.damageType || 'damage' },
+                    )} />
                   </div>
                   {/* Weapon properties with hover tooltips */}
                   {props.length > 0 && (

@@ -25,7 +25,7 @@ export type {
   Combatant, CombatState, ActionEconomy, ActionType,
   InitiativeRollRequest, InitiativeRollResult, SpellCastEvent,
 } from './types/combat.js';
-export type { ChatMessageType, DiceRollData, ChatMessage } from './types/chat.js';
+export type { ChatMessageType, DiceRollData, ChatMessage, RollTemplate } from './types/chat.js';
 export type {
   ClientToServerEvents, ServerToClientEvents,
   ClientSessionEvents, ServerSessionEvents,

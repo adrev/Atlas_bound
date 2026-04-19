@@ -122,7 +122,7 @@ export function registerChatEvents(io: Server, socket: Socket): void {
     if (!checkRateLimit(socket.id, 'chat:roll', 10, 5000)) return;
 
     const hidden = parsed.data.hidden && ctx.player.role === 'dm';
-    const { notation, reason, reported } = parsed.data;
+    const { notation, reason, reported, template } = parsed.data;
 
     try {
       // Prefer the client-reported result from the 3D dice (see
@@ -160,12 +160,15 @@ export function registerChatEvents(io: Server, socket: Socket): void {
             // wasn't generated server-side. They can render a subtle
             // marker or log it for audit.
             clientReported: true,
+            ...(template ? { template } : {}),
           };
         } else {
           rollData = DiceService.roll(notation, reason);
+          if (template) rollData = { ...rollData, template };
         }
       } else {
         rollData = DiceService.roll(notation, reason);
+        if (template) rollData = { ...rollData, template };
       }
       const messageId = uuidv4();
       const now = new Date().toISOString();

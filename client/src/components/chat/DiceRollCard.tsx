@@ -1,4 +1,5 @@
-import type { DiceRollData } from '@dnd-vtt/shared';
+import type { CSSProperties } from 'react';
+import type { DiceRollData, RollTemplate } from '@dnd-vtt/shared';
 import { theme } from '../../styles/theme';
 
 // ── Skills list for detection ────────────────────────────────────
@@ -13,7 +14,25 @@ const ABILITIES = [
   'strength', 'dexterity', 'constitution', 'intelligence', 'wisdom', 'charisma',
 ];
 
+// Structured template wins over keyword heuristics when present (R3).
+// Keeps the type label in sync with the metadata actually carried on
+// the roll so "ATTACK vs AC 15" and "SAVE DC 13 WIS" etc. match the
+// card chrome rendered below.
+function labelFromTemplate(tpl: RollTemplate): { label: string; sub?: string } {
+  switch (tpl.kind) {
+    case 'attack': return { label: 'ATTACK', sub: 'ROLL' };
+    case 'save': return { label: tpl.ability.toUpperCase(), sub: 'SAVE' };
+    case 'check': return {
+      label: (tpl.skill ?? tpl.ability).toUpperCase(),
+      sub: 'CHECK',
+    };
+    case 'damage': return { label: 'DAMAGE', sub: tpl.damageType.toUpperCase() };
+    case 'spell': return { label: tpl.spellName.toUpperCase(), sub: tpl.spellLevel === 0 ? 'CANTRIP' : `LVL ${tpl.spellLevel}` };
+  }
+}
+
 function detectRollType(content: string, rollData: DiceRollData): { label: string; sub?: string } {
+  if (rollData.template) return labelFromTemplate(rollData.template);
   const lower = content.toLowerCase();
   const reason = rollData.reason?.toLowerCase() ?? '';
   const combined = `${lower} ${reason}`;
@@ -100,6 +119,86 @@ function injectKeyframes() {
     }
   `;
   document.head.appendChild(style);
+}
+
+// ── Template chip (R3 roll-template chrome) ──────────────────────
+function TemplateChip({
+  template, total, isNat20, isNat1,
+}: {
+  template: RollTemplate;
+  total: number;
+  isNat20: boolean;
+  isNat1: boolean;
+}) {
+  const chipBase: CSSProperties = {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: 6,
+    padding: '2px 8px',
+    borderRadius: 10,
+    fontSize: 10,
+    fontWeight: 600,
+    letterSpacing: '0.04em',
+    textTransform: 'uppercase',
+    border: '1px solid rgba(255,255,255,0.08)',
+    background: 'rgba(255,255,255,0.04)',
+    color: theme.text.secondary,
+  };
+  const hitStyle = { ...chipBase, background: 'rgba(39,174,96,0.18)', color: '#2ecc71', border: '1px solid rgba(39,174,96,0.4)' };
+  const missStyle = { ...chipBase, background: 'rgba(192,57,43,0.18)', color: '#e74c3c', border: '1px solid rgba(192,57,43,0.4)' };
+
+  if (template.kind === 'attack') {
+    // AC target + hit/miss indicator. Crit/fumble override the AC comparison.
+    const isHit = typeof template.ac === 'number' ? total >= template.ac : undefined;
+    const resolved = isNat20 ? 'HIT' : isNat1 ? 'MISS' : isHit === undefined ? null : isHit ? 'HIT' : 'MISS';
+    const resolvedStyle = resolved === 'HIT' ? hitStyle : resolved === 'MISS' ? missStyle : chipBase;
+    return (
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginBottom: 6 }}>
+        {template.target && <span style={chipBase}>→ {template.target}</span>}
+        {typeof template.ac === 'number' && <span style={chipBase}>AC {template.ac}</span>}
+        {resolved && <span style={resolvedStyle}>{resolved}</span>}
+      </div>
+    );
+  }
+
+  if (template.kind === 'save') {
+    const passed = typeof template.dc === 'number' ? total >= template.dc : undefined;
+    const resolved = passed === undefined ? null : passed ? 'PASS' : 'FAIL';
+    const resolvedStyle = resolved === 'PASS' ? hitStyle : resolved === 'FAIL' ? missStyle : chipBase;
+    return (
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginBottom: 6 }}>
+        {typeof template.dc === 'number' && <span style={chipBase}>DC {template.dc}</span>}
+        {template.target && <span style={chipBase}>→ {template.target}</span>}
+        {resolved && <span style={resolvedStyle}>{resolved}</span>}
+      </div>
+    );
+  }
+
+  if (template.kind === 'damage') {
+    return (
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginBottom: 6 }}>
+        <span style={chipBase}>{template.damageType}</span>
+        {template.critical && <span style={{ ...chipBase, color: '#f1c40f', border: '1px solid rgba(241,196,15,0.4)' }}>CRIT</span>}
+        {template.target && <span style={chipBase}>→ {template.target}</span>}
+      </div>
+    );
+  }
+
+  if (template.kind === 'check') {
+    return (
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginBottom: 6 }}>
+        <span style={chipBase}>{template.ability}</span>
+        {template.skill && <span style={chipBase}>{template.skill}</span>}
+      </div>
+    );
+  }
+
+  // spell
+  return (
+    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginBottom: 6 }}>
+      <span style={chipBase}>{template.spellLevel === 0 ? 'CANTRIP' : `LEVEL ${template.spellLevel}`}</span>
+    </div>
+  );
 }
 
 // ── Component ────────────────────────────────────────────────────
@@ -208,6 +307,11 @@ export function DiceRollCard({ rollData, content, displayName, isHidden }: DiceR
           </span>
         )}
       </div>
+
+      {/* Template-specific chrome (R3) — structured context chip. */}
+      {rollData.template && (
+        <TemplateChip template={rollData.template} total={rollData.total} isNat20={isNat20} isNat1={isNat1} />
+      )}
 
       {/* Critical hit / miss label */}
       {isNat20 && (

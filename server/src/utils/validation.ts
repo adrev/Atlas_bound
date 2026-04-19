@@ -431,6 +431,42 @@ export const chatWhisperSchema = z.object({
   content: z.string().min(1).max(2000),
 });
 
+// R3 — optional Roll20-style template metadata. Lets the card renderer
+// show attack/save/check/damage/spell cards with the right chrome. All
+// fields are client-authored so we cap string lengths tightly; the
+// server does not interpret them beyond round-tripping into rollData.
+const rollTemplateSchema = z.discriminatedUnion('kind', [
+  z.object({
+    kind: z.literal('attack'),
+    target: z.string().max(80).optional(),
+    ac: z.number().int().min(0).max(99).optional(),
+    crit: z.boolean().optional(),
+    fumble: z.boolean().optional(),
+  }),
+  z.object({
+    kind: z.literal('save'),
+    ability: z.string().min(1).max(20),
+    dc: z.number().int().min(0).max(99).optional(),
+    target: z.string().max(80).optional(),
+  }),
+  z.object({
+    kind: z.literal('check'),
+    skill: z.string().max(40).optional(),
+    ability: z.string().min(1).max(20),
+  }),
+  z.object({
+    kind: z.literal('damage'),
+    damageType: z.string().min(1).max(40),
+    target: z.string().max(80).optional(),
+    critical: z.boolean().optional(),
+  }),
+  z.object({
+    kind: z.literal('spell'),
+    spellName: z.string().min(1).max(80),
+    spellLevel: z.number().int().min(0).max(9),
+  }),
+]);
+
 export const chatRollSchema = z.object({
   notation: z.string().min(1).max(200),
   reason: z.string().max(200).optional(),
@@ -448,6 +484,7 @@ export const chatRollSchema = z.object({
     })).min(1).max(100),
     total: z.number().int().min(-10000).max(10000),
   }).optional(),
+  template: rollTemplateSchema.optional(),
 });
 
 // --- REST API schemas ---
