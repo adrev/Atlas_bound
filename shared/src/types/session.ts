@@ -79,6 +79,12 @@ export interface SessionSettings {
    * members can cross-reference stats during play.
    */
   showPlayersToPlayers?: boolean;
+  /**
+   * When true, the DM sees the players' fog-of-war as a translucent
+   * overlay (so they can narrate from the party's perspective).
+   * Defaults to false — DMs traditionally see the whole map.
+   */
+  dmSeesPlayerFog?: boolean;
 }
 
 export const DEFAULT_SESSION_SETTINGS: SessionSettings = {

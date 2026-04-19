@@ -26,17 +26,24 @@ interface FogLayerProps {
 export function FogLayer({ mapWidth, mapHeight }: FogLayerProps) {
   const isDM = useSessionStore((s) => s.isDM);
   const enableFog = useSessionStore((s) => s.settings.enableFogOfWar);
+  const dmSeesPlayerFog = useSessionStore((s) => !!s.settings.dmSeesPlayerFog);
   const tokens = useMapStore((s) => s.tokens);
   const userId = useSessionStore((s) => s.userId);
   const gridSize = useMapStore((s) => s.currentMap?.gridSize ?? 70);
   const fogPreviewCharacterId = useMapStore((s) => s.fogPreviewCharacterId);
 
-  // Find all tokens owned by this player (heroes)
+  // Find all tokens owned by this player (heroes). When the DM has
+  // opted into "see player fog" mode, we treat every PC token (any
+  // human owner) as a vision source so the DM gets the union of what
+  // the party can see. Without that flag the DM still bypasses fog
+  // entirely so their map vision isn't accidentally constrained.
   const heroTokens = useMemo(() => {
-    return Object.values(tokens).filter(
-      (t) => t.ownerUserId === userId && t.visible
-    );
-  }, [tokens, userId]);
+    return Object.values(tokens).filter((t) => {
+      if (!t.visible) return false;
+      if (isDM && dmSeesPlayerFog) return !!t.ownerUserId;
+      return t.ownerUserId === userId;
+    });
+  }, [tokens, userId, isDM, dmSeesPlayerFog]);
 
   // Find all lit tokens (anyone carrying a torch / has Light spell on them).
   // These reveal fog around themselves regardless of ownership.
@@ -59,7 +66,7 @@ export function FogLayer({ mapWidth, mapHeight }: FogLayerProps) {
 
   // DM vision-preview overlay — rendered even when fog is off, because
   // the DM might want to see what a player *would* see.
-  if (isDM) {
+  if (isDM && !dmSeesPlayerFog) {
     if (!previewToken) return null;
     const cx = previewToken.x + (gridSize * previewToken.size) / 2;
     const cy = previewToken.y + (gridSize * previewToken.size) / 2;
@@ -78,6 +85,11 @@ export function FogLayer({ mapWidth, mapHeight }: FogLayerProps) {
 
   if (!enableFog) return null;
 
+  // DM viewing player fog gets a lighter overlay — the point is to
+  // *see* what the players can't, so the map underneath stays readable.
+  // Players get the full 85% black.
+  const fogAlpha = isDM && dmSeesPlayerFog ? 0.45 : 0.85;
+
   return (
     <Group listening={false}>
       {/* Base fog: covers entire map */}
@@ -86,7 +98,7 @@ export function FogLayer({ mapWidth, mapHeight }: FogLayerProps) {
         y={0}
         width={mapWidth}
         height={mapHeight}
-        fill="rgba(0, 0, 0, 0.85)"
+        fill={`rgba(0, 0, 0, ${fogAlpha})`}
       />
 
       {/* Cut out vision circles around each hero token */}

@@ -17,6 +17,7 @@ export function SessionPrivacyPanel() {
   const allowPlayerRest = settings.allowPlayerRest ?? true;
   const showCreatureStatsToPlayers = settings.showCreatureStatsToPlayers ?? true;
   const showPlayersToPlayers = settings.showPlayersToPlayers ?? true;
+  const dmSeesPlayerFog = settings.dmSeesPlayerFog ?? false;
   const [password, setPassword] = useState('');
   const [saving, setSaving] = useState(false);
 
@@ -198,6 +199,12 @@ export function SessionPrivacyPanel() {
           helper="Party members can open each other's character sheets."
           checked={showPlayersToPlayers}
           onChange={(v) => emitUpdateSettings({ showPlayersToPlayers: v })}
+        />
+        <PermissionToggle
+          label="See fog-of-war as players do"
+          helper="DM view: overlay the party's fog-of-war at reduced opacity so you can narrate from what they can actually see."
+          checked={dmSeesPlayerFog}
+          onChange={(v) => emitUpdateSettings({ dmSeesPlayerFog: v })}
         />
       </div>
 

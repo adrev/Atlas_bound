@@ -18,6 +18,9 @@ export function InitiativeTracker() {
   const settings = useSessionStore((s) => s.settings);
   const turnTimerEnabled = !!settings.turnTimerEnabled;
   const turnTimerSeconds = settings.turnTimerSeconds ?? 60;
+  // Default to "visible" when the setting has never been set.
+  const showCreatureStats = settings.showCreatureStatsToPlayers !== false;
+  const showPlayerStats = settings.showPlayersToPlayers !== false;
 
   if (!active || combatants.length === 0) return null;
 
@@ -27,6 +30,22 @@ export function InitiativeTracker() {
   const currentToken = currentCombatant ? tokens[currentCombatant.tokenId] : null;
   const isCurrentOwner = currentToken?.ownerUserId === userId;
   const isMyTurn = isDM || isCurrentOwner;
+
+  // For each combatant row, whether the caller is allowed to see its
+  // HP numbers + initiative value. DM always sees all; a PC's owner
+  // always sees their own row; otherwise gated by session settings.
+  const canSeeStatsFor = (combatantTokenId: string): boolean => {
+    if (isDM) return true;
+    const token = tokens[combatantTokenId];
+    if (!token) return true;
+    const isOwn = token.ownerUserId === userId;
+    if (isOwn) return true;
+    // If the combatant has a human owner, it's another player's PC
+    // — gated by showPlayersToPlayers. Otherwise it's an NPC — gated
+    // by showCreatureStatsToPlayers.
+    const isAnotherPC = !!token.ownerUserId;
+    return isAnotherPC ? showPlayerStats : showCreatureStats;
+  };
 
   return (
     <div style={styles.container}>
@@ -51,6 +70,7 @@ export function InitiativeTracker() {
       <div style={styles.list}>
         {combatants.map((combatant, index) => {
           const isCurrent = index === currentTurnIndex;
+          const showStats = canSeeStatsFor(combatant.tokenId);
           const hpRatio = combatant.maxHp > 0 ? combatant.hp / combatant.maxHp : 1;
           const hpColor =
             hpRatio > 0.5 ? theme.hp.full : hpRatio > 0.25 ? theme.hp.half : theme.hp.low;
@@ -69,14 +89,19 @@ export function InitiativeTracker() {
                   detail: { tokenId: combatant.tokenId },
                 }));
               }}
-              title={`${combatant.name} — Initiative ${combatant.initiative} • HP ${combatant.hp}/${combatant.maxHp} • AC ${combatant.armorClass}\nClick to jump camera to this combatant`}
+              title={showStats
+                ? `${combatant.name} — Initiative ${combatant.initiative} • HP ${combatant.hp}/${combatant.maxHp} • AC ${combatant.armorClass}\nClick to jump camera to this combatant`
+                : `${combatant.name}\nClick to jump camera to this combatant`}
               style={{
                 ...styles.row,
                 ...(isCurrent ? styles.rowActive : {}),
                 ...(isDown ? styles.rowDown : {}),
               }}
             >
-              {/* Initiative number on the left */}
+              {/* Initiative number on the left. Hidden from other
+                  players when the DM has gated that combatant's stats
+                  — the turn order itself is unchanged, but the numeric
+                  roll is private info. */}
               <div
                 style={{
                   ...styles.initBadge,
@@ -84,7 +109,7 @@ export function InitiativeTracker() {
                   borderColor: isCurrent ? theme.gold.primary : theme.border.default,
                 }}
               >
-                {combatant.initiative}
+                {showStats ? combatant.initiative : '•'}
               </div>
 
               {/* Portrait */}
@@ -111,7 +136,11 @@ export function InitiativeTracker() {
                 )}
               </div>
 
-              {/* Name + HP bar stacked on the right */}
+              {/* Name + HP bar stacked on the right. When stats are
+                  hidden the HP numbers become "??" but the bar still
+                  animates so the party can see a target is "bloodied"
+                  vs "fresh" without the exact numbers — matches the
+                  typical pen-and-paper DM narration style. */}
               <div style={styles.rowInfo}>
                 <span
                   style={{
@@ -132,7 +161,7 @@ export function InitiativeTracker() {
                     />
                   </div>
                   <span style={styles.hpText}>
-                    {combatant.hp}/{combatant.maxHp}
+                    {showStats ? `${combatant.hp}/${combatant.maxHp}` : '??'}
                   </span>
                 </div>
               </div>
