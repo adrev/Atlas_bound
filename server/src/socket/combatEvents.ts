@@ -233,6 +233,10 @@ export function registerCombatEvents(io: Server, socket: Socket): void {
 
     try {
       await CombatService.endCombat(ctx.room.sessionId);
+      // R7 — turn/round hooks are scoped to the encounter. Wipe them
+      // when combat ends so a new combat starts with a clean slate.
+      ctx.room.turnHooks.clear();
+      ctx.room.roundHooks = [];
       io.to(ctx.room.sessionId).emit('combat:ended', {});
       void DiscordService.notifySession(ctx.room.sessionId, {
         title: '🏳️ Combat Ended',
@@ -330,6 +334,11 @@ export function registerCombatEvents(io: Server, socket: Socket): void {
           )
         : { removed: [], messages: [] };
 
+      // Capture the pre-advance round so R7 round hooks can fire
+      // once per transition (e.g. round 3 → round 4), not on every
+      // turn inside a round.
+      const preAdvanceRound = state.roundNumber;
+
       // ── Phase 2: advance the turn order
       const result = CombatService.nextTurn(ctx.room.sessionId);
       io.to(ctx.room.sessionId).emit('combat:turn-advanced', {
@@ -399,6 +408,17 @@ export function registerCombatEvents(io: Server, socket: Socket): void {
       const lines: string[] = [];
       for (const m of endTickResult.messages) lines.push(m);
       for (const m of startTickResult.messages) lines.push(m);
+      // R7 — round hooks fire when the round number advanced.
+      if (result.roundNumber !== preAdvanceRound) {
+        for (const m of ctx.room.roundHooks) lines.push(`📣 ${m}`);
+      }
+      // R7 — turn hooks for the combatant whose turn is now starting.
+      if (startingCombatant) {
+        const hooks = ctx.room.turnHooks.get(startingCombatant.tokenId);
+        if (hooks && hooks.length > 0) {
+          for (const m of hooks) lines.push(`📣 ${m}`);
+        }
+      }
       lines.push(result.skippedTokenIds.length > 0
         ? `⚔️ Round ${result.roundNumber} — ${result.currentCombatant.name}'s turn (skipped ${result.skippedTokenIds.length} downed)`
         : `⚔️ Round ${result.roundNumber} — ${result.currentCombatant.name}'s turn`);

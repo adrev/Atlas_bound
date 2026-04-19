@@ -131,6 +131,17 @@ export interface RoomState {
      */
     action: 'pause' | 'resume' | 'next' | 'prev' | null;
   };
+  /**
+   * R7 — per-combatant turn hooks queued by the DM via `!onturn`.
+   * tokenId → list of raw chat lines to broadcast when that token's
+   * turn starts. Cleared when combat ends. Not persisted.
+   */
+  turnHooks: Map<string, string[]>;
+  /**
+   * R7 — per-round hooks queued by `!onround`. Fires once whenever the
+   * combat advances to a new round.
+   */
+  roundHooks: string[];
 }
 
 // ── Rate limiting ──────────────────────────────────────────
@@ -175,6 +186,8 @@ export function createRoom(
     conditionMeta: new Map(),
     drawings: new Map(),
     music: { track: null, fileIndex: null, action: null },
+    turnHooks: new Map(),
+    roundHooks: [],
   };
   rooms.set(sessionId, room);
   roomCodeIndex.set(roomCode, sessionId);
