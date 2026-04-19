@@ -8,6 +8,7 @@ import * as CombatService from '../services/CombatService.js';
 import * as DiscordService from '../services/DiscordService.js';
 import * as DiceService from '../services/DiceService.js';
 import * as ConditionService from '../services/ConditionService.js';
+import { applyDamageSideEffects } from '../services/damageEffects.js';
 import * as OpportunityAttackService from '../services/OpportunityAttackService.js';
 import { getSpellAnimation } from '@dnd-vtt/shared';
 import {
@@ -480,6 +481,12 @@ export function registerCombatEvents(io: Server, socket: Socket): void {
           changes: { hitPoints: result.hp, tempHitPoints: result.tempHp },
         });
       }
+      // R2: auto-run damage side effects (concentration save, Sleep
+      // break, etc.). Used to require the client to emit a separate
+      // `damage:side-effects` event; now it runs server-side the moment
+      // HP actually changes so a DM-initiated damage or a macro
+      // bypasses no longer skip concentration.
+      await applyDamageSideEffects(io, ctx.room, parsed.data.tokenId, parsed.data.amount);
     } catch (err) {
       socket.emit('session:error', {
         message: err instanceof Error ? err.message : 'Failed to apply damage',

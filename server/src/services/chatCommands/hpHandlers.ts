@@ -2,6 +2,7 @@ import type { Server } from 'socket.io';
 import type { Token } from '@dnd-vtt/shared';
 import pool from '../../db/connection.js';
 import * as CombatService from '../CombatService.js';
+import { applyDamageSideEffects } from '../damageEffects.js';
 import {
   registerChatCommand,
   whisperToCaller,
@@ -166,6 +167,8 @@ async function handleDamage(c: ChatCommandContext): Promise<boolean> {
       whisperToCaller(c.io, c.ctx, '!damage: this token has no character and combat is not active.');
       return true;
     }
+    // R2: concentration save + endsOnDamage / saveOnDamage side effects.
+    await applyDamageSideEffects(c.io, c.ctx.room, res.target.token.id, amount);
   } catch (err) {
     whisperToCaller(c.io, c.ctx, `!damage: ${err instanceof Error ? err.message : 'failed'}`);
   }
@@ -254,6 +257,13 @@ async function handleHp(c: ChatCommandContext): Promise<boolean> {
         broadcastHpChange(c.io, c.ctx, res.target.token.id, res.target.characterId, r.hp, r.tempHp, delta, delta >= 0 ? 'heal' : 'damage');
       } else {
         whisperToCaller(c.io, c.ctx, '!hp: this token has no character and combat is not active.');
+        return true;
+      }
+      // R2: treat `!hp -N` as a damage event. `!hp +N` is a heal so no
+      // concentration check. `!hp 20` (absolute) is administrative
+      // hand-editing — not routed through side effects on purpose.
+      if (delta < 0) {
+        await applyDamageSideEffects(c.io, c.ctx.room, res.target.token.id, -delta);
       }
       return true;
     }
