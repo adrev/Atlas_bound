@@ -407,6 +407,57 @@ router.post('/characters/:id/loot/take', async (req: Request, res: Response) => 
     // Log but don't throw — the HTTP response has already been sent.
     console.warn('[loot/take] inventory broadcast failed:', err);
   }
+
+  // When the last entry is taken from a loot bag, despawn its tokens
+  // server-side so the empty bag doesn't linger on the map. The
+  // previous implementation relied on the client (LootBagPanel) to
+  // call emitTokenRemove after re-fetching loot, which failed when the
+  // player closed the panel before the fetch returned or when a second
+  // player emptied the bag from another client.
+  try {
+    // Is the source actually a loot bag? Anything else (NPC drops,
+    // player-owned characters) we leave alone — the DM manages those.
+    const { rows: tagRows } = await pool.query(
+      'SELECT race, class FROM characters WHERE id = $1',
+      [creatureCharId],
+    );
+    const race = String(tagRows[0]?.race ?? '').toLowerCase();
+    const klass = String(tagRows[0]?.class ?? '').toLowerCase();
+    if (race !== 'loot' || klass !== 'bag') return;
+
+    const { rows: remainingRows } = await pool.query(
+      'SELECT 1 FROM loot_entries WHERE character_id = $1 LIMIT 1',
+      [creatureCharId],
+    );
+    if (remainingRows.length > 0) return; // bag still has items
+
+    // Find every token backed by this loot character. Most bags only
+    // have one token, but a DM could clone / duplicate a bag before it
+    // was emptied — cover all of them.
+    const { rows: tokenRows } = await pool.query(
+      `SELECT t.id AS id, t.map_id AS map_id, m.session_id AS session_id
+       FROM tokens t JOIN maps m ON m.id = t.map_id
+       WHERE t.character_id = $1`,
+      [creatureCharId],
+    );
+    if (tokenRows.length === 0) return;
+
+    const io = getIO();
+    await pool.query('DELETE FROM tokens WHERE character_id = $1', [creatureCharId]);
+
+    for (const row of tokenRows) {
+      const tokenId = row.id as string;
+      const mapId = row.map_id as string;
+      const sessionId = row.session_id as string;
+      // Drop from the in-memory room snapshot so the next hit-test
+      // (drag target, click, token lookup) doesn't return a ghost.
+      const room = getRoom(sessionId);
+      if (room) room.tokens.delete(tokenId);
+      if (io) io.to(sessionId).emit('map:token-removed', { tokenId, mapId });
+    }
+  } catch (err) {
+    console.warn('[loot/take] empty-bag despawn failed:', err);
+  }
 });
 
 // POST /api/characters/:id/inventory/enrich
