@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef, lazy, Suspense } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { Copy, PanelRightClose, PanelRightOpen, X, LogOut, Home, UserCog, ChevronDown, Menu, Settings } from 'lucide-react';
+import { Copy, PanelRightClose, PanelRightOpen, X, LogOut, Home, UserCog, ChevronDown, Menu, Settings, Volume2, VolumeX } from 'lucide-react';
 import { TweaksPanel } from '../../kbrt/TweaksPanel';
 import { useSocket } from '../../hooks/useSocket';
 import { useIsMobile } from '../../hooks/useIsMobile';
@@ -19,6 +19,9 @@ import { CounterspellModal } from '../combat/CounterspellModal';
 import { ShieldModal } from '../combat/ShieldModal';
 import { ReadyCheckModal } from '../combat/ReadyCheckModal';
 import { MusicEngine } from '../audio/MusicEngine';
+import { AudioPopover } from '../audio/AudioPopover';
+import { TRACKS } from '../audio/tracks';
+import { useAudioStore } from '../../stores/useAudioStore';
 // Sidebar is large (DM panels, scene manager, creature library). Lazy-loaded
 // so the initial session bundle stays under the 500 kB warning threshold.
 const Sidebar = lazy(() => import('./Sidebar').then((m) => ({ default: m.Sidebar })));
@@ -64,6 +67,10 @@ export function AppShell() {
   const storeDisplayName = useSessionStore((s) => s.displayName);
   const gameMode = useSessionStore((s) => s.gameMode);
   const storedRoomCode = useSessionStore((s) => s.roomCode);
+  const currentTrack = useSessionStore((s) => s.currentTrack);
+  const activeTrack = currentTrack ? TRACKS.find((t) => t.id === currentTrack) : null;
+  const masterMuted = useAudioStore((s) => s.masterMuted);
+  const toggleMasterMute = useAudioStore((s) => s.toggleMasterMute);
   const authUser = useAuthStore((s) => s.user);
   const authLogout = useAuthStore((s) => s.logout);
   const [sidebarOpen, setSidebarOpen] = useState(true);
@@ -74,6 +81,8 @@ export function AppShell() {
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [showProfileModal, setShowProfileModal] = useState(false);
   const userMenuRef = useRef<HTMLDivElement>(null);
+  const [showAudioPopover, setShowAudioPopover] = useState(false);
+  const audioButtonRef = useRef<HTMLButtonElement>(null);
   // Hold only the character ID — the actual character object is read live
   // from useCharacterStore so updates (e.g. adding a spell, healing) appear
   // immediately without needing to re-open the sheet.
@@ -566,6 +575,12 @@ export function AppShell() {
           >
             {gameMode === 'combat' ? 'Combat' : 'Free Roam'}
           </div>
+          {activeTrack && (
+            <div style={styles.trackStatus} title={`Now playing: ${activeTrack.name}`}>
+              <span aria-hidden>{activeTrack.emoji}</span>
+              <span>{activeTrack.name}</span>
+            </div>
+          )}
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           {/* User Menu */}
@@ -622,6 +637,18 @@ export function AppShell() {
             </div>
           )}
           <button
+            ref={audioButtonRef}
+            className="btn-icon"
+            onClick={() => setShowAudioPopover((v) => !v)}
+            onContextMenu={(e) => { e.preventDefault(); toggleMasterMute(); }}
+            title="Audio controls (right-click to quick-mute)"
+            aria-label={masterMuted ? 'Unmute audio and open controls' : 'Open audio controls (right-click to mute)'}
+            aria-pressed={showAudioPopover}
+            style={{ color: masterMuted ? theme.text.muted : undefined }}
+          >
+            {masterMuted ? <VolumeX size={16} /> : <Volume2 size={16} />}
+          </button>
+          <button
             className="btn-icon"
             onClick={() => setTweaksOpen((v) => !v)}
             title="Theme tweaks"
@@ -665,6 +692,12 @@ export function AppShell() {
 
       {sharedModals}
       <TweaksPanel open={tweaksOpen} onClose={() => setTweaksOpen(false)} />
+      {showAudioPopover && (
+        <AudioPopover
+          onClose={() => setShowAudioPopover(false)}
+          anchorRef={audioButtonRef}
+        />
+      )}
       <Suspense fallback={null}><Dice3DOverlay /></Suspense>
     </div>
   );
@@ -787,6 +820,25 @@ const styles: Record<string, React.CSSProperties> = {
     border: `1px solid ${theme.state.danger}`,
     boxShadow: theme.dangerGlow,
     animation: 'pulse 2s ease-in-out infinite',
+  },
+  // Ambience/now-playing status chip. Sits next to the mode badge in
+  // the top bar and renders whatever track MusicEngine has as active.
+  // Display-only — the speaker icon on the right side of the top bar
+  // is the control surface. Kept subtle so it doesn't steal focus from
+  // the Free Roam / Combat state.
+  trackStatus: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 6,
+    padding: '3px 10px',
+    fontFamily: theme.font.body,
+    fontSize: 11,
+    fontWeight: 600,
+    color: theme.gold.primary,
+    background: theme.gold.bg,
+    border: `1px solid ${theme.gold.border}`,
+    borderRadius: theme.radius.sm,
+    whiteSpace: 'nowrap' as const,
   },
   main: {
     flex: 1,

@@ -1,13 +1,8 @@
-import { useState, useCallback, useRef } from 'react';
-import { Volume2, VolumeX } from 'lucide-react';
+import { useCallback } from 'react';
 import { QuickActions } from '../quickactions/QuickActions';
 import { DiceTray } from '../dice/DiceTray';
-import { useAudioStore } from '../../stores/useAudioStore';
 import { useCharacterStore } from '../../stores/useCharacterStore';
-import { useSessionStore } from '../../stores/useSessionStore';
 import { emitCharacterUpdate } from '../../socket/emitters';
-import { AudioPopover } from '../audio/AudioPopover';
-import { TRACKS } from '../audio/tracks';
 import { theme } from '../../styles/theme';
 import type { SpellSlot } from '@dnd-vtt/shared';
 
@@ -19,15 +14,14 @@ import type { SpellSlot } from '@dnd-vtt/shared';
  *
  * Layout:
  *   [ QuickActions ............... | divider | ... DiceTray ]
+ *
+ * Audio controls + the "now playing" ambience status pill used to
+ * live here next to the dice tray. Both moved up into the top bar
+ * (next to Settings / the Free Roam badge) so session state lives
+ * in one strip and the bottom bar stays focused on per-turn actions.
  */
 export function BottomBar() {
-  const masterMuted = useAudioStore((s) => s.masterMuted);
-  const toggleMasterMute = useAudioStore((s) => s.toggleMasterMute);
-  const [showAudioPopover, setShowAudioPopover] = useState(false);
-  const audioButtonRef = useRef<HTMLButtonElement>(null);
   const myCharacter = useCharacterStore((s) => s.myCharacter);
-  const currentTrack = useSessionStore((s) => s.currentTrack);
-  const activeTrack = currentTrack ? TRACKS.find((t) => t.id === currentTrack) : null;
 
   const hasSpellSlots =
     myCharacter?.spellSlots &&
@@ -50,64 +44,6 @@ export function BottomBar() {
       <div aria-hidden style={styles.divider} />
       <div style={styles.diceSection}>
         <DiceTray />
-      </div>
-      {activeTrack && (
-        <button
-          onClick={() => setShowAudioPopover((v) => !v)}
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: 4,
-            padding: '2px 8px',
-            fontSize: 11,
-            color: theme.gold.primary,
-            background: theme.gold.bg,
-            border: `1px solid ${theme.gold.border}`,
-            borderRadius: theme.radius.sm,
-            cursor: 'pointer',
-            flexShrink: 0,
-            whiteSpace: 'nowrap' as const,
-          }}
-          title="Now playing — click for audio controls"
-        >
-          <span>{activeTrack.emoji}</span>
-          <span style={{ fontWeight: 600 }}>{activeTrack.name}</span>
-        </button>
-      )}
-      <div style={{ flexShrink: 0, marginLeft: theme.space.sm }}>
-        <button
-          ref={audioButtonRef}
-          onClick={() => setShowAudioPopover((v) => !v)}
-          onContextMenu={(e) => { e.preventDefault(); toggleMasterMute(); }}
-          title="Audio Controls (right-click to quick-mute)"
-          aria-label={masterMuted ? 'Unmute audio and open controls' : 'Open audio controls (right-click to mute)'}
-          aria-pressed={!masterMuted}
-          style={{
-            display: 'flex',
-            flexDirection: 'column' as const,
-            alignItems: 'center',
-            justifyContent: 'center',
-            width: 36,
-            height: 40,
-            borderRadius: theme.radius.sm,
-            border: `1px solid ${masterMuted ? theme.border.default : theme.gold.border}`,
-            background: masterMuted ? theme.bg.deep : theme.gold.bg,
-            color: masterMuted ? theme.text.muted : theme.gold.primary,
-            cursor: 'pointer',
-            flexShrink: 0,
-            transition: `all ${theme.motion.fast}`,
-            gap: 1,
-          }}
-        >
-          {masterMuted ? <VolumeX size={16} /> : <Volume2 size={16} />}
-          <span style={{ fontSize: 8, fontWeight: 600, lineHeight: 1, letterSpacing: '0.04em' }}>Audio</span>
-        </button>
-        {showAudioPopover && (
-          <AudioPopover
-            onClose={() => setShowAudioPopover(false)}
-            anchorRef={audioButtonRef}
-          />
-        )}
       </div>
     </div>
   );
