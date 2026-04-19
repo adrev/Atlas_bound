@@ -62,16 +62,47 @@ export function registerTokenEvents(io: Server, socket: Socket): void {
 
     if (ctx.room.combatState?.active) {
       const opportunities = OpportunityAttackService.detectOpportunityAttacks(ctx.room.sessionId, tokenId, oldX, oldY, x, y);
+      if (opportunities.length > 0) {
+        // Log each detected OA so a failing broadcast is diagnosable
+        // from the prod logs — "why didn't the player see the reaction
+        // prompt" is the #1 combat support ask.
+        console.log(`[OA] ${opportunities.length} opportunit${opportunities.length === 1 ? 'y' : 'ies'} detected on move of ${token.name} (${tokenId})`);
+      }
       for (const opp of opportunities) {
         const targetOwnerId = opp.attackerOwnerUserId;
         const sentToSocketIds = new Set<string>();
+        // Broadcast to the attacker owner on EVERY socket they have open
+        // (multi-tab) via userSockets, not just the primary socketId
+        // stored on RoomPlayer. The previous single-socket emit missed
+        // the player if their active tab was the second one they
+        // opened, since RoomPlayer.socketId tracks the most-recent
+        // `session:join` and can lag reality if they toggled tabs.
+        if (targetOwnerId) {
+          const attackerSockets = ctx.room.userSockets.get(targetOwnerId);
+          if (attackerSockets && attackerSockets.size > 0) {
+            for (const sid of attackerSockets) {
+              if (!sentToSocketIds.has(sid)) {
+                io.to(sid).emit('combat:oa-opportunity', opp);
+                sentToSocketIds.add(sid);
+              }
+            }
+          } else {
+            console.warn(`[OA] attacker owner ${targetOwnerId} for ${opp.attackerName} has no live sockets — OA prompt lost`);
+          }
+        }
+        // Always mirror to every DM tab so the DM sees NPC OAs (primary
+        // use case) and can observe PC OAs for adjudication.
         for (const player of ctx.room.players.values()) {
-          const isDM = player.role === 'dm';
-          const isAttackerOwner = targetOwnerId && player.userId === targetOwnerId;
-          let shouldSend = false;
-          if (targetOwnerId) { if (isAttackerOwner || isDM) shouldSend = true; }
-          else { if (isDM) shouldSend = true; }
-          if (shouldSend && !sentToSocketIds.has(player.socketId)) {
+          if (player.role !== 'dm') continue;
+          const dmSockets = ctx.room.userSockets.get(player.userId);
+          if (dmSockets) {
+            for (const sid of dmSockets) {
+              if (!sentToSocketIds.has(sid)) {
+                io.to(sid).emit('combat:oa-opportunity', opp);
+                sentToSocketIds.add(sid);
+              }
+            }
+          } else if (!sentToSocketIds.has(player.socketId)) {
             io.to(player.socketId).emit('combat:oa-opportunity', opp);
             sentToSocketIds.add(player.socketId);
           }

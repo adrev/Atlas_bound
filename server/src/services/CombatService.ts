@@ -1,6 +1,41 @@
 import type { Combatant, CombatState, ActionEconomy, ActionType, Condition } from '@dnd-vtt/shared';
-import { getRoom } from '../utils/roomState.js';
+import { getRoom, type RoomState } from '../utils/roomState.js';
 import pool from '../db/connection.js';
+
+/**
+ * 5e movement cap for a combatant's turn. Pulls base speed from the
+ * combatant row and then applies any condition that halves or zeros
+ * movement based on the token's current conditions:
+ *
+ *   • prone      → half speed (represents the cost of standing up
+ *                  OR crawling; either way only half moves the token)
+ *   • grappled   → 0 (speed is 0 while grappled)
+ *   • restrained → 0 (speed is 0 while restrained)
+ *   • paralyzed / stunned / unconscious / petrified → 0
+ *     (all incapacitating — the turn-skip logic elsewhere usually
+ *     skips these combatants entirely, but the cap is set defensively
+ *     in case they still get a turn from a special feature.)
+ *
+ * Keeping this in one helper so future condition additions have a
+ * single place to encode their movement effect.
+ */
+function computeMovementCap(combatant: Combatant, room: RoomState): number {
+  const token = room.tokens.get(combatant.tokenId);
+  if (!token) return combatant.speed;
+  const conds = new Set((token.conditions || []) as string[]);
+  if (
+    conds.has('grappled') ||
+    conds.has('restrained') ||
+    conds.has('paralyzed') ||
+    conds.has('stunned') ||
+    conds.has('unconscious') ||
+    conds.has('petrified')
+  ) {
+    return 0;
+  }
+  if (conds.has('prone')) return Math.floor(combatant.speed / 2);
+  return combatant.speed;
+}
 
 export function startCombat(sessionId: string, tokenIds: string[]): CombatState {
   const room = getRoom(sessionId);
@@ -366,9 +401,15 @@ export function nextTurn(sessionId: string): {
   }
 
   const currentCombatant = state.combatants[state.currentTurnIndex];
+  // Apply 5e movement penalties for conditions that land on a token
+  // BEFORE their turn starts. Prone → half speed (representing the
+  // cost of either crawling or standing up). Grappled / restrained →
+  // speed 0. These are authoritative for the turn; standing up later
+  // in the turn doesn't refund the movement.
+  const moveCap = computeMovementCap(currentCombatant, room);
   const economy: ActionEconomy = {
-    action: false, bonusAction: false, movementRemaining: currentCombatant.speed,
-    movementMax: currentCombatant.speed, reaction: false,
+    action: false, bonusAction: false, movementRemaining: moveCap,
+    movementMax: moveCap, reaction: false,
   };
   room.actionEconomies.set(currentCombatant.tokenId, economy);
   persistCombatState(state);
