@@ -333,23 +333,38 @@ function applyResistedDamage(
 }
 
 /**
- * Roll dice notation like "2d8", "3d6+2", "1d10" and return the actual total.
+ * Roll dice notation like "2d8", "3d6+2", "1d10" and return both the
+ * total and a per-die breakdown so chat can show exactly what
+ * happened ("3d8 (4+7+2)+3 = 16"). The legacy rollDamageDice wrapper
+ * below returns just the number for call sites that don't care.
  * Used to apply real rolled damage to HP instead of averages.
- * Returns 0 if the notation can't be parsed.
  */
-function rollDamageDice(notation: string): number {
-  if (!notation) return 0;
+function rollDamageDiceDetailed(notation: string): { total: number; breakdown: string } {
+  if (!notation) return { total: 0, breakdown: '' };
   const match = notation.match(/(\d+)d(\d+)(?:\s*([+-])\s*(\d+))?/);
-  if (!match) return 0;
+  if (!match) return { total: 0, breakdown: '' };
   const numDice = parseInt(match[1]) || 0;
   const dieSize = parseInt(match[2]) || 0;
   const sign = match[3] === '-' ? -1 : 1;
   const mod = match[4] ? parseInt(match[4]) * sign : 0;
-  let total = 0;
+  const rolls: number[] = [];
+  let subTotal = 0;
   for (let i = 0; i < numDice; i++) {
-    total += Math.floor(Math.random() * dieSize) + 1;
+    const r = Math.floor(Math.random() * dieSize) + 1;
+    rolls.push(r);
+    subTotal += r;
   }
-  return Math.max(0, total + mod);
+  const total = Math.max(0, subTotal + mod);
+  // `3d8 (4+7+2)` — or `3d8 (4+7+2)+3` when a modifier is present.
+  const rollsStr = rolls.join('+');
+  const breakdown = mod !== 0
+    ? `${numDice}d${dieSize} (${rollsStr})${mod > 0 ? '+' : ''}${mod} = ${total}`
+    : `${numDice}d${dieSize} (${rollsStr}) = ${total}`;
+  return { total, breakdown };
+}
+
+function rollDamageDice(notation: string): number {
+  return rollDamageDiceDetailed(notation).total;
 }
 
 /**
@@ -964,14 +979,17 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
 
           if (isHit && damageDice && effectiveCharId) {
             const finalDice = isCrit ? damageDice.replace(/(\d+)d/, (_: string, n: string) => `${parseInt(n) * 2}d`) : damageDice;
-            const rolledDmg = rollDamageDice(finalDice);
+            const { total: rolledDmg, breakdown: dmgBreakdown } = rollDamageDiceDetailed(finalDice);
             const freshChar = useCharacterStore.getState().allCharacters[effectiveCharId];
             const freshHp = freshChar ? (typeof freshChar.hitPoints === 'number' ? freshChar.hitPoints : parseInt(String(freshChar.hitPoints)) || 0) : targetHp;
             const resisted = applyResistedDamage(rolledDmg, dmgType, freshChar, targetConditions);
             const newHp = Math.max(0, freshHp - resisted.final);
             const resistTag = resisted.note ? ` [${resisted.note}]` : '';
             const dmgChange = resisted.final !== rolledDmg ? `${rolledDmg}→${resisted.final}` : `${resisted.final}`;
-            resultParts.push(`${dmgChange} ${dmgWord}dmg${resistTag} (HP ${freshHp}→${newHp})${isCrit ? ' [CRIT]' : ''}`);
+            // Surface the per-die breakdown so players + DM can see
+            // "2d8 (5+3)+2 = 10 slashing dmg" instead of just the final
+            // number. Matches the "show your work" user request.
+            resultParts.push(`${dmgChange} ${dmgWord}dmg${resistTag} [${dmgBreakdown}] (HP ${freshHp}→${newHp})${isCrit ? ' [CRIT]' : ''}`);
             if (newHp === 0) resultParts.push('💀 DOWN');
             setTimeout(() => {
               updateTargetHp(effectiveCharId, newHp);

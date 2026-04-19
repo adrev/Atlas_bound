@@ -60,17 +60,22 @@ interface TabDef {
   dmOnly?: boolean;
 }
 
+// Ordered for combat-first use: Chat + Combat stay in the eye line
+// since that's where 90% of session interaction lives. DM Tools comes
+// next so the DM doesn't have to scan past every player-facing tab.
+// Hero / Wiki / Notes follow, and Players lands last (roster is only
+// used at join / kick / ban time, not in-game).
 const TABS: TabDef[] = [
+  { id: 'chat', label: 'Chat', icon: <MessageSquare size={16} /> },
   { id: 'combat', label: 'Combat', icon: <Swords size={16} /> },
+  { id: 'dm', label: 'Tools', icon: <Settings size={16} />, dmOnly: true },
   // Label reads "Hero" (shorter + more thematic for the DM vibe)
   // while the internal id stays 'character' so existing event
   // listeners, routing, and component names don't need to change.
   { id: 'character', label: 'Hero', icon: <BookOpen size={16} /> },
   { id: 'compendium', label: 'Wiki', icon: <Library size={16} /> },
   { id: 'notes', label: 'Notes', icon: <ScrollText size={16} /> },
-  { id: 'chat', label: 'Chat', icon: <MessageSquare size={16} /> },
   { id: 'players', label: 'Players', icon: <Users size={16} /> },
-  { id: 'dm', label: 'Tools', icon: <Settings size={16} />, dmOnly: true },
 ];
 
 export function Sidebar() {
