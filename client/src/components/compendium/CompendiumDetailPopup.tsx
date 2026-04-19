@@ -16,6 +16,7 @@ import type {
 } from '@dnd-vtt/shared';
 import { CONDITION_MAP } from '@dnd-vtt/shared';
 import { RULES_GLOSSARY } from './rulesGlossary';
+import { FEATS } from './featsGlossary';
 
 /** Renders markdown content with dark-theme styled tables, bold, lists, etc. */
 function MarkdownContent({ text }: { text: string }) {
@@ -1165,11 +1166,11 @@ export function CompendiumDetailPopup({ result, onClose }: Props) {
     setLoading(true);
     setError('');
 
-    // Client-only categories (conditions + rules glossary) are static
-    // lookup tables; no server round-trip. Match by slug against the
-    // rules glossary first (rules share the 'conditions' badge color
-    // so they come back typed as category='conditions'), then fall
-    // back to the CONDITION_MAP for true 5e conditions.
+    // Client-only categories (conditions + rules glossary + feats)
+    // are static lookup tables; no server round-trip. Match by slug
+    // against the rules glossary first (rules share the 'conditions'
+    // badge color so they come back typed as category='conditions'),
+    // then fall back to the CONDITION_MAP for true 5e conditions.
     if (result.category === 'conditions') {
       const rule = RULES_GLOSSARY.find((r) => r.slug === result.slug);
       if (rule) {
@@ -1184,6 +1185,20 @@ export function CompendiumDetailPopup({ result, onClose }: Props) {
         return;
       }
       setError('Not found');
+      setLoading(false);
+      return;
+    }
+    if (result.category === 'feats') {
+      const feat = FEATS.find((f) => f.slug === result.slug);
+      if (feat) {
+        const body = feat.prerequisite
+          ? `_Prerequisite: ${feat.prerequisite}_\n\n${feat.description}`
+          : feat.description;
+        setData({ kind: 'rule', name: feat.name, description: body, color: '#d4a843' });
+        setLoading(false);
+        return;
+      }
+      setError('Feat not found');
       setLoading(false);
       return;
     }
@@ -1268,6 +1283,9 @@ export function CompendiumDetailPopup({ result, onClose }: Props) {
             <ItemDetail item={data as CompendiumItem} onClose={onClose} />
           )}
           {!loading && !error && data && result.category === 'conditions' && (
+            <RuleOrConditionDetail entry={data as { kind: 'condition' | 'rule'; name: string; description: string; color?: string }} />
+          )}
+          {!loading && !error && data && result.category === 'feats' && (
             <RuleOrConditionDetail entry={data as { kind: 'condition' | 'rule'; name: string; description: string; color?: string }} />
           )}
         </div>

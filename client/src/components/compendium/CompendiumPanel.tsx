@@ -11,8 +11,9 @@ import type { CompendiumSearchResult, CompendiumCategory } from '@dnd-vtt/shared
 import { CONDITIONS } from '@dnd-vtt/shared';
 import { getCompendiumImageUrl, getCompendiumFallbackUrl } from '../../utils/compendiumIcons';
 import { RULES_GLOSSARY } from './rulesGlossary';
+import { FEATS } from './featsGlossary';
 
-type FilterCategory = 'all' | 'monsters' | 'spells' | 'items' | 'homebrew' | 'conditions' | 'rules';
+type FilterCategory = 'all' | 'monsters' | 'spells' | 'items' | 'homebrew' | 'conditions' | 'rules' | 'feats';
 
 // Wiki is a lookup surface for both DM + players — Homebrew lives
 // under DM Tools (HomebrewPanel) so players don't see the authoring
@@ -23,6 +24,7 @@ const CATEGORY_FILTERS: { value: FilterCategory; label: string }[] = [
   { value: 'monsters', label: 'Monsters' },
   { value: 'spells', label: 'Spells' },
   { value: 'items', label: 'Items' },
+  { value: 'feats', label: 'Feats' },
   { value: 'conditions', label: 'Conditions' },
   { value: 'rules', label: 'Rules' },
 ];
@@ -101,6 +103,16 @@ export function CompendiumPanel({
         // detail popup keys off slug for the rule glossary lookup.
         category: 'conditions' as const,
         snippet: r.snippet,
+      })));
+      setLoading(false);
+      return;
+    }
+    if (cat === 'feats') {
+      setResults(FEATS.map((f) => ({
+        slug: f.slug,
+        name: f.name,
+        category: 'feats' as const,
+        snippet: f.prerequisite ? `${f.prerequisite} — ${f.snippet}` : f.snippet,
       })));
       setLoading(false);
       return;
