@@ -15,6 +15,7 @@ import '../services/chatCommands/noteHandlers.js';
 import '../services/chatCommands/hpHandlers.js';
 import '../services/chatCommands/conditionHandlers.js';
 import '../services/chatCommands/turnHookHandlers.js';
+import '../services/chatCommands/aoeHandlers.js';
 
 export function registerChatEvents(io: Server, socket: Socket): void {
 
