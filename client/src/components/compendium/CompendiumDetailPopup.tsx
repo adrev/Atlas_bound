@@ -14,6 +14,8 @@ import type {
   CompendiumItem,
   CompendiumSearchResult,
 } from '@dnd-vtt/shared';
+import { CONDITION_MAP } from '@dnd-vtt/shared';
+import { RULES_GLOSSARY } from './rulesGlossary';
 
 /** Renders markdown content with dark-theme styled tables, bold, lists, etc. */
 function MarkdownContent({ text }: { text: string }) {
@@ -1146,13 +1148,45 @@ function ordinal(n: number): string {
 }
 
 export function CompendiumDetailPopup({ result, onClose }: Props) {
-  const [data, setData] = useState<CompendiumMonster | CompendiumSpell | CompendiumItem | null>(null);
+  // `data` also holds the lightweight client-only rule/condition
+  // payload — not strictly a CompendiumX, but the dispatch below
+  // checks shape before casting so the union stays honest.
+  const [data, setData] = useState<
+    | CompendiumMonster
+    | CompendiumSpell
+    | CompendiumItem
+    | { kind: 'condition' | 'rule'; name: string; description: string; color?: string }
+    | null
+  >(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
   useEffect(() => {
     setLoading(true);
     setError('');
+
+    // Client-only categories (conditions + rules glossary) are static
+    // lookup tables; no server round-trip. Match by slug against the
+    // rules glossary first (rules share the 'conditions' badge color
+    // so they come back typed as category='conditions'), then fall
+    // back to the CONDITION_MAP for true 5e conditions.
+    if (result.category === 'conditions') {
+      const rule = RULES_GLOSSARY.find((r) => r.slug === result.slug);
+      if (rule) {
+        setData({ kind: 'rule', name: rule.name, description: rule.description });
+        setLoading(false);
+        return;
+      }
+      const info = CONDITION_MAP.get(result.slug as never);
+      if (info) {
+        setData({ kind: 'condition', name: info.label, description: info.description, color: info.color });
+        setLoading(false);
+        return;
+      }
+      setError('Not found');
+      setLoading(false);
+      return;
+    }
 
     const categoryPath = result.category;
     // Apply spell name alias as a safety net so direct fetches with DDB
@@ -1233,8 +1267,44 @@ export function CompendiumDetailPopup({ result, onClose }: Props) {
           {!loading && !error && data && result.category === 'items' && (
             <ItemDetail item={data as CompendiumItem} onClose={onClose} />
           )}
+          {!loading && !error && data && result.category === 'conditions' && (
+            <RuleOrConditionDetail entry={data as { kind: 'condition' | 'rule'; name: string; description: string; color?: string }} />
+          )}
         </div>
       </div>
+    </div>
+  );
+}
+
+function RuleOrConditionDetail({
+  entry,
+}: {
+  entry: { kind: 'condition' | 'rule'; name: string; description: string; color?: string };
+}) {
+  const accent = entry.color ?? theme.gold.primary;
+  return (
+    <div style={{ padding: '4px 0' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
+        <span style={{
+          display: 'inline-block', width: 8, height: 24, borderRadius: 2,
+          background: accent,
+        }} aria-hidden />
+        <h2 style={{
+          margin: 0, color: accent, fontFamily: theme.font.display,
+          fontSize: 20, letterSpacing: '0.04em',
+        }}>
+          {entry.name}
+        </h2>
+        <span style={{
+          marginLeft: 'auto', fontSize: 10, fontWeight: 700,
+          letterSpacing: '0.1em', textTransform: 'uppercase',
+          color: theme.text.muted,
+        }}>
+          {entry.kind === 'condition' ? 'Condition' : 'Rule'}
+        </span>
+      </div>
+      <div style={{ height: 1, background: theme.border.default, marginBottom: 10 }} />
+      <MarkdownContent text={entry.description} />
     </div>
   );
 }

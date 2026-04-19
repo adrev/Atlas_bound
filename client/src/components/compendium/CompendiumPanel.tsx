@@ -8,9 +8,11 @@ import { CreateMonsterForm } from './CreateMonsterForm';
 import { CreateSpellForm } from './CreateSpellForm';
 import { CreateItemForm } from './CreateItemForm';
 import type { CompendiumSearchResult, CompendiumCategory } from '@dnd-vtt/shared';
+import { CONDITIONS } from '@dnd-vtt/shared';
 import { getCompendiumImageUrl, getCompendiumFallbackUrl } from '../../utils/compendiumIcons';
+import { RULES_GLOSSARY } from './rulesGlossary';
 
-type FilterCategory = 'all' | 'monsters' | 'spells' | 'items' | 'homebrew';
+type FilterCategory = 'all' | 'monsters' | 'spells' | 'items' | 'homebrew' | 'conditions' | 'rules';
 
 // Wiki is a lookup surface for both DM + players — Homebrew lives
 // under DM Tools (HomebrewPanel) so players don't see the authoring
@@ -21,6 +23,8 @@ const CATEGORY_FILTERS: { value: FilterCategory; label: string }[] = [
   { value: 'monsters', label: 'Monsters' },
   { value: 'spells', label: 'Spells' },
   { value: 'items', label: 'Items' },
+  { value: 'conditions', label: 'Conditions' },
+  { value: 'rules', label: 'Rules' },
 ];
 
 const CATEGORY_BADGE_COLORS: Record<CompendiumCategory, string> = {
@@ -75,6 +79,32 @@ export function CompendiumPanel({
     setResults([]);
     setLoading(true);
     const cat = category;
+
+    // Client-only rule references: conditions + rules glossary are
+    // static data that live on the client, no server fetch needed.
+    if (cat === 'conditions') {
+      setResults(CONDITIONS.map((c) => ({
+        slug: c.name,
+        name: c.label,
+        category: 'conditions' as const,
+        snippet: c.description,
+      })));
+      setLoading(false);
+      return;
+    }
+    if (cat === 'rules') {
+      setResults(RULES_GLOSSARY.map((r) => ({
+        slug: r.slug,
+        name: r.name,
+        // CompendiumCategory doesn't include 'rules' yet; cast to the
+        // nearest enum member so the badge renderer has a color. The
+        // detail popup keys off slug for the rule glossary lookup.
+        category: 'conditions' as const,
+        snippet: r.snippet,
+      })));
+      setLoading(false);
+      return;
+    }
 
     if (cat === 'homebrew') {
       // Fetch custom content from our session
