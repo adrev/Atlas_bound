@@ -121,6 +121,41 @@ function injectKeyframes() {
   document.head.appendChild(style);
 }
 
+// ── Roll-type accent colors (P3) ─────────────────────────────────
+// Keyed off the label detectRollType returns + structured template
+// metadata when present. Falls back to gold for anything unrecognised.
+function typeAccentColor(
+  rollType: { label: string; sub?: string },
+  rollData: DiceRollData,
+): string {
+  if (rollData.template?.kind === 'attack') return '#3498db';       // blue
+  if (rollData.template?.kind === 'damage') return '#e67e22';       // orange
+  if (rollData.template?.kind === 'save') return '#9b59b6';         // purple
+  if (rollData.template?.kind === 'check') return theme.gold.primary;
+  if (rollData.template?.kind === 'spell') return '#3498db';        // blue (same as attack rolls)
+  const label = rollType.label;
+  const sub = rollType.sub ?? '';
+  if (label === 'ATTACK') return '#3498db';
+  if (label === 'DAMAGE') return '#e67e22';
+  if (label === 'SAVING' || sub === 'SAVE') return '#9b59b6';
+  if (/heal/i.test(label + sub)) return '#27ae60';
+  if (label === 'INITIATIVE') return '#3498db';
+  return theme.gold.primary;
+}
+
+function typeAccentBg(
+  rollType: { label: string; sub?: string },
+  rollData: DiceRollData,
+): string {
+  const c = typeAccentColor(rollType, rollData);
+  // 0x10 alpha over the card backdrop — subtle tint, not a fill.
+  if (c === '#3498db') return 'rgba(52,152,219,0.08)';
+  if (c === '#e67e22') return 'rgba(230,126,34,0.08)';
+  if (c === '#9b59b6') return 'rgba(155,89,182,0.08)';
+  if (c === '#27ae60') return 'rgba(39,174,96,0.08)';
+  return 'rgba(212,168,67,0.06)';
+}
+
 // ── Template chip (R3 roll-template chrome) ──────────────────────
 function TemplateChip({
   template, total, isNat20, isNat1,
@@ -229,14 +264,19 @@ export function DiceRollCard({ rollData, content, displayName, isHidden }: DiceR
     formulaParts = `${rollData.total}`;
   }
 
-  // Colors based on crit state
+  // P3 — roll-type accent colors so the eye can sort attack / damage /
+  // save / check / healing at a glance without reading the label. Crit
+  // (nat 20), fumble (nat 1), and hidden rolls override with their
+  // existing signal colors.
+  const typeAccent = typeAccentColor(rollType, rollData);
+
   const accentColor = isHidden
     ? theme.purple
     : isNat20
     ? '#f1c40f'
     : isNat1
     ? theme.danger
-    : theme.gold.primary;
+    : typeAccent;
 
   const totalColor = isHidden
     ? theme.purple
@@ -250,7 +290,7 @@ export function DiceRollCard({ rollData, content, displayName, isHidden }: DiceR
     ? 'rgba(241,196,15,0.08)'
     : isNat1
     ? 'rgba(192,57,43,0.08)'
-    : 'rgba(212,168,67,0.06)';
+    : typeAccentBg(rollType, rollData);
 
   const cardAnimation = isNat20
     ? 'diceCardGoldPulse 2s ease-in-out 1, diceCardSlideIn 0.25s ease'

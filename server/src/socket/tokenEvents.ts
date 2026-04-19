@@ -1,5 +1,6 @@
 import type { Server, Socket } from 'socket.io';
 import type { Token } from '@dnd-vtt/shared';
+import { snapToGrid } from '@dnd-vtt/shared';
 import { v4 as uuidv4 } from 'uuid';
 import pool from '../db/connection.js';
 import {
@@ -202,9 +203,20 @@ export function registerTokenEvents(io: Server, socket: Socket): void {
     }
     const finalFaction: Token['faction'] = parsed.data.faction ?? defaultFaction;
 
+    // Snap the drop point to the nearest grid cell CENTER. Call sites
+    // (context menu, creature library, encounter builder, loot drop)
+    // hand us raw pointer coords; without snapping, tokens land on the
+    // cross-hair corner where four cells meet — characters appear to
+    // straddle tiles. snapToGrid is a no-op when gridSize is 0 or the
+    // map has no grid config cached yet.
+    const snapGridSize = ctx.room.mapGridSizes.get(targetMapId) ?? 0;
+    const snapped = snapGridSize > 0
+      ? snapToGrid(parsed.data.x, parsed.data.y, snapGridSize)
+      : { x: parsed.data.x, y: parsed.data.y };
+
     const token: Token = {
       id: tokenId, mapId: targetMapId, characterId: parsed.data.characterId ?? null,
-      name: finalName, x: parsed.data.x, y: parsed.data.y, size: parsed.data.size,
+      name: finalName, x: snapped.x, y: snapped.y, size: parsed.data.size,
       imageUrl: parsed.data.imageUrl ?? null, color: parsed.data.color,
       layer: parsed.data.layer, visible: parsed.data.visible,
       hasLight: parsed.data.hasLight, lightRadius: parsed.data.lightRadius,

@@ -99,6 +99,10 @@ export function InitiativeTracker() {
                     src={combatant.portraitUrl}
                     alt={combatant.name}
                     style={styles.portraitImg}
+                    // P8 — if the portrait URL 404s (PC never uploaded
+                    // an avatar, NPC missing from GCS), collapse the
+                    // <img> and let the initial fallback show through.
+                    onError={(e) => { e.currentTarget.style.display = 'none'; }}
                   />
                 ) : (
                   <span style={styles.portraitInitial}>

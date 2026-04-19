@@ -1688,7 +1688,7 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
             <img src={portraitUrl} alt="" style={{
               width: 48, height: 48, borderRadius: '50%', objectFit: 'cover',
               border: `2px solid ${isOwner ? C.green : C.red}`,
-            }} />
+            }} onError={(e) => { e.currentTarget.style.display = 'none'; }} />
           ) : (
             <div style={{
               width: 48, height: 48, borderRadius: '50%', background: token.color || '#555',

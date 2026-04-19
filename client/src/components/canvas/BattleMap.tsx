@@ -603,6 +603,75 @@ export function BattleMap() {
           </Layer>
         )}
       </Stage>
+      {/* P7 — DM-only empty-state CTA. Instead of a blank canvas when a
+          fresh session has no map, surface a direct path into MapBrowser
+          so the DM can pick a pre-built map without hunting through
+          sidebar tabs. Players still get the Konva "No map loaded" text
+          (they can't load maps themselves). */}
+      {!currentMap && isDM && (
+        <div
+          style={{
+            position: 'absolute',
+            inset: 0,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            pointerEvents: 'none',
+          }}
+        >
+          <div
+            style={{
+              pointerEvents: 'auto',
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              gap: 16,
+              padding: '32px 40px',
+              background: 'rgba(12,10,8,0.85)',
+              border: `1px solid ${theme.gold.border}`,
+              borderRadius: theme.radius.md,
+              boxShadow: '0 8px 40px rgba(0,0,0,0.5)',
+              maxWidth: 440,
+              textAlign: 'center',
+            }}
+          >
+            <div style={{ fontSize: 32, opacity: 0.65 }}>🗺️</div>
+            <div style={{
+              fontFamily: theme.font.display,
+              fontSize: 20,
+              fontWeight: 700,
+              letterSpacing: '0.08em',
+              textTransform: 'uppercase',
+              color: theme.gold.primary,
+            }}>
+              No Map Loaded
+            </div>
+            <div style={{ fontSize: 13, color: theme.text.secondary, lineHeight: 1.5 }}>
+              Pick a pre-built map or upload your own to begin the session.
+            </div>
+            <button
+              onClick={() => window.dispatchEvent(new Event('open-map-browser'))}
+              style={{
+                marginTop: 4,
+                padding: '10px 24px',
+                fontFamily: theme.font.display,
+                fontSize: 12,
+                fontWeight: 700,
+                letterSpacing: '0.1em',
+                textTransform: 'uppercase',
+                color: theme.bg.base,
+                background: theme.gold.primary,
+                border: `1px solid ${theme.gold.primary}`,
+                borderRadius: theme.radius.sm,
+                cursor: 'pointer',
+                boxShadow: `0 0 12px ${theme.gold.border}`,
+              }}
+            >
+              Browse Maps
+            </button>
+          </div>
+        </div>
+      )}
       <InitiativeOverlay />
       <PingOverlay stageX={stageProps.x} stageY={stageProps.y} stageScale={stageProps.scaleX} />
       <TokenTooltip />
