@@ -13,6 +13,7 @@ import { tryHandleChatCommand } from '../services/ChatCommands.js';
 // central ChatCommands registry at module load.
 import '../services/chatCommands/noteHandlers.js';
 import '../services/chatCommands/hpHandlers.js';
+import '../services/chatCommands/conditionHandlers.js';
 
 export function registerChatEvents(io: Server, socket: Socket): void {
 
