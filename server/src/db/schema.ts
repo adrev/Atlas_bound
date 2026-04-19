@@ -142,6 +142,24 @@ export async function initDatabase(): Promise<void> {
       FROM maps
     ) AS sub WHERE maps.id = sub.id AND maps.display_order = 0;
 
+    -- Map folders — optional session-scoped organization so DMs can
+    -- group maps by chapter / act / dungeon. One-level (flat) for the
+    -- MVP; nested folders would bloat the drag-drop logic for minimal
+    -- extra value. Maps with folder_id IS NULL live at the root. When
+    -- a folder is deleted, maps inside it fall back to the root (SET
+    -- NULL on delete) so scenes are never silently orphaned.
+    CREATE TABLE IF NOT EXISTS map_folders (
+      id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+      name TEXT NOT NULL,
+      display_order INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL DEFAULT (NOW()::text)
+    );
+    CREATE INDEX IF NOT EXISTS idx_map_folders_session ON map_folders(session_id);
+    ALTER TABLE maps ADD COLUMN IF NOT EXISTS folder_id TEXT
+      REFERENCES map_folders(id) ON DELETE SET NULL;
+    CREATE INDEX IF NOT EXISTS idx_maps_folder ON maps(folder_id);
+
     CREATE TABLE IF NOT EXISTS tokens (
       id TEXT PRIMARY KEY,
       map_id TEXT NOT NULL REFERENCES maps(id) ON DELETE CASCADE,

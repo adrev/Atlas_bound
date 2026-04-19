@@ -166,7 +166,7 @@ router.get('/sessions/:sessionId/maps', async (req: Request, res: Response) => {
   let maps: Array<Record<string, unknown>>;
   if (isDM) {
     const { rows } = await pool.query(`
-      SELECT id, session_id, name, image_url, thumbnail_url, width, height, grid_size, grid_type, created_at
+      SELECT id, session_id, name, image_url, thumbnail_url, width, height, grid_size, grid_type, folder_id, display_order, created_at
       FROM maps WHERE session_id = $1
       ORDER BY created_at DESC
     `, [sessionId]);
@@ -291,6 +291,115 @@ router.delete('/maps/:id', async (req: Request, res: Response) => {
   await pool.query('DELETE FROM tokens WHERE map_id = $1', [id]);
   await pool.query('DELETE FROM maps WHERE id = $1', [id]);
 
+  res.json({ success: true });
+});
+
+// ── Map folders ──────────────────────────────────────────────
+// Flat folders scoped to a session so a DM can group maps by act /
+// chapter / dungeon. Maps join a folder via their nullable
+// `folder_id` column; moving a map to root means setting folder_id
+// back to NULL. Delete cascades to SET NULL on maps so scenes are
+// never orphaned — they just reappear at the session root.
+
+// GET /api/sessions/:sessionId/map-folders
+router.get('/sessions/:sessionId/map-folders', async (req: Request, res: Response) => {
+  const userId = getAuthUserId(req);
+  const sessionId = String(req.params.sessionId);
+  await assertSessionDM(sessionId, userId);
+  const { rows } = await pool.query(
+    `SELECT id, session_id, name, display_order, created_at
+       FROM map_folders
+      WHERE session_id = $1
+   ORDER BY display_order ASC, created_at ASC`,
+    [sessionId],
+  );
+  res.json(rows);
+});
+
+// POST /api/sessions/:sessionId/map-folders
+router.post('/sessions/:sessionId/map-folders', async (req: Request, res: Response) => {
+  const userId = getAuthUserId(req);
+  const sessionId = String(req.params.sessionId);
+  await assertSessionDM(sessionId, userId);
+  const name = String(req.body?.name ?? '').trim();
+  if (!name || name.length > 100) {
+    res.status(400).json({ error: 'Folder name must be 1–100 chars' });
+    return;
+  }
+  const id = uuidv4();
+  const { rows: orderRows } = await pool.query(
+    'SELECT COALESCE(MAX(display_order), 0) AS max FROM map_folders WHERE session_id = $1',
+    [sessionId],
+  );
+  const nextOrder = Number(orderRows[0]?.max ?? 0) + 1;
+  await pool.query(
+    `INSERT INTO map_folders (id, session_id, name, display_order)
+     VALUES ($1, $2, $3, $4)`,
+    [id, sessionId, name, nextOrder],
+  );
+  res.status(201).json({ id, sessionId, name, displayOrder: nextOrder });
+});
+
+// PATCH /api/map-folders/:id — rename / reorder
+router.patch('/map-folders/:id', async (req: Request, res: Response) => {
+  const userId = getAuthUserId(req);
+  const id = String(req.params.id);
+  const { rows } = await pool.query('SELECT session_id FROM map_folders WHERE id = $1', [id]);
+  if (rows.length === 0) { res.status(404).json({ error: 'Folder not found' }); return; }
+  await assertSessionDM(rows[0].session_id, userId);
+
+  const name = typeof req.body?.name === 'string' ? req.body.name.trim() : undefined;
+  const displayOrder = typeof req.body?.displayOrder === 'number' ? req.body.displayOrder : undefined;
+  if (name !== undefined && (!name || name.length > 100)) {
+    res.status(400).json({ error: 'Folder name must be 1–100 chars' });
+    return;
+  }
+  const sets: string[] = [];
+  const params: unknown[] = [];
+  let idx = 1;
+  if (name !== undefined) { sets.push(`name = $${idx++}`); params.push(name); }
+  if (displayOrder !== undefined) { sets.push(`display_order = $${idx++}`); params.push(displayOrder); }
+  if (sets.length === 0) { res.json({ success: true, noop: true }); return; }
+  params.push(id);
+  await pool.query(`UPDATE map_folders SET ${sets.join(', ')} WHERE id = $${idx}`, params);
+  res.json({ success: true });
+});
+
+// DELETE /api/map-folders/:id — removes the folder; maps fall back to
+// the session root via the schema's ON DELETE SET NULL.
+router.delete('/map-folders/:id', async (req: Request, res: Response) => {
+  const userId = getAuthUserId(req);
+  const id = String(req.params.id);
+  const { rows } = await pool.query('SELECT session_id FROM map_folders WHERE id = $1', [id]);
+  if (rows.length === 0) { res.status(404).json({ error: 'Folder not found' }); return; }
+  await assertSessionDM(rows[0].session_id, userId);
+  await pool.query('DELETE FROM map_folders WHERE id = $1', [id]);
+  res.json({ success: true });
+});
+
+// PATCH /api/maps/:id/folder — move a single map into (or out of) a
+// folder. folder_id=null moves back to the session root.
+router.patch('/maps/:id/folder', async (req: Request, res: Response) => {
+  const userId = getAuthUserId(req);
+  const id = String(req.params.id);
+  const { rows } = await pool.query('SELECT session_id FROM maps WHERE id = $1', [id]);
+  if (rows.length === 0) { res.status(404).json({ error: 'Map not found' }); return; }
+  const sessionId = rows[0].session_id;
+  await assertSessionDM(sessionId, userId);
+
+  const target = req.body?.folderId;
+  const folderId = target === null || target === undefined || target === '' ? null : String(target);
+  if (folderId) {
+    const { rows: check } = await pool.query(
+      'SELECT 1 FROM map_folders WHERE id = $1 AND session_id = $2',
+      [folderId, sessionId],
+    );
+    if (check.length === 0) {
+      res.status(400).json({ error: 'Folder not in this session' });
+      return;
+    }
+  }
+  await pool.query('UPDATE maps SET folder_id = $1 WHERE id = $2', [folderId, id]);
   res.json({ success: true });
 });
 
