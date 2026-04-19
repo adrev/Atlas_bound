@@ -488,6 +488,10 @@ export function registerListeners(socket: Socket): () => void {
     useDrawStore.getState().removeDrawing(payload.drawingId);
   });
 
+  socket.on('drawing:updated', (payload) => {
+    useDrawStore.getState().applyDrawingUpdate(payload.drawingId, payload.geometry);
+  });
+
   socket.on('drawing:cleared', (payload: { scope: 'all' | 'mine'; userId?: string; mapId?: string }) => {
     if (payload.mapId && payload.mapId !== currentMapId()) return;
     const currentUserId = useSessionStore.getState().userId ?? undefined;
@@ -565,6 +569,7 @@ export function registerListeners(socket: Socket): () => void {
     socket.off('chat:history');
     socket.off('drawing:created');
     socket.off('drawing:deleted');
+    socket.off('drawing:updated');
     socket.off('drawing:cleared');
     socket.off('drawing:streamed');
     socket.off('drawing:stream-end');

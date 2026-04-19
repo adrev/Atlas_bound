@@ -212,6 +212,10 @@ export interface ClientDrawingEvents {
   'drawing:clear-all': { scope: 'all' | 'mine' };
   'drawing:stream': DrawingStreamPayload;
   'drawing:stream-end': { tempId: string };
+  // Move / reshape an existing drawing. Only geometry is mutable via
+  // this path — kind / color / visibility stay constant. DM-only when
+  // the drawing was authored by someone else.
+  'drawing:update': { drawingId: string; geometry: Drawing['geometry'] };
 }
 
 export interface ServerDrawingEvents {
@@ -220,6 +224,7 @@ export interface ServerDrawingEvents {
   'drawing:cleared': { scope: 'all' | 'mine'; userId?: string };
   'drawing:streamed': DrawingStreamPayload;
   'drawing:stream-end': { tempId: string };
+  'drawing:updated': { drawingId: string; geometry: Drawing['geometry'] };
 }
 
 // --- Character Events ---

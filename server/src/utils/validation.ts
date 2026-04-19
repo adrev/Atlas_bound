@@ -244,6 +244,14 @@ export const drawingStreamEndSchema = z.object({
   tempId: z.string().min(1),
 });
 
+// Move / reshape an existing drawing. Only geometry moves via this
+// path — kind, color, visibility are fixed from creation time so a
+// player can't e.g. rescope a dm-only drawing to shared.
+export const drawingUpdateSchema = z.object({
+  drawingId: z.string().min(1),
+  geometry: drawingGeometrySchema,
+});
+
 // --- Combat event schemas ---
 export const combatStartSchema = z.object({
   tokenIds: z.array(z.string().min(1)).min(1),

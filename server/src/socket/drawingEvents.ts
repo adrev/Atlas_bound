@@ -7,7 +7,7 @@ import {
 } from '../utils/roomState.js';
 import {
   drawingCreateSchema, drawingDeleteSchema, drawingClearAllSchema,
-  drawingStreamSchema, drawingStreamEndSchema,
+  drawingStreamSchema, drawingStreamEndSchema, drawingUpdateSchema,
 } from '../utils/validation.js';
 import { safeHandler } from '../utils/socketHelpers.js';
 import { safeParseJSON } from '../utils/safeJson.js';
@@ -156,6 +156,44 @@ export function registerDrawingEvents(io: Server, socket: Socket): void {
 
     const recipients = socketsForVisibility(ctx.room, drawing.visibility, drawing.creatorUserId, drawing.mapId);
     for (const sid of recipients) { io.to(sid).emit('drawing:deleted', { drawingId: drawing.id, mapId: drawing.mapId }); }
+  }));
+
+  // drawing:update — move / reshape an existing drawing. Only the
+  // geometry changes via this path; kind, color, visibility, creator
+  // stay fixed. Same auth model as delete: creator OR DM.
+  socket.on('drawing:update', safeHandler(socket, async (data) => {
+    const parsed = drawingUpdateSchema.safeParse(data);
+    if (!parsed.success) return;
+
+    const ctx = getPlayerBySocketId(socket.id);
+    if (!ctx) return;
+
+    const drawing = ctx.room.drawings.get(parsed.data.drawingId);
+    if (!drawing) return;
+
+    const isDM = ctx.player.role === 'dm';
+    if (!isDM && drawing.creatorUserId !== ctx.player.userId) return;
+
+    // Mutate the in-memory copy first so subsequent queries from the
+    // same room (re-renders, hit tests) see the new position.
+    drawing.geometry = parsed.data.geometry;
+
+    if (drawing.kind !== 'ephemeral') {
+      try {
+        await pool.query(
+          'UPDATE drawings SET geometry = $1 WHERE id = $2',
+          [JSON.stringify(parsed.data.geometry), drawing.id],
+        );
+      } catch (err) { console.warn('[drawing:update] DB update failed:', err); }
+    }
+
+    const recipients = socketsForVisibility(ctx.room, drawing.visibility, drawing.creatorUserId, drawing.mapId);
+    for (const sid of recipients) {
+      io.to(sid).emit('drawing:updated', {
+        drawingId: drawing.id,
+        geometry: drawing.geometry,
+      });
+    }
   }));
 
   socket.on('drawing:clear-all', safeHandler(socket, async (data) => {

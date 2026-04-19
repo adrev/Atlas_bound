@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react';
 import { Line, Rect, Circle, Arrow, Text, Group } from 'react-konva';
+import type Konva from 'konva';
 import type { Drawing, DrawingGeometry, DrawingKind } from '@dnd-vtt/shared';
 import { useDrawStore, type PreviewDrawing } from '../../../stores/useDrawStore';
 import { useSessionStore } from '../../../stores/useSessionStore';
+import { emitDrawingUpdate } from '../../../socket/emitters';
 
 /**
  * DrawingLayer — renders all DM / player annotations on top of
@@ -58,6 +60,12 @@ export function DrawingLayer() {
           opacity={computeOpacity(d)}
           selected={d.id === selectedId}
           selectable={selectable}
+          // DM can reposition anything; players can only drag drawings
+          // they authored themselves. Drag is only armed while the
+          // select tool is active (Draw Mode → Select) so a normal
+          // token-drag session doesn't accidentally pick up a nearby
+          // drawing.
+          draggable={selectable && (isDM || d.creatorUserId === userId)}
         />
       ))}
 
@@ -112,15 +120,34 @@ function DrawingShape({
   opacity,
   selected,
   selectable,
+  draggable,
 }: {
   drawing: Drawing;
   opacity: number;
   selected?: boolean;
   selectable?: boolean;
+  draggable?: boolean;
 }) {
   const onClick = selectable
     ? () => useDrawStore.getState().selectDrawing(drawing.id)
     : undefined;
+
+  // When the user drops the drawing we compute the delta the Group has
+  // moved (Konva translates the whole Group during drag) and apply
+  // that offset to every geometry field, then reset the Group back to
+  // origin so the shape's own coordinates are authoritative again.
+  // The store is updated optimistically; the server broadcast just
+  // echoes what we already did.
+  const handleDragEnd = (e: Konva.KonvaEventObject<DragEvent>) => {
+    const node = e.target;
+    const dx = node.x();
+    const dy = node.y();
+    if (dx === 0 && dy === 0) return;
+    const nextGeometry = translateGeometry(drawing.geometry, dx, dy);
+    node.position({ x: 0, y: 0 });
+    useDrawStore.getState().applyDrawingUpdate(drawing.id, nextGeometry);
+    emitDrawingUpdate(drawing.id, nextGeometry);
+  };
 
   return (
     <Group
@@ -128,11 +155,31 @@ function DrawingShape({
       onClick={onClick}
       onTap={onClick}
       listening={selectable}
+      draggable={draggable}
+      onDragEnd={draggable ? handleDragEnd : undefined}
     >
       {selected && <SelectionRing drawing={drawing} />}
       {renderShape(drawing)}
     </Group>
   );
+}
+
+// Translate every coordinate field of a DrawingGeometry by (dx, dy).
+// Works uniformly across freehand points, rect / circle / text origins.
+function translateGeometry(g: Drawing['geometry'], dx: number, dy: number): Drawing['geometry'] {
+  const next: Drawing['geometry'] = {};
+  if (g.points) {
+    const out: number[] = new Array(g.points.length);
+    for (let i = 0; i < g.points.length; i += 2) {
+      out[i] = g.points[i] + dx;
+      out[i + 1] = g.points[i + 1] + dy;
+    }
+    next.points = out;
+  }
+  if (g.rect) next.rect = { ...g.rect, x: g.rect.x + dx, y: g.rect.y + dy };
+  if (g.circle) next.circle = { ...g.circle, x: g.circle.x + dx, y: g.circle.y + dy };
+  if (g.text) next.text = { ...g.text, x: g.text.x + dx, y: g.text.y + dy };
+  return next;
 }
 
 function renderShape(drawing: Drawing) {

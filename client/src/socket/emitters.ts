@@ -491,6 +491,16 @@ export function emitDrawingDelete(drawingId: string) {
 }
 
 /**
+ * Move / reshape an existing drawing. Sends only the new geometry;
+ * kind / color / visibility stay what they were at creation. Server
+ * gates on DM OR creator. Client should also optimistically mutate
+ * the local store so the drag feels instant.
+ */
+export function emitDrawingUpdate(drawingId: string, geometry: Drawing['geometry']) {
+  getSocket().emit('drawing:update', { drawingId, geometry });
+}
+
+/**
  * Clear many drawings in one shot.
  *   `all`  → DM wipe of every drawing on the current map (DM-only)
  *   `mine` → wipe of every drawing this user created on the map

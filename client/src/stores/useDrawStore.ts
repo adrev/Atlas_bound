@@ -128,6 +128,12 @@ interface DrawStore {
   // Applied from server broadcasts
   addDrawing(d: Drawing): void;
   removeDrawing(id: string): void;
+  /**
+   * Apply a geometry-only update to an existing drawing. Used by both
+   * the local drag handler (optimistic) and the `drawing:updated`
+   * socket listener. No-op if the id is unknown.
+   */
+  applyDrawingUpdate(id: string, geometry: Drawing['geometry']): void;
   loadDrawings(list: Drawing[]): void;
   clearAllLocal(scope: 'all' | 'mine', userId?: string, currentUserId?: string): void;
 
@@ -514,6 +520,16 @@ export const useDrawStore = create<DrawStore>((set, get) => ({
       return {
         drawings: rest,
         selectedDrawingId: s.selectedDrawingId === id ? null : s.selectedDrawingId,
+      };
+    });
+  },
+
+  applyDrawingUpdate: (id, geometry) => {
+    set((s) => {
+      const existing = s.drawings[id];
+      if (!existing) return s;
+      return {
+        drawings: { ...s.drawings, [id]: { ...existing, geometry } },
       };
     });
   },
