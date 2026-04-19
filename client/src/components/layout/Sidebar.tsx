@@ -1,4 +1,4 @@
-import { useState, useEffect, lazy, Suspense } from 'react';
+import { useState, useEffect, useMemo, lazy, Suspense } from 'react';
 import {
   Swords,
   BookOpen,
@@ -213,16 +213,28 @@ function isCombatantToken(t: { name: string; size: number; characterId: string |
  * character takes focus at the top.
  */
 function HeroTab() {
-  const myCharacter = useCharacterStore((s) => s.myCharacter);
+  const rawMyCharacter = useCharacterStore((s) => s.myCharacter);
   const tokens = useMapStore((s) => s.tokens);
   const currentMap = useMapStore((s) => s.currentMap);
   const userId = useSessionStore((s) => s.userId);
+  const isDM = useSessionStore((s) => s.isDM);
   const [showImport, setShowImport] = useState(false);
   const [showList, setShowList] = useState(false);
   const [characters, setCharacters] = useState<any[]>([]);
   const [listLoading, setListLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
   const [syncMessage, setSyncMessage] = useState<{ text: string; isError: boolean } | null>(null);
+
+  // Defensive filter: a player should only ever see a character they
+  // actually own in the HeroTab. DMs can swap between any character
+  // (that's the "DM navigating heroes" flow) — their own ownership
+  // check is looser. If myCharacter was somehow set to someone else
+  // (via a stale socket sync, pre-login localStorage carry-over, etc.)
+  // this hides it so the tab renders the "No hero" empty state.
+  const myCharacter =
+    rawMyCharacter && (isDM || rawMyCharacter.userId === userId)
+      ? rawMyCharacter
+      : null;
 
   // Load all characters owned by this user.
   const reloadList = () => {
@@ -316,19 +328,101 @@ function HeroTab() {
     }
   };
 
+  // DM-only party browser when no character is active. Players see the
+  // generic "import a character" prompt; DMs see the list of PC tokens
+  // on the map so they can click into any party member's sheet without
+  // needing to own a character themselves. Once the DM picks one, the
+  // rest of the HeroTab treats it as the active hero (combat actions,
+  // spell slots, etc.) and they can swap back via this same list.
+  const partyRoster = useMemo(() => {
+    if (!isDM) return [];
+    const seen = new Set<string>();
+    const out: { characterId: string; name: string; portraitUrl?: string | null }[] = [];
+    for (const t of Object.values(tokens)) {
+      if (!t.characterId || seen.has(t.characterId)) continue;
+      if (!t.ownerUserId || t.ownerUserId === 'npc') continue; // PC tokens only
+      const ch = useCharacterStore.getState().allCharacters[t.characterId];
+      out.push({
+        characterId: t.characterId,
+        name: ch?.name ?? t.name,
+        portraitUrl: ch?.portraitUrl ?? t.imageUrl ?? null,
+      });
+      seen.add(t.characterId);
+    }
+    return out;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tokens, isDM]);
+
+  const loadPartyCharacter = async (characterId: string) => {
+    try {
+      const resp = await fetch(`/api/characters/${characterId}`);
+      if (!resp.ok) return;
+      const ch = await resp.json();
+      useCharacterStore.getState().setCharacter(ch);
+    } catch { /* ignore */ }
+  };
+
   // ── Active character body (top, takes focus) ───────────
   let body: React.ReactNode;
   if (!myCharacter) {
     body = (
       <div style={{
         display: 'flex', flexDirection: 'column', alignItems: 'center',
-        justifyContent: 'center', gap: 12, padding: 32, textAlign: 'center',
+        justifyContent: 'center', gap: 12, padding: 24, textAlign: 'center',
         flex: 1,
       }}>
         <BookOpen size={40} color={theme.text.muted} />
         <p style={{ color: theme.text.secondary, margin: 0, fontSize: 12 }}>
-          No active hero. Use the buttons below to load or import a character.
+          {isDM
+            ? 'No active hero. Pick a party member below or import your own character.'
+            : 'No active hero. Use the buttons below to load or import a character.'}
         </p>
+        {isDM && partyRoster.length > 0 && (
+          <div style={{
+            width: '100%', marginTop: 6, display: 'flex', flexDirection: 'column', gap: 4,
+          }}>
+            <div style={{
+              fontSize: 9, fontWeight: 700, letterSpacing: '0.1em',
+              textTransform: 'uppercase', color: theme.gold.dim, marginBottom: 2,
+            }}>
+              Party ({partyRoster.length})
+            </div>
+            {partyRoster.map((p) => (
+              <button
+                key={p.characterId}
+                onClick={() => loadPartyCharacter(p.characterId)}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 8,
+                  padding: '6px 10px', fontSize: 12,
+                  background: theme.bg.elevated,
+                  border: `1px solid ${theme.border.default}`,
+                  borderRadius: theme.radius.sm,
+                  color: theme.text.primary, cursor: 'pointer',
+                  fontFamily: theme.font.body, textAlign: 'left',
+                }}
+              >
+                {p.portraitUrl ? (
+                  <img
+                    src={p.portraitUrl}
+                    alt=""
+                    style={{ width: 24, height: 24, borderRadius: '50%', objectFit: 'cover' }}
+                    onError={(e) => { e.currentTarget.style.display = 'none'; }}
+                  />
+                ) : (
+                  <div style={{
+                    width: 24, height: 24, borderRadius: '50%',
+                    background: theme.gold.bg, color: theme.gold.primary,
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    fontSize: 11, fontWeight: 700,
+                  }}>
+                    {p.name?.[0] ?? '?'}
+                  </div>
+                )}
+                <span style={{ flex: 1 }}>{p.name}</span>
+              </button>
+            ))}
+          </div>
+        )}
       </div>
     );
   } else if (!myTokenId) {
