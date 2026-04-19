@@ -166,6 +166,22 @@ export async function initDatabase(): Promise<void> {
     );
 
     ALTER TABLE tokens ADD COLUMN IF NOT EXISTS faction TEXT NOT NULL DEFAULT 'neutral';
+
+    -- Backfill: tokens created before the DM staging flow started
+    -- explicitly setting faction all landed as 'neutral' even when
+    -- they had a human owner. PC tokens (those with owner_user_id set
+    -- and the corresponding character record owned by a non-npc user)
+    -- should be 'friendly' so the party-green label renders correctly.
+    -- Idempotent — re-running is safe.
+    UPDATE tokens t
+       SET faction = 'friendly'
+      FROM characters c
+     WHERE t.character_id = c.id
+       AND t.faction = 'neutral'
+       AND t.owner_user_id IS NOT NULL
+       AND c.user_id IS NOT NULL
+       AND c.user_id <> 'npc';
+
     -- aura is a JSON blob ({radiusFeet,color,opacity,shape}) or NULL.
     -- Stored as TEXT because we don't query its fields server-side; the
     -- client renders it. Added post-MVP so older sessions get NULL and

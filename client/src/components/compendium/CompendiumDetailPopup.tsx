@@ -462,9 +462,12 @@ function SpellDetail({ spell }: { spell: CompendiumSpell }) {
   const [adding, setAdding] = useState<string | null>(null);
 
   // Build the list of characters this user can grant spells to.
-  // - DM can target any character with a token on the map
-  // - Players can only target their own character(s)
+  // DM-only — letting players grant themselves compendium spells was
+  // trivial to abuse (e.g. a rogue picks up fireball). The DM runs
+  // leveling and spell selection for the party; if a player needs a
+  // spell the DM uses this button on their behalf.
   const grantTargets = useMemo(() => {
+    if (!isDM) return [];
     const seen = new Set<string>();
     const out: { id: string; name: string }[] = [];
     for (const t of Object.values(tokens)) {
@@ -472,11 +475,12 @@ function SpellDetail({ spell }: { spell: CompendiumSpell }) {
       if (!cid || seen.has(cid)) continue;
       const ch = allCharacters[cid];
       if (!ch) continue;
-      if (!isDM && ch.userId !== userId) continue;
       out.push({ id: cid, name: ch.name || (t as any).name || 'Unnamed' });
       seen.add(cid);
     }
     return out;
+    // userId retained only to keep the dep stable when we re-enable
+    // self-grant under a future session-setting.
   }, [tokens, allCharacters, isDM, userId]);
 
   async function grantToCharacter(characterId: string) {

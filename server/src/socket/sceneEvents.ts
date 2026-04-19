@@ -166,15 +166,20 @@ export function registerSceneEvents(io: Server, socket: Socket): void {
 
       const tokenId = uuidv4();
       const gridSize = (mapRow.grid_size as number) ?? 70;
+      // PCs coming through the DM staging flow always have a human
+      // owner — explicitly tag faction='friendly' so the name label
+      // renders with the party-green border instead of the default
+      // 'neutral' (black) that made PCs read as enemies to party
+      // members used to the green/red convention.
       await pool.query(`INSERT INTO tokens (
         id, map_id, character_id, name, x, y, size, color, layer, visible,
         image_url, has_light, light_radius, light_dim_radius, light_color,
-        conditions, owner_user_id
-      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)`, [
+        conditions, owner_user_id, faction
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)`, [
         tokenId, mapId, staged.characterId, staged.name,
         staged.x, staged.y, 1, '#666', 'token', 1,
         staged.imageUrl, 0, gridSize * 4, gridSize * 8, '#ffcc66',
-        '[]', staged.ownerUserId,
+        '[]', staged.ownerUserId, 'friendly',
       ]);
       console.log(`[SCENE] staged hero ${staged.name} at (${staged.x}, ${staged.y})`);
     }
