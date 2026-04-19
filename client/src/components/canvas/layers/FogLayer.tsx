@@ -2,6 +2,7 @@ import { useMemo, useRef } from 'react';
 import { Group, Rect, Shape } from 'react-konva';
 import { useMapStore } from '../../../stores/useMapStore';
 import { useSessionStore } from '../../../stores/useSessionStore';
+import { useCharacterStore } from '../../../stores/useCharacterStore';
 
 interface FogLayerProps {
   mapWidth: number;
@@ -104,15 +105,36 @@ export function FogLayer({ mapWidth, mapHeight }: FogLayerProps) {
         fill={`rgba(0, 0, 0, ${fogAlpha})`}
       />
 
-      {/* Cut out vision circles around each hero token */}
-      {heroTokens.map((token) => (
-        <VisionCutout
-          key={token.id}
-          x={token.x + (gridSize * token.size) / 2}
-          y={token.y + (gridSize * token.size) / 2}
-          radius={visionRadius}
-        />
-      ))}
+      {/* Cut out vision circles around each hero token. Per-token
+          radius = max(map-wide fogVisionCells, the linked character's
+          darkvision). So a half-orc barbarian with 60 ft darkvision
+          reveals a bigger bubble than a human fighter with nothing,
+          and the DM's cap still applies for the base. Character
+          darkvision is in feet, converted to pixels via gridSize / 5. */}
+      {heroTokens.map((token) => {
+        const char = token.characterId
+          ? useCharacterStore.getState().allCharacters[token.characterId]
+          : null;
+        const darkvisionFt = (() => {
+          const s = char?.senses;
+          if (!s) return 0;
+          if (typeof s === 'string') {
+            try { return Number((JSON.parse(s) as { darkvision?: number })?.darkvision ?? 0) || 0; }
+            catch { return 0; }
+          }
+          return Number(s.darkvision ?? 0) || 0;
+        })();
+        const darkvisionPx = darkvisionFt > 0 ? (darkvisionFt / 5) * gridSize : 0;
+        const radius = Math.max(visionRadius, darkvisionPx);
+        return (
+          <VisionCutout
+            key={token.id}
+            x={token.x + (gridSize * token.size) / 2}
+            y={token.y + (gridSize * token.size) / 2}
+            radius={radius}
+          />
+        );
+      })}
 
       {/* Cut out light-source circles around lit tokens. A Light spell
           cast on an object or ally reveals the fog in that area for the
