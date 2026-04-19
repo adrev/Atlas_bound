@@ -332,7 +332,7 @@ export function deleteRoom(sessionId: string): void {
 // control. All return booleans — callers should silently return
 // on false (matching the existing pattern in mapEvents/sceneEvents).
 
-type PlayerContext = { room: RoomState; player: RoomPlayer };
+export type PlayerContext = { room: RoomState; player: RoomPlayer };
 
 /** True if the player is the DM. */
 export function playerIsDM(ctx: PlayerContext): boolean {

@@ -8,6 +8,10 @@ import * as DiceService from '../services/DiceService.js';
 import { chatMessageSchema, chatWhisperSchema, chatRollSchema } from '../utils/validation.js';
 import { safeHandler } from '../utils/socketHelpers.js';
 import { validateReportedRoll } from '../utils/rollValidator.js';
+import { tryHandleChatCommand } from '../services/ChatCommands.js';
+// Side-effect import — registers the !gmnote / !pcnote / !note
+// handlers into the central ChatCommands registry at module load.
+import '../services/chatCommands/noteHandlers.js';
 
 export function registerChatEvents(io: Server, socket: Socket): void {
 
@@ -21,6 +25,17 @@ export function registerChatEvents(io: Server, socket: Socket): void {
     if (!checkRateLimit(socket.id, 'chat:message', 5, 5000)) return;
 
     const { type, content, characterName } = parsed.data;
+
+    // Slash-command dispatcher (R1 / R8 / future). Commands starting
+    // with `!` are routed here before we persist or broadcast the raw
+    // input. A handled command is responsible for emitting whatever
+    // chat messages it wants; the user's input line is suppressed so
+    // `!gmnote XYZ` doesn't leave the literal command string in chat.
+    if (content.startsWith('!')) {
+      const handled = await tryHandleChatCommand(io, ctx, content);
+      if (handled) return;
+    }
+
     const messageId = uuidv4();
     const now = new Date().toISOString();
 
