@@ -170,7 +170,10 @@ const COMBAT_ACTIONS: QuickAction[] = [
   {
     id: 'shove',
     label: 'Shove',
-    emoji: '🫸',
+    // 🫸 (Emoji 14.0, 2021) renders as a missing glyph on older Windows
+    // builds and some Android devices. 💥 (Emoji 0.6, 2009) has ~100%
+    // font coverage and reads as "push/impact" the same way.
+    emoji: '💥',
     description: 'Shove a creature up to one size larger prone or 5 ft away. Athletics vs target\'s Athletics/Acrobatics.',
     cost: 'action',
     onClick: (ctx) => {
@@ -188,7 +191,7 @@ const COMBAT_ACTIONS: QuickAction[] = [
       emitRoll(`1d20${total >= 0 ? '+' : ''}${total}`, `${actor} Shove (Athletics, contested)`);
       if (ctx.selectedTokenId && ctx.inCombat) emitUseAction('action');
       announce('attempts to **Shove**', ctx, '— contested Athletics vs Athletics/Acrobatics');
-      showToast({ emoji: '🫸', message: 'Shove — Athletics roll sent to chat', variant: 'info', duration: 3500 });
+      showToast({ emoji: '💥', message: 'Shove — Athletics roll sent to chat', variant: 'info', duration: 3500 });
     },
   },
   {
@@ -208,7 +211,10 @@ const UTILITY_ACTIONS: QuickAction[] = [
   {
     id: 'hide',
     label: 'Hide',
-    emoji: '🫥',
+    // 🫥 (dotted-line face, Emoji 14.0) is missing on older OSes —
+    // fall back to 👤 (silhouette, 2010) which universally reads as
+    // "hidden identity" and is present in every emoji font.
+    emoji: '👤',
     description: 'Take the Hide action. Roll a Dexterity (Stealth) check to become hidden.',
     cost: 'action',
     onClick: (ctx) => {
@@ -225,7 +231,7 @@ const UTILITY_ACTIONS: QuickAction[] = [
       emitRoll(`1d20${total >= 0 ? '+' : ''}${total}`, `${actor} Hide (Stealth)`);
       if (ctx.selectedTokenId && ctx.inCombat) emitUseAction('action');
       announce('attempts to **Hide**', ctx, '— roll Stealth');
-      showToast({ emoji: '🫥', message: 'Hide — Stealth roll sent to chat', variant: 'info', duration: 3500 });
+      showToast({ emoji: '👤', message: 'Hide — Stealth roll sent to chat', variant: 'info', duration: 3500 });
     },
   },
   {

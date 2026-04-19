@@ -29,8 +29,12 @@ export const EMOJI = {
     crit: '💥',
     hit: '🎯',
     miss: '💨',
-    dodge: '🛡',
-    shield: '🛡',
+    // Force the emoji variation selector (U+FE0F) so the shield
+    // glyph renders as a color emoji everywhere instead of falling
+    // back to the monochrome text form on older Windows builds where
+    // the plain 🛡 codepoint was blank for some players.
+    dodge: '🛡️',
+    shield: '🛡️',
     cast: '✨',
     counterspell: '🚫',
     dead: '💀',
