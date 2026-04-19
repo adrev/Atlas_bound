@@ -22,6 +22,7 @@ import { MusicEngine } from '../audio/MusicEngine';
 import { AudioPopover } from '../audio/AudioPopover';
 import { TRACKS } from '../audio/tracks';
 import { useAudioStore } from '../../stores/useAudioStore';
+import { FirstJoinTour } from '../onboarding/FirstJoinTour';
 // Sidebar is large (DM panels, scene manager, creature library). Lazy-loaded
 // so the initial session bundle stays under the 500 kB warning threshold.
 const Sidebar = lazy(() => import('./Sidebar').then((m) => ({ default: m.Sidebar })));
@@ -698,6 +699,7 @@ export function AppShell() {
           anchorRef={audioButtonRef}
         />
       )}
+      <FirstJoinTour />
       <Suspense fallback={null}><Dice3DOverlay /></Suspense>
     </div>
   );

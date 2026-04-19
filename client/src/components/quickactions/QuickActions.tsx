@@ -1,4 +1,6 @@
-import type { CSSProperties } from 'react';
+import { useEffect, useRef, useState, type CSSProperties } from 'react';
+import { createPortal } from 'react-dom';
+import { Swords } from 'lucide-react';
 import { emitSystemMessage, emitUseAction, emitRoll, emitDash } from '../../socket/emitters';
 import { useSessionStore } from '../../stores/useSessionStore';
 import { useCharacterStore } from '../../stores/useCharacterStore';
@@ -321,18 +323,132 @@ export function QuickActions() {
   const allowPlayerRest = useSessionStore((s) => s.settings.allowPlayerRest ?? true);
   const showRestActions = !!character && !isDM && allowPlayerRest;
 
+  // P4 — collapse the 8-tile combat/utility row into a single trigger
+  // with a flyout grid. 9 inline tiles ate the bottom bar horizontally
+  // on laptop-sized screens; the flyout keeps the actions one click
+  // away without stealing the whole bar. Rest tiles stay inline since
+  // they're only 2 and players reach for them often at end-of-scene.
+  const [flyoutOpen, setFlyoutOpen] = useState(false);
+  const flyoutRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const [flyoutPos, setFlyoutPos] = useState<{ left: number; bottom: number } | null>(null);
+
+  // Close the flyout on outside click so it doesn't linger above the
+  // canvas while the user tries to drag a token. Trigger + portaled
+  // flyout both count as "inside" — without the trigger check, the
+  // click on the trigger bubbles to window BEFORE React sets
+  // flyoutOpen=true, which caused the flyout to close itself on first
+  // click.
+  useEffect(() => {
+    if (!flyoutOpen) return;
+    const onDown = (e: MouseEvent) => {
+      const t = e.target as Node;
+      const insideTrigger = triggerRef.current?.contains(t);
+      const insideFlyout = flyoutRef.current?.contains(t);
+      if (!insideTrigger && !insideFlyout) setFlyoutOpen(false);
+    };
+    window.addEventListener('mousedown', onDown);
+    return () => window.removeEventListener('mousedown', onDown);
+  }, [flyoutOpen]);
+
+  // Compute the portal position from the trigger's bounding rect each
+  // time the flyout opens. The portal escapes BottomBar's overflow
+  // clipping (overflowY: 'hidden' on the row) which otherwise cut the
+  // flyout off.
+  useEffect(() => {
+    if (!flyoutOpen || !triggerRef.current) return;
+    const rect = triggerRef.current.getBoundingClientRect();
+    setFlyoutPos({
+      left: rect.left,
+      bottom: window.innerHeight - rect.top + 8,
+    });
+  }, [flyoutOpen]);
+
+  const runAndClose = (action: QuickAction) => {
+    action.onClick(ctx);
+    setFlyoutOpen(false);
+  };
+
   return (
-    <div style={styles.container}>
-      {renderTiles(COMBAT_ACTIONS)}
-      <div aria-hidden style={styles.separator} />
-      {renderTiles(UTILITY_ACTIONS)}
+    <div style={{ ...styles.container, position: 'relative' }}>
+      <button
+        ref={triggerRef}
+        onClick={() => setFlyoutOpen((v) => !v)}
+        title="Quick Actions — Dodge / Dash / Disengage / Grapple / Shove / Disarm / Hide / Help / Ready"
+        aria-expanded={flyoutOpen}
+        style={{
+          ...styles.tile,
+          minWidth: 88,
+          gap: 6,
+          background: flyoutOpen
+            ? `linear-gradient(180deg, rgba(232, 196, 85, 0.18), ${theme.gold.bg})`
+            : `linear-gradient(180deg, ${theme.parchmentEdge} 0%, ${theme.bg.deep} 100%)`,
+          color: flyoutOpen ? theme.gold.bright : theme.text.secondary,
+        }}
+      >
+        <Swords size={14} />
+        <span style={styles.tileLabel}>Actions</span>
+        <span style={{ ...styles.tileLabel, opacity: 0.6 }}>{flyoutOpen ? '▾' : '▸'}</span>
+      </button>
       {showRestActions && (
         <>
           <div aria-hidden style={styles.separator} />
           {renderTiles(REST_ACTIONS)}
         </>
       )}
+      {flyoutOpen && flyoutPos && createPortal(
+        <div
+          ref={flyoutRef}
+          style={{
+            ...styles.flyout,
+            left: flyoutPos.left,
+            bottom: flyoutPos.bottom,
+          }}
+          role="menu"
+        >
+          <div style={styles.flyoutHeader}>Combat</div>
+          <div style={styles.flyoutGrid}>
+            {COMBAT_ACTIONS.map((a) => (
+              <FlyoutItem key={a.id} action={a} onRun={runAndClose} />
+            ))}
+          </div>
+          <div style={styles.flyoutHeader}>Utility</div>
+          <div style={styles.flyoutGrid}>
+            {UTILITY_ACTIONS.map((a) => (
+              <FlyoutItem key={a.id} action={a} onRun={runAndClose} />
+            ))}
+          </div>
+        </div>,
+        document.body,
+      )}
     </div>
+  );
+}
+
+// ── Flyout item — larger, more descriptive than the inline tiles ──
+function FlyoutItem({
+  action, onRun,
+}: {
+  action: QuickAction;
+  onRun: (a: QuickAction) => void;
+}) {
+  return (
+    <button
+      onClick={() => onRun(action)}
+      title={action.description}
+      style={styles.flyoutTile}
+      onMouseEnter={(e) => {
+        e.currentTarget.style.background = `linear-gradient(180deg, rgba(232, 196, 85, 0.15), ${theme.gold.bg})`;
+        e.currentTarget.style.color = theme.gold.bright;
+      }}
+      onMouseLeave={(e) => {
+        e.currentTarget.style.background = 'transparent';
+        e.currentTarget.style.color = theme.text.secondary;
+      }}
+    >
+      <span style={{ fontSize: 18 }}>{action.emoji}</span>
+      <span style={styles.flyoutLabel}>{action.label}</span>
+    </button>
   );
 }
 
@@ -410,5 +526,51 @@ const styles: Record<string, CSSProperties> = {
     textTransform: 'uppercase' as const,
     letterSpacing: '0.3px',
     whiteSpace: 'nowrap' as const,
+  },
+  flyout: {
+    position: 'fixed',
+    padding: '10px 12px',
+    minWidth: 280,
+    background: `linear-gradient(180deg, ${theme.bg.deepest} 0%, ${theme.bg.deep} 100%)`,
+    border: `1px solid ${theme.gold.border}`,
+    borderRadius: theme.radius.md,
+    boxShadow: '0 10px 30px rgba(0,0,0,0.55)',
+    zIndex: 2000,
+  },
+  flyoutHeader: {
+    fontFamily: theme.font.display,
+    fontSize: 9,
+    fontWeight: 700,
+    letterSpacing: '0.18em',
+    textTransform: 'uppercase' as const,
+    color: theme.gold.primary,
+    margin: '2px 4px 6px',
+  },
+  flyoutGrid: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(3, 1fr)',
+    gap: 6,
+    marginBottom: 8,
+  },
+  flyoutTile: {
+    display: 'flex',
+    flexDirection: 'column' as const,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 4,
+    padding: '10px 4px',
+    borderRadius: theme.radius.sm,
+    border: `1px solid ${theme.border.default}`,
+    background: 'transparent',
+    color: theme.text.secondary,
+    cursor: 'pointer',
+    transition: `all ${theme.motion.fast}`,
+    fontFamily: theme.font.body,
+  },
+  flyoutLabel: {
+    fontSize: 10,
+    fontWeight: 700,
+    textTransform: 'uppercase' as const,
+    letterSpacing: '0.3px',
   },
 };

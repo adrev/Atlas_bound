@@ -27,6 +27,7 @@ import { MapContextMenu } from './MapContextMenu';
 import { TokenTooltip } from './TokenTooltip';
 import { DrawToolbar } from './DrawToolbar';
 import { InitiativeOverlay } from './InitiativeOverlay';
+import { AoePalette } from './AoePalette';
 import { emitDrawingStream, emitDrawingStreamEnd } from '../../socket/emitters';
 import { askPrompt } from '../ui';
 import { theme } from '../../styles/theme';
@@ -673,6 +674,7 @@ export function BattleMap() {
         </div>
       )}
       <InitiativeOverlay />
+      <AoePalette />
       <PingOverlay stageX={stageProps.x} stageY={stageProps.y} stageScale={stageProps.scaleX} />
       <TokenTooltip />
       <TokenActionPanel />

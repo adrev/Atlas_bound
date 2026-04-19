@@ -471,7 +471,13 @@ export function SessionLobby() {
                 className="btn-primary"
                 onClick={handleCreate}
                 disabled={loading || !createName.trim()}
-                style={{ width: '100%' }}
+                style={{
+                  width: '100%',
+                  boxShadow: !createName.trim()
+                    ? undefined
+                    : `0 0 18px rgba(232, 196, 85, 0.45), inset 0 0 0 1px ${theme.gold.border}`,
+                  transition: `box-shadow ${theme.motion.normal}`,
+                }}
               >
                 <Swords size={16} />
                 Create Game
@@ -619,7 +625,16 @@ const styles: Record<string, React.CSSProperties> = {
     justifyContent: 'flex-start',
     overflowY: 'auto',
     overflowX: 'hidden',
-    background: `radial-gradient(ellipse at center, ${theme.bg.base} 0%, ${theme.bg.deepest} 70%)`,
+    // P5 — layered radial + ember glow to give the lobby the same
+    // "tome being opened by candlelight" feel as the in-session shell.
+    // Two radial layers: a warm gold glow high-left (candle) and a
+    // deeper red pulse low-right (hearth) over the original dark
+    // radial. Purely decorative; content is padded-in on top.
+    background: `
+      radial-gradient(ellipse at 20% 15%, rgba(232, 196, 85, 0.12) 0%, transparent 55%),
+      radial-gradient(ellipse at 80% 85%, rgba(192, 57, 43, 0.10) 0%, transparent 60%),
+      radial-gradient(ellipse at center, ${theme.bg.base} 0%, ${theme.bg.deepest} 70%)
+    `,
     padding: '40px 24px',
   },
   content: {

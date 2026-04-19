@@ -1,7 +1,12 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { ChevronDown, ChevronUp } from 'lucide-react';
 import { useCombatStore } from '../../stores/useCombatStore';
 import { useMapStore } from '../../stores/useMapStore';
 import { theme } from '../../styles/theme';
+
+// P1 — collapse state persists across reloads so a DM who hides the
+// overlay mid-combat doesn't have it pop back on every refresh.
+const STORAGE_KEY = 'kbrt.initiativeOverlay.collapsed';
 
 /**
  * Floating mini initiative tracker rendered as an HTML overlay on top
@@ -17,6 +22,14 @@ export function InitiativeOverlay() {
   const roundNumber = useCombatStore((s) => s.roundNumber);
   const active = useCombatStore((s) => s.active);
   const [tooltip, setTooltip] = useState<{ name: string; x: number; y: number } | null>(null);
+  const [collapsed, setCollapsed] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return false;
+    return window.localStorage.getItem(STORAGE_KEY) === '1';
+  });
+
+  useEffect(() => {
+    try { window.localStorage.setItem(STORAGE_KEY, collapsed ? '1' : '0'); } catch { /* ignore */ }
+  }, [collapsed]);
 
   if (!active || combatants.length === 0) return null;
 
@@ -26,8 +39,7 @@ export function InitiativeOverlay() {
         {/* Round badge */}
         <div style={styles.roundBadge}>R{roundNumber}</div>
 
-        {/* Combatant circles */}
-        {combatants.map((c, index) => {
+        {!collapsed && combatants.map((c, index) => {
           const isCurrent = index === currentTurnIndex;
           const hpRatio = c.maxHp > 0 ? Math.max(0, c.hp / c.maxHp) : 1;
           const hpColor =
@@ -86,6 +98,21 @@ export function InitiativeOverlay() {
             </div>
           );
         })}
+
+        {collapsed && (
+          <div style={styles.collapsedSummary}>
+            {combatants.length} in order
+          </div>
+        )}
+
+        <button
+          onClick={() => setCollapsed((v) => !v)}
+          style={styles.toggleBtn}
+          title={collapsed ? 'Expand initiative' : 'Collapse initiative'}
+          aria-pressed={collapsed}
+        >
+          {collapsed ? <ChevronDown size={12} /> : <ChevronUp size={12} />}
+        </button>
       </div>
 
       {/* Tooltip */}
@@ -191,5 +218,26 @@ const styles: Record<string, React.CSSProperties> = {
     whiteSpace: 'nowrap' as const,
     pointerEvents: 'none' as const,
     zIndex: 999,
+  },
+  toggleBtn: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: 20,
+    height: 20,
+    padding: 0,
+    marginLeft: 4,
+    background: 'transparent',
+    border: `1px solid ${theme.border.default}`,
+    borderRadius: theme.radius.sm,
+    color: theme.text.muted,
+    cursor: 'pointer',
+    transition: `all ${theme.motion.fast}`,
+  },
+  collapsedSummary: {
+    fontSize: 10,
+    color: theme.text.muted,
+    fontStyle: 'italic' as const,
+    padding: '0 4px',
   },
 };
