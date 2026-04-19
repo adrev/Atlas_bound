@@ -331,10 +331,22 @@ export async function seedEquipment(): Promise<void> {
   try {
     await client.query('BEGIN');
     for (const item of ALL_EQUIPMENT) {
+      // Use ON CONFLICT DO UPDATE so a boot after we add a new
+      // structured field (e.g. ac, acType, stealthDisadvantage,
+      // strRequired) rewrites the raw_json on existing rows. The
+      // previous DO NOTHING left old rows with stale partial data,
+      // which is why armor details (AC, stealth) stopped rendering
+      // in the wiki after we extended the raw_json schema.
       await client.query(
         `INSERT INTO compendium_items (slug, name, type, rarity, requires_attunement, description, source, raw_json)
          VALUES ($1, $2, $3, $4, 0, $5, 'PHB Equipment', $6)
-         ON CONFLICT (slug) DO NOTHING`,
+         ON CONFLICT (slug) DO UPDATE SET
+           name = EXCLUDED.name,
+           type = EXCLUDED.type,
+           rarity = EXCLUDED.rarity,
+           description = EXCLUDED.description,
+           source = EXCLUDED.source,
+           raw_json = EXCLUDED.raw_json`,
         [item.slug, item.name, item.type, item.rarity, item.description, JSON.stringify(item.rawJson)],
       );
     }
@@ -349,8 +361,9 @@ export async function seedEquipment(): Promise<void> {
 }
 
 export async function isEquipmentSeeded(): Promise<boolean> {
-  const { rows } = await pool.query(
-    "SELECT COUNT(*) as cnt FROM compendium_items WHERE source = 'PHB Equipment'",
-  );
-  return Number(rows[0].cnt) >= ALL_EQUIPMENT.length;
+  // Always return false now that seedEquipment is an UPSERT — the
+  // cost of re-running it on every boot is tiny (a few hundred UPSERTs
+  // in a single transaction) and it keeps raw_json aligned with the
+  // source code as we iterate on structured item fields.
+  return false;
 }
