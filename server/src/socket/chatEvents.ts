@@ -30,6 +30,8 @@ import '../services/chatCommands/protectionHandler.js';
 import '../services/chatCommands/utilityHandlers.js';
 import '../services/chatCommands/saveHandler.js';
 import '../services/chatCommands/stealthHandler.js';
+import '../services/chatCommands/spellHandlers.js';
+import '../services/chatCommands/ritualHandler.js';
 
 export function registerChatEvents(io: Server, socket: Socket): void {
 

@@ -163,6 +163,68 @@ async function handleSave(c: ChatCommandContext): Promise<boolean> {
       if (info.name) tName = info.name;
     }
 
+    // Aura of Protection (Paladin L6): when the target or any ally
+    // within 10 ft of a Paladin with the aura makes a save, add the
+    // Paladin's CHA modifier. Only one aura applies (take the
+    // highest), and the Paladin must be conscious (not unconscious
+    // or downed). Works on the Paladin themself too.
+    let auraBonus = 0;
+    let auraSource = '';
+    try {
+      const gridSize = (c.ctx.room.currentMapId && c.ctx.room.mapGridSizes.get(c.ctx.room.currentMapId)) || 70;
+      const tSize = (target as Token).size || 1;
+      const tcx = target.x + (gridSize * tSize) / 2;
+      const tcy = target.y + (gridSize * tSize) / 2;
+      const tIsPC = !!target.ownerUserId;
+      for (const pal of c.ctx.room.tokens.values()) {
+        if (!pal.characterId) continue;
+        const palIsPC = !!pal.ownerUserId;
+        if (palIsPC !== tIsPC) continue; // ally side only
+        const palConds = (pal.conditions as string[]) || [];
+        if (palConds.includes('unconscious') || palConds.includes('incapacitated') || palConds.includes('dead')) continue;
+        // Edge-to-edge distance — aura reaches 10 ft (2 cells).
+        const pSize = (pal as Token).size || 1;
+        const pcx = pal.x + (gridSize * pSize) / 2;
+        const pcy = pal.y + (gridSize * pSize) / 2;
+        const dx = Math.max(0, Math.abs(pcx - tcx) - (pSize * gridSize) / 2 - (tSize * gridSize) / 2);
+        const dy = Math.max(0, Math.abs(pcy - tcy) - (pSize * gridSize) / 2 - (tSize * gridSize) / 2);
+        const edge = Math.max(dx, dy);
+        if (edge > gridSize * 2 + 1) continue;
+        const { rows: prows } = await pool.query(
+          'SELECT class, level, features, ability_scores, name FROM characters WHERE id = $1',
+          [pal.characterId],
+        );
+        const prow = prows[0] as Record<string, unknown> | undefined;
+        if (!prow) continue;
+        const classLower = String(prow.class || '').toLowerCase();
+        const palLevel = Number(prow.level) || 1;
+        if (!classLower.includes('paladin') || palLevel < 6) continue;
+        // Verify the feature is present (auto-populated by level 6
+        // but defensively check).
+        try {
+          const rawF = prow.features;
+          const feats = typeof rawF === 'string' ? JSON.parse(rawF) : (rawF ?? []);
+          const has = Array.isArray(feats) && feats.some(
+            (f: { name?: string }) => typeof f?.name === 'string' && /aura\s+of\s+protection/i.test(f.name),
+          );
+          // Per PHB, Aura of Protection is automatic at L6 — accept
+          // if level matches even when the feature isn't explicitly
+          // listed in the imported features.
+          if (!has && palLevel < 6) continue;
+        } catch { if (palLevel < 6) continue; }
+        const scores = typeof prow.ability_scores === 'string' ? JSON.parse(prow.ability_scores) : (prow.ability_scores ?? {});
+        const cha = Math.floor((((scores as Record<string, number>).cha ?? 10) - 10) / 2);
+        const chaBonus = Math.max(1, cha); // min +1 per RAW
+        if (chaBonus > auraBonus) {
+          auraBonus = chaBonus;
+          auraSource = (prow.name as string) || pal.name;
+        }
+      }
+    } catch { /* aura detection best-effort */ }
+    if (auraBonus > 0) {
+      saveMod += auraBonus;
+    }
+
     let d20: number;
     let rollsStr: string;
     if (mods.autoFail) {
@@ -186,9 +248,10 @@ async function handleSave(c: ChatCommandContext): Promise<boolean> {
     const total = mods.autoFail ? 0 : d20 + saveMod;
     const saved = !mods.autoFail && total >= dc;
     const dmg = saved ? halfDmg : fullDmg;
+    const auraLabel = auraBonus > 0 ? ` (incl. +${auraBonus} Aura of Protection from ${auraSource})` : '';
 
     lines.push(
-      `   • ${tName}: d20=${rollsStr}${mods.autoFail ? '' : `${modSign}${saveMod}=${total}`} vs ${dc} → ${saved ? 'SAVED (half)' : 'FAILED (full)'} — ${dmg}${typeLabel} dmg`,
+      `   • ${tName}: d20=${rollsStr}${mods.autoFail ? '' : `${modSign}${saveMod}=${total}`} vs ${dc}${auraLabel} → ${saved ? 'SAVED (half)' : 'FAILED (full)'} — ${dmg}${typeLabel} dmg`,
     );
 
     // Apply damage. Use CombatService.applyDamage when in combat

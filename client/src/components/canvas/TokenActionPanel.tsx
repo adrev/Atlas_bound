@@ -1311,6 +1311,51 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
         const wIsRangedWeapon = ((atk.properties as string[] | undefined) || [])
           .some((p) => /(range|ammunition|thrown)/i.test(p));
         const wIsActuallyRangedShot = wIsRangedWeapon && !((atk.properties as string[] | undefined) || []).includes('Melee');
+
+        // Ammunition tracking: if the weapon consumes ammo (has the
+        // Ammunition property, and isn't a thrown-weapon inventory
+        // drop), decrement the matching ammo stack from inventory.
+        // Ammo type picked from weapon name: bow → arrow, crossbow →
+        // bolt, sling → sling bullet, blowgun → needle.
+        const wUsesAmmo = ((atk.properties as string[] | undefined) || [])
+          .some((p) => /ammunition/i.test(p));
+        if (wUsesAmmo && !wIsThrown && effectiveCharId) {
+          const ammoChar = useCharacterStore.getState().allCharacters[effectiveCharId];
+          const atkNameLower = String(atk.name || '').toLowerCase();
+          let ammoNeedle = '';
+          if (/bow|shortbow|longbow/.test(atkNameLower)) ammoNeedle = 'arrow';
+          else if (/crossbow/.test(atkNameLower)) ammoNeedle = 'bolt';
+          else if (/sling/.test(atkNameLower)) ammoNeedle = 'sling';
+          else if (/blowgun/.test(atkNameLower)) ammoNeedle = 'needle';
+          if (ammoNeedle) {
+            try {
+              const rawInv = (ammoChar as any)?.inventory;
+              const inv: Array<Record<string, unknown>> = typeof rawInv === 'string' ? JSON.parse(rawInv) : (rawInv || []);
+              const idx = inv.findIndex((i) => {
+                const n = String(i?.name || '').toLowerCase();
+                const q = Number(i?.quantity ?? i?.count ?? 0);
+                return n.includes(ammoNeedle) && q > 0;
+              });
+              if (idx >= 0) {
+                const curQty = Number(inv[idx].quantity ?? inv[idx].count ?? 1);
+                if (curQty <= 1) {
+                  // Last one — remove the stack entirely.
+                  inv.splice(idx, 1);
+                } else {
+                  inv[idx] = { ...inv[idx], quantity: curQty - 1 };
+                }
+                emitCharacterUpdate(effectiveCharId, { inventory: inv });
+                useCharacterStore.getState().applyRemoteUpdate(effectiveCharId, { inventory: inv });
+              } else {
+                // No ammo — still let the shot fire (DM can rule on
+                // failed or free-ammo assumption), but log a warning.
+                emitSystemMessage(
+                  `⚠ ${currentTargeting.casterName} fires ${atk.name} but has no ${ammoNeedle}s left in inventory. DM adjudicates.`,
+                );
+              }
+            } catch { /* inventory unparseable — skip ammo */ }
+          }
+        }
         if (wIsActuallyRangedShot && wCasterToken) {
           const gridSize = useMapStore.getState().currentMap?.gridSize ?? 70;
           const allTokens = useMapStore.getState().tokens;
