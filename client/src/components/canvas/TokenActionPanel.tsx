@@ -1254,6 +1254,56 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
           } catch { /* size unparseable — skip the penalty */ }
         }
 
+        // Fighting styles — scan character.features for the tagged
+        // style and apply the relevant modifier. Only fires for
+        // homebrew / manually-created characters (DDB imports already
+        // bake attack_bonus into each weapon action, so adding here
+        // would double-count). Uses the same !dndbeyond_id heuristic
+        // as the Tough feat code path.
+        let wArcheryBonus = 0;
+        let wDuelingBonus = 0;
+        let wTwfOffHandMod = 0;
+        let wGwfReroll = false;
+        {
+          const atkProps = (atk.properties as string[] | undefined) || [];
+          const isMeleeAtk = atkProps.includes('Melee');
+          const isFinesseAtk = atkProps.some(p => /finesse/i.test(p));
+          const isRangedAtk = atkProps.some(p => /(range|ammunition|thrown)/i.test(p)) && !isMeleeAtk;
+          const isTwoHanded = atkProps.some(p => /two-handed|versatile/i.test(p));
+          const isOffHand = /off-?hand/i.test(String(atk.name || ''));
+
+          if (wCasterToken?.characterId) {
+            const fsChar = useCharacterStore.getState().allCharacters[wCasterToken.characterId];
+            const ddbId = (fsChar as any)?.dndbeyondId ?? (fsChar as any)?.dndbeyond_id ?? null;
+            if (!ddbId) {
+              try {
+                const fsRaw = (fsChar as any)?.features;
+                const feats = typeof fsRaw === 'string' ? JSON.parse(fsRaw) : (fsRaw ?? []);
+                const fsList: Array<{ name?: string }> = Array.isArray(feats) ? feats : [];
+                const hasStyle = (rx: RegExp) => fsList.some(
+                  (f) => typeof f?.name === 'string' && rx.test(f.name),
+                );
+
+                if (hasStyle(/archery/i) && isRangedAtk) wArcheryBonus = 2;
+                if (hasStyle(/dueling/i) && isMeleeAtk && !isTwoHanded && !isOffHand) wDuelingBonus = 2;
+                if (hasStyle(/two-?weapon fighting/i) && isOffHand) {
+                  const scores = (fsChar as any)?.abilityScores
+                    ? (typeof (fsChar as any).abilityScores === 'string'
+                      ? JSON.parse((fsChar as any).abilityScores)
+                      : (fsChar as any).abilityScores)
+                    : {};
+                  const strMod = abilityModifier((scores as any).str || 10);
+                  const dexMod = abilityModifier((scores as any).dex || 10);
+                  wTwfOffHandMod = isFinesseAtk ? Math.max(strMod, dexMod) : strMod;
+                }
+                if (hasStyle(/great weapon fighting/i) && isMeleeAtk && isTwoHanded) {
+                  wGwfReroll = true;
+                }
+              } catch { /* features unparseable */ }
+            }
+          }
+        }
+
         // Ranged attack disadvantage when an enemy is within 5 ft.
         // Per RAW: "You have disadvantage on a ranged attack roll if
         // you are within 5 feet of a hostile creature who can see you
@@ -1347,7 +1397,11 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
           }
         }
 
-        const wAttackBonusFinal = wPowerAttackActive ? atkBonus - 5 : atkBonus;
+        let wAttackBonusFinal = wPowerAttackActive ? atkBonus - 5 : atkBonus;
+        if (wArcheryBonus > 0) {
+          wAttackBonusFinal += wArcheryBonus;
+          wCombined.notes.push(`Archery +${wArcheryBonus} to hit`);
+        }
         const wAtkResult = rollAttackWithModifiers(wAttackBonusFinal, wCombined);
 
         // Effective AC accounts for Hasted / Shield / Mage Armor / etc.
@@ -1399,7 +1453,32 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
 
         if (wIsHit && effectiveCharId) {
           const wFinalDice = wIsCrit ? dmgDice.replace(/(\d+)d/g, (_: string, n: string) => `${parseInt(n) * 2}d`) : dmgDice;
-          let wRolledDmg = rollDamageDice(wFinalDice);
+          // Great Weapon Fighting: re-roll 1s and 2s on the weapon's
+          // damage dice, once each (the new result is kept even if it's
+          // worse). Implemented via a custom roller that reshapes the
+          // notation when the style is active. Fall through to the
+          // standard roller otherwise.
+          let wRolledDmg: number;
+          if (wGwfReroll) {
+            const match = String(wFinalDice).match(/(\d+)d(\d+)(?:\s*([+-])\s*(\d+))?/);
+            if (match) {
+              const numDice = parseInt(match[1]) || 0;
+              const dieSize = parseInt(match[2]) || 0;
+              const sign = match[3] === '-' ? -1 : 1;
+              const modN = match[4] ? parseInt(match[4]) * sign : 0;
+              let subTotal = 0;
+              for (let i = 0; i < numDice; i++) {
+                let r = Math.floor(Math.random() * dieSize) + 1;
+                if (r <= 2) r = Math.floor(Math.random() * dieSize) + 1;
+                subTotal += r;
+              }
+              wRolledDmg = Math.max(0, subTotal + modN);
+            } else {
+              wRolledDmg = rollDamageDice(wFinalDice);
+            }
+          } else {
+            wRolledDmg = rollDamageDice(wFinalDice);
+          }
 
           // Cache the caster record once — both Rage and Sneak Attack
           // need it. Also pre-compute finesse / ranged flags since
@@ -1498,6 +1577,17 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
           if (wPowerAttackActive) {
             wRolledDmg += 10;
           }
+          // Dueling fighting style: +2 damage on one-handed melee
+          // attacks (no second weapon). We pre-computed whether the
+          // style qualifies earlier and stored it on wDuelingBonus.
+          if (wDuelingBonus > 0) {
+            wRolledDmg += wDuelingBonus;
+          }
+          // Two-Weapon Fighting style: add the ability modifier to
+          // off-hand damage (normally off-hand attacks drop the mod).
+          if (wTwfOffHandMod !== 0) {
+            wRolledDmg += wTwfOffHandMod;
+          }
 
           const wFreshChar = useCharacterStore.getState().allCharacters[effectiveCharId];
           const wFreshHp = wFreshChar ? (typeof wFreshChar.hitPoints === 'number' ? wFreshChar.hitPoints : parseInt(String(wFreshChar.hitPoints)) || 0) : targetHp;
@@ -1509,8 +1599,11 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
           const wRageTag = wRageBonus > 0 ? ` [Rage +${wRageBonus}]` : '';
           const wSneakTag = wSneakDice > 0 ? ` [Sneak +${wSneakDice}d6 → ${wSneakRolled}]` : '';
           const wPowerTag = wPowerAttackActive ? ' [Power Attack +10]' : '';
+          const wDuelingTag = wDuelingBonus > 0 ? ` [Dueling +${wDuelingBonus}]` : '';
+          const wTwfTag = wTwfOffHandMod !== 0 ? ` [TWF ${wTwfOffHandMod >= 0 ? '+' : ''}${wTwfOffHandMod}]` : '';
+          const wGwfTag = wGwfReroll ? ' [GWF reroll 1s/2s]' : '';
           const wDmgChange = wResisted.amount !== wRolledDmg ? `${wRolledDmg}→${wResisted.amount}` : `${wResisted.amount}`;
-          wParts.push(`${wDmgChange} ${weaponDmgWord}dmg${wRageTag}${wSneakTag}${wPowerTag}${wResistTag} (HP ${wFreshHp}→${wNewHp})${wIsCrit ? ' [CRIT]' : ''}`);
+          wParts.push(`${wDmgChange} ${weaponDmgWord}dmg${wRageTag}${wSneakTag}${wPowerTag}${wDuelingTag}${wTwfTag}${wGwfTag}${wResistTag} (HP ${wFreshHp}→${wNewHp})${wIsCrit ? ' [CRIT]' : ''}`);
           if (wNewHp === 0) wParts.push('💀 DOWN');
           setTimeout(() => {
             updateTargetHp(effectiveCharId, wNewHp);
