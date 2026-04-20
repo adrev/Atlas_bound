@@ -182,6 +182,66 @@ export async function startCombatAsync(sessionId: string, tokenIds: string[]): P
           room.tokenMeleeReach.set(tokenId, reachCells);
         } catch { room.tokenMeleeReach.set(tokenId, 1); }
 
+        // Legendary actions auto-parse: if the character was imported
+        // from a compendium monster with a non-empty legendary_actions
+        // array OR a legendary_desc like "X can take 3 legendary
+        // actions", seed the RoomState budget so the DM doesn't have
+        // to !legendary set manually.
+        try {
+          if (!room.legendaryActions.has(tokenId)) {
+            const exRaw = charRow.extras;
+            const extras = typeof exRaw === 'string' ? JSON.parse(exRaw) : (exRaw ?? {});
+            const la = (extras as Record<string, unknown>)?.legendary_actions
+              ?? (extras as Record<string, unknown>)?.legendaryActions;
+            const ld = (extras as Record<string, unknown>)?.legendary_desc
+              ?? (extras as Record<string, unknown>)?.legendaryDesc;
+            let max: number | null = null;
+            if (typeof ld === 'string') {
+              const m = ld.match(/(\d+)\s+legendary\s+actions?/i);
+              if (m) max = parseInt(m[1], 10);
+            }
+            if (max === null && Array.isArray(la) && la.length > 0) {
+              // Default to 3 if we have actions but no declared count.
+              max = 3;
+            }
+            if (max !== null && max > 0 && max <= 9) {
+              room.legendaryActions.set(tokenId, { max, remaining: max });
+            }
+          }
+        } catch { /* ignore */ }
+
+        // Recharge auto-parse: scan action names for "(Recharge N-6)"
+        // and populate the recharge pool so the DM doesn't have to
+        // !recharge set each breath weapon manually.
+        try {
+          if (!room.rechargePools.has(tokenId)) {
+            const exRaw = charRow.extras;
+            const extras = typeof exRaw === 'string' ? JSON.parse(exRaw) : (exRaw ?? {});
+            const actions = (extras as Record<string, unknown>)?.actions;
+            if (Array.isArray(actions)) {
+              for (const a of actions as Array<Record<string, unknown>>) {
+                const name = String(a?.name ?? '');
+                const m = name.match(/\(\s*Recharge\s+(\d)(?:\s*-\s*6)?\s*\)/i);
+                if (m) {
+                  const min = parseInt(m[1], 10);
+                  if (Number.isFinite(min) && min >= 2 && min <= 6) {
+                    let pool = room.rechargePools.get(tokenId);
+                    if (!pool) {
+                      pool = new Map();
+                      room.rechargePools.set(tokenId, pool);
+                    }
+                    // Strip the "(Recharge N-6)" suffix for the key — the
+                    // DM / chat commands refer to the ability by its
+                    // bare name.
+                    const bareName = name.replace(/\s*\(\s*Recharge[^)]+\)/i, '').trim().toLowerCase();
+                    pool.set(bareName, { min, available: true });
+                  }
+                }
+              }
+            }
+          }
+        } catch { /* ignore */ }
+
         hp = (charRow.hit_points as number) ?? 10;
         maxHp = (charRow.max_hit_points as number) ?? 10;
         tempHp = (charRow.temp_hit_points as number) ?? 0;

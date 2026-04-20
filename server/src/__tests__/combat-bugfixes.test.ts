@@ -749,3 +749,104 @@ describe('CombatService.startCombatAsync — manual-character feat bonuses', () 
     expect(combatant.armorClass).toBe(18);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Combat start: legendary actions + recharge auto-parse from the
+// character.extras blob. Lets the DM skip !legendary set / !recharge
+// set for any monster imported from a compendium stat block.
+// ---------------------------------------------------------------------------
+
+describe('CombatService.startCombatAsync — legendary + recharge auto-parse', () => {
+  it('auto-populates legendary budget from extras.legendary_desc', async () => {
+    const sessionId = 's-leg-auto';
+    const tMonster = makeToken('tDragon', {
+      characterId: 'char-dragon', ownerUserId: null,
+    });
+    seedRoom(sessionId, [tMonster], []);
+
+    mockQuery.mockImplementation((sql: string) => {
+      if (sql.includes('SELECT * FROM characters')) {
+        return Promise.resolve({
+          rows: [{
+            hit_points: 200, max_hit_points: 200, temp_hit_points: 0,
+            armor_class: 20, speed: 40,
+            ability_scores: JSON.stringify({ str: 25, dex: 10, con: 25, int: 16, wis: 15, cha: 22 }),
+            saving_throws: JSON.stringify([]),
+            proficiency_bonus: 7, level: 1,
+            features: JSON.stringify([]),
+            dndbeyond_id: null,
+            user_id: 'npc',
+            portrait_url: null,
+            inventory: JSON.stringify([]),
+            extras: JSON.stringify({
+              legendary_desc: 'The dragon can take 3 legendary actions, choosing from the options below.',
+              legendary_actions: [
+                { name: 'Detect', desc: '...' },
+                { name: 'Tail Attack', desc: '...' },
+                { name: 'Wing Attack (Costs 2 Actions)', desc: '...' },
+              ],
+              actions: [],
+            }),
+            initiative: 0,
+            exhaustion_level: 0,
+          }],
+        });
+      }
+      return Promise.resolve({ rows: [] });
+    });
+
+    await CombatService.startCombatAsync(sessionId, ['tDragon']);
+    const { getRoom } = await import('../utils/roomState.js');
+    const room = getRoom(sessionId)!;
+    const budget = room.legendaryActions.get('tDragon');
+    expect(budget).toBeDefined();
+    expect(budget!.max).toBe(3);
+    expect(budget!.remaining).toBe(3);
+  });
+
+  it('auto-populates recharge pool from action names with (Recharge N-6)', async () => {
+    const sessionId = 's-recharge-auto';
+    const tMonster = makeToken('tRedDragon', {
+      characterId: 'char-redragon', ownerUserId: null,
+    });
+    seedRoom(sessionId, [tMonster], []);
+
+    mockQuery.mockImplementation((sql: string) => {
+      if (sql.includes('SELECT * FROM characters')) {
+        return Promise.resolve({
+          rows: [{
+            hit_points: 250, max_hit_points: 250, temp_hit_points: 0,
+            armor_class: 19, speed: 40,
+            ability_scores: JSON.stringify({ str: 27, dex: 10, con: 25, int: 16, wis: 13, cha: 21 }),
+            saving_throws: JSON.stringify([]),
+            proficiency_bonus: 7, level: 1,
+            features: JSON.stringify([]),
+            dndbeyond_id: null,
+            user_id: 'npc',
+            portrait_url: null,
+            inventory: JSON.stringify([]),
+            extras: JSON.stringify({
+              actions: [
+                { name: 'Bite', desc: '...' },
+                { name: 'Fire Breath (Recharge 5-6)', desc: 'The dragon exhales fire...' },
+                { name: 'Frightful Presence', desc: '...' },
+              ],
+            }),
+            initiative: 0,
+            exhaustion_level: 0,
+          }],
+        });
+      }
+      return Promise.resolve({ rows: [] });
+    });
+
+    await CombatService.startCombatAsync(sessionId, ['tRedDragon']);
+    const { getRoom } = await import('../utils/roomState.js');
+    const room = getRoom(sessionId)!;
+    const pool = room.rechargePools.get('tRedDragon');
+    expect(pool).toBeDefined();
+    expect(pool!.has('fire breath')).toBe(true);
+    expect(pool!.get('fire breath')!.min).toBe(5);
+    expect(pool!.get('fire breath')!.available).toBe(true);
+  });
+});
