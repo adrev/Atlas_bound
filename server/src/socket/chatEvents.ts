@@ -32,6 +32,9 @@ import '../services/chatCommands/saveHandler.js';
 import '../services/chatCommands/stealthHandler.js';
 import '../services/chatCommands/spellHandlers.js';
 import '../services/chatCommands/ritualHandler.js';
+import '../services/chatCommands/monkHandler.js';
+import '../services/chatCommands/sorcererHandler.js';
+import '../services/chatCommands/xpAndWildShapeHandler.js';
 
 export function registerChatEvents(io: Server, socket: Socket): void {
 

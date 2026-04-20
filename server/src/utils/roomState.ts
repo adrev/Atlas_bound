@@ -202,6 +202,13 @@ export interface RoomState {
    * bonus-action butt-end attack).
    */
   polearmMasters: Set<string>;
+  /**
+   * Per-class point pools (Monk Ki, Sorcerer sorcery points, Paladin
+   * Lay-on-Hands pool, etc.). characterId → poolName → { max, remaining }.
+   * Lives alongside the other per-combat caches; populated on-demand
+   * by !ki / !sp / etc. Reset via the same commands.
+   */
+  pointPools: Map<string, Map<string, { max: number; remaining: number }>>;
 }
 
 // ── Rate limiting ──────────────────────────────────────────
@@ -255,6 +262,7 @@ export function createRoom(
     lairActionTokens: new Set(),
     rechargePools: new Map(),
     polearmMasters: new Set(),
+    pointPools: new Map(),
   };
   rooms.set(sessionId, room);
   roomCodeIndex.set(roomCode, sessionId);
