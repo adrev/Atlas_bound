@@ -233,6 +233,18 @@ export async function startCombatAsync(sessionId: string, tokenIds: string[]): P
               if (hp > maxHp) hp = maxHp;
             }
           }
+          // Defense fighting style: +1 AC while wearing armor. Same
+          // DDB heuristic as Tough — avoid double-counting when the
+          // import already baked it in.
+          const hasDefense = featureList.some(
+            (f) => typeof f?.name === 'string' && /defense/i.test(f.name),
+          );
+          if (hasDefense) {
+            const ddbId = charRow.dndbeyond_id as string | null;
+            if (!ddbId) {
+              ac += 1;
+            }
+          }
         } catch { /* features blob unparseable — skip */ }
         const charUserId = charRow.user_id as string | null;
         isNPC = !token.ownerUserId || charUserId === 'npc';
