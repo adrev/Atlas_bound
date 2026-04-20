@@ -205,6 +205,7 @@ export async function startCombatAsync(sessionId: string, tokenIds: string[]): P
           const features = typeof rawFeatures === 'string' ? JSON.parse(rawFeatures) : (rawFeatures ?? []);
           const featureList: Array<{ name?: string }> = Array.isArray(features) ? features : [];
           const hasAlert = featureList.some((f) => typeof f?.name === 'string' && /^\s*alert\s*$/i.test(f.name));
+          const hasTough = featureList.some((f) => typeof f?.name === 'string' && /^\s*tough\s*$/i.test(f.name));
           if (hasAlert) {
             // If storedInit already included Alert, we'd double-count.
             // Detect by comparing against the raw DEX mod — stored
@@ -212,6 +213,23 @@ export async function startCombatAsync(sessionId: string, tokenIds: string[]): P
             // resilient.
             if (initBonus < baseFromDex + 5) {
               initBonus = baseFromDex + 5;
+            }
+          }
+          // Tough feat: +2 maxHP per character level. DDB imports
+          // already bake this into `max_hit_points`, so we only add
+          // the bonus when the character was created manually (i.e.
+          // has no dndbeyond_id). Lets homebrew PCs take the feat
+          // without requiring the player to edit maxHp manually.
+          if (hasTough) {
+            const ddbId = charRow.dndbeyond_id as string | null;
+            if (!ddbId) {
+              const lvl = Number(charRow.level) || 1;
+              const bonus = 2 * lvl;
+              maxHp += bonus;
+              // Keep current HP at least matching — Tough represents
+              // raw resilience, not temp HP. We don't auto-heal the
+              // character, just ensure the max cap reflects the feat.
+              if (hp > maxHp) hp = maxHp;
             }
           }
         } catch { /* features blob unparseable — skip */ }
