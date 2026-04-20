@@ -441,6 +441,8 @@ export function allInitiativesRolled(sessionId: string): boolean {
 export function nextTurn(sessionId: string): {
   currentTurnIndex: number; roundNumber: number; actionEconomy: ActionEconomy;
   skippedTokenIds: string[]; currentCombatant: Combatant;
+  /** Ability names that just recharged on this turn start (breath weapons). */
+  rechargedAbilities: string[];
 } {
   const room = getRoom(sessionId);
   if (!room?.combatState) throw new Error('No active combat');
@@ -512,9 +514,33 @@ export function nextTurn(sessionId: string): {
   if (legBudget) {
     legBudget.remaining = legBudget.max;
   }
+  // Recharge pool: at the start of this monster's turn, re-roll each
+  // ability flagged with a (Recharge N-6). Track which ones just
+  // flipped from unavailable → available so the socket layer can
+  // show a one-line "recharged: X" reminder.
+  const rechargedAbilities: string[] = [];
+  const pool = room.rechargePools.get(currentCombatant.tokenId);
+  if (pool) {
+    for (const [abilityName, entry] of pool.entries()) {
+      if (!entry.available) {
+        const roll = Math.floor(Math.random() * 6) + 1;
+        if (roll >= entry.min) {
+          entry.available = true;
+          rechargedAbilities.push(abilityName);
+        }
+      }
+    }
+  }
   persistCombatState(state);
 
-  return { currentTurnIndex: state.currentTurnIndex, roundNumber: state.roundNumber, actionEconomy: economy, skippedTokenIds, currentCombatant };
+  return {
+    currentTurnIndex: state.currentTurnIndex,
+    roundNumber: state.roundNumber,
+    actionEconomy: economy,
+    skippedTokenIds,
+    currentCombatant,
+    rechargedAbilities,
+  };
 }
 
 export interface HpChangeResult {

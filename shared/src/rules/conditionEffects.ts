@@ -348,6 +348,10 @@ export const PSEUDO_CONDITION_EFFECTS: Record<string, ConditionEffect> = {
     name: 'concentrating',
     notes: ['Maintaining a concentration spell'],
   },
+  'bardic-inspired': {
+    name: 'bardic-inspired',
+    notes: ['Holds a Bardic Inspiration die (spend to add to attack / save / check)'],
+  },
 };
 
 /**

@@ -130,6 +130,16 @@ export const SPELL_BUFFS: SpellBuffEntry[] = [
     ].join('\n\n'),
   },
   {
+    slug: 'bardic-inspired',
+    name: 'Bardic Inspiration',
+    color: '#9b59b6',
+    snippet: 'Holds a d6/d8/d10/d12 to add to any attack, save, or check.',
+    description: [
+      'A Bard used a bonus action to grant you **Bardic Inspiration**. Within 10 minutes, you can add a **d6 / d8 / d10 / d12** (based on the bard\'s level) to **one** attack roll, saving throw, or ability check — even after you roll but before the DM declares the outcome.',
+      'Die granted: `!bardic <target> [d6|d8|d10|d12]`. Spend: `!unbardic <target>` (rolls the die and announces the bonus). Waste: `!unbardic <target> waste` (clears without rolling).',
+    ].join('\n\n'),
+  },
+  {
     slug: 'helped',
     name: 'Helped',
     color: '#5cb77a',

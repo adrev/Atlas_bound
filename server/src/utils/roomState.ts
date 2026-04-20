@@ -168,6 +168,24 @@ export interface RoomState {
    * lost on server restart.
    */
   legendaryActions: Map<string, { max: number; remaining: number }>;
+  /**
+   * Lair action support. Set of tokenIds flagged as having lair actions
+   * in their current environment (a monster only has lair actions while
+   * in its lair). At the start of each new round, a system chat
+   * reminder fires on initiative 20 (losing ties) so the DM knows to
+   * resolve the lair action — the effect itself is DM-adjudicated
+   * since lair actions are flavourful per-monster (wall closes, geyser
+   * erupts, etc.).
+   */
+  lairActionTokens: Set<string>;
+  /**
+   * Monster recharge pool. tokenId + ability-name → { min, available }.
+   * `min` is the recharge threshold (a d6 ≥ min → available). `available`
+   * flips to false after the ability is used; at the start of that
+   * monster's turn we re-roll and set it back to true if the d6 meets
+   * the threshold. Populated via !recharge set, not auto-parsed.
+   */
+  rechargePools: Map<string, Map<string, { min: number; available: boolean }>>;
 }
 
 // ── Rate limiting ──────────────────────────────────────────
@@ -217,6 +235,8 @@ export function createRoom(
     tokenMeleeReach: new Map(),
     mobileMeleeTargets: new Map(),
     legendaryActions: new Map(),
+    lairActionTokens: new Set(),
+    rechargePools: new Map(),
   };
   rooms.set(sessionId, room);
   roomCodeIndex.set(roomCode, sessionId);

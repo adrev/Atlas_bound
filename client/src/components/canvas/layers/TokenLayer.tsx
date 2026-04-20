@@ -289,6 +289,7 @@ function TokenSprite({ token, isSelected, isCurrentTurn, showTokenLabels }: Toke
     'power-attack': '#e67e22',
     inspired: '#f39c12',
     helped: '#5cb77a',
+    'bardic-inspired': '#9b59b6',
   };
 
   const isDM = useSessionStore.getState().isDM;

@@ -431,6 +431,22 @@ export function registerCombatEvents(io: Server, socket: Socket): void {
       // R7 — round hooks fire when the round number advanced.
       if (result.roundNumber !== preAdvanceRound) {
         for (const m of ctx.room.roundHooks) lines.push(`📣 ${m}`);
+        // Lair actions fire at initiative 20 (losing ties). We emit a
+        // reminder at every new-round transition because the tracker
+        // doesn't interrupt play to insert a virtual init-20 slot —
+        // the DM reads the reminder and narrates the lair effect.
+        for (const lairTokenId of ctx.room.lairActionTokens) {
+          const lairToken = ctx.room.tokens.get(lairTokenId);
+          if (!lairToken) continue;
+          lines.push(`🏰 LAIR ACTION — ${lairToken.name} (init 20, losing ties). DM: narrate + resolve via !lair <action>.`);
+        }
+      }
+      // Recharge reminder: CombatService.nextTurn already rolled the
+      // recharge die. If any abilities flipped into 'available' just
+      // now, show a one-line reminder so the DM knows the breath
+      // weapon is back online.
+      if (result.rechargedAbilities.length > 0 && startingCombatant) {
+        lines.push(`🔥 ${startingCombatant.name} recharged: ${result.rechargedAbilities.join(', ')}`);
       }
       // R7 — turn hooks for the combatant whose turn is now starting.
       if (startingCombatant) {
