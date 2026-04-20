@@ -287,6 +287,7 @@ function TokenSprite({ token, isSelected, isCurrentTurn, showTokenLabels }: Toke
     'three-quarters-cover': '#576574',
     'full-cover': '#2c3e50',
     'power-attack': '#e67e22',
+    inspired: '#f39c12',
   };
 
   const isDM = useSessionStore.getState().isDM;

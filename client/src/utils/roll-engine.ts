@@ -211,6 +211,18 @@ export function getOwnRollModifiers(conditions: string[]): RollModifiers {
     out.notes.push('Dodging (adv. DEX saves)');
   }
 
+  // Inspiration — "if you have inspiration, you can expend it when
+  // you make an attack roll, saving throw, or ability check" to gain
+  // advantage. We grant the advantage on attack rolls here and on
+  // saves / checks in computeSaveModifiers via the same set check.
+  // The condition is persistent until cleared (simpler than a one-
+  // shot model that would require a follow-up server write every
+  // time a roll resolves).
+  if (set.has('inspired')) {
+    applyAdvantage(out, 'attack', 'advantage');
+    out.notes.push('Inspired (adv. attack)');
+  }
+
   // Slowed: handled in Phase 2 as a save penalty (-2)
 
   return out;

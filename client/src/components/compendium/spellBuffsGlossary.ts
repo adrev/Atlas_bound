@@ -130,6 +130,16 @@ export const SPELL_BUFFS: SpellBuffEntry[] = [
     ].join('\n\n'),
   },
   {
+    slug: 'inspired',
+    name: 'Inspired',
+    color: '#f39c12',
+    snippet: 'Holding Inspiration — expend for advantage on a roll.',
+    description: [
+      'You\'ve been awarded **Inspiration** by the DM for great roleplay or a heroic moment. You can expend it on any **attack roll, ability check, or saving throw** to gain **advantage** on that roll.',
+      'Award: `!inspire <target>` (DM-only). Spend: `!uninspire [target]` (player or DM).',
+    ].join('\n\n'),
+  },
+  {
     slug: 'power-attack',
     name: 'Power Attack',
     color: '#e67e22',

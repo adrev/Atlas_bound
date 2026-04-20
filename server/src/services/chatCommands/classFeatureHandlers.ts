@@ -258,7 +258,74 @@ async function handlePower(c: ChatCommandContext): Promise<boolean> {
   return true;
 }
 
+/**
+ *   !inspire [target]
+ *       DM-awards inspiration to a PC token (defaults to the caller's
+ *       own token if omitted, useful for testing solo). Applies the
+ *       `inspired` pseudo-condition which the client-side roll engine
+ *       turns into advantage on the next attack / save / check.
+ */
+async function handleInspire(c: ChatCommandContext): Promise<boolean> {
+  if (c.ctx.player.role !== 'dm') {
+    whisperToCaller(c.io, c.ctx, '!inspire: DM only. Players spend inspiration with !uninspire.');
+    return true;
+  }
+  const targetName = c.rest.trim();
+  const target = resolveTargetOrSelf(c.ctx, targetName);
+  if (!target) {
+    whisperToCaller(c.io, c.ctx, '!inspire: no token matched (or no DM token on the map).');
+    return true;
+  }
+  if ((target.conditions as string[]).some((x) => x.toLowerCase() === 'inspired')) {
+    whisperToCaller(c.io, c.ctx, `!inspire: ${target.name} already has inspiration.`);
+    return true;
+  }
+  ConditionService.applyConditionWithMeta(c.ctx.room.sessionId, target.id, {
+    name: 'inspired',
+    source: `${c.ctx.player.displayName} (!inspire)`,
+    appliedRound: c.ctx.room.combatState?.roundNumber ?? 0,
+  });
+  c.io.to(c.ctx.room.sessionId).emit('map:token-updated', {
+    tokenId: target.id,
+    changes: { conditions: target.conditions },
+  });
+  broadcastSystem(c.io, c.ctx, `✨ ${target.name} gains Inspiration.`);
+  return true;
+}
+
+/**
+ *   !uninspire [target]
+ *       Spend / clear inspiration. Either the DM or the PC's owner can
+ *       trigger this — the PC spends when they want the advantage on
+ *       a roll, the DM clears when inspiration is otherwise lost.
+ */
+async function handleUninspire(c: ChatCommandContext): Promise<boolean> {
+  const targetName = c.rest.trim();
+  const target = resolveTargetOrSelf(c.ctx, targetName);
+  if (!target) {
+    whisperToCaller(c.io, c.ctx, '!uninspire: no token matched.');
+    return true;
+  }
+  if (!canTarget(c.ctx, target)) {
+    whisperToCaller(c.io, c.ctx, `!uninspire: you don't own ${target.name}.`);
+    return true;
+  }
+  if (!(target.conditions as string[]).some((x) => x.toLowerCase() === 'inspired')) {
+    whisperToCaller(c.io, c.ctx, `!uninspire: ${target.name} doesn't have inspiration.`);
+    return true;
+  }
+  ConditionService.removeCondition(c.ctx.room.sessionId, target.id, 'inspired');
+  c.io.to(c.ctx.room.sessionId).emit('map:token-updated', {
+    tokenId: target.id,
+    changes: { conditions: target.conditions },
+  });
+  broadcastSystem(c.io, c.ctx, `💫 ${target.name} spends their Inspiration.`);
+  return true;
+}
+
 registerChatCommand('rage', handleRage);
 registerChatCommand('unrage', handleUnrage);
 registerChatCommand('cover', handleCover);
 registerChatCommand(['power', 'powerattack'], handlePower);
+registerChatCommand('inspire', handleInspire);
+registerChatCommand('uninspire', handleUninspire);
