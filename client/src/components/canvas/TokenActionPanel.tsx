@@ -368,6 +368,17 @@ function rollDamageDice(notation: string): number {
 }
 
 /**
+ * Tracks which tokens have already used their Sneak Attack this turn.
+ * Keyed by `${roundNumber}_${currentTurnIndex}_${attackerTokenId}` so
+ * the gate naturally releases when combat advances. Lives at module
+ * scope on purpose — a single browser session is enough, and we don't
+ * need to replicate it across clients (each rogue only sneaks from
+ * their own client). Lost on page reload, which is acceptable: a
+ * reload typically means the turn has already advanced.
+ */
+const sneakAttackUsedThisTurn = new Set<string>();
+
+/**
  * Props for TokenActionPanel.
  *
  * - `embedded`: when true, render the panel inline (no fixed position,
@@ -1310,7 +1321,100 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
 
         if (wIsHit && effectiveCharId) {
           const wFinalDice = wIsCrit ? dmgDice.replace(/(\d+)d/g, (_: string, n: string) => `${parseInt(n) * 2}d`) : dmgDice;
-          const wRolledDmg = rollDamageDice(wFinalDice);
+          let wRolledDmg = rollDamageDice(wFinalDice);
+
+          // Cache the caster record once — both Rage and Sneak Attack
+          // need it. Also pre-compute finesse / ranged flags since
+          // both features key off weapon properties.
+          const wCasterChar = wCasterToken?.characterId
+            ? useCharacterStore.getState().allCharacters[wCasterToken.characterId]
+            : null;
+          const casterClassLower = String((wCasterChar as any)?.class || '').toLowerCase();
+          const wPropList = (atk.properties as string[] | undefined) || [];
+          const wIsFinesse = wPropList.some(p => /finesse/i.test(p));
+          const wIsRangedProp = wPropList.some(p => /(range|ammunition|thrown)/i.test(p))
+            && !wPropList.includes('Melee');
+
+          // Rage (Barbarian): +2/+3/+4 bonus damage on melee attacks that
+          // use Strength. RAW requires STR; for finesse weapons we only
+          // grant it if the barbarian's STR ≥ DEX (i.e. they'd actually
+          // pick STR). Non-finesse melee weapons always use STR so they
+          // qualify outright.
+          let wRageBonus = 0;
+          if (wIsMelee && wCasterConds.includes('raging') && casterClassLower.includes('barbarian')) {
+            let usesStr = true;
+            if (wIsFinesse) {
+              const scores = (wCasterChar as any)?.abilityScores
+                ? (typeof (wCasterChar as any).abilityScores === 'string'
+                  ? JSON.parse((wCasterChar as any).abilityScores)
+                  : (wCasterChar as any).abilityScores)
+                : {};
+              const strMod = abilityModifier((scores as any).str || 10);
+              const dexMod = abilityModifier((scores as any).dex || 10);
+              usesStr = strMod >= dexMod;
+            }
+            if (usesStr) {
+              const barbLvl = (wCasterChar as any)?.level ?? 1;
+              wRageBonus = barbLvl >= 16 ? 4 : barbLvl >= 9 ? 3 : 2;
+              wRolledDmg += wRageBonus;
+            }
+          }
+
+          // Sneak Attack (Rogue): once per turn, +⌈lvl/2⌉d6 of the
+          // weapon's damage type when:
+          //   • weapon is finesse OR ranged
+          //   • attacker has advantage on the roll, OR an ally of the
+          //     attacker is within 5 ft of the target and not
+          //     incapacitated (and the attacker is not at disadvantage)
+          let wSneakDice = 0;
+          let wSneakRolled = 0;
+          if (casterClassLower.includes('rogue') && (wIsFinesse || wIsRangedProp) && wCasterToken) {
+            const combatStore = useCombatStore.getState();
+            const turnKey = `${combatStore.roundNumber}_${combatStore.currentTurnIndex}_${wCasterToken.id}`;
+            if (!sneakAttackUsedThisTurn.has(turnKey)) {
+              const hasAdv = wCombined.attackAdvantage === 'advantage';
+              const hasDisadv = wCombined.attackAdvantage === 'disadvantage';
+              let allyFlank = false;
+              if (!hasAdv && !hasDisadv) {
+                const gridSize = useMapStore.getState().currentMap?.gridSize ?? 70;
+                const allTokens = useMapStore.getState().tokens;
+                const attackerIsPC = !!(wCasterToken as any).ownerUserId;
+                const targetIsPC = !!(targetToken as any).ownerUserId;
+                const tgtSize = (targetToken as any).size || 1;
+                const tcx = (targetToken as any).x + (gridSize * tgtSize) / 2;
+                const tcy = (targetToken as any).y + (gridSize * tgtSize) / 2;
+                for (const ally of Object.values(allTokens)) {
+                  if (!ally) continue;
+                  const id = (ally as any).id;
+                  if (id === wCasterToken.id || id === targetToken.id) continue;
+                  const allyIsPC = !!(ally as any).ownerUserId;
+                  // Ally must share attacker's team AND oppose target
+                  if (allyIsPC !== attackerIsPC) continue;
+                  if (allyIsPC === targetIsPC) continue;
+                  const ac = ((ally as any).conditions || []) as string[];
+                  if (ac.includes('incapacitated') || ac.includes('unconscious')
+                    || ac.includes('stunned') || ac.includes('paralyzed')
+                    || ac.includes('petrified') || ac.includes('dead')) continue;
+                  const aSize = (ally as any).size || 1;
+                  const acx = (ally as any).x + (gridSize * aSize) / 2;
+                  const acy = (ally as any).y + (gridSize * aSize) / 2;
+                  const dx = Math.max(0, Math.abs(acx - tcx) - (aSize * gridSize) / 2 - (tgtSize * gridSize) / 2);
+                  const dy = Math.max(0, Math.abs(acy - tcy) - (aSize * gridSize) / 2 - (tgtSize * gridSize) / 2);
+                  if (Math.max(dx, dy) <= gridSize + 1) { allyFlank = true; break; }
+                }
+              }
+              if (hasAdv || allyFlank) {
+                const rogueLvl = (wCasterChar as any)?.level ?? 1;
+                const baseDice = Math.ceil(rogueLvl / 2);
+                // Crits double dice — same rule as weapon damage dice.
+                wSneakDice = wIsCrit ? baseDice * 2 : baseDice;
+                wSneakRolled = rollDamageDice(`${wSneakDice}d6`);
+                wRolledDmg += wSneakRolled;
+                sneakAttackUsedThisTurn.add(turnKey);
+              }
+            }
+          }
+
           const wFreshChar = useCharacterStore.getState().allCharacters[effectiveCharId];
           const wFreshHp = wFreshChar ? (typeof wFreshChar.hitPoints === 'number' ? wFreshChar.hitPoints : parseInt(String(wFreshChar.hitPoints)) || 0) : targetHp;
           // Weapon attacks are NONMAGICAL by default — Stoneskin matters
@@ -1318,8 +1422,10 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
           const wResisted = applyDamageWithResist(wRolledDmg, weaponDmgType, wDefenses, wTargetConds, false);
           const wNewHp = Math.max(0, wFreshHp - wResisted.amount);
           const wResistTag = wResisted.source ? ` [${wResisted.source}]` : '';
+          const wRageTag = wRageBonus > 0 ? ` [Rage +${wRageBonus}]` : '';
+          const wSneakTag = wSneakDice > 0 ? ` [Sneak +${wSneakDice}d6 → ${wSneakRolled}]` : '';
           const wDmgChange = wResisted.amount !== wRolledDmg ? `${wRolledDmg}→${wResisted.amount}` : `${wResisted.amount}`;
-          wParts.push(`${wDmgChange} ${weaponDmgWord}dmg${wResistTag} (HP ${wFreshHp}→${wNewHp})${wIsCrit ? ' [CRIT]' : ''}`);
+          wParts.push(`${wDmgChange} ${weaponDmgWord}dmg${wRageTag}${wSneakTag}${wResistTag} (HP ${wFreshHp}→${wNewHp})${wIsCrit ? ' [CRIT]' : ''}`);
           if (wNewHp === 0) wParts.push('💀 DOWN');
           setTimeout(() => {
             updateTargetHp(effectiveCharId, wNewHp);
