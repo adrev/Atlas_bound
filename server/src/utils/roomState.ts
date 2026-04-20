@@ -382,12 +382,20 @@ export function canTargetToken(ctx: PlayerContext, tokenId: string): boolean {
  * and no hard-incapacitating condition. Used by combat action handlers
  * to block downed tokens from attacking, casting, moving, etc. DM
  * override is applied by the callers, not here.
+ *
+ * Expanded to cover the full 5e incapacitating-condition list so a
+ * stunned / paralyzed / petrified / incapacitated token can't burn
+ * its action economy on the server regardless of what the client
+ * sends. Matches the `blocksActions` flag in conditionEffects.
  */
 export function isTokenActionable(ctx: PlayerContext, tokenId: string): boolean {
   const token = ctx.room.tokens.get(tokenId);
   if (!token) return false;
   const conds = (token.conditions || []) as string[];
-  if (conds.includes('dead') || conds.includes('unconscious')) return false;
+  const INCAPACITATING = [
+    'dead', 'unconscious', 'incapacitated', 'stunned', 'paralyzed', 'petrified',
+  ];
+  if (conds.some((c) => INCAPACITATING.includes(c))) return false;
   // In combat, the authoritative HP is on the combatant state.
   const combatant = ctx.room.combatState?.combatants.find((c) => c.tokenId === tokenId);
   if (combatant && combatant.hp <= 0) return false;
