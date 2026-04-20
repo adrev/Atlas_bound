@@ -28,6 +28,7 @@ import '../services/chatCommands/classAbilityHandlers.js';
 import '../services/chatCommands/attuneHandlers.js';
 import '../services/chatCommands/protectionHandler.js';
 import '../services/chatCommands/utilityHandlers.js';
+import '../services/chatCommands/saveHandler.js';
 
 export function registerChatEvents(io: Server, socket: Socket): void {
 

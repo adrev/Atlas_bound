@@ -108,6 +108,7 @@ const GROUPS: Array<{ title: string; entries: Entry[] }> = [
     title: 'Area of effect',
     entries: [
       { name: 'aoe', usage: '!aoe <shape> <size> [color]', dmOnly: true, desc: 'Drop a timed AoE template on the canvas.' },
+      { name: 'save', usage: '!save <ability> <dc> <dice>/<type> <target1> [target2 …]', dmOnly: true, desc: 'Resolve a spell save + damage against multiple targets. Half on save.' },
     ],
   },
   {
