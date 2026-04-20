@@ -187,6 +187,24 @@ export function getOwnRollModifiers(conditions: string[]): RollModifiers {
       applyAdvantage(out, 'check', 'disadvantage', ab);
     }
   }
+  // Frightened: disadvantage on ability checks while source of fear
+  // is in sight. We can't easily track line-of-sight here, so the
+  // disadvantage applies whenever the condition is active — DM can
+  // clear the badge when LoS is broken.
+  if (set.has('frightened')) {
+    for (const ab of ['str', 'dex', 'con', 'int', 'wis', 'cha'] as AbilityName[]) {
+      applyAdvantage(out, 'check', 'disadvantage', ab);
+    }
+  }
+  // Exhaustion levels 1+: disadvantage on ability checks. L3+ adds
+  // disadvantage on attacks + saves (handled in computeSaveModifiers
+  // via the set check — this block only covers the level-1 trigger
+  // on checks since the attack / save paths already saw it).
+  if (set.has('exhaustion')) {
+    for (const ab of ['str', 'dex', 'con', 'int', 'wis', 'cha'] as AbilityName[]) {
+      applyAdvantage(out, 'check', 'disadvantage', ab);
+    }
+  }
 
   // Auto-fail saves
   if (set.has('paralyzed') || set.has('stunned') || set.has('unconscious') || set.has('petrified')) {
