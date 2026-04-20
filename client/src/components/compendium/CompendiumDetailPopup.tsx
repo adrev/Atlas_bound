@@ -20,6 +20,7 @@ import { FEATS } from './featsGlossary';
 import { CLASSES } from './classesGlossary';
 import { BACKGROUNDS } from './backgroundsGlossary';
 import { RACES } from './racesGlossary';
+import { SPELL_BUFFS } from './spellBuffsGlossary';
 
 /** Renders markdown content with dark-theme styled tables, bold, lists, etc. */
 function MarkdownContent({ text }: { text: string }) {
@@ -1184,6 +1185,13 @@ export function CompendiumDetailPopup({ result, onClose }: Props) {
       const info = CONDITION_MAP.get(result.slug as never);
       if (info) {
         setData({ kind: 'condition', name: info.label, description: info.description, color: info.color });
+        setLoading(false);
+        return;
+      }
+      // Spell / class-feature pseudo-conditions (blessed, raging, hasted…)
+      const buff = SPELL_BUFFS.find((b) => b.slug === result.slug);
+      if (buff) {
+        setData({ kind: 'condition', name: buff.name, description: buff.description, color: buff.color });
         setLoading(false);
         return;
       }

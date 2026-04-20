@@ -9,6 +9,7 @@ import { CreateSpellForm } from './CreateSpellForm';
 import { CreateItemForm } from './CreateItemForm';
 import type { CompendiumSearchResult, CompendiumCategory } from '@dnd-vtt/shared';
 import { CONDITIONS } from '@dnd-vtt/shared';
+import { SPELL_BUFFS } from './spellBuffsGlossary';
 import { getCompendiumImageUrl, getCompendiumFallbackUrl } from '../../utils/compendiumIcons';
 import { RULES_GLOSSARY } from './rulesGlossary';
 import { FEATS } from './featsGlossary';
@@ -95,13 +96,24 @@ export function CompendiumPanel({
 
     // Client-only rule references: conditions + rules glossary are
     // static data that live on the client, no server fetch needed.
+    // The Conditions list surfaces the 15 standard 5e conditions AND
+    // the common spell / class-feature pseudo-conditions (blessed,
+    // raging, hasted, etc.) so players can look up what "Slowed" on
+    // their token badge means.
     if (cat === 'conditions') {
-      setResults(CONDITIONS.map((c) => ({
+      const real = CONDITIONS.map((c) => ({
         slug: c.name,
         name: c.label,
         category: 'conditions' as const,
         snippet: c.description,
-      })));
+      }));
+      const buffs = SPELL_BUFFS.map((b) => ({
+        slug: b.slug,
+        name: b.name,
+        category: 'conditions' as const,
+        snippet: b.snippet,
+      }));
+      setResults([...real, ...buffs]);
       setLoading(false);
       return;
     }
