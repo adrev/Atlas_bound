@@ -50,6 +50,7 @@ const GROUPS: Array<{ title: string; entries: Entry[] }> = [
     entries: [
       { name: 'grapple', usage: '!grapple <target>', desc: 'Caller Athletics vs target Athletics/Acrobatics — on win, target is grappled.' },
       { name: 'shove', usage: '!shove <target> [prone|push]', desc: 'Caller Athletics vs target Athletics/Acrobatics — on win, target is knocked prone (default) or shoved 5 ft.' },
+      { name: 'legendary', usage: '!legendary <target> [action] | set <target> <max> | clear <target>', desc: 'Monster legendary-action budget. Spends one, refreshes on monster\'s own turn.' },
     ],
   },
   {

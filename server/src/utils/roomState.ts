@@ -160,6 +160,14 @@ export interface RoomState {
    * attacked" half of the feat.
    */
   mobileMeleeTargets: Map<string, Set<string>>;
+  /**
+   * Legendary actions budget. tokenId → { max, remaining }. Populated
+   * on-demand by the DM via !legendary set. Remaining is reset to max
+   * at the start of that token's own turn (5e RAW — you regain your
+   * legendary actions at the start of your turn). Lives in memory only;
+   * lost on server restart.
+   */
+  legendaryActions: Map<string, { max: number; remaining: number }>;
 }
 
 // ── Rate limiting ──────────────────────────────────────────
@@ -208,6 +216,7 @@ export function createRoom(
     roundHooks: [],
     tokenMeleeReach: new Map(),
     mobileMeleeTargets: new Map(),
+    legendaryActions: new Map(),
   };
   rooms.set(sessionId, room);
   roomCodeIndex.set(roomCode, sessionId);

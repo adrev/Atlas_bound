@@ -21,6 +21,7 @@ import '../services/chatCommands/helpHandlers.js';
 import '../services/chatCommands/maneuverHandlers.js';
 import '../services/chatCommands/smiteHandler.js';
 import '../services/chatCommands/restHandlers.js';
+import '../services/chatCommands/legendaryHandlers.js';
 
 export function registerChatEvents(io: Server, socket: Socket): void {
 

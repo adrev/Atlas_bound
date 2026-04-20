@@ -504,6 +504,14 @@ export function nextTurn(sessionId: string): {
   // a new turn begins. The feat's OA-immunity only holds "for the
   // rest of the turn."
   room.mobileMeleeTargets.delete(currentCombatant.tokenId);
+  // Legendary actions: a legendary creature regains all of its
+  // spent actions at the START of its turn per RAW. (They're spent
+  // between OTHER creatures' turns, then refill when the legendary
+  // creature finally acts again.)
+  const legBudget = room.legendaryActions.get(currentCombatant.tokenId);
+  if (legBudget) {
+    legBudget.remaining = legBudget.max;
+  }
   persistCombatState(state);
 
   return { currentTurnIndex: state.currentTurnIndex, roundNumber: state.roundNumber, actionEconomy: economy, skippedTokenIds, currentCombatant };
