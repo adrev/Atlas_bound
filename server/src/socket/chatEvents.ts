@@ -18,6 +18,7 @@ import '../services/chatCommands/turnHookHandlers.js';
 import '../services/chatCommands/aoeHandlers.js';
 import '../services/chatCommands/classFeatureHandlers.js';
 import '../services/chatCommands/helpHandlers.js';
+import '../services/chatCommands/maneuverHandlers.js';
 
 export function registerChatEvents(io: Server, socket: Socket): void {
 

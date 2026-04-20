@@ -37,6 +37,13 @@ const GROUPS: Array<{ title: string; entries: Entry[] }> = [
     ],
   },
   {
+    title: 'Combat — maneuvers',
+    entries: [
+      { name: 'grapple', usage: '!grapple <target>', desc: 'Caller Athletics vs target Athletics/Acrobatics — on win, target is grappled.' },
+      { name: 'shove', usage: '!shove <target> [prone|push]', desc: 'Caller Athletics vs target Athletics/Acrobatics — on win, target is knocked prone (default) or shoved 5 ft.' },
+    ],
+  },
+  {
     title: 'HP / damage',
     entries: [
       { name: 'hp', usage: '!hp <target> <value>', dmOnly: true, desc: 'Set a token\'s current HP.' },
