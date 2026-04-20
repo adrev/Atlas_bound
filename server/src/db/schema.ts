@@ -102,9 +102,15 @@ export async function initDatabase(): Promise<void> {
       hit_dice TEXT DEFAULT '[]',
       concentrating_on TEXT,
       compendium_slug TEXT DEFAULT NULL,
+      exhaustion_level INTEGER NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL DEFAULT (NOW()::text),
       updated_at TEXT NOT NULL DEFAULT (NOW()::text)
     );
+
+    -- Exhaustion 1–6 per 5e PHB. Added 2026-04-20 alongside the rules
+    -- engine pass. ALTER is idempotent so an existing DB just gets the
+    -- column bolted on with the default 0 (no prior exhaustion).
+    ALTER TABLE characters ADD COLUMN IF NOT EXISTS exhaustion_level INTEGER NOT NULL DEFAULT 0;
 
     CREATE TABLE IF NOT EXISTS maps (
       id TEXT PRIMARY KEY,

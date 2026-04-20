@@ -199,6 +199,7 @@ router.put('/:id', async (req: Request, res: Response) => {
   if (updates.tempHitPoints !== undefined) { setClauses.push(`temp_hit_points = $${paramIdx++}`); params.push(updates.tempHitPoints); }
   if (updates.hitDice !== undefined) { setClauses.push(`hit_dice = $${paramIdx++}`); params.push(JSON.stringify(updates.hitDice)); }
   if (updates.concentratingOn !== undefined) { setClauses.push(`concentrating_on = $${paramIdx++}`); params.push(updates.concentratingOn); }
+  if (updates.exhaustionLevel !== undefined) { setClauses.push(`exhaustion_level = $${paramIdx++}`); params.push(Math.max(0, Math.min(6, Number(updates.exhaustionLevel) || 0))); }
 
   if (setClauses.length === 0) {
     const { rows } = await pool.query('SELECT * FROM characters WHERE id = $1', [req.params.id]);

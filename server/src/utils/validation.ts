@@ -659,6 +659,7 @@ export const createCharacterSchema = z.object({
     used: z.number().int(),
   })).optional(),
   concentratingOn: z.string().nullable().optional(),
+  exhaustionLevel: z.number().int().min(0).max(6).optional(),
   compendiumSlug: z.string().nullable().optional(),
   isNpc: z.boolean().optional(),
   // Required when isNpc === true: the DM must prove they are the DM of

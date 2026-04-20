@@ -56,6 +56,7 @@ const FIELD_TO_COLUMN: Record<string, { col: string; json: boolean }> = {
   extras: { col: 'extras', json: true },
   hitDice: { col: 'hit_dice', json: true },
   concentratingOn: { col: 'concentrating_on', json: false },
+  exhaustionLevel: { col: 'exhaustion_level', json: false },
 };
 
 export function registerCharacterEvents(io: Server, socket: Socket): void {

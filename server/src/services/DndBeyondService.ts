@@ -107,6 +107,7 @@ export function parseCharacterJSON(json: Record<string, unknown>): Omit<Characte
     spellAttackBonus,
     spellSaveDC,
     concentratingOn: null,
+    exhaustionLevel: 0,
     hitDice,
     initiative,
     portraitUrl,

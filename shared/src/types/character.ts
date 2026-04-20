@@ -242,6 +242,12 @@ export interface Character {
   concentratingOn: string | null;
   initiative: number;
   compendiumSlug: string | null;
+  /**
+   * 5e exhaustion level 0–6. L1 disadvantage on checks, L2 speed half,
+   * L3 disadvantage on attacks + saves, L4 HP max halved, L5 speed 0,
+   * L6 death. Reduced by 1 on a long rest or Greater Restoration.
+   */
+  exhaustionLevel: number;
   portraitUrl: string | null;
   dndbeyondId: string | null;
   source: 'manual' | 'dndbeyond_api' | 'dndbeyond_import';

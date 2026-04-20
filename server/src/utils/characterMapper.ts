@@ -28,6 +28,7 @@ export function dbRowToCharacter(row: Record<string, unknown>) {
     deathSaves: safeJsonParse(row.death_saves, { successes: 0, failures: 0 }),
     hitDice: safeJsonParse(row.hit_dice, []),
     concentratingOn: row.concentrating_on ?? null,
+    exhaustionLevel: Number(row.exhaustion_level ?? 0) || 0,
     background: safeJsonParse(row.background, { name: '', description: '', feature: '' }),
     characteristics: safeJsonParse(row.characteristics, { alignment: '', gender: '', eyes: '', hair: '', skin: '', height: '', weight: '', age: '', faith: '', size: 'Medium' }),
     personality: safeJsonParse(row.personality, { traits: '', ideals: '', bonds: '', flaws: '' }),

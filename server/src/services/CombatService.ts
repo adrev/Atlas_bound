@@ -14,8 +14,7 @@ function computeMovementCap(combatant: Combatant, room: RoomState): number {
   const token = room.tokens.get(combatant.tokenId);
   if (!token) return combatant.speed;
   const conditions = (token.conditions || []) as string[];
-  // TODO: wire exhaustion level once the character row exposes it.
-  const mul = speedMultiplierFor(conditions, 0);
+  const mul = speedMultiplierFor(conditions, combatant.exhaustionLevel ?? 0);
   return Math.floor(combatant.speed * mul);
 }
 
@@ -35,6 +34,7 @@ export function startCombat(sessionId: string, tokenIds: string[]): CombatState 
     let hp = 10, maxHp = 10, tempHp = 0, ac = 10, speed = 30, initBonus = 0;
     let portrait: string | null = null;
     let isNPC = !token.ownerUserId;
+    const exhaustionLevel = 0;
 
     if (token.characterId) {
       // NOTE: This is sync code in a sync function. We use a sync DB call pattern.
@@ -51,6 +51,7 @@ export function startCombat(sessionId: string, tokenIds: string[]): CombatState 
       conditions: [...token.conditions],
       deathSaves: { successes: 0, failures: 0 },
       portraitUrl: portrait ?? token.imageUrl,
+      exhaustionLevel,
     });
   }
 
@@ -120,6 +121,7 @@ export async function startCombatAsync(sessionId: string, tokenIds: string[]): P
     let hp = 10, maxHp = 10, tempHp = 0, ac = 10, speed = 30, initBonus = 0;
     let portrait: string | null = null;
     let isNPC = !token.ownerUserId;
+    let exhaustionLevel = 0;
 
     if (token.characterId) {
       const { rows } = await pool.query('SELECT * FROM characters WHERE id = $1', [token.characterId]);
@@ -131,6 +133,16 @@ export async function startCombatAsync(sessionId: string, tokenIds: string[]): P
         ac = (charRow.armor_class as number) ?? 10;
         speed = (charRow.speed as number) ?? 30;
         portrait = charRow.portrait_url as string | null;
+        exhaustionLevel = Math.max(0, Math.min(6, Number(charRow.exhaustion_level ?? 0) || 0));
+        // 5e exhaustion L4: HP max halved. Apply here so the combat
+        // tracker respects the cap from the start of the encounter;
+        // the character row keeps its baseline maxHp for post-combat
+        // resets. Current HP is clamped too so the tracker doesn't
+        // show a PC above their effective max.
+        if (exhaustionLevel >= 4) {
+          maxHp = Math.floor(maxHp / 2);
+          if (hp > maxHp) hp = maxHp;
+        }
         // Prefer the character's precomputed initiative bonus — it's
         // what the character sheet shows and it already includes Alert
         // (+5), Jack of All Trades (half prof), and any other feat
@@ -183,6 +195,7 @@ export async function startCombatAsync(sessionId: string, tokenIds: string[]): P
       conditions: [...token.conditions],
       deathSaves: { successes: 0, failures: 0 },
       portraitUrl: portrait ?? token.imageUrl,
+      exhaustionLevel,
     });
   }
 
@@ -256,6 +269,7 @@ export async function addCombatantAsync(sessionId: string, tokenId: string): Pro
   let hp = 10, maxHp = 10, tempHp = 0, ac = 10, speed = 30, initBonus = 0;
   let portrait: string | null = null;
   let isNPC = !token.ownerUserId;
+  let exhaustionLevel = 0;
   if (token.characterId) {
     const { rows } = await pool.query('SELECT * FROM characters WHERE id = $1', [token.characterId]);
     const charRow = rows[0] as Record<string, unknown> | undefined;
@@ -266,6 +280,11 @@ export async function addCombatantAsync(sessionId: string, tokenId: string): Pro
       ac = (charRow.armor_class as number) ?? 10;
       speed = (charRow.speed as number) ?? 30;
       portrait = charRow.portrait_url as string | null;
+      exhaustionLevel = Math.max(0, Math.min(6, Number(charRow.exhaustion_level ?? 0) || 0));
+      if (exhaustionLevel >= 4) {
+        maxHp = Math.floor(maxHp / 2);
+        if (hp > maxHp) hp = maxHp;
+      }
       // Prefer precomputed character.initiative (includes Alert +5, etc.)
       // Fall back to DEX mod when unset.
       const storedInit = Number(charRow.initiative);
@@ -292,6 +311,7 @@ export async function addCombatantAsync(sessionId: string, tokenId: string): Pro
     conditions: [...token.conditions],
     deathSaves: { successes: 0, failures: 0 },
     portraitUrl: portrait ?? token.imageUrl,
+    exhaustionLevel,
   };
 
   // Insert into the sorted list while keeping the existing turn

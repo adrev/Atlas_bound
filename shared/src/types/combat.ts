@@ -16,6 +16,8 @@ export interface Combatant {
   conditions: Condition[];
   deathSaves: DeathSaves;
   portraitUrl: string | null;
+  /** 5e exhaustion level 0–6. Propagated from the character row at combat start. */
+  exhaustionLevel?: number;
 }
 
 export interface CombatState {
