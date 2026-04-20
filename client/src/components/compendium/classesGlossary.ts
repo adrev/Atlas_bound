@@ -1,3 +1,5 @@
+import type { RuleSource } from '@dnd-vtt/shared';
+
 export interface ClassEntry {
   slug: string;
   name: string;
@@ -7,6 +9,8 @@ export interface ClassEntry {
   subclasses: string[];
   snippet: string;
   description: string;
+  /** Absent = PHB. Artificer is `tce`. Pin new classes to their source. */
+  source?: RuleSource;
 }
 
 /**
@@ -228,6 +232,7 @@ export const CLASSES: ClassEntry[] = [
     primaryAbility: 'Intelligence',
     savingThrows: ['Constitution', 'Intelligence'],
     subclasses: ['Alchemist', 'Artillerist', 'Battle Smith', 'Armorer (TCE)'],
+    source: 'tce',
     snippet: 'd8 HD. Half caster (INT). Infuse Item, spell storing.',
     description: [
       '**Magical Tinkering** (L1): touch a tiny object and imbue it with a minor effect (light, message, sound).',

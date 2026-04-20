@@ -1,3 +1,5 @@
+import type { RuleSource } from '@dnd-vtt/shared';
+
 export interface RaceEntry {
   slug: string;
   name: string;
@@ -7,6 +9,8 @@ export interface RaceEntry {
   subraces: string[];
   snippet: string;
   description: string;
+  /** Absent = PHB. */
+  source?: RuleSource;
 }
 
 /**

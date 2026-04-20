@@ -80,6 +80,11 @@ export function CompendiumPanel({
 
   const sessionId = useSessionStore((s) => s.sessionId);
   const isDM = useSessionStore((s) => s.isDM);
+  const ruleSources = useSessionStore((s) => s.settings.ruleSources ?? ['phb']);
+  // Memoize the Set so the effect deps stay stable across renders —
+  // `ruleSources` is fresh on every render, but its content rarely
+  // changes, so a stable-by-content comparison is what we want.
+  const activeRuleSources = new Set(ruleSources);
 
   // Load default entries when no search
   useEffect(() => {
@@ -113,8 +118,15 @@ export function CompendiumPanel({
       setLoading(false);
       return;
     }
+    // Filter client-side glossary entries by the DM's enabled rule
+    // sources. PHB is always implicitly enabled. Entries without an
+    // explicit source default to PHB, so the PHB-only default
+    // session doesn't drop content.
+    const isSourceEnabled = (src: string | undefined) =>
+      (src ?? 'phb') === 'phb' || activeRuleSources.has(src as string);
+
     if (cat === 'feats') {
-      setResults(FEATS.map((f) => ({
+      setResults(FEATS.filter((f) => isSourceEnabled(f.source)).map((f) => ({
         slug: f.slug,
         name: f.name,
         category: 'feats' as const,
@@ -124,7 +136,7 @@ export function CompendiumPanel({
       return;
     }
     if (cat === 'classes') {
-      setResults(CLASSES.map((c) => ({
+      setResults(CLASSES.filter((c) => isSourceEnabled(c.source)).map((c) => ({
         slug: c.slug,
         name: c.name,
         category: 'classes' as const,
@@ -134,7 +146,7 @@ export function CompendiumPanel({
       return;
     }
     if (cat === 'races') {
-      setResults(RACES.map((r) => ({
+      setResults(RACES.filter((r) => isSourceEnabled(r.source)).map((r) => ({
         slug: r.slug,
         name: r.name,
         // Races share the 'classes' badge color; no dedicated category
@@ -146,7 +158,7 @@ export function CompendiumPanel({
       return;
     }
     if (cat === 'backgrounds') {
-      setResults(BACKGROUNDS.map((b) => ({
+      setResults(BACKGROUNDS.filter((b) => isSourceEnabled(b.source)).map((b) => ({
         slug: b.slug,
         name: b.name,
         category: 'conditions' as const,
@@ -221,7 +233,8 @@ export function CompendiumPanel({
         setLoading(false);
       }).catch(() => { setResults([]); setLoading(false); });
     }
-  }, [category, query, sessionId, refreshKey]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [category, query, sessionId, refreshKey, ruleSources.join(',')]);
 
   const fetchResults = useCallback((q: string, cat: FilterCategory) => {
     if (!q.trim()) return; // Default browse handles empty state

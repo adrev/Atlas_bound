@@ -1,9 +1,15 @@
+import type { RuleSource } from '@dnd-vtt/shared';
+
 export interface FeatEntry {
   slug: string;
   name: string;
   prerequisite?: string;
   snippet: string;
   description: string;
+  /** Rulebook this feat comes from. Absent = PHB (the default). Set
+   *  explicitly for Xanathar / Tasha / etc. entries so the wiki can
+   *  filter by the DM's enabled rulebooks. */
+  source?: RuleSource;
 }
 
 /**
