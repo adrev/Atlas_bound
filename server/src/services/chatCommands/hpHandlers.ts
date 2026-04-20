@@ -136,6 +136,34 @@ async function setDirectHp(
   return { hp: nextHp, tempHp };
 }
 
+/**
+ * Set temp HP to `value`, but only if it's greater than the current
+ * (RAW: "If you have temporary hit points and receive more of them,
+ * you decide whether to keep the ones you have or to gain the new
+ * ones"). Passing 0 always clears. Returns the final values and
+ * whether the write actually replaced anything.
+ */
+async function applyDirectTempHp(
+  characterId: string,
+  value: number,
+): Promise<{ hp: number; tempHp: number; replaced: boolean } | null> {
+  const { rows } = await pool.query(
+    'SELECT hit_points, temp_hit_points FROM characters WHERE id = $1',
+    [characterId],
+  );
+  const row = rows[0] as Record<string, unknown> | undefined;
+  if (!row) return null;
+  const hp = Number(row.hit_points);
+  const current = Number(row.temp_hit_points ?? 0);
+  // 0 always clears; otherwise keep the better value.
+  const next = value === 0 ? 0 : Math.max(current, value);
+  const replaced = next !== current;
+  if (replaced) {
+    await pool.query('UPDATE characters SET temp_hit_points = $1 WHERE id = $2', [next, characterId]);
+  }
+  return { hp, tempHp: next, replaced };
+}
+
 async function handleDamage(c: ChatCommandContext): Promise<boolean> {
   const parts = c.rest.split(/\s+/);
   const amountRaw = parts.shift() ?? '';
@@ -389,7 +417,64 @@ async function handleSetattr(c: ChatCommandContext): Promise<boolean> {
   return true;
 }
 
+async function handleThp(c: ChatCommandContext): Promise<boolean> {
+  const parts = c.rest.split(/\s+/);
+  const amountRaw = parts.shift() ?? '';
+  const target = parts.join(' ').trim();
+  const amount = parseAmount(amountRaw);
+  if (amount === null) {
+    whisperToCaller(c.io, c.ctx, '!thp: usage `!thp <amount> [target]` — 0 clears, higher replaces, lower keeps existing.');
+    return true;
+  }
+  const res = resolveTarget(c.ctx, target);
+  if (!res.target) {
+    whisperToCaller(c.io, c.ctx, `!thp: ${res.reason}`);
+    return true;
+  }
+  if (!canMutateTarget(c.ctx, res.target.token)) {
+    whisperToCaller(c.io, c.ctx, '!thp: you cannot target that token.');
+    return true;
+  }
+
+  try {
+    const combatState = c.ctx.room.combatState;
+    if (combatState?.active) {
+      const combatant = combatState.combatants.find((cm) => cm.tokenId === res.target!.token.id);
+      if (combatant) {
+        const prior = combatant.tempHp;
+        // RAW: 0 clears; otherwise keep the higher value.
+        combatant.tempHp = amount === 0 ? 0 : Math.max(prior, amount);
+        if (res.target.characterId) {
+          await pool.query(
+            'UPDATE characters SET temp_hit_points = $1 WHERE id = $2',
+            [combatant.tempHp, res.target.characterId],
+          );
+        }
+        broadcastHpChange(
+          c.io, c.ctx, res.target.token.id, res.target.characterId,
+          combatant.hp, combatant.tempHp,
+          combatant.tempHp - prior, 'heal',
+        );
+      }
+    } else if (res.target.characterId) {
+      const r = await applyDirectTempHp(res.target.characterId, amount);
+      if (!r) { whisperToCaller(c.io, c.ctx, '!thp: character not found'); return true; }
+      broadcastHpChange(
+        c.io, c.ctx, res.target.token.id, res.target.characterId,
+        r.hp, r.tempHp, 0, 'heal',
+      );
+    } else {
+      whisperToCaller(c.io, c.ctx, '!thp: this token has no character and combat is not active.');
+      return true;
+    }
+  } catch (err) {
+    whisperToCaller(c.io, c.ctx, `!thp: ${err instanceof Error ? err.message : 'failed'}`);
+  }
+  return true;
+}
+
 registerChatCommand('damage', handleDamage);
 registerChatCommand('heal', handleHeal);
 registerChatCommand('hp', handleHp);
+registerChatCommand(['thp', 'temphp'], handleThp);
 registerChatCommand('setattr', handleSetattr);

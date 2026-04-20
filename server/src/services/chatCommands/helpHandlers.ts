@@ -59,6 +59,7 @@ const GROUPS: Array<{ title: string; entries: Entry[] }> = [
       { name: 'hp', usage: '!hp <target> <value>', dmOnly: true, desc: 'Set a token\'s current HP.' },
       { name: 'damage', usage: '!damage <target> <amount>', dmOnly: true, desc: 'Subtract HP, fires concentration save.' },
       { name: 'heal', usage: '!heal <target> <amount>', dmOnly: true, desc: 'Add HP up to max.' },
+      { name: 'thp', usage: '!thp <amount> [target]', desc: 'Set temp HP — 0 clears, higher replaces, lower keeps existing (RAW).' },
     ],
   },
   {
