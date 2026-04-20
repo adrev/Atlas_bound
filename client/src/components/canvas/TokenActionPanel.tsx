@@ -978,7 +978,13 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
           resultParts.push(`${hitIcon} Attack ${atkResult.breakdown} vs AC ${targetAC}${acNote} → ${isCrit ? 'CRIT' : isHit ? 'HIT' : 'MISS'}${modNote}${shieldNote}`);
 
           if (isHit && damageDice && effectiveCharId) {
-            const finalDice = isCrit ? damageDice.replace(/(\d+)d/, (_: string, n: string) => `${parseInt(n) * 2}d`) : damageDice;
+            // 5e crit rule: double EVERY damage die, not just the
+            // first group. "2d6+1d8+3" → "4d6+2d8+3". Modifier flats
+            // don't double (they're kept as-is by the regex which
+            // only targets the `(count)d` pattern).
+            const finalDice = isCrit
+              ? damageDice.replace(/(\d+)d/g, (_: string, n: string) => `${parseInt(n) * 2}d`)
+              : damageDice;
             const { total: rolledDmg, breakdown: dmgBreakdown } = rollDamageDiceDetailed(finalDice);
             const freshChar = useCharacterStore.getState().allCharacters[effectiveCharId];
             const freshHp = freshChar ? (typeof freshChar.hitPoints === 'number' ? freshChar.hitPoints : parseInt(String(freshChar.hitPoints)) || 0) : targetHp;
@@ -1303,7 +1309,7 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
         wParts.push(`${wHitIcon} Attack ${wAtkResult.breakdown} vs AC ${wTargetAC}${wAcNote} → ${wIsCrit ? 'CRIT' : wIsHit ? 'HIT' : 'MISS'}${wModNote}${wShieldNote}`);
 
         if (wIsHit && effectiveCharId) {
-          const wFinalDice = wIsCrit ? dmgDice.replace(/(\d+)d/, (_: string, n: string) => `${parseInt(n) * 2}d`) : dmgDice;
+          const wFinalDice = wIsCrit ? dmgDice.replace(/(\d+)d/g, (_: string, n: string) => `${parseInt(n) * 2}d`) : dmgDice;
           const wRolledDmg = rollDamageDice(wFinalDice);
           const wFreshChar = useCharacterStore.getState().allCharacters[effectiveCharId];
           const wFreshHp = wFreshChar ? (typeof wFreshChar.hitPoints === 'number' ? wFreshChar.hitPoints : parseInt(String(wFreshChar.hitPoints)) || 0) : targetHp;

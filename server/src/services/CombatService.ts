@@ -430,6 +430,13 @@ export interface HpChangeResult {
    *  Callers should fan out `character:updated` so character sheet
    *  views stay in sync with the combat tracker. */
   characterId: string | null;
+  /**
+   * Non-null when applyDamage triggered an auto death-save failure
+   * (damage taken while already at 0 HP). Caller broadcasts
+   * `combat:death-save-updated` so every client's tracker animates
+   * the failure tally.
+   */
+  autoDeathSaveFailure?: { successes: number; failures: number };
 }
 
 export async function applyDamage(sessionId: string, tokenId: string, amount: number): Promise<HpChangeResult> {
@@ -437,6 +444,12 @@ export async function applyDamage(sessionId: string, tokenId: string, amount: nu
   if (!room?.combatState) throw new Error('No active combat');
   const combatant = room.combatState.combatants.find(c => c.tokenId === tokenId);
   if (!combatant) throw new Error('Combatant not found');
+
+  // 5e: "If you take any damage while you have 0 HP, you suffer a
+  // death saving throw failure." Track this BEFORE mutating hp so
+  // we only auto-fail when the token was already down (not when the
+  // damage is what's putting them down for the first time).
+  const wasAlreadyDown = combatant.hp === 0 && combatant.maxHp > 0 && !!combatant.characterId;
 
   let remaining = amount;
   if (combatant.tempHp > 0) {
@@ -446,12 +459,25 @@ export async function applyDamage(sessionId: string, tokenId: string, amount: nu
   }
   combatant.hp = Math.max(0, combatant.hp - remaining);
 
+  let autoDeathSaveFailure: { successes: number; failures: number } | undefined;
+  if (wasAlreadyDown && combatant.hp === 0 && amount > 0) {
+    combatant.deathSaves = combatant.deathSaves ?? { successes: 0, failures: 0 };
+    combatant.deathSaves.failures = Math.min(3, combatant.deathSaves.failures + 1);
+    autoDeathSaveFailure = { ...combatant.deathSaves };
+  }
+
   if (combatant.characterId) {
     await pool.query('UPDATE characters SET hit_points = $1, temp_hit_points = $2 WHERE id = $3',
       [combatant.hp, combatant.tempHp, combatant.characterId]);
   }
   persistCombatState(room.combatState);
-  return { hp: combatant.hp, tempHp: combatant.tempHp, change: -amount, characterId: combatant.characterId ?? null };
+  return {
+    hp: combatant.hp,
+    tempHp: combatant.tempHp,
+    change: -amount,
+    characterId: combatant.characterId ?? null,
+    autoDeathSaveFailure,
+  };
 }
 
 export async function applyHeal(sessionId: string, tokenId: string, amount: number): Promise<HpChangeResult> {

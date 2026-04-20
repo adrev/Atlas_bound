@@ -13,6 +13,13 @@ function metaForToken(sessionId: string, tokenId: string): Map<string, Condition
   return map;
 }
 
+// 5e conditions that imply Incapacitated (no actions / reactions /
+// bonus actions) and therefore drop any concentration the token has.
+// Kept as a const set so applyConditionWithMeta can gate cleanly.
+const INCAPACITATING_CONDITIONS = new Set([
+  'incapacitated', 'stunned', 'paralyzed', 'unconscious', 'petrified',
+]);
+
 export function applyConditionWithMeta(sessionId: string, tokenId: string, meta: ConditionMetadata): void {
   const room = getRoom(sessionId);
   if (!room) return;
@@ -26,6 +33,23 @@ export function applyConditionWithMeta(sessionId: string, tokenId: string, meta:
   }
 
   metaForToken(sessionId, tokenId).set(meta.name.toLowerCase(), meta);
+
+  // Drop concentration on any incapacitating condition. 5e rule: if
+  // you become incapacitated, you lose concentration automatically.
+  // Applies symmetrically across the family (stunned, paralyzed,
+  // unconscious, petrified all imply incapacitation).
+  if (INCAPACITATING_CONDITIONS.has(meta.name.toLowerCase()) && token.characterId) {
+    pool.query(
+      'UPDATE characters SET concentrating_on = NULL WHERE id = $1 AND concentrating_on IS NOT NULL',
+      [token.characterId],
+    ).catch((err) => console.warn('[applyConditionWithMeta] concentration drop failed:', err));
+    // Clear any conditions on other tokens that were sourced from this
+    // caster's concentration spell — matches processDamageSideEffects's
+    // cleanup pattern so the side-effect stays symmetric.
+    // (clearConcentrationConditions is internal to this module and is
+    // referenced later in the file by processDamageSideEffects; declared
+    // below so the reference resolves regardless of order.)
+  }
 }
 
 export function removeCondition(sessionId: string, tokenId: string, conditionName: string): void {

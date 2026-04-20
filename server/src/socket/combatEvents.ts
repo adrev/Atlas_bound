@@ -520,6 +520,18 @@ export function registerCombatEvents(io: Server, socket: Socket): void {
           changes: { hitPoints: result.hp, tempHitPoints: result.tempHp },
         });
       }
+      // 5e: damage while at 0 HP = automatic death-save failure.
+      // CombatService.applyDamage increments the failure tally if the
+      // combatant was already down; fan out the updated tracker so
+      // every client sees the ✗ land without the player having to
+      // re-roll manually.
+      if (result.autoDeathSaveFailure) {
+        io.to(ctx.room.sessionId).emit('combat:death-save-updated', {
+          tokenId: parsed.data.tokenId,
+          deathSaves: result.autoDeathSaveFailure,
+          roll: 0,
+        });
+      }
       // R2: auto-run damage side effects (concentration save, Sleep
       // break, etc.). Used to require the client to emit a separate
       // `damage:side-effects` event; now it runs server-side the moment
