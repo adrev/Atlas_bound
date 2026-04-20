@@ -67,7 +67,7 @@ export function detectOpportunityAttacks(
     const meleeAttack = findBestMeleeAttackSync(enemy);
     if (!meleeAttack) continue;
 
-    const reachCells = meleeReachCells(enemy);
+    const reachCells = meleeReachCells(sessionId, enemy);
     const reachPx = reachCells * gridSize;
 
     const wasDist = edgeDistance(enemy.x, enemy.y, (enemy.size as number) || 1, oldX, oldY, (mover.size as number) || 1, gridSize);
@@ -137,7 +137,7 @@ export function detectSpellCastingOA(
     const meleeAttack = findBestMeleeAttackSync(enemy);
     if (!meleeAttack) continue;
 
-    const reachCells = meleeReachCells(enemy);
+    const reachCells = meleeReachCells(sessionId, enemy);
     const reachPx = reachCells * gridSize;
 
     const dist = edgeDistance(
@@ -178,6 +178,12 @@ export async function executeOpportunityAttack(
 
   const attack = await findBestMeleeAttack(attacker);
   if (!attack) return { success: false, messages: [`\u26A0 ${attacker.name} has no melee attack available.`] };
+
+  // Cache the reach for the next sync detector pass. Keeps the map
+  // warm when a token picks up / swaps weapons mid-combat, without
+  // waiting for another startCombat cycle.
+  const reachFromAttack = attack.properties?.some((p) => /reach/i.test(String(p))) ? 2 : 1;
+  room.tokenMeleeReach.set(attacker.id, reachFromAttack);
 
   const moverConds = (mover.conditions || []) as string[];
   const attackerConds = (attacker.conditions || []) as string[];
@@ -303,7 +309,13 @@ function edgeDistance(
   return Math.max(Math.max(dx, 0), Math.max(dy, 0));
 }
 
-function meleeReachCells(attacker: Token): number {
+function meleeReachCells(sessionId: string, attacker: Token): number {
+  // Prefer the cached reach populated at combat start — that's the
+  // only path that can see the full inventory synchronously.
+  const room = getRoom(sessionId);
+  const cached = room?.tokenMeleeReach.get(attacker.id);
+  if (typeof cached === 'number' && cached > 0) return cached;
+
   const atk = findBestMeleeAttackSync(attacker);
   if (!atk) return 1;
   if (atk.properties?.some((p) => /reach/i.test(p))) return 2;

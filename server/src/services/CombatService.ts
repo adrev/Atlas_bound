@@ -127,6 +127,38 @@ export async function startCombatAsync(sessionId: string, tokenIds: string[]): P
       const { rows } = await pool.query('SELECT * FROM characters WHERE id = $1', [token.characterId]);
       const charRow = rows[0] as Record<string, unknown> | undefined;
       if (charRow) {
+        // Reach cache: look for a Reach property on any equipped melee
+        // weapon, or a "reach 10 ft." phrase in NPC action descriptions
+        // (typical monster stat-block formatting). Falls through to
+        // 1 cell when inventory is missing or unparseable.
+        try {
+          let reachCells = 1;
+          const invRaw = charRow.inventory;
+          const inv = typeof invRaw === 'string' ? JSON.parse(invRaw) : (invRaw ?? []);
+          if (Array.isArray(inv)) {
+            for (const item of inv) {
+              const type = String((item as Record<string, unknown>)?.type ?? (item as Record<string, unknown>)?.category ?? '').toLowerCase();
+              if (type !== 'weapon') continue;
+              const props = ((item as Record<string, unknown>)?.properties as string[] | undefined) ?? [];
+              const isMelee = !props.some((p) => /(range|ammunition)/i.test(String(p)));
+              const hasReach = props.some((p) => /reach/i.test(String(p)));
+              if (isMelee && hasReach) { reachCells = 2; break; }
+            }
+          }
+          if (reachCells === 1) {
+            const exRaw = charRow.extras;
+            const extras = typeof exRaw === 'string' ? JSON.parse(exRaw) : (exRaw ?? {});
+            const actions = (extras?.actions ?? []) as Array<Record<string, unknown>>;
+            for (const a of actions) {
+              const desc = String((a?.desc ?? a?.description ?? '')).toLowerCase();
+              if (!/melee\s+(weapon\s+)?attack/.test(desc)) continue;
+              if (/reach\s*10\s*ft/.test(desc)) { reachCells = 2; break; }
+              if (/reach\s*15\s*ft/.test(desc)) { reachCells = 3; break; }
+            }
+          }
+          room.tokenMeleeReach.set(tokenId, reachCells);
+        } catch { room.tokenMeleeReach.set(tokenId, 1); }
+
         hp = (charRow.hit_points as number) ?? 10;
         maxHp = (charRow.max_hit_points as number) ?? 10;
         tempHp = (charRow.temp_hit_points as number) ?? 0;

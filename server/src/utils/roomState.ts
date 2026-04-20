@@ -142,6 +142,15 @@ export interface RoomState {
    * combat advances to a new round.
    */
   roundHooks: string[];
+  /**
+   * tokenId → best melee reach in grid cells (1 or 2 in standard 5e).
+   * Populated at combat start from each combatant's equipped weapons
+   * and NPC action list. Used by the synchronous OpportunityAttack
+   * detector, which can't do its own DB lookups. Missing entries
+   * default to 1 cell (a 5-ft reach unarmed strike), so behavior is
+   * conservative when the cache hasn't been warmed yet.
+   */
+  tokenMeleeReach: Map<string, number>;
 }
 
 // ── Rate limiting ──────────────────────────────────────────
@@ -188,6 +197,7 @@ export function createRoom(
     music: { track: null, fileIndex: null, action: null },
     turnHooks: new Map(),
     roundHooks: [],
+    tokenMeleeReach: new Map(),
   };
   rooms.set(sessionId, room);
   roomCodeIndex.set(roomCode, sessionId);

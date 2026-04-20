@@ -168,7 +168,7 @@ export async function processDamageSideEffects(
   // 1. Concentration save
   if (token.characterId) {
     const { rows } = await pool.query(
-      'SELECT concentrating_on, ability_scores, saving_throws, proficiency_bonus, name FROM characters WHERE id = $1',
+      'SELECT concentrating_on, ability_scores, saving_throws, proficiency_bonus, features, name FROM characters WHERE id = $1',
       [token.characterId],
     );
     const charRow = rows[0] as Record<string, unknown> | undefined;
@@ -184,16 +184,31 @@ export async function processDamageSideEffects(
       } catch { /* ignore */ }
       const profBonus = (charRow!.proficiency_bonus as number) || 2;
       const totalMod = conMod + (isProficient ? profBonus : 0);
-      const roll = Math.floor(Math.random() * 20) + 1;
+
+      // War Caster feat — advantage on any Constitution save made to
+      // maintain concentration. Check the features blob the same way
+      // CombatService scans for Alert.
+      let hasWarCaster = false;
+      try {
+        const raw = charRow!.features;
+        const features = typeof raw === 'string' ? JSON.parse(raw) : (raw ?? []);
+        const list: Array<{ name?: string }> = Array.isArray(features) ? features : [];
+        hasWarCaster = list.some((f) => typeof f?.name === 'string' && /^\s*war\s*caster\s*$/i.test(f.name));
+      } catch { /* ignore */ }
+
+      const r1 = Math.floor(Math.random() * 20) + 1;
+      const r2 = Math.floor(Math.random() * 20) + 1;
+      const roll = hasWarCaster ? Math.max(r1, r2) : r1;
       const total = roll + totalMod;
       const success = total >= dc;
       const modStr = totalMod >= 0 ? `+${totalMod}` : `${totalMod}`;
+      const advTag = hasWarCaster ? ` (adv via War Caster: ${r1},${r2} → ${roll})` : '';
       const tokenName = (charRow!.name as string) || token.name;
 
       if (success) {
-        result.messages.push(`\uD83C\uDFAF ${tokenName} CON save d20=${roll}${modStr}=${total} vs DC ${dc} \u2192 SAVED, concentration on ${concentratingOn} maintained`);
+        result.messages.push(`\uD83C\uDFAF ${tokenName} CON save d20=${roll}${modStr}=${total} vs DC ${dc}${advTag} \u2192 SAVED, concentration on ${concentratingOn} maintained`);
       } else {
-        result.messages.push(`\u26A1 ${tokenName} CON save d20=${roll}${modStr}=${total} vs DC ${dc} \u2192 FAILED, concentration on ${concentratingOn} dropped!`);
+        result.messages.push(`\u26A1 ${tokenName} CON save d20=${roll}${modStr}=${total} vs DC ${dc}${advTag} \u2192 FAILED, concentration on ${concentratingOn} dropped!`);
         await pool.query('UPDATE characters SET concentrating_on = NULL WHERE id = $1', [token.characterId]);
         result.droppedConcentration = { spellName: concentratingOn };
         const cleared = clearConcentrationConditions(sessionId, tokenId, concentratingOn);
