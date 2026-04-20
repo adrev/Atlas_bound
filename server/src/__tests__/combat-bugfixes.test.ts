@@ -619,6 +619,45 @@ describe('CombatService.startCombatAsync — manual-character feat bonuses', () 
     expect(combatant.armorClass).toBe(16);
   });
 
+  it('refills legendary actions on the legendary creature\'s own turn start', () => {
+    const sessionId = 's-legendary';
+    const tDragon = makeToken('tDragon');
+    const tHero = makeToken('tHero');
+    seedRoom(sessionId, [tDragon, tHero], [
+      makeCombatant('tDragon', { initiative: 20 }),
+      makeCombatant('tHero', { initiative: 10 }),
+    ]);
+    const room = getAllRooms().get(sessionId)!;
+    room.legendaryActions.set('tDragon', { max: 3, remaining: 1 });
+
+    // Start on hero's turn index, advance to dragon's turn.
+    room.combatState!.currentTurnIndex = 1; // tHero
+    const result = CombatService.nextTurn(sessionId);
+    // Depending on skip logic, it should wrap to tDragon.
+    expect(result.currentCombatant.tokenId).toBe('tDragon');
+    // Refilled to max.
+    expect(room.legendaryActions.get('tDragon')?.remaining).toBe(3);
+  });
+
+  it('does not refill legendary actions when an unrelated combatant\'s turn starts', () => {
+    const sessionId = 's-legendary-other';
+    const tDragon = makeToken('tDragon');
+    const tHero = makeToken('tHero');
+    seedRoom(sessionId, [tDragon, tHero], [
+      makeCombatant('tDragon', { initiative: 20 }),
+      makeCombatant('tHero', { initiative: 10 }),
+    ]);
+    const room = getAllRooms().get(sessionId)!;
+    room.legendaryActions.set('tDragon', { max: 3, remaining: 1 });
+
+    // Start on dragon's turn, advance to hero.
+    room.combatState!.currentTurnIndex = 0; // tDragon
+    const result = CombatService.nextTurn(sessionId);
+    expect(result.currentCombatant.tokenId).toBe('tHero');
+    // Dragon's budget should NOT refill on hero's turn start.
+    expect(room.legendaryActions.get('tDragon')?.remaining).toBe(1);
+  });
+
   it('skips bonuses when the character has a dndbeyond_id', async () => {
     const sessionId = 's-ddb-char';
     const tPC = makeToken('tPC', {
