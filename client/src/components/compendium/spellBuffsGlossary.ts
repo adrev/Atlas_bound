@@ -171,4 +171,58 @@ export const SPELL_BUFFS: SpellBuffEntry[] = [
       'The attacker must actually have the matching feat for the trade-off to apply. Toggle with `!power [target] [on|off]`. Leave the badge on to keep committing each round.',
     ].join('\n\n'),
   },
+  {
+    slug: 'reckless',
+    name: 'Reckless Attack',
+    color: '#d35400',
+    snippet: 'Advantage on your STR melee attacks; attacks against you have advantage too.',
+    description: [
+      'Barbarian L2 feature. Once per your turn, you can choose to attack recklessly on your first melee attack: **advantage on all your Strength-based melee attacks until the end of the turn, but attack rolls against you also have advantage until your next turn**.',
+      'Toggle: `!reckless`. The badge auto-clears at the start of your next turn so the disadvantage-against-you doesn\'t linger.',
+    ].join('\n\n'),
+  },
+  {
+    slug: 'hexblade-cursed',
+    name: 'Hexblade\'s Curse',
+    color: '#6c3483',
+    snippet: 'Hexblade caster deals +prof dmg, crits on 19-20, heals on kill.',
+    description: [
+      'A Hexblade Warlock (L1) has cursed this creature. For the next 1 minute, the caster:',
+      '- Deals **+proficiency-bonus damage** to the cursed target',
+      '- Scores **critical hits on a 19 or 20** against the cursed target',
+      '- Regains **HP = warlock level + CHA mod** if the cursed target drops to 0 HP',
+      'Apply: `!hbc <target>`. Clear early: `!hbc clear <target>`. 1/short rest.',
+    ].join('\n\n'),
+  },
+  {
+    slug: 'bear-raging',
+    name: 'Bear Totem',
+    color: '#6e2c00',
+    snippet: 'While raging: resistance to ALL damage except psychic.',
+    description: [
+      'Path of the Totem Warrior Barbarian (L3) with the Bear spirit. **While raging**, this creature has **resistance to every damage type except psychic**, stacking with the normal Rage resistance to bludgeoning / piercing / slashing.',
+      'In practice: nearly invincible during Rage. Apply with `!bear on` (requires Rage already active); `!bear off` to clear.',
+    ].join('\n\n'),
+  },
+  {
+    slug: 'vowed',
+    name: 'Vow of Enmity',
+    color: '#b03a2e',
+    snippet: 'Vengeance Paladin has advantage on attacks against this target.',
+    description: [
+      'A Vengeance Paladin (L3) has sworn to destroy this creature. For the next 1 minute or until the target drops to 0 HP, the Paladin has **advantage on attack rolls against the target**.',
+      'Only the Paladin who cast the vow gets the benefit — other attackers roll normally. The VTT\'s attack resolver auto-checks the caster\'s feature against the target\'s vow when the Paladin attacks.',
+      'Apply: `!vow <target>`. Uses 1 Channel Divinity.',
+    ].join('\n\n'),
+  },
+  {
+    slug: 'stable',
+    name: 'Stable',
+    color: '#27ae60',
+    snippet: 'At 0 HP, no longer rolling death saves.',
+    description: [
+      'Successfully stabilized — the creature is at 0 HP but is no longer making death saving throws. They regain consciousness after 1d4 hours at 1 HP.',
+      'Stabilize via Medicine DC 10 check: `!stabilize <target>`, or automatically after three successful death saves.',
+    ].join('\n\n'),
+  },
 ];
