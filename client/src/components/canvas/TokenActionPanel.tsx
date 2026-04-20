@@ -938,9 +938,12 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
 
         // --- Phase 3A: Spell Attack vs AC ---
         if (resolvedAttackType) {
-          // Build attacker + target modifiers and combine for the attack
+          // Build attacker + target modifiers and combine for the attack.
+          // Spell attack rolls are nearly all ranged in 5e (touch-range
+          // cantrips like Shocking Grasp are the minority). Default to
+          // 'ranged' so prone targets take the correct disadvantage.
           const attackerOwn = getOwnRollModifiers(casterConditions);
-          const targetIncoming = getTargetRollModifiers(targetConditions);
+          const targetIncoming = getTargetRollModifiers(targetConditions, 'ranged');
           const combined = combineAttackModifiers(attackerOwn, targetIncoming);
 
           const atkResult = rollAttackWithModifiers(casterSpellAttack, combined);
