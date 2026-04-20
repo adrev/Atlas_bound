@@ -130,6 +130,16 @@ export const SPELL_BUFFS: SpellBuffEntry[] = [
     ].join('\n\n'),
   },
   {
+    slug: 'helped',
+    name: 'Helped',
+    color: '#5cb77a',
+    snippet: 'Advantage on the next attack or ability check (Help action).',
+    description: [
+      'An ally just took the **Help** action to assist you. On your **next attack roll** or **ability check**, you have **advantage**. Once consumed, the badge should clear — `!unassist [target]` or the DM removes it manually.',
+      'Apply: `!assist <target>`. Helper must be able to meaningfully assist (within 5 ft of the target of an attack, or proficient with the tool / skill for a check).',
+    ].join('\n\n'),
+  },
+  {
     slug: 'inspired',
     name: 'Inspired',
     color: '#f39c12',

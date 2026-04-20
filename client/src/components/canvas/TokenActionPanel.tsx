@@ -2271,7 +2271,7 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
                 onClick={() => {
                   if (!canSpendActionSlot(selectedTokenId!, 'action', 'Help')) return;
                   emitUseAction('action');
-                  emitSystemMessage(`🤝 ${token.name} takes the Help action — an ally of their choice has advantage on their next ability check or attack.`);
+                  emitSystemMessage(`🤝 ${token.name} takes the Help action — an ally gets advantage on their next attack or check. Apply the badge via \`!assist <ally>\`.`);
                 }}
               />
               <CombatActionBtn

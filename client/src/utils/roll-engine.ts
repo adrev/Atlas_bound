@@ -241,6 +241,18 @@ export function getOwnRollModifiers(conditions: string[]): RollModifiers {
     out.notes.push('Inspired (adv. attack)');
   }
 
+  // Help action: the recipient is tagged `helped` until they take
+  // their next attack or check. For simplicity we grant advantage
+  // on both attacks and ability checks while the badge persists —
+  // the DM clears after the assisted action lands.
+  if (set.has('helped')) {
+    applyAdvantage(out, 'attack', 'advantage');
+    for (const ab of ['str', 'dex', 'con', 'int', 'wis', 'cha'] as AbilityName[]) {
+      applyAdvantage(out, 'check', 'advantage', ab);
+    }
+    out.notes.push('Helped (adv. attack + checks)');
+  }
+
   // Slowed: handled in Phase 2 as a save penalty (-2)
 
   return out;

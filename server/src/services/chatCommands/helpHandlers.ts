@@ -24,6 +24,8 @@ const GROUPS: Array<{ title: string; entries: Entry[] }> = [
       { name: 'unrage', usage: '!unrage [target]', desc: 'End Rage voluntarily.' },
       { name: 'inspire', usage: '!inspire <target>', dmOnly: true, desc: 'Award Inspiration — advantage on next roll.' },
       { name: 'uninspire', usage: '!uninspire [target]', desc: 'Spend / clear Inspiration.' },
+      { name: 'assist', usage: '!assist <target>', desc: 'Help action — advantage on target\'s next attack or check.' },
+      { name: 'unassist', usage: '!unassist [target]', desc: 'Clear the helped badge after the assisted action.' },
       { name: 'power', usage: '!power [target] [on|off]', desc: 'GWM / Sharpshooter -5 / +10 toggle.' },
       { name: 'cover', usage: '!cover <target> <none|half|three|full>', dmOnly: true, desc: '+0 / +2 / +5 AC cover bonuses.' },
     ],

@@ -323,9 +323,69 @@ async function handleUninspire(c: ChatCommandContext): Promise<boolean> {
   return true;
 }
 
+/**
+ *   !assist <target>
+ *       Help action. Tags <target> with the `helped` pseudo-condition,
+ *       which the roll engine turns into advantage on their next
+ *       attack roll or ability check. DM or ally can use it.
+ *   !unassist [target]
+ *       Clear `helped`. Players call this after spending the advantage
+ *       — or the DM can clear if the task the helper set up doesn't
+ *       actually happen.
+ */
+async function handleAssist(c: ChatCommandContext): Promise<boolean> {
+  const targetName = c.rest.trim();
+  if (!targetName) {
+    whisperToCaller(c.io, c.ctx, '!assist: usage `!assist <target>`');
+    return true;
+  }
+  const target = resolveTargetOrSelf(c.ctx, targetName);
+  if (!target) {
+    whisperToCaller(c.io, c.ctx, `!assist: no token named "${targetName}" on this map.`);
+    return true;
+  }
+  if ((target.conditions as string[]).some((x) => x.toLowerCase() === 'helped')) {
+    whisperToCaller(c.io, c.ctx, `!assist: ${target.name} is already helped.`);
+    return true;
+  }
+  ConditionService.applyConditionWithMeta(c.ctx.room.sessionId, target.id, {
+    name: 'helped',
+    source: `${c.ctx.player.displayName} (!assist)`,
+    appliedRound: c.ctx.room.combatState?.roundNumber ?? 0,
+  });
+  c.io.to(c.ctx.room.sessionId).emit('map:token-updated', {
+    tokenId: target.id,
+    changes: { conditions: target.conditions },
+  });
+  broadcastSystem(c.io, c.ctx, `🤝 ${c.ctx.player.displayName} helps ${target.name} — advantage on their next attack or check.`);
+  return true;
+}
+
+async function handleUnassist(c: ChatCommandContext): Promise<boolean> {
+  const targetName = c.rest.trim();
+  const target = resolveTargetOrSelf(c.ctx, targetName);
+  if (!target) {
+    whisperToCaller(c.io, c.ctx, '!unassist: no token matched.');
+    return true;
+  }
+  if (!(target.conditions as string[]).some((x) => x.toLowerCase() === 'helped')) {
+    whisperToCaller(c.io, c.ctx, `!unassist: ${target.name} is not helped.`);
+    return true;
+  }
+  ConditionService.removeCondition(c.ctx.room.sessionId, target.id, 'helped');
+  c.io.to(c.ctx.room.sessionId).emit('map:token-updated', {
+    tokenId: target.id,
+    changes: { conditions: target.conditions },
+  });
+  broadcastSystem(c.io, c.ctx, `💪 ${target.name} spends the Help.`);
+  return true;
+}
+
 registerChatCommand('rage', handleRage);
 registerChatCommand('unrage', handleUnrage);
 registerChatCommand('cover', handleCover);
 registerChatCommand(['power', 'powerattack'], handlePower);
 registerChatCommand('inspire', handleInspire);
 registerChatCommand('uninspire', handleUninspire);
+registerChatCommand('assist', handleAssist);
+registerChatCommand('unassist', handleUnassist);

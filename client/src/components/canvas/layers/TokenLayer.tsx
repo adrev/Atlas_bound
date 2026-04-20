@@ -288,6 +288,7 @@ function TokenSprite({ token, isSelected, isCurrentTurn, showTokenLabels }: Toke
     'full-cover': '#2c3e50',
     'power-attack': '#e67e22',
     inspired: '#f39c12',
+    helped: '#5cb77a',
   };
 
   const isDM = useSessionStore.getState().isDM;
