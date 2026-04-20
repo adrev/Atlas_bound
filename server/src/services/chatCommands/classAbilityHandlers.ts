@@ -275,8 +275,99 @@ async function handleChannelDivinity(c: ChatCommandContext): Promise<boolean> {
   return true;
 }
 
+// ───── !pam <target> — Polearm Master butt-end bonus attack ──
+async function handlePolearmButt(c: ChatCommandContext): Promise<boolean> {
+  const targetName = c.rest.trim();
+  if (!targetName) {
+    whisperToCaller(c.io, c.ctx, '!pam: usage `!pam <target>` — bonus action butt-end strike with your polearm.');
+    return true;
+  }
+  const caller = resolveCallerToken(c.ctx);
+  if (!caller?.characterId) {
+    whisperToCaller(c.io, c.ctx, '!pam: no owned PC token on this map.');
+    return true;
+  }
+  const row = await loadCharacter(caller.characterId);
+  if (!row) { whisperToCaller(c.io, c.ctx, '!pam: character not found.'); return true; }
+
+  // Feat + weapon check.
+  let hasFeat = false;
+  try {
+    const rawF = row.features;
+    const feats = typeof rawF === 'string' ? JSON.parse(rawF) : (rawF ?? []);
+    hasFeat = Array.isArray(feats) && feats.some(
+      (f: { name?: string }) => typeof f?.name === 'string' && /^\s*polearm\s+master\s*$/i.test(f.name),
+    );
+  } catch { /* ignore */ }
+  if (!hasFeat) {
+    whisperToCaller(c.io, c.ctx, `!pam: ${caller.name} doesn't have the Polearm Master feat.`);
+    return true;
+  }
+
+  // Find the equipped polearm and pull its ability mod (same one used
+  // for the main attack — typically STR).
+  let abilityMod = 0;
+  let profBonus = 2;
+  let weaponName = 'polearm';
+  try {
+    const rawI = row.inventory;
+    const inv = typeof rawI === 'string' ? JSON.parse(rawI) : (rawI ?? []);
+    const scoresRaw = row.ability_scores;
+    const scores = typeof scoresRaw === 'string' ? JSON.parse(scoresRaw) : (scoresRaw ?? {});
+    const strMod = Math.floor(((scores?.str ?? 10) - 10) / 2);
+    const dexMod = Math.floor(((scores?.dex ?? 10) - 10) / 2);
+    profBonus = Number(row.proficiency_bonus) || 2;
+    if (Array.isArray(inv)) {
+      for (const item of inv) {
+        const name = String((item as Record<string, unknown>)?.name ?? '').toLowerCase();
+        if ((item as Record<string, unknown>)?.equipped && /glaive|halberd|pike|quarterstaff|spear/.test(name)) {
+          weaponName = (item as Record<string, unknown>).name as string;
+          const props = ((item as Record<string, unknown>)?.properties as string[] | undefined) ?? [];
+          const isFinesse = props.some((p) => /finesse/i.test(String(p)));
+          abilityMod = isFinesse ? Math.max(strMod, dexMod) : strMod;
+          break;
+        }
+      }
+    }
+  } catch { /* ignore */ }
+
+  // Spend the bonus action slot.
+  const economy = c.ctx.room.actionEconomies.get(caller.id);
+  if (economy?.bonusAction) {
+    whisperToCaller(c.io, c.ctx, `!pam: ${caller.name} has already spent their bonus action this turn.`);
+    return true;
+  }
+  if (economy) {
+    economy.bonusAction = true;
+    c.io.to(c.ctx.room.sessionId).emit('combat:action-used', {
+      tokenId: caller.id,
+      actionType: 'bonusAction',
+      economy,
+    });
+  }
+
+  // Roll to hit + roll damage. We don't have the target's AC in this
+  // path (it's adjudicated client-side normally), so the DM applies
+  // the hit outcome manually. Still useful to roll both numbers.
+  const atkBonus = abilityMod + profBonus;
+  const d20 = Math.floor(Math.random() * 20) + 1;
+  const atkTotal = d20 + atkBonus;
+  const d4 = Math.floor(Math.random() * 4) + 1;
+  const dmg = Math.max(0, d4 + abilityMod);
+  const atkSign = atkBonus >= 0 ? '+' : '';
+  const dmgSign = abilityMod >= 0 ? '+' : '';
+  broadcastSystem(
+    c.io, c.ctx,
+    `🪙 ${caller.name} butt-ends with ${weaponName} (PAM bonus):\n` +
+    `   to hit: d20=${d20}${atkSign}${atkBonus}=${atkTotal}${d20 === 20 ? ' 💥CRIT' : d20 === 1 ? ' 💀fumble' : ''}\n` +
+    `   dmg: d4(${d4})${dmgSign}${abilityMod}=${dmg} bludgeoning`,
+  );
+  return true;
+}
+
 registerChatCommand(['secondwind', 'sw'], handleSecondWind);
 registerChatCommand(['actionsurge', 'surge'], handleActionSurge);
 registerChatCommand('cunning', handleCunning);
 registerChatCommand(['lay', 'layonhands', 'loh'], handleLayOnHands);
 registerChatCommand(['channel', 'cd'], handleChannelDivinity);
+registerChatCommand(['pam', 'buttend'], handlePolearmButt);

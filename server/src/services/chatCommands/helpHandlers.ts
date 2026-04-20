@@ -32,6 +32,8 @@ const GROUPS: Array<{ title: string; entries: Entry[] }> = [
       { name: 'secondwind', usage: '!secondwind', desc: 'Fighter Second Wind — bonus action, heal 1d10 + level.' },
       { name: 'actionsurge', usage: '!actionsurge', desc: 'Fighter Action Surge — grants an extra action this turn.' },
       { name: 'cunning', usage: '!cunning <dash|disengage|hide>', desc: 'Rogue Cunning Action — bonus action version.' },
+      { name: 'protect', usage: '!protect <ally>', desc: 'Protection fighting style (reaction + shield) — ally within 5 ft gets attack-against disadvantage.' },
+      { name: 'pam', usage: '!pam <target>', desc: 'Polearm Master butt-end strike (bonus action, 1d4 bludgeoning).' },
       { name: 'lay', usage: '!lay <target> <amount>', desc: 'Paladin Lay on Hands — heal target (track ≤ 5*level/day).' },
       { name: 'channel', usage: '!channel <effect>', desc: 'Cleric / Paladin Channel Divinity — DM-narrated effect.' },
       { name: 'power', usage: '!power [target] [on|off]', desc: 'GWM / Sharpshooter -5 / +10 toggle.' },
@@ -50,6 +52,13 @@ const GROUPS: Array<{ title: string; entries: Entry[] }> = [
     title: 'Rests',
     entries: [
       { name: 'rest', usage: '!rest <short|long> [target]', dmOnly: true, desc: 'Trigger a rest on the whole party or a single target — runs performLongRest/ShortRest on each PC\'s client.' },
+    ],
+  },
+  {
+    title: 'Attunement',
+    entries: [
+      { name: 'attune', usage: '!attune <item> | list', desc: 'Attune to an item in your inventory (cap: 3).' },
+      { name: 'unattune', usage: '!unattune <item>', desc: 'Break attunement with an item.' },
     ],
   },
   {

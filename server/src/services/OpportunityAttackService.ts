@@ -85,6 +85,14 @@ export function detectOpportunityAttacks(
         attackerTokenId: enemy.id, attackerName: enemy.name,
         attackerOwnerUserId: enemy.ownerUserId, moverTokenId, moverName: mover.name,
       });
+    } else if (!wasInReach && isInReach && room.polearmMasters.has(enemy.id)) {
+      // Polearm Master: "While you are wielding a glaive, halberd,
+      // pike, quarterstaff, or spear, other creatures provoke an
+      // opportunity attack from you when they enter your reach."
+      opportunities.push({
+        attackerTokenId: enemy.id, attackerName: enemy.name,
+        attackerOwnerUserId: enemy.ownerUserId, moverTokenId, moverName: mover.name,
+      });
     }
   }
 

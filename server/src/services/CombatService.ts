@@ -134,6 +134,11 @@ export async function startCombatAsync(sessionId: string, tokenIds: string[]): P
         // 1 cell when inventory is missing or unparseable.
         try {
           let reachCells = 1;
+          // Polearm detection: a polearm is a glaive/halberd/pike/quarterstaff
+          // /spear — the weapons Polearm Master's OA-on-entry applies to.
+          // We flag the token for the OA detector if the character has
+          // the feat AND a polearm equipped.
+          let hasPolearm = false;
           const invRaw = charRow.inventory;
           const inv = typeof invRaw === 'string' ? JSON.parse(invRaw) : (invRaw ?? []);
           if (Array.isArray(inv)) {
@@ -143,8 +148,25 @@ export async function startCombatAsync(sessionId: string, tokenIds: string[]): P
               const props = ((item as Record<string, unknown>)?.properties as string[] | undefined) ?? [];
               const isMelee = !props.some((p) => /(range|ammunition)/i.test(String(p)));
               const hasReach = props.some((p) => /reach/i.test(String(p)));
-              if (isMelee && hasReach) { reachCells = 2; break; }
+              if (isMelee && hasReach) { reachCells = 2; }
+              const name = String((item as Record<string, unknown>)?.name ?? '').toLowerCase();
+              if ((item as Record<string, unknown>)?.equipped && /glaive|halberd|pike|quarterstaff|spear/.test(name)) {
+                hasPolearm = true;
+              }
             }
+          }
+          // Check Polearm Master feat name; only flag if both feat +
+          // polearm weapon are present.
+          if (hasPolearm) {
+            try {
+              const rawF = charRow.features;
+              const feats = typeof rawF === 'string' ? JSON.parse(rawF) : (rawF ?? []);
+              if (Array.isArray(feats) && feats.some(
+                (f: { name?: string }) => typeof f?.name === 'string' && /^\s*polearm\s+master\s*$/i.test(f.name),
+              )) {
+                room.polearmMasters.add(tokenId);
+              }
+            } catch { /* ignore */ }
           }
           if (reachCells === 1) {
             const exRaw = charRow.extras;

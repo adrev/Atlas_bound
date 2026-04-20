@@ -186,6 +186,14 @@ export interface RoomState {
    * the threshold. Populated via !recharge set, not auto-parsed.
    */
   rechargePools: Map<string, Map<string, { min: number; available: boolean }>>;
+  /**
+   * Tokens whose character has the Polearm Master feat and a polearm
+   * weapon equipped. Populated at combat start. Used by the OA
+   * detector to fire an additional OA when an enemy *enters* the
+   * polearm-master's reach (the other half of the feat — beyond the
+   * bonus-action butt-end attack).
+   */
+  polearmMasters: Set<string>;
 }
 
 // ── Rate limiting ──────────────────────────────────────────
@@ -237,6 +245,7 @@ export function createRoom(
     legendaryActions: new Map(),
     lairActionTokens: new Set(),
     rechargePools: new Map(),
+    polearmMasters: new Set(),
   };
   rooms.set(sessionId, room);
   roomCodeIndex.set(roomCode, sessionId);

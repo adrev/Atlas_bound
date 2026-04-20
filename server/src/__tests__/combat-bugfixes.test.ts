@@ -478,6 +478,59 @@ describe('OpportunityAttackService — reach cache', () => {
     expect(ops[0].attackerTokenId).toBe('tEnemy');
   });
 
+  it('fires Polearm Master OA when mover ENTERS reach (not leaves)', async () => {
+    const sessionId = 's-pam-entry';
+    const mover = makeToken('tMover', {
+      // Start 4+ cells away so wasInReach is false for a reach-2 attacker.
+      x: -GRID * 3, y: 0, ownerUserId: 'player-1',
+    });
+    const pam = makeToken('tPAM', {
+      x: GRID * 3, y: 0, ownerUserId: null,
+    });
+    seedRoom(sessionId, [mover, pam], [
+      makeCombatant('tMover', { isNPC: false }),
+      makeCombatant('tPAM'),
+    ]);
+    const { getRoom } = await import('../utils/roomState.js');
+    const room = getRoom(sessionId)!;
+    room.tokenMeleeReach.set('tPAM', 2);
+    room.polearmMasters.add('tPAM');
+    room.mapGridSizes.set('map-1', GRID);
+
+    // Mover starts outside reach and steps to a square 2 cells from PAM.
+    const ops = OAService.detectOpportunityAttacks(
+      sessionId, 'tMover', -GRID * 3, 0, GRID, 0,
+    );
+    expect(ops.length).toBe(1);
+    expect(ops[0].attackerTokenId).toBe('tPAM');
+  });
+
+  it('does not fire Polearm Master OA when mover was already inside reach', async () => {
+    const sessionId = 's-pam-no-entry';
+    const mover = makeToken('tMover', {
+      x: GRID * 2, y: 0, ownerUserId: 'player-1',
+    });
+    const pam = makeToken('tPAM', {
+      x: GRID * 3, y: 0, ownerUserId: null,
+    });
+    seedRoom(sessionId, [mover, pam], [
+      makeCombatant('tMover', { isNPC: false }),
+      makeCombatant('tPAM'),
+    ]);
+    const { getRoom } = await import('../utils/roomState.js');
+    const room = getRoom(sessionId)!;
+    room.tokenMeleeReach.set('tPAM', 2);
+    room.polearmMasters.add('tPAM');
+    room.mapGridSizes.set('map-1', GRID);
+
+    // Mover was already inside the 2-cell reach and shuffled to
+    // another in-reach square. Neither entry nor exit — no OA.
+    const ops = OAService.detectOpportunityAttacks(
+      sessionId, 'tMover', GRID * 2, 0, GRID * 2, GRID,
+    );
+    expect(ops).toEqual([]);
+  });
+
   it('does not fire OA from a reach-1 attacker when mover was 10 ft away', async () => {
     const sessionId = 's-reach-1';
     const mover = makeToken('tMover', {

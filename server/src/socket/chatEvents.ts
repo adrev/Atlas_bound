@@ -25,6 +25,8 @@ import '../services/chatCommands/legendaryHandlers.js';
 import '../services/chatCommands/lairAndRechargeHandlers.js';
 import '../services/chatCommands/bardicHandler.js';
 import '../services/chatCommands/classAbilityHandlers.js';
+import '../services/chatCommands/attuneHandlers.js';
+import '../services/chatCommands/protectionHandler.js';
 
 export function registerChatEvents(io: Server, socket: Socket): void {
 

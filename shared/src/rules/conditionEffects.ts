@@ -352,6 +352,23 @@ export const PSEUDO_CONDITION_EFFECTS: Record<string, ConditionEffect> = {
     name: 'bardic-inspired',
     notes: ['Holds a Bardic Inspiration die (spend to add to attack / save / check)'],
   },
+  protected: {
+    // Protection fighting style: an ally within 5 ft used their
+    // reaction + shield to impose disadvantage on attacks against
+    // this creature. One-shot; the badge auto-expires next round.
+    name: 'protected',
+    attacksAgainst: 'disadvantage',
+    notes: ['Attacks against have disadvantage (Protection fighting style)'],
+  },
+  hidden: {
+    name: 'hidden',
+    attacksAgainst: 'disadvantage',
+    notes: ['Attacks against have disadvantage until spotted'],
+  },
+  disengaged: {
+    name: 'disengaged',
+    notes: ['Movement this turn doesn\'t provoke opportunity attacks'],
+  },
 };
 
 /**

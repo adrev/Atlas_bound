@@ -290,6 +290,7 @@ function TokenSprite({ token, isSelected, isCurrentTurn, showTokenLabels }: Toke
     inspired: '#f39c12',
     helped: '#5cb77a',
     'bardic-inspired': '#9b59b6',
+    protected: '#34495e',
   };
 
   const isDM = useSessionStore.getState().isDM;
