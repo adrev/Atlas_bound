@@ -152,4 +152,112 @@ async function handleLegendary(c: ChatCommandContext): Promise<boolean> {
   return true;
 }
 
+/**
+ * !legres set <target> <max>    configure the resistance pool (default 3)
+ * !legres <target>              spend one: flips the target's most recent
+ *                               failed save into a success, decrements pool.
+ * !legres list <target>         show remaining
+ * !legres reset <target>        refresh to max (new day)
+ */
+async function handleLegRes(c: ChatCommandContext): Promise<boolean> {
+  const parts = c.rest.split(/\s+/).filter(Boolean);
+  const isDM = c.ctx.player.role === 'dm';
+  if (parts.length === 0) {
+    whisperToCaller(
+      c.io, c.ctx,
+      '!legres: usage `!legres <target>` | `!legres set <target> <max>` | `!legres list <target>` | `!legres reset <target>`',
+    );
+    return true;
+  }
+  const sub = parts[0].toLowerCase();
+
+  if (sub === 'set') {
+    if (!isDM) { whisperToCaller(c.io, c.ctx, '!legres set: DM only.'); return true; }
+    const maxRaw = parts[parts.length - 1];
+    const max = parseInt(maxRaw, 10);
+    if (!Number.isFinite(max) || max < 1 || max > 9) {
+      whisperToCaller(c.io, c.ctx, '!legres set: max must be 1-9.');
+      return true;
+    }
+    const targetName = parts.slice(1, -1).join(' ');
+    const target = resolveTarget(c.ctx, targetName);
+    if (!target) {
+      whisperToCaller(c.io, c.ctx, `!legres set: no token named "${targetName}".`);
+      return true;
+    }
+    c.ctx.room.legendaryResistance.set(target.id, { max, remaining: max });
+    broadcastSystem(c.io, c.ctx, `🛡 ${target.name} has ${max} legendary resistance${max === 1 ? '' : 's'}/day.`);
+    return true;
+  }
+
+  if (sub === 'list') {
+    const targetName = parts.slice(1).join(' ');
+    const target = resolveTarget(c.ctx, targetName);
+    if (!target) {
+      whisperToCaller(c.io, c.ctx, `!legres list: no token named "${targetName}".`);
+      return true;
+    }
+    const pool = c.ctx.room.legendaryResistance.get(target.id);
+    if (!pool) {
+      whisperToCaller(c.io, c.ctx, `!legres: ${target.name} has no Legendary Resistance configured.`);
+      return true;
+    }
+    whisperToCaller(c.io, c.ctx, `${target.name}: ${pool.remaining}/${pool.max} legendary resistances remaining.`);
+    return true;
+  }
+
+  if (sub === 'reset') {
+    if (!isDM) { whisperToCaller(c.io, c.ctx, '!legres reset: DM only.'); return true; }
+    const targetName = parts.slice(1).join(' ');
+    const target = resolveTarget(c.ctx, targetName);
+    if (!target) {
+      whisperToCaller(c.io, c.ctx, `!legres reset: no token named "${targetName}".`);
+      return true;
+    }
+    const pool = c.ctx.room.legendaryResistance.get(target.id);
+    if (!pool) {
+      whisperToCaller(c.io, c.ctx, `!legres: ${target.name} has no pool to reset.`);
+      return true;
+    }
+    pool.remaining = pool.max;
+    broadcastSystem(c.io, c.ctx, `🛡 ${target.name}: Legendary Resistance refreshed (${pool.max}/${pool.max}).`);
+    return true;
+  }
+
+  // Default: spend one — same target-name parsing as !legendary.
+  let consumed = 0;
+  let target: Token | null = null;
+  for (let i = 1; i <= parts.length; i++) {
+    const candidate = parts.slice(0, i).join(' ');
+    const match = resolveTarget(c.ctx, candidate);
+    if (match) { target = match; consumed = i; }
+  }
+  // Allow "!legres <target>" with single-token target too (skip the
+  // subcommand detection since we already set sub).
+  if (!target) target = resolveTarget(c.ctx, parts.join(' '));
+  if (!target) {
+    whisperToCaller(c.io, c.ctx, '!legres: no token matched.');
+    return true;
+  }
+  const pool = c.ctx.room.legendaryResistance.get(target.id);
+  if (!pool) {
+    whisperToCaller(
+      c.io, c.ctx,
+      `!legres: ${target.name} has no budget. DM: \`!legres set ${target.name} 3\` first.`,
+    );
+    return true;
+  }
+  if (pool.remaining <= 0) {
+    whisperToCaller(c.io, c.ctx, `!legres: ${target.name} has no resistances remaining.`);
+    return true;
+  }
+  pool.remaining -= 1;
+  broadcastSystem(
+    c.io, c.ctx,
+    `🛡 **${target.name} uses Legendary Resistance** — failed save becomes a success (${pool.remaining}/${pool.max} left).`,
+  );
+  return true;
+}
+
 registerChatCommand(['legendary', 'leg'], handleLegendary);
+registerChatCommand(['legres', 'legresist'], handleLegRes);

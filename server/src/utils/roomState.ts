@@ -169,6 +169,14 @@ export interface RoomState {
    */
   legendaryActions: Map<string, { max: number; remaining: number }>;
   /**
+   * Legendary Resistance budget. tokenId → { max, remaining }. Typically
+   * 3/day for legendary monsters. The DM spends one with !legres
+   * <target> after the creature fails a save to flip the result into
+   * a success. Refreshes on long rest (monsters don't long rest during
+   * combat, so we only reset on !legres reset).
+   */
+  legendaryResistance: Map<string, { max: number; remaining: number }>;
+  /**
    * Lair action support. Set of tokenIds flagged as having lair actions
    * in their current environment (a monster only has lair actions while
    * in its lair). At the start of each new round, a system chat
@@ -243,6 +251,7 @@ export function createRoom(
     tokenMeleeReach: new Map(),
     mobileMeleeTargets: new Map(),
     legendaryActions: new Map(),
+    legendaryResistance: new Map(),
     lairActionTokens: new Set(),
     rechargePools: new Map(),
     polearmMasters: new Set(),

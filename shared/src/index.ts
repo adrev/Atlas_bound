@@ -53,6 +53,8 @@ export {
   blocksReactions,
 } from './rules/conditionEffects.js';
 export type { ConditionEffect, AttackModifierResult, SaveModifierResult, EffectiveStat, Ability } from './rules/conditionEffects.js';
+export { RACE_TRAITS, traitsForRace } from './rules/raceFeatures.js';
+export type { RaceTraits, SaveAdvantageFlag } from './rules/raceFeatures.js';
 export { SPELL_CONDITIONS, SPELL_BUFFS } from './constants/spell-conditions.js';
 export type { ConditionInfo } from './constants/conditions.js';
 export { SPELL_ANIMATIONS, getSpellAnimation } from './constants/spell-animations.js';

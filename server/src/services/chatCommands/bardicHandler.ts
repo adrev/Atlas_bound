@@ -153,5 +153,81 @@ async function handleUnbardic(c: ChatCommandContext): Promise<boolean> {
   return true;
 }
 
+/**
+ * Cutting Words (College of Lore, L3). Reaction: when a creature
+ * within 60 ft that you can see or hear makes an attack roll, ability
+ * check, or damage roll, you can expend a Bardic Inspiration die to
+ * subtract the rolled die value from the creature's total.
+ *
+ * This consumes the caller's Bardic Inspiration die (if they have
+ * one) — not an ally's. For simplicity we treat the caller's BI pool
+ * as "their own d6 (or d8/d10/d12 based on level)". The command
+ * rolls the die and announces the subtraction; DM applies it to the
+ * enemy's roll.
+ *
+ *   !cuttingwords <enemy-name>
+ *
+ * Expects the caller to be a Bard. We infer the die size from level
+ * (d6 @ 1-4, d8 @ 5-9, d10 @ 10-14, d12 @ 15+), matching the base
+ * Bardic Inspiration progression.
+ */
+async function handleCuttingWords(c: ChatCommandContext): Promise<boolean> {
+  const targetName = c.rest.trim();
+  if (!targetName) {
+    whisperToCaller(c.io, c.ctx, '!cuttingwords: usage `!cuttingwords <enemy-name>`');
+    return true;
+  }
+  const all = Array.from(c.ctx.room.tokens.values());
+  const matches = all.filter((t) => t.name.toLowerCase() === targetName.toLowerCase());
+  if (matches.length === 0) {
+    whisperToCaller(c.io, c.ctx, `!cuttingwords: no token named "${targetName}".`);
+    return true;
+  }
+  matches.sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
+  const target = matches[0];
+
+  const caller = resolveTargetOrSelf(c.ctx, '');
+  if (!caller?.characterId) {
+    whisperToCaller(c.io, c.ctx, '!cuttingwords: no owned PC token.');
+    return true;
+  }
+
+  // Class + die-size lookup.
+  const { rows } = await import('../../db/connection.js').then((m) =>
+    m.default.query('SELECT class, level FROM characters WHERE id = $1', [caller.characterId]),
+  );
+  const row = rows[0] as Record<string, unknown> | undefined;
+  const classLower = String(row?.class || '').toLowerCase();
+  if (!classLower.includes('bard')) {
+    whisperToCaller(c.io, c.ctx, `!cuttingwords: ${caller.name} isn't a Bard.`);
+    return true;
+  }
+  const level = Number(row?.level) || 1;
+  const dieSize = level >= 15 ? 12 : level >= 10 ? 10 : level >= 5 ? 8 : 6;
+
+  // Burn the reaction.
+  const economy = c.ctx.room.actionEconomies.get(caller.id);
+  if (economy?.reaction) {
+    whisperToCaller(c.io, c.ctx, `!cuttingwords: ${caller.name} has already used their reaction this round.`);
+    return true;
+  }
+  if (economy) {
+    economy.reaction = true;
+    c.io.to(c.ctx.room.sessionId).emit('combat:action-used', {
+      tokenId: caller.id,
+      actionType: 'reaction',
+      economy,
+    });
+  }
+
+  const roll = Math.floor(Math.random() * dieSize) + 1;
+  broadcastSystem(
+    c.io, c.ctx,
+    `🎵 ${caller.name} uses Cutting Words on ${target.name} — d${dieSize} = **${roll}**. Subtract from ${target.name}'s attack / check / damage roll.`,
+  );
+  return true;
+}
+
 registerChatCommand(['bardic', 'bi'], handleBardic);
 registerChatCommand('unbardic', handleUnbardic);
+registerChatCommand(['cuttingwords', 'cw'], handleCuttingWords);

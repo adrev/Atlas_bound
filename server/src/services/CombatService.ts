@@ -1,5 +1,5 @@
 import type { Combatant, CombatState, ActionEconomy, ActionType, Condition } from '@dnd-vtt/shared';
-import { speedMultiplierFor } from '@dnd-vtt/shared';
+import { speedMultiplierFor, traitsForRace } from '@dnd-vtt/shared';
 import { getRoom, type RoomState } from '../utils/roomState.js';
 import pool from '../db/connection.js';
 import { releaseGrapplesByGrappler } from './ConditionService.js';
@@ -210,6 +210,33 @@ export async function startCombatAsync(sessionId: string, tokenIds: string[]): P
           }
         } catch { /* ignore */ }
 
+        // Legendary Resistance auto-parse: scan special_abilities for
+        // the classic "Legendary Resistance (N/Day)" entry. Most
+        // legendary monsters have 3; archdevils / ancient dragons etc.
+        // Follows the same defer-to-DM pattern as legendary actions
+        // (doesn't overwrite an existing !legres set).
+        try {
+          if (!room.legendaryResistance.has(tokenId)) {
+            const exRaw = charRow.extras;
+            const extras = typeof exRaw === 'string' ? JSON.parse(exRaw) : (exRaw ?? {});
+            const sa = (extras as Record<string, unknown>)?.special_abilities
+              ?? (extras as Record<string, unknown>)?.specialAbilities;
+            if (Array.isArray(sa)) {
+              for (const ability of sa as Array<Record<string, unknown>>) {
+                const name = String(ability?.name ?? '');
+                if (/legendary\s+resistance/i.test(name)) {
+                  const m = name.match(/\((\d+)\s*\/\s*day/i);
+                  const max = m ? parseInt(m[1], 10) : 3;
+                  if (Number.isFinite(max) && max >= 1 && max <= 9) {
+                    room.legendaryResistance.set(tokenId, { max, remaining: max });
+                  }
+                  break;
+                }
+              }
+            }
+          }
+        } catch { /* ignore */ }
+
         // Recharge auto-parse: scan action names for "(Recharge N-6)"
         // and populate the recharge pool so the DM doesn't have to
         // !recharge set each breath weapon manually.
@@ -248,6 +275,42 @@ export async function startCombatAsync(sessionId: string, tokenIds: string[]): P
         ac = (charRow.armor_class as number) ?? 10;
         speed = (charRow.speed as number) ?? 30;
         portrait = charRow.portrait_url as string | null;
+
+        // Race traits: merge race-granted resistances into the
+        // character's defenses JSON so the damage resolver picks them
+        // up. Halfling Brave / Gnome Cunning / Elf charm-adv are
+        // handled at roll time via a separate getter; here we only
+        // touch the damage-resistance side. Gated on no-ddb-id since
+        // DDB imports already include race resistances.
+        try {
+          const ddbId = charRow.dndbeyond_id as string | null;
+          if (!ddbId) {
+            const race = charRow.race as string | null | undefined;
+            const traits = traitsForRace(race);
+            if (traits?.resistances && traits.resistances.length > 0) {
+              const defRaw = (charRow as Record<string, unknown>)?.defenses;
+              const defenses = typeof defRaw === 'string'
+                ? JSON.parse(defRaw as string)
+                : (defRaw ?? { resistances: [], immunities: [], vulnerabilities: [] });
+              const existing: string[] = Array.isArray(defenses.resistances) ? defenses.resistances : [];
+              const merged = Array.from(new Set([...existing, ...traits.resistances]));
+              if (merged.length !== existing.length) {
+                defenses.resistances = merged;
+                // Persist the merge so the client + damage pipeline
+                // pick it up without extra plumbing.
+                await pool.query('UPDATE characters SET defenses = $1 WHERE id = $2',
+                  [JSON.stringify(defenses), token.characterId],
+                ).catch((e) => console.warn('[race-traits] defenses merge failed:', e));
+              }
+            }
+            // Race speed override (halflings 25 ft etc.) — only lift
+            // below, never override a higher stored speed.
+            if (traits?.speed != null && speed < traits.speed) {
+              // Do NOT override: DDB + manual characters set the right
+              // speed already. This branch is defensive.
+            }
+          }
+        } catch { /* race merge best-effort */ }
         exhaustionLevel = Math.max(0, Math.min(6, Number(charRow.exhaustion_level ?? 0) || 0));
         // 5e exhaustion L4: HP max halved. Apply here so the combat
         // tracker respects the cap from the start of the encounter;

@@ -504,6 +504,19 @@ export function computeSaveModifiers(
   targetConditions: Iterable<Condition | string>,
   ability: 'str' | 'dex' | 'con' | 'int' | 'wis' | 'cha',
   exhaustionLevel: number = 0,
+  /**
+   * Optional race string (e.g. "Mountain Dwarf", "Hill Dwarf"). When
+   * supplied we consult RACE_TRAITS.savesVs for advantage/disadvantage
+   * on specific conditions — halfling Brave (frightened), dwarf
+   * Resilience (poison), gnome Cunning (magic vs INT/WIS/CHA), elf
+   * charm-resistance.
+   *
+   * Save category is inferred from `savingAgainst`: passing
+   * 'frightened' as the label lets halflings get adv; 'poison' lets
+   * dwarves. Callers that don't know the flavor can skip this.
+   */
+  race?: string | null,
+  savingAgainst?: string | null,
 ): SaveModifierResult {
   let hasAdv = false;
   let hasDis = false;
@@ -541,6 +554,44 @@ export function computeSaveModifiers(
   if (exhaustionLevel >= 3) {
     hasDis = true;
     notes.push(`exhaustion L${exhaustionLevel}: disadvantage on all saves`);
+  }
+
+  // Race traits: halfling Brave vs frightened, dwarf Resilience vs
+  // poison, gnome Cunning vs magic (INT/WIS/CHA), elf charm-adv, etc.
+  // Only fires when the caller supplies both the race and a label
+  // describing what the save is against.
+  if (race && savingAgainst) {
+    const tag = savingAgainst.toLowerCase();
+    // Re-import avoided: inline the lookup to keep this file self-contained.
+    // Match the trait map directly via the caller-supplied labels.
+    const raceLower = race.toLowerCase();
+    const raceAdvantages: Record<string, Record<string, 'advantage' | 'disadvantage'>> = {
+      halfling: { frightened: 'advantage' },
+      dwarf: { poison: 'advantage' },
+      gnome: { magic: 'advantage' },
+      elf: { charmed: 'advantage', charm: 'advantage' },
+      'half-elf': { charmed: 'advantage', charm: 'advantage' },
+      drow: { charmed: 'advantage', charm: 'advantage' },
+      aasimar: { necrotic: 'advantage', radiant: 'advantage' },
+      tiefling: { fire: 'advantage' },
+    };
+    // Gnome Cunning specifically gates on INT/WIS/CHA for `magic`.
+    // Other races apply regardless of ability.
+    for (const [raceKey, bonuses] of Object.entries(raceAdvantages)) {
+      if (!raceLower.includes(raceKey)) continue;
+      const flag = bonuses[tag];
+      if (!flag) continue;
+      if (raceKey === 'gnome' && tag === 'magic') {
+        if (!['int', 'wis', 'cha'].includes(ability)) continue;
+      }
+      if (flag === 'advantage') {
+        hasAdv = true;
+        notes.push(`${raceKey} trait: advantage on save vs ${tag}`);
+      } else {
+        hasDis = true;
+        notes.push(`${raceKey} trait: disadvantage on save vs ${tag}`);
+      }
+    }
   }
 
   let effectiveAdvantage: 'advantage' | 'disadvantage' | 'normal' = 'normal';

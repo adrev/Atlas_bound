@@ -7,6 +7,7 @@ import {
 import pool from '../../db/connection.js';
 import type { Token } from '@dnd-vtt/shared';
 import type { PlayerContext } from '../../utils/roomState.js';
+import * as CombatService from '../CombatService.js';
 
 /**
  * Per-class bonus-action and feature commands that are common enough
@@ -365,9 +366,147 @@ async function handlePolearmButt(c: ChatCommandContext): Promise<boolean> {
   return true;
 }
 
+// ───── !uncanny <damage> — Rogue Uncanny Dodge reaction ─────
+/**
+ * Rogue's Uncanny Dodge (L5): when an attacker you can see hits you
+ * with an attack, you can use your reaction to halve the attack's
+ * damage against you. Since damage has already been rolled + applied
+ * by the time the player realises they want to use it, the simplest
+ * model is a "heal back the half" chat command that also burns the
+ * reaction slot.
+ *
+ *   !uncanny <damage-amount>
+ *     Example: took 18 damage → `!uncanny 18` heals 9 back and
+ *     marks reaction spent.
+ */
+async function handleUncanny(c: ChatCommandContext): Promise<boolean> {
+  const arg = c.rest.trim();
+  const dmg = parseInt(arg, 10);
+  if (!Number.isFinite(dmg) || dmg < 1) {
+    whisperToCaller(c.io, c.ctx, '!uncanny: usage `!uncanny <incoming-damage-amount>`');
+    return true;
+  }
+  const caller = resolveCallerToken(c.ctx);
+  if (!caller?.characterId) {
+    whisperToCaller(c.io, c.ctx, '!uncanny: no owned PC token.');
+    return true;
+  }
+  const row = await loadCharacter(caller.characterId);
+  const classLower = String(row?.class || '').toLowerCase();
+  if (!classLower.includes('rogue')) {
+    whisperToCaller(c.io, c.ctx, `!uncanny: ${caller.name} isn't a Rogue.`);
+    return true;
+  }
+  const level = Number(row?.level) || 1;
+  if (level < 5) {
+    whisperToCaller(c.io, c.ctx, `!uncanny: Uncanny Dodge requires Rogue level 5 (${caller.name} is ${level}).`);
+    return true;
+  }
+  const economy = c.ctx.room.actionEconomies.get(caller.id);
+  if (economy?.reaction) {
+    whisperToCaller(c.io, c.ctx, `!uncanny: ${caller.name} has already used their reaction this round.`);
+    return true;
+  }
+  if (economy) {
+    economy.reaction = true;
+    c.io.to(c.ctx.room.sessionId).emit('combat:action-used', {
+      tokenId: caller.id,
+      actionType: 'reaction',
+      economy,
+    });
+  }
+
+  // Heal back half the damage. Route through CombatService in combat
+  // so the tracker + auto-conditions stay in sync.
+  const healback = Math.floor(dmg / 2);
+  if (c.ctx.room.combatState?.active) {
+    const r = await CombatService.applyHeal(c.ctx.room.sessionId, caller.id, healback);
+    c.io.to(c.ctx.room.sessionId).emit('combat:hp-changed', {
+      tokenId: caller.id, hp: r.hp, tempHp: r.tempHp, change: healback, type: 'heal',
+    });
+    if (r.characterId) {
+      c.io.to(c.ctx.room.sessionId).emit('character:updated', {
+        characterId: r.characterId,
+        changes: { hitPoints: r.hp, tempHitPoints: r.tempHp },
+      });
+    }
+  }
+  broadcastSystem(
+    c.io, c.ctx,
+    `🗡 ${caller.name} uses Uncanny Dodge (reaction) — halves the incoming damage: ${dmg} → ${dmg - healback} (heal back ${healback}).`,
+  );
+  return true;
+}
+
+// ───── !evasion <damage> — Rogue Evasion (L7) ───────────────
+/**
+ * Rogue's Evasion (L7): when subjected to an effect that allows a
+ * DEX save for half damage, you take no damage on success + half on
+ * fail. Because the DM is already routing saves through !save, this
+ * helper heals back the full or half depending on what the DM
+ * passes — but in practice this is just a "half the damage again"
+ * or "take zero" wrapper.
+ *
+ *   !evasion pass <damage>   — saved; heal back ALL applied damage
+ *   !evasion fail <damage>   — failed; heal back HALF applied damage
+ */
+async function handleEvasion(c: ChatCommandContext): Promise<boolean> {
+  const parts = c.rest.split(/\s+/).filter(Boolean);
+  if (parts.length < 2) {
+    whisperToCaller(c.io, c.ctx, '!evasion: usage `!evasion <pass|fail> <damage-applied>`');
+    return true;
+  }
+  const outcome = parts[0].toLowerCase();
+  const dmg = parseInt(parts[1], 10);
+  if ((outcome !== 'pass' && outcome !== 'fail') || !Number.isFinite(dmg) || dmg < 1) {
+    whisperToCaller(c.io, c.ctx, '!evasion: usage `!evasion <pass|fail> <damage-applied>`');
+    return true;
+  }
+  const caller = resolveCallerToken(c.ctx);
+  if (!caller?.characterId) {
+    whisperToCaller(c.io, c.ctx, '!evasion: no owned PC token.');
+    return true;
+  }
+  const row = await loadCharacter(caller.characterId);
+  const classLower = String(row?.class || '').toLowerCase();
+  if (!classLower.includes('rogue') && !classLower.includes('monk')) {
+    whisperToCaller(c.io, c.ctx, `!evasion: ${caller.name} isn't a Rogue or Monk.`);
+    return true;
+  }
+  const level = Number(row?.level) || 1;
+  if (level < 7) {
+    whisperToCaller(c.io, c.ctx, `!evasion: Evasion requires Rogue/Monk level 7 (${caller.name} is ${level}).`);
+    return true;
+  }
+  // pass = full save means ZERO damage, but the DM already applied
+  //         full/half. Refund everything.
+  // fail = half-damage means take half, but the DM may have applied
+  //         full. Refund half.
+  const refund = outcome === 'pass' ? dmg : Math.floor(dmg / 2);
+  if (c.ctx.room.combatState?.active) {
+    const r = await CombatService.applyHeal(c.ctx.room.sessionId, caller.id, refund);
+    c.io.to(c.ctx.room.sessionId).emit('combat:hp-changed', {
+      tokenId: caller.id, hp: r.hp, tempHp: r.tempHp, change: refund, type: 'heal',
+    });
+    if (r.characterId) {
+      c.io.to(c.ctx.room.sessionId).emit('character:updated', {
+        characterId: r.characterId,
+        changes: { hitPoints: r.hp, tempHitPoints: r.tempHp },
+      });
+    }
+  }
+  broadcastSystem(
+    c.io, c.ctx,
+    `💨 ${caller.name} uses Evasion (${outcome}) — ${outcome === 'pass' ? 'takes 0 damage (refund full)' : 'takes half (refund other half)'}: +${refund} HP.`,
+  );
+  return true;
+}
+
 registerChatCommand(['secondwind', 'sw'], handleSecondWind);
 registerChatCommand(['actionsurge', 'surge'], handleActionSurge);
 registerChatCommand('cunning', handleCunning);
 registerChatCommand(['lay', 'layonhands', 'loh'], handleLayOnHands);
 registerChatCommand(['channel', 'cd'], handleChannelDivinity);
 registerChatCommand(['pam', 'buttend'], handlePolearmButt);
+registerChatCommand(['uncanny', 'uncannydodge'], handleUncanny);
+registerChatCommand('evasion', handleEvasion);

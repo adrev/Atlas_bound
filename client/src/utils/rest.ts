@@ -108,6 +108,16 @@ export function performLongRest(character: Character): void {
     updates.concentratingOn = null;
     changes.push(`Concentration on ${concentratingOn} dropped`);
   }
+  // 8) Exhaustion: RAW "finishing a long rest reduces a creature's
+  // exhaustion level by 1, provided that the creature has also
+  // ingested some food and drink." We assume food + drink happen
+  // (it's a tabletop abstraction) and decrement.
+  const currentExhaustion = (character as unknown as { exhaustionLevel?: number })
+    .exhaustionLevel ?? 0;
+  if (currentExhaustion > 0) {
+    updates.exhaustionLevel = Math.max(0, currentExhaustion - 1);
+    changes.push(`Exhaustion ${currentExhaustion} → ${updates.exhaustionLevel}`);
+  }
 
   if (changes.length === 0) changes.push('Already fully rested');
 

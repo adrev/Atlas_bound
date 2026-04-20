@@ -1588,11 +1588,12 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
           if (wTwfOffHandMod !== 0) {
             wRolledDmg += wTwfOffHandMod;
           }
-          // Hex spell: +1d6 necrotic when the CASTER hits the hexed
-          // target. We can't 100% verify the caster matches (the
-          // metadata carrying casterTokenId isn't mirrored to the
-          // client yet), so we gate on: target is hexed AND attacker
-          // has Hex in their spells list.
+          // Hex / Hunter's Mark damage riders: separate necrotic /
+          // weapon-type damage instances so resistance resolves
+          // INDEPENDENTLY of the main weapon damage. (A target with
+          // slashing resistance shouldn't halve the hex necrotic;
+          // a target with necrotic resistance shouldn't halve the
+          // slashing.)
           let wHexBonus = 0;
           let wMarkBonus = 0;
           if (wTargetConds.includes('hexed')) {
@@ -1602,13 +1603,10 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
               if (Array.isArray(spells) && spells.some(
                 (s: { name?: string }) => typeof s?.name === 'string' && /^\s*hex\s*$/i.test(s.name),
               )) {
-                const roll = rollDamageDice('1d6');
-                wHexBonus = roll;
-                wRolledDmg += roll;
+                wHexBonus = rollDamageDice('1d6');
               }
             } catch { /* ignore */ }
           }
-          // Hunter's Mark: same shape, +1d6 weapon damage from caster.
           if (wTargetConds.includes('marked')) {
             try {
               const spellsRaw = (wCasterChar as any)?.spells;
@@ -1616,19 +1614,43 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
               if (Array.isArray(spells) && spells.some(
                 (s: { name?: string }) => typeof s?.name === 'string' && /hunter'?s\s+mark/i.test(s.name),
               )) {
-                const roll = rollDamageDice('1d6');
-                wMarkBonus = roll;
-                wRolledDmg += roll;
+                wMarkBonus = rollDamageDice('1d6');
               }
             } catch { /* ignore */ }
           }
 
           const wFreshChar = useCharacterStore.getState().allCharacters[effectiveCharId];
           const wFreshHp = wFreshChar ? (typeof wFreshChar.hitPoints === 'number' ? wFreshChar.hitPoints : parseInt(String(wFreshChar.hitPoints)) || 0) : targetHp;
-          // Weapon attacks are NONMAGICAL by default — Stoneskin matters
+          // Weapon attacks default to NONMAGICAL (so Stoneskin applies),
+          // but magic weapons (+1 longsword, etc.) count as magical for
+          // the purpose of overcoming damage resistance. Detect via the
+          // atk's magicBonus field or a "+N" / magical tag in the name.
+          let wIsMagicalWeapon = false;
+          const atkMb = Number((atk as Record<string, unknown>)?.magicBonus) || 0;
+          if (atkMb > 0) wIsMagicalWeapon = true;
+          if (!wIsMagicalWeapon) {
+            const nm = String(atk.name || '');
+            if (/\+\d/.test(nm) || /magic(al)?\b/i.test(nm)) wIsMagicalWeapon = true;
+          }
           const wDefenses = (wFreshChar as any)?.defenses ? (typeof (wFreshChar as any).defenses === 'string' ? JSON.parse((wFreshChar as any).defenses) : (wFreshChar as any).defenses) : { resistances: [], immunities: [], vulnerabilities: [] };
-          const wResisted = applyDamageWithResist(wRolledDmg, weaponDmgType, wDefenses, wTargetConds, false);
-          const wNewHp = Math.max(0, wFreshHp - wResisted.amount);
+          // Resolve the main weapon damage (weapon type, magic flag)
+          // and the rider instances (hex = necrotic magical, mark = same
+          // weapon type & magic flag) independently.
+          const wResisted = applyDamageWithResist(wRolledDmg, weaponDmgType, wDefenses, wTargetConds, wIsMagicalWeapon);
+          let wResistedHex = { amount: 0, source: '' };
+          let wResistedMark = { amount: 0, source: '' };
+          if (wHexBonus > 0) {
+            wResistedHex = applyDamageWithResist(wHexBonus, 'necrotic', wDefenses, wTargetConds, true) as { amount: number; source: string };
+          }
+          if (wMarkBonus > 0) {
+            // Hunter's Mark rides on the weapon damage type; it's
+            // magical because it's a spell-sourced rider.
+            wResistedMark = applyDamageWithResist(wMarkBonus, weaponDmgType, wDefenses, wTargetConds, true) as { amount: number; source: string };
+          }
+          // Combine resisted totals into a single "incoming damage"
+          // figure for HP reduction + the side-effect pipeline.
+          const wTotalResisted = wResisted.amount + wResistedHex.amount + wResistedMark.amount;
+          const wNewHp = Math.max(0, wFreshHp - wTotalResisted);
           const wResistTag = wResisted.source ? ` [${wResisted.source}]` : '';
           const wRageTag = wRageBonus > 0 ? ` [Rage +${wRageBonus}]` : '';
           const wSneakTag = wSneakDice > 0 ? ` [Sneak +${wSneakDice}d6 → ${wSneakRolled}]` : '';
@@ -1636,14 +1658,21 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
           const wDuelingTag = wDuelingBonus > 0 ? ` [Dueling +${wDuelingBonus}]` : '';
           const wTwfTag = wTwfOffHandMod !== 0 ? ` [TWF ${wTwfOffHandMod >= 0 ? '+' : ''}${wTwfOffHandMod}]` : '';
           const wGwfTag = wGwfReroll ? ' [GWF reroll 1s/2s]' : '';
-          const wHexTag = wHexBonus > 0 ? ` [Hex +${wHexBonus} necrotic]` : '';
-          const wMarkTag = wMarkBonus > 0 ? ` [Mark +${wMarkBonus}]` : '';
+          // Hex / Mark now show their resisted amount (e.g. "+6→3" if
+          // the target had necrotic resistance) rather than just the raw roll.
+          const wHexTag = wHexBonus > 0
+            ? ` [Hex ${wResistedHex.amount !== wHexBonus ? `${wHexBonus}→${wResistedHex.amount}` : `+${wHexBonus}`} necrotic${wResistedHex.source ? ` ${wResistedHex.source}` : ''}]`
+            : '';
+          const wMarkTag = wMarkBonus > 0
+            ? ` [Mark ${wResistedMark.amount !== wMarkBonus ? `${wMarkBonus}→${wResistedMark.amount}` : `+${wMarkBonus}`}]`
+            : '';
+          const wMagicWeaponTag = wIsMagicalWeapon ? ' [magic]' : '';
           const wDmgChange = wResisted.amount !== wRolledDmg ? `${wRolledDmg}→${wResisted.amount}` : `${wResisted.amount}`;
-          wParts.push(`${wDmgChange} ${weaponDmgWord}dmg${wRageTag}${wSneakTag}${wPowerTag}${wDuelingTag}${wTwfTag}${wGwfTag}${wHexTag}${wMarkTag}${wResistTag} (HP ${wFreshHp}→${wNewHp})${wIsCrit ? ' [CRIT]' : ''}`);
+          wParts.push(`${wDmgChange} ${weaponDmgWord}dmg${wMagicWeaponTag}${wRageTag}${wSneakTag}${wPowerTag}${wDuelingTag}${wTwfTag}${wGwfTag}${wHexTag}${wMarkTag}${wResistTag} (HP ${wFreshHp}→${wNewHp})${wIsCrit ? ' [CRIT]' : ''}`);
           if (wNewHp === 0) wParts.push('💀 DOWN');
           setTimeout(() => {
             updateTargetHp(effectiveCharId, wNewHp);
-            if (wResisted.amount > 0) emitDamageSideEffects(targetToken.id, wResisted.amount);
+            if (wTotalResisted > 0) emitDamageSideEffects(targetToken.id, wTotalResisted);
           }, 300);
         }
 
