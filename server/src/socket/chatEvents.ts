@@ -29,6 +29,7 @@ import '../services/chatCommands/attuneHandlers.js';
 import '../services/chatCommands/protectionHandler.js';
 import '../services/chatCommands/utilityHandlers.js';
 import '../services/chatCommands/saveHandler.js';
+import '../services/chatCommands/stealthHandler.js';
 
 export function registerChatEvents(io: Server, socket: Socket): void {
 
