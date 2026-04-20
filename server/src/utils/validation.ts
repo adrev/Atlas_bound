@@ -384,6 +384,13 @@ export const damageSideEffectsSchema = z.object({
   damageAmount: z.number().min(0).max(9999),
 });
 
+// Mobile feat: mark a melee-attack target so detectOpportunityAttacks
+// can suppress the OA when the attacker moves away this turn.
+export const combatMobileAttackedSchema = z.object({
+  attackerTokenId: z.string().min(1),
+  targetTokenId: z.string().min(1),
+});
+
 export const concentrationDroppedSchema = z.object({
   casterTokenId: z.string().min(1),
   spellName: z.string().min(1).max(200),

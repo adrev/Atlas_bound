@@ -255,6 +255,17 @@ export function emitOADecline(attackerTokenId: string, moverTokenId: string) {
 }
 
 /**
+ * Mobile feat: tell the server that `attackerTokenId` just made a
+ * melee attack against `targetTokenId`, so the OA detector skips
+ * any would-be OA from the target for the rest of the attacker's
+ * turn. No-ops on the server if the attacker doesn't actually have
+ * the feat — the client is responsible for gating the call.
+ */
+export function emitMobileAttacked(attackerTokenId: string, targetTokenId: string) {
+  getSocket().emit('combat:mobile-attacked', { attackerTokenId, targetTokenId });
+}
+
+/**
  * Broadcast a leveled spell cast intent so other clients can show
  * a Counterspell prompt. The cast resolver waits ~2s for a
  * `combat:spell-counterspelled` response before committing the

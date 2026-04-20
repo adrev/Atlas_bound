@@ -20,6 +20,7 @@ import {
   combatSpellCastAttemptSchema, combatSpellCounterspelledSchema,
   combatAttackHitAttemptSchema, combatShieldCastSchema,
   damageSideEffectsSchema, concentrationDroppedSchema,
+  combatMobileAttackedSchema,
 } from '../utils/validation.js';
 import { safeHandler } from '../utils/socketHelpers.js';
 
@@ -1026,6 +1027,31 @@ export function registerCombatEvents(io: Server, socket: Socket): void {
     }
 
     io.to(ctx.room.sessionId).emit('combat:shield-cast', parsed.data);
+  }));
+
+  // combat:mobile-attacked — the attacker's client fires this when a
+  // Mobile-feat PC makes a melee attack, so detectOpportunityAttacks
+  // can suppress the OA from this particular target for the rest of
+  // the turn. No broadcast needed — state change lives server-side.
+  socket.on('combat:mobile-attacked', safeHandler(socket, async (data: unknown) => {
+    const parsed = combatMobileAttackedSchema.safeParse(data);
+    if (!parsed.success) return;
+    const ctx = getPlayerBySocketId(socket.id);
+    if (!ctx) return;
+
+    // Ownership: attacker must be owned by the caller (or DM). Stops
+    // a bystander from neutering someone else's OA.
+    const attackerTok = ctx.room.tokens.get(parsed.data.attackerTokenId);
+    if (!attackerTok) return;
+    const isDM = ctx.player.role === 'dm';
+    if (!isDM && attackerTok.ownerUserId !== ctx.player.userId) return;
+
+    let set = ctx.room.mobileMeleeTargets.get(parsed.data.attackerTokenId);
+    if (!set) {
+      set = new Set();
+      ctx.room.mobileMeleeTargets.set(parsed.data.attackerTokenId, set);
+    }
+    set.add(parsed.data.targetTokenId);
   }));
 
   socket.on('combat:cast-spell', safeHandler(socket, async (data) => {

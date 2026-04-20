@@ -3,7 +3,7 @@ import { useMapStore } from '../../stores/useMapStore';
 import { useCharacterStore } from '../../stores/useCharacterStore';
 import { useSessionStore } from '../../stores/useSessionStore';
 import { useCombatStore } from '../../stores/useCombatStore';
-import { emitRoll, emitCharacterUpdate, emitTokenUpdate, emitSystemMessage, emitTokenAdd, emitUseAction, emitDash, emitSpellCastAttempt, emitAttackHitAttempt } from '../../socket/emitters';
+import { emitRoll, emitCharacterUpdate, emitTokenUpdate, emitSystemMessage, emitTokenAdd, emitUseAction, emitDash, emitSpellCastAttempt, emitAttackHitAttempt, emitMobileAttacked } from '../../socket/emitters';
 import { theme } from '../../styles/theme';
 import type { ActionType } from '@dnd-vtt/shared';
 
@@ -1490,6 +1490,26 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
         }
 
         emitSystemMessage(`${wHeader}\n   • ${wParts.join(' • ')}`);
+
+        // Mobile feat: if the caster just made a MELEE attack and has
+        // the Mobile feat, mark the target so the server suppresses
+        // the OA when the caster moves away this turn. Ranged attacks
+        // don't qualify per RAW.
+        if (wIsMelee && wCasterToken) {
+          const mobileCaster = wCasterToken.characterId
+            ? useCharacterStore.getState().allCharacters[wCasterToken.characterId]
+            : null;
+          try {
+            const raw = (mobileCaster as any)?.features;
+            const feats = typeof raw === 'string' ? JSON.parse(raw) : (raw || []);
+            const hasMobile = Array.isArray(feats) && feats.some(
+              (f: { name?: string }) => typeof f?.name === 'string' && /^\s*mobile\s*$/i.test(f.name),
+            );
+            if (hasMobile) {
+              emitMobileAttacked(wCasterToken.id, targetToken.id);
+            }
+          } catch { /* ignore */ }
+        }
 
         // Thrown weapons drop from inventory and spawn an item token at
         // the target's location. Only fires if we have a valid inventory

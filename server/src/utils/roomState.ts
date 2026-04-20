@@ -151,6 +151,15 @@ export interface RoomState {
    * conservative when the cache hasn't been warmed yet.
    */
   tokenMeleeReach: Map<string, number>;
+  /**
+   * Mobile feat support. attackerTokenId → Set of targetTokenIds the
+   * attacker has made a melee attack against during their current
+   * turn. Cleared at the start of each turn. detectOpportunityAttacks
+   * skips any would-be OA from an enemy that's been melee-attacked by
+   * the mover this turn — that's the "no OA from creatures you
+   * attacked" half of the feat.
+   */
+  mobileMeleeTargets: Map<string, Set<string>>;
 }
 
 // ── Rate limiting ──────────────────────────────────────────
@@ -198,6 +207,7 @@ export function createRoom(
     turnHooks: new Map(),
     roundHooks: [],
     tokenMeleeReach: new Map(),
+    mobileMeleeTargets: new Map(),
   };
   rooms.set(sessionId, room);
   roomCodeIndex.set(roomCode, sessionId);

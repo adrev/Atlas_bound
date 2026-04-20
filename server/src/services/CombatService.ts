@@ -469,6 +469,10 @@ export function nextTurn(sessionId: string): {
     movementMax: moveCap, reaction: false,
   };
   room.actionEconomies.set(currentCombatant.tokenId, economy);
+  // Mobile: clear the previous combatant's melee-target set when
+  // a new turn begins. The feat's OA-immunity only holds "for the
+  // rest of the turn."
+  room.mobileMeleeTargets.delete(currentCombatant.tokenId);
   persistCombatState(state);
 
   return { currentTurnIndex: state.currentTurnIndex, roundNumber: state.roundNumber, actionEconomy: economy, skippedTokenIds, currentCombatant };

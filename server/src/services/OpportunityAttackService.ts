@@ -67,6 +67,11 @@ export function detectOpportunityAttacks(
     const meleeAttack = findBestMeleeAttackSync(enemy);
     if (!meleeAttack) continue;
 
+    // Mobile feat: skip OA from any creature the mover has melee-
+    // attacked this turn. Populated by the combat:mobile-targeted
+    // event earlier in the turn.
+    if (room.mobileMeleeTargets.get(moverTokenId)?.has(enemy.id)) continue;
+
     const reachCells = meleeReachCells(sessionId, enemy);
     const reachPx = reachCells * gridSize;
 
@@ -250,6 +255,31 @@ export async function executeOpportunityAttack(
       messages.push(`   ${mover.name} HP \u2192 ${newHp}`);
       result.hpChange = { tokenId: moverTokenId, hp: newHp, tempHp: combatant?.tempHp ?? 0 };
       if (newHp <= 0) messages.push(`   \uD83D\uDC80 ${mover.name} is DOWN`);
+    }
+
+    // Sentinel feat: "When you hit a creature with an opportunity
+    // attack, the creature's speed becomes 0 for the rest of the
+    // turn." We zero out the mover's remaining movement so the
+    // client's movement cap code refuses further motion.
+    if (attacker.characterId) {
+      try {
+        const { rows: featRows } = await pool.query(
+          'SELECT features FROM characters WHERE id = $1', [attacker.characterId],
+        );
+        const featRow = featRows[0] as Record<string, unknown> | undefined;
+        const raw = featRow?.features;
+        const feats = typeof raw === 'string' ? JSON.parse(raw) : (raw ?? []);
+        const hasSentinel = Array.isArray(feats) && feats.some(
+          (f: { name?: string }) => typeof f?.name === 'string' && /^\s*sentinel\s*$/i.test(f.name),
+        );
+        if (hasSentinel) {
+          const moverEco = room.actionEconomies.get(moverTokenId);
+          if (moverEco) {
+            moverEco.movementRemaining = 0;
+          }
+          messages.push(`   \u26D4 Sentinel — ${mover.name}'s speed becomes 0 for the rest of this turn.`);
+        }
+      } catch { /* ignore */ }
     }
   }
 
