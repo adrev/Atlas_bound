@@ -532,6 +532,15 @@ export function registerCombatEvents(io: Server, socket: Socket): void {
           roll: 0,
         });
       }
+      // PC dropped to 0 HP → unconscious auto-applied. Broadcast the
+      // token's new condition list so every client's badge tray
+      // reflects the new state.
+      if (result.autoAppliedConditions) {
+        io.to(ctx.room.sessionId).emit('map:token-updated', {
+          tokenId: parsed.data.tokenId,
+          changes: { conditions: result.autoAppliedConditions },
+        });
+      }
       // R2: auto-run damage side effects (concentration save, Sleep
       // break, etc.). Used to require the client to emit a separate
       // `damage:side-effects` event; now it runs server-side the moment

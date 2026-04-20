@@ -457,6 +457,13 @@ export interface HpChangeResult {
    * the failure tally.
    */
   autoDeathSaveFailure?: { successes: number; failures: number };
+  /**
+   * Populated when applyDamage auto-applied a condition to the token
+   * (e.g. `unconscious` when HP drops to 0). Caller broadcasts
+   * `map:token-updated` with the new conditions array so every
+   * client's token badges refresh in lockstep.
+   */
+  autoAppliedConditions?: string[];
 }
 
 export async function applyDamage(sessionId: string, tokenId: string, amount: number): Promise<HpChangeResult> {
@@ -486,6 +493,41 @@ export async function applyDamage(sessionId: string, tokenId: string, amount: nu
     autoDeathSaveFailure = { ...combatant.deathSaves };
   }
 
+  // 5e: dropping a PC to 0 HP auto-applies the unconscious condition.
+  // (NPCs typically die outright — the DM toggles that via the
+  // remove-condition / HP-rewrite workflow.) Only add it if the
+  // combatant wasn't already down (so we don't toggle back on a heal
+  // that gets re-killed in the same damage tick).
+  let autoAppliedConditions: string[] | undefined;
+  if (!wasAlreadyDown && combatant.hp === 0 && !combatant.isNPC) {
+    const token = room.tokens.get(tokenId);
+    if (token) {
+      const conds = (token.conditions as string[]) || [];
+      if (!conds.includes('unconscious')) {
+        conds.push('unconscious');
+        token.conditions = conds as never;
+        autoAppliedConditions = [...conds];
+        // Persist to DB — fire-and-forget; missing the write won't
+        // rollback the damage application.
+        pool.query(
+          'UPDATE tokens SET conditions = $1 WHERE id = $2',
+          [JSON.stringify(conds), tokenId],
+        ).catch((e) => console.warn('[applyDamage] unconscious persist failed:', e));
+        // Mirror onto the combatant row so the tracker reflects it
+        // without waiting for a map:token-updated round-trip.
+        combatant.conditions = conds as never;
+      }
+      // Drop any concentration the character was holding. Matches the
+      // applyConditionWithMeta rule for incapacitating conditions.
+      if (combatant.characterId) {
+        pool.query(
+          'UPDATE characters SET concentrating_on = NULL WHERE id = $1 AND concentrating_on IS NOT NULL',
+          [combatant.characterId],
+        ).catch((e) => console.warn('[applyDamage] concentration clear failed:', e));
+      }
+    }
+  }
+
   if (combatant.characterId) {
     await pool.query('UPDATE characters SET hit_points = $1, temp_hit_points = $2 WHERE id = $3',
       [combatant.hp, combatant.tempHp, combatant.characterId]);
@@ -497,6 +539,7 @@ export async function applyDamage(sessionId: string, tokenId: string, amount: nu
     change: -amount,
     characterId: combatant.characterId ?? null,
     autoDeathSaveFailure,
+    autoAppliedConditions,
   };
 }
 
