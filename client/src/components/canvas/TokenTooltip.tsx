@@ -225,7 +225,7 @@ export function TokenTooltip() {
             )}
             {/* Quick stats inline */}
             {showFullInfo && (
-              <div style={{ display: 'flex', gap: 8, marginTop: 4, fontSize: 11 }}>
+              <div style={{ display: 'flex', gap: 8, marginTop: 4, fontSize: 11, flexWrap: 'wrap' }}>
                 {ac !== null && (
                   <span><span style={{ color: C.textMuted }}>AC</span> <strong>{ac}</strong></span>
                 )}
@@ -238,6 +238,23 @@ export function TokenTooltip() {
                 {hp !== null && maxHp !== null && (
                   <span><span style={{ color: C.textMuted }}>HP</span> <strong style={{ color: hp / maxHp > 0.5 ? C.green : hp / maxHp > 0.25 ? C.yellow : C.red }}>{hp}/{maxHp}</strong></span>
                 )}
+                {/* Passive Perception — DM-facing stealth comparison.
+                    Parses from character.senses which can be either a
+                    JSON string or an object depending on load state. */}
+                {(() => {
+                  if (!character?.senses) return null;
+                  const s = character.senses;
+                  let pp: number | null = null;
+                  try {
+                    const senses = typeof s === 'string' ? JSON.parse(s) : s;
+                    const raw = (senses as { passivePerception?: number })?.passivePerception;
+                    if (typeof raw === 'number' && raw > 0) pp = raw;
+                  } catch { /* ignore */ }
+                  if (pp === null) return null;
+                  return (
+                    <span><span style={{ color: C.textMuted }}>PP</span> <strong>{pp}</strong></span>
+                  );
+                })()}
               </div>
             )}
           </div>
