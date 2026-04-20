@@ -12,8 +12,11 @@ import { CONDITIONS } from '@dnd-vtt/shared';
 import { getCompendiumImageUrl, getCompendiumFallbackUrl } from '../../utils/compendiumIcons';
 import { RULES_GLOSSARY } from './rulesGlossary';
 import { FEATS } from './featsGlossary';
+import { CLASSES } from './classesGlossary';
+import { BACKGROUNDS } from './backgroundsGlossary';
+import { RACES } from './racesGlossary';
 
-type FilterCategory = 'all' | 'monsters' | 'spells' | 'items' | 'homebrew' | 'conditions' | 'rules' | 'feats';
+type FilterCategory = 'all' | 'monsters' | 'spells' | 'items' | 'homebrew' | 'conditions' | 'rules' | 'feats' | 'classes' | 'backgrounds' | 'races';
 
 // Wiki is a lookup surface for both DM + players — Homebrew lives
 // under DM Tools (HomebrewPanel) so players don't see the authoring
@@ -24,6 +27,9 @@ const CATEGORY_FILTERS: { value: FilterCategory; label: string }[] = [
   { value: 'monsters', label: 'Monsters' },
   { value: 'spells', label: 'Spells' },
   { value: 'items', label: 'Items' },
+  { value: 'classes', label: 'Classes' },
+  { value: 'races', label: 'Races' },
+  { value: 'backgrounds', label: 'Backgrounds' },
   { value: 'feats', label: 'Feats' },
   { value: 'conditions', label: 'Conditions' },
   { value: 'rules', label: 'Rules' },
@@ -113,6 +119,38 @@ export function CompendiumPanel({
         name: f.name,
         category: 'feats' as const,
         snippet: f.prerequisite ? `${f.prerequisite} — ${f.snippet}` : f.snippet,
+      })));
+      setLoading(false);
+      return;
+    }
+    if (cat === 'classes') {
+      setResults(CLASSES.map((c) => ({
+        slug: c.slug,
+        name: c.name,
+        category: 'classes' as const,
+        snippet: `d${c.hitDie} HD · ${c.primaryAbility} · ${c.snippet}`,
+      })));
+      setLoading(false);
+      return;
+    }
+    if (cat === 'races') {
+      setResults(RACES.map((r) => ({
+        slug: r.slug,
+        name: r.name,
+        // Races share the 'classes' badge color; no dedicated category
+        // in the shared CompendiumCategory union yet.
+        category: 'races' as const,
+        snippet: `${r.size} · ${r.speed}ft · ${r.snippet}`,
+      })));
+      setLoading(false);
+      return;
+    }
+    if (cat === 'backgrounds') {
+      setResults(BACKGROUNDS.map((b) => ({
+        slug: b.slug,
+        name: b.name,
+        category: 'conditions' as const,
+        snippet: `${b.skills.join(', ')} · ${b.snippet}`,
       })));
       setLoading(false);
       return;

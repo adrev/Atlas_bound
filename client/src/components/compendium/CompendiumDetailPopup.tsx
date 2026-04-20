@@ -17,6 +17,9 @@ import type {
 import { CONDITION_MAP } from '@dnd-vtt/shared';
 import { RULES_GLOSSARY } from './rulesGlossary';
 import { FEATS } from './featsGlossary';
+import { CLASSES } from './classesGlossary';
+import { BACKGROUNDS } from './backgroundsGlossary';
+import { RACES } from './racesGlossary';
 
 /** Renders markdown content with dark-theme styled tables, bold, lists, etc. */
 function MarkdownContent({ text }: { text: string }) {
@@ -1184,6 +1187,22 @@ export function CompendiumDetailPopup({ result, onClose }: Props) {
         setLoading(false);
         return;
       }
+      // Backgrounds also come back typed as category='conditions'
+      // since we reuse that badge color; check them before erroring.
+      const bg = BACKGROUNDS.find((b) => b.slug === result.slug);
+      if (bg) {
+        const toolsLine = bg.tools ? `**Tool Proficiencies:** ${bg.tools.join(', ')}` : null;
+        const langLine = bg.languages ? `**Languages:** ${bg.languages}` : null;
+        const header = [
+          `**Skill Proficiencies:** ${bg.skills.join(', ')}`,
+          toolsLine,
+          langLine,
+          `**Feature:** ${bg.feature}`,
+        ].filter(Boolean).join('  \n');
+        setData({ kind: 'rule', name: bg.name, description: `${header}\n\n---\n\n${bg.description}`, color: '#6aa9d1' });
+        setLoading(false);
+        return;
+      }
       setError('Not found');
       setLoading(false);
       return;
@@ -1199,6 +1218,40 @@ export function CompendiumDetailPopup({ result, onClose }: Props) {
         return;
       }
       setError('Feat not found');
+      setLoading(false);
+      return;
+    }
+    if (result.category === 'classes') {
+      const cls = CLASSES.find((c) => c.slug === result.slug);
+      if (cls) {
+        const header = [
+          `**Hit Die:** d${cls.hitDie}`,
+          `**Primary Ability:** ${cls.primaryAbility}`,
+          `**Saving Throws:** ${cls.savingThrows.join(', ')}`,
+          `**Subclasses:** ${cls.subclasses.join(', ')}`,
+        ].join('  \n');
+        setData({ kind: 'rule', name: cls.name, description: `${header}\n\n---\n\n${cls.description}`, color: '#9b59b6' });
+        setLoading(false);
+        return;
+      }
+      setError('Class not found');
+      setLoading(false);
+      return;
+    }
+    if (result.category === 'races') {
+      const race = RACES.find((r) => r.slug === result.slug);
+      if (race) {
+        const header = [
+          `**Size:** ${race.size}`,
+          `**Speed:** ${race.speed} ft`,
+          `**Ability Score Increase:** ${race.asi}`,
+          `**Subraces:** ${race.subraces.join(', ')}`,
+        ].join('  \n');
+        setData({ kind: 'rule', name: race.name, description: `${header}\n\n---\n\n${race.description}`, color: '#1abc9c' });
+        setLoading(false);
+        return;
+      }
+      setError('Race not found');
       setLoading(false);
       return;
     }
@@ -1286,6 +1339,12 @@ export function CompendiumDetailPopup({ result, onClose }: Props) {
             <RuleOrConditionDetail entry={data as { kind: 'condition' | 'rule'; name: string; description: string; color?: string }} />
           )}
           {!loading && !error && data && result.category === 'feats' && (
+            <RuleOrConditionDetail entry={data as { kind: 'condition' | 'rule'; name: string; description: string; color?: string }} />
+          )}
+          {!loading && !error && data && result.category === 'classes' && (
+            <RuleOrConditionDetail entry={data as { kind: 'condition' | 'rule'; name: string; description: string; color?: string }} />
+          )}
+          {!loading && !error && data && result.category === 'races' && (
             <RuleOrConditionDetail entry={data as { kind: 'condition' | 'rule'; name: string; description: string; color?: string }} />
           )}
         </div>
