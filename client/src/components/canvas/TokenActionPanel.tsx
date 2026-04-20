@@ -1232,6 +1232,28 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
         );
         const wCombined = combineAttackModifiers(wAttackerOwn, wTargetIncoming);
 
+        // Heavy weapon + Small creature: RAW disadvantage. Halflings
+        // and gnomes with a greataxe just don't get the full swing.
+        // The flag is buried in character.characteristics.size and can
+        // be string-encoded JSON or an already-parsed object.
+        const wIsHeavy = ((atk.properties as string[] | undefined) || []).some(p => /heavy/i.test(p));
+        if (wIsHeavy && wCasterToken?.characterId) {
+          const hcChar = useCharacterStore.getState().allCharacters[wCasterToken.characterId];
+          try {
+            const rawChars = (hcChar as any)?.characteristics;
+            const parsed = typeof rawChars === 'string' ? JSON.parse(rawChars) : (rawChars || {});
+            const sizeStr = String((parsed as { size?: string })?.size || '').toLowerCase();
+            if (sizeStr === 'small' || sizeStr === 'tiny') {
+              if (wCombined.attackAdvantage === 'advantage') {
+                wCombined.attackAdvantage = 'normal';
+              } else {
+                wCombined.attackAdvantage = 'disadvantage';
+              }
+              wCombined.notes.push(`Heavy weapon + ${sizeStr} creature (disadv)`);
+            }
+          } catch { /* size unparseable — skip the penalty */ }
+        }
+
         // Ranged attack disadvantage when an enemy is within 5 ft.
         // Per RAW: "You have disadvantage on a ranged attack roll if
         // you are within 5 feet of a hostile creature who can see you
