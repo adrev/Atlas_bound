@@ -294,6 +294,7 @@ function TokenSprite({ token, isSelected, isCurrentTurn, showTokenLabels }: Toke
     hexed: '#8e44ad',
     marked: '#c0392b',
     stable: '#27ae60',
+    reckless: '#d35400',
   };
 
   const isDM = useSessionStore.getState().isDM;

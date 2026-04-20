@@ -385,6 +385,17 @@ export const PSEUDO_CONDITION_EFFECTS: Record<string, ConditionEffect> = {
     name: 'stable',
     notes: ['No longer rolls death saves; HP stays at 0'],
   },
+  reckless: {
+    // Barbarian Reckless Attack. Advantage on own melee STR attacks,
+    // attacks against have advantage until the start of next turn.
+    name: 'reckless',
+    selfAttackAdvantage: true,
+    attacksAgainst: 'advantage',
+    notes: [
+      'Advantage on your own Strength-based melee attack rolls',
+      'Attack rolls against you have advantage until your next turn',
+    ],
+  },
 };
 
 /**
