@@ -78,6 +78,22 @@ const GROUPS: Array<{ title: string; entries: Entry[] }> = [
       { name: 'damage', usage: '!damage <target> <amount>', dmOnly: true, desc: 'Subtract HP, fires concentration save.' },
       { name: 'heal', usage: '!heal <target> <amount>', dmOnly: true, desc: 'Add HP up to max.' },
       { name: 'thp', usage: '!thp <amount> [target]', desc: 'Set temp HP — 0 clears, higher replaces, lower keeps existing (RAW).' },
+      { name: 'potion', usage: '!potion <target> [dice]', desc: 'Drink a healing potion (default 2d4+2).' },
+      { name: 'stabilize', usage: '!stabilize <target>', desc: 'Medicine DC 10 — stabilize a 0-HP creature.' },
+    ],
+  },
+  {
+    title: 'Damage riders / concentration spells',
+    entries: [
+      { name: 'hex', usage: '!hex <target> / !unhex', desc: 'Warlock Hex — caster\'s attacks deal +1d6 necrotic vs target.' },
+      { name: 'mark', usage: '!mark <target> / !unmark', desc: 'Ranger Hunter\'s Mark — caster\'s weapon attacks deal +1d6.' },
+      { name: 'turnundead', usage: '!turnundead <target> [target2 …]', desc: 'Cleric/Paladin CD — WIS save vs fright for 1 min.' },
+    ],
+  },
+  {
+    title: 'Meta',
+    entries: [
+      { name: 'lucky', usage: '!lucky use | status | reset', desc: 'Lucky feat — spend a luck point to roll an extra d20 (3/long rest).' },
     ],
   },
   {

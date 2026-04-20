@@ -291,6 +291,9 @@ function TokenSprite({ token, isSelected, isCurrentTurn, showTokenLabels }: Toke
     helped: '#5cb77a',
     'bardic-inspired': '#9b59b6',
     protected: '#34495e',
+    hexed: '#8e44ad',
+    marked: '#c0392b',
+    stable: '#27ae60',
   };
 
   const isDM = useSessionStore.getState().isDM;

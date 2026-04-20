@@ -1588,6 +1588,40 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
           if (wTwfOffHandMod !== 0) {
             wRolledDmg += wTwfOffHandMod;
           }
+          // Hex spell: +1d6 necrotic when the CASTER hits the hexed
+          // target. We can't 100% verify the caster matches (the
+          // metadata carrying casterTokenId isn't mirrored to the
+          // client yet), so we gate on: target is hexed AND attacker
+          // has Hex in their spells list.
+          let wHexBonus = 0;
+          let wMarkBonus = 0;
+          if (wTargetConds.includes('hexed')) {
+            try {
+              const spellsRaw = (wCasterChar as any)?.spells;
+              const spells = typeof spellsRaw === 'string' ? JSON.parse(spellsRaw) : (spellsRaw || []);
+              if (Array.isArray(spells) && spells.some(
+                (s: { name?: string }) => typeof s?.name === 'string' && /^\s*hex\s*$/i.test(s.name),
+              )) {
+                const roll = rollDamageDice('1d6');
+                wHexBonus = roll;
+                wRolledDmg += roll;
+              }
+            } catch { /* ignore */ }
+          }
+          // Hunter's Mark: same shape, +1d6 weapon damage from caster.
+          if (wTargetConds.includes('marked')) {
+            try {
+              const spellsRaw = (wCasterChar as any)?.spells;
+              const spells = typeof spellsRaw === 'string' ? JSON.parse(spellsRaw) : (spellsRaw || []);
+              if (Array.isArray(spells) && spells.some(
+                (s: { name?: string }) => typeof s?.name === 'string' && /hunter'?s\s+mark/i.test(s.name),
+              )) {
+                const roll = rollDamageDice('1d6');
+                wMarkBonus = roll;
+                wRolledDmg += roll;
+              }
+            } catch { /* ignore */ }
+          }
 
           const wFreshChar = useCharacterStore.getState().allCharacters[effectiveCharId];
           const wFreshHp = wFreshChar ? (typeof wFreshChar.hitPoints === 'number' ? wFreshChar.hitPoints : parseInt(String(wFreshChar.hitPoints)) || 0) : targetHp;
@@ -1602,8 +1636,10 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
           const wDuelingTag = wDuelingBonus > 0 ? ` [Dueling +${wDuelingBonus}]` : '';
           const wTwfTag = wTwfOffHandMod !== 0 ? ` [TWF ${wTwfOffHandMod >= 0 ? '+' : ''}${wTwfOffHandMod}]` : '';
           const wGwfTag = wGwfReroll ? ' [GWF reroll 1s/2s]' : '';
+          const wHexTag = wHexBonus > 0 ? ` [Hex +${wHexBonus} necrotic]` : '';
+          const wMarkTag = wMarkBonus > 0 ? ` [Mark +${wMarkBonus}]` : '';
           const wDmgChange = wResisted.amount !== wRolledDmg ? `${wRolledDmg}→${wResisted.amount}` : `${wResisted.amount}`;
-          wParts.push(`${wDmgChange} ${weaponDmgWord}dmg${wRageTag}${wSneakTag}${wPowerTag}${wDuelingTag}${wTwfTag}${wGwfTag}${wResistTag} (HP ${wFreshHp}→${wNewHp})${wIsCrit ? ' [CRIT]' : ''}`);
+          wParts.push(`${wDmgChange} ${weaponDmgWord}dmg${wRageTag}${wSneakTag}${wPowerTag}${wDuelingTag}${wTwfTag}${wGwfTag}${wHexTag}${wMarkTag}${wResistTag} (HP ${wFreshHp}→${wNewHp})${wIsCrit ? ' [CRIT]' : ''}`);
           if (wNewHp === 0) wParts.push('💀 DOWN');
           setTimeout(() => {
             updateTargetHp(effectiveCharId, wNewHp);

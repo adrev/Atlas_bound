@@ -369,6 +369,22 @@ export const PSEUDO_CONDITION_EFFECTS: Record<string, ConditionEffect> = {
     name: 'disengaged',
     notes: ['Movement this turn doesn\'t provoke opportunity attacks'],
   },
+  hexed: {
+    // Hex spell — caster's attacks against target deal +1d6 necrotic.
+    // Mechanical application lives in the attack resolver (checks
+    // ConditionMetadata.casterTokenId matches the current attacker).
+    name: 'hexed',
+    notes: ['Caster\'s attacks against this target deal +1d6 necrotic', 'Target has disadvantage on caster\'s chosen ability checks'],
+  },
+  marked: {
+    // Hunter's Mark — caster's weapon attacks deal +1d6 to target.
+    name: 'marked',
+    notes: ['Caster\'s weapon attacks against this target deal +1d6', 'Caster has adv on Perception / Survival checks to find target'],
+  },
+  stable: {
+    name: 'stable',
+    notes: ['No longer rolls death saves; HP stays at 0'],
+  },
 };
 
 /**
