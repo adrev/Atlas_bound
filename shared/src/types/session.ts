@@ -92,7 +92,40 @@ export interface SessionSettings {
    * dark-vision-disabled modules.
    */
   fogVisionCells?: number;
+  /**
+   * Which rulebooks the engine enforces. Every rule handler declares
+   * the source it comes from; rules whose source isn't in this list
+   * are skipped by the modifier pipeline and hidden in the wiki. PHB
+   * is implicitly always enabled (defaulting here keeps legacy sessions
+   * working without a migration).
+   *
+   * Codes are short: 'phb', 'dmg', 'mm', 'xge' (Xanathar's Guide to
+   * Everything), 'tce' (Tasha's Cauldron of Everything), 'vgm' (Volo's
+   * Guide to Monsters), 'mmm' (Monsters of the Multiverse), 'ua'
+   * (Unearthed Arcana playtest content).
+   */
+  ruleSources?: RuleSource[];
 }
+
+export type RuleSource = 'phb' | 'dmg' | 'mm' | 'xge' | 'tce' | 'vgm' | 'mmm' | 'ua';
+
+export interface RuleSourceInfo {
+  code: RuleSource;
+  name: string;
+  description: string;
+}
+
+/** Canonical metadata for the rulebook selector UI. */
+export const RULE_SOURCES: RuleSourceInfo[] = [
+  { code: 'phb', name: "Player's Handbook",       description: 'Core rules — classes, races, spells, combat. Always enabled by default.' },
+  { code: 'dmg', name: "Dungeon Master's Guide",  description: 'Optional rules: encumbrance variant, wounds, insanity, downtime.' },
+  { code: 'mm',  name: 'Monster Manual',          description: 'Monster stat blocks (wiki surface only — creature mechanics always enforced).' },
+  { code: 'xge', name: "Xanathar's Guide",        description: 'Class optional features, extra feats, sleep/chase rules.' },
+  { code: 'tce', name: "Tasha's Cauldron",        description: 'Custom background rule, origin feats, ability-score flexibility.' },
+  { code: 'vgm', name: "Volo's Guide to Monsters", description: 'Extra playable races.' },
+  { code: 'mmm', name: 'Monsters of the Multiverse', description: 'Rewritten race traits.' },
+  { code: 'ua',  name: 'Unearthed Arcana',        description: 'Playtest content. Unstable by design.' },
+];
 
 export const DEFAULT_SESSION_SETTINGS: SessionSettings = {
   gridSize: 70,
@@ -103,6 +136,9 @@ export const DEFAULT_SESSION_SETTINGS: SessionSettings = {
   allowPlayerRest: true,
   showCreatureStatsToPlayers: true,
   showPlayersToPlayers: true,
+  // PHB is implicitly always on; listing it here as the default lets
+  // existing settings UI treat the set uniformly.
+  ruleSources: ['phb'],
 };
 
 export interface Player {

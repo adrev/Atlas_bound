@@ -1,9 +1,9 @@
 // Types
 export type {
   Session, SessionSettings, Player, GameMode,
-  SessionVisibility, SessionBan,
+  SessionVisibility, SessionBan, RuleSource, RuleSourceInfo,
 } from './types/session.js';
-export { DEFAULT_SESSION_SETTINGS } from './types/session.js';
+export { DEFAULT_SESSION_SETTINGS, RULE_SOURCES } from './types/session.js';
 export type {
   AbilityScores, AbilityName, SkillProficiency, Skills, SpellSlot,
   Spell, InventoryItem, DeathSaves, Character, Feature, HitDicePool,
@@ -40,6 +40,15 @@ export { calculateEquipmentBonuses } from './utils/equipmentBonuses.js';
 
 // Constants
 export { CONDITIONS, CONDITION_MAP } from './constants/conditions.js';
+export {
+  CONDITION_EFFECTS,
+  computeAttackModifiers,
+  computeSaveModifiers,
+  speedMultiplierFor,
+  blocksActions,
+  blocksReactions,
+} from './rules/conditionEffects.js';
+export type { ConditionEffect, AttackModifierResult, SaveModifierResult } from './rules/conditionEffects.js';
 export { SPELL_CONDITIONS, SPELL_BUFFS } from './constants/spell-conditions.js';
 export type { ConditionInfo } from './constants/conditions.js';
 export { SPELL_ANIMATIONS, getSpellAnimation } from './constants/spell-animations.js';

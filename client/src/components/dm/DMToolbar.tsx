@@ -13,6 +13,7 @@ import { Section, Button, NumberInput, FieldGroup, Divider } from '../ui';
 import { MusicPlayer } from './MusicPlayer';
 import { HandoutSender } from './HandoutSender';
 import { SessionPrivacyPanel } from './SessionPrivacyPanel';
+import { RULE_SOURCES, type RuleSource } from '@dnd-vtt/shared';
 
 type DMView = 'maps' | 'creatures' | 'encounters' | 'settings' | 'handouts' | 'music' | 'homebrew';
 
@@ -193,9 +194,19 @@ function SettingsPanel({
     turnTimerSeconds?: number;
     discordWebhookUrl?: string | null;
     fogVisionCells?: number;
+    ruleSources?: RuleSource[];
   };
 }) {
   const visionCells = settings.fogVisionCells ?? 8;
+  const activeSources = new Set<RuleSource>(settings.ruleSources ?? ['phb']);
+  const toggleSource = (code: RuleSource) => {
+    // PHB is always on — the core rules can't be opt-out.
+    if (code === 'phb') return;
+    const next = new Set(activeSources);
+    if (next.has(code)) next.delete(code); else next.add(code);
+    next.add('phb');
+    emitUpdateSettings({ ruleSources: Array.from(next) });
+  };
   return (
     <div style={styles.settingsContainer}>
       <h3 style={styles.settingsTitle}>Session Privacy</h3>
@@ -328,6 +339,62 @@ function SettingsPanel({
           />
         </FieldGroup>
       )}
+
+      <Divider variant="ornate" marginY={theme.space.md} />
+
+      {/* Rule sources — which books the engine enforces. PHB is
+          mandatory (core rules); the rest are opt-in. Today this gate
+          mostly affects the wiki surface; rule handlers will honor it
+          once each declares its source (see rules-engine plan memory).
+          UI = a compact checklist so the DM can see the full set at a
+          glance without a modal. */}
+      <h3 style={styles.settingsTitle}>Rule Sources</h3>
+      <p style={styles.hint}>
+        Which rulebooks does this session use? PHB is always on. Toggling a
+        source affects the wiki + (incrementally) the rules engine.
+      </p>
+      <div style={{ display: 'flex', flexDirection: 'column' as const, gap: 6 }}>
+        {RULE_SOURCES.map((src) => {
+          const active = src.code === 'phb' || activeSources.has(src.code);
+          const locked = src.code === 'phb';
+          return (
+            <div
+              key={src.code}
+              onClick={() => toggleSource(src.code)}
+              title={locked ? 'PHB is always enabled.' : 'Click to toggle.'}
+              style={{
+                display: 'flex',
+                alignItems: 'flex-start',
+                gap: 10,
+                padding: '8px 10px',
+                borderRadius: theme.radius.sm,
+                border: `1px solid ${active ? theme.gold.border : theme.border.default}`,
+                background: active ? theme.gold.bg : theme.bg.deep,
+                cursor: locked ? 'default' : 'pointer',
+                opacity: locked ? 0.85 : 1,
+              }}
+            >
+              <div style={{
+                width: 16, height: 16, marginTop: 1, borderRadius: 3,
+                background: active ? theme.gold.primary : 'transparent',
+                border: `1px solid ${active ? theme.gold.primary : theme.border.default}`,
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                color: theme.bg.base, fontSize: 11, fontWeight: 700, flexShrink: 0,
+              }}>
+                {active ? '✓' : ''}
+              </div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 12, fontWeight: 700, color: theme.text.primary }}>
+                  {src.name} <span style={{ color: theme.text.muted, fontWeight: 400 }}>({src.code.toUpperCase()})</span>
+                </div>
+                <div style={{ fontSize: 10, color: theme.text.muted, marginTop: 2, lineHeight: 1.35 }}>
+                  {src.description}
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
 
       <Divider variant="ornate" marginY={theme.space.md} />
 

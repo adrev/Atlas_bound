@@ -1,40 +1,22 @@
 import type { Combatant, CombatState, ActionEconomy, ActionType, Condition } from '@dnd-vtt/shared';
+import { speedMultiplierFor } from '@dnd-vtt/shared';
 import { getRoom, type RoomState } from '../utils/roomState.js';
 import pool from '../db/connection.js';
 
 /**
  * 5e movement cap for a combatant's turn. Pulls base speed from the
- * combatant row and then applies any condition that halves or zeros
- * movement based on the token's current conditions:
- *
- *   • prone      → half speed (represents the cost of standing up
- *                  OR crawling; either way only half moves the token)
- *   • grappled   → 0 (speed is 0 while grappled)
- *   • restrained → 0 (speed is 0 while restrained)
- *   • paralyzed / stunned / unconscious / petrified → 0
- *     (all incapacitating — the turn-skip logic elsewhere usually
- *     skips these combatants entirely, but the cap is set defensively
- *     in case they still get a turn from a special feature.)
- *
- * Keeping this in one helper so future condition additions have a
- * single place to encode their movement effect.
+ * combatant row and then applies any condition / exhaustion level
+ * that halves or zeros movement. Delegates to the shared
+ * `speedMultiplierFor` helper so client + server + future handlers
+ * agree on the same movement rules.
  */
 function computeMovementCap(combatant: Combatant, room: RoomState): number {
   const token = room.tokens.get(combatant.tokenId);
   if (!token) return combatant.speed;
-  const conds = new Set((token.conditions || []) as string[]);
-  if (
-    conds.has('grappled') ||
-    conds.has('restrained') ||
-    conds.has('paralyzed') ||
-    conds.has('stunned') ||
-    conds.has('unconscious') ||
-    conds.has('petrified')
-  ) {
-    return 0;
-  }
-  if (conds.has('prone')) return Math.floor(combatant.speed / 2);
-  return combatant.speed;
+  const conditions = (token.conditions || []) as string[];
+  // TODO: wire exhaustion level once the character row exposes it.
+  const mul = speedMultiplierFor(conditions, 0);
+  return Math.floor(combatant.speed * mul);
 }
 
 export function startCombat(sessionId: string, tokenIds: string[]): CombatState {
@@ -156,16 +138,39 @@ export async function startCombatAsync(sessionId: string, tokenIds: string[]): P
         // DEX mod when the column is unset (missing / 0 / NaN), which
         // matches the old behaviour for unimported characters.
         const storedInit = Number(charRow.initiative);
+        let baseFromDex = 0;
+        try {
+          const rawAbilities = charRow.ability_scores;
+          const abilities = typeof rawAbilities === 'string' ? JSON.parse(rawAbilities) : (rawAbilities ?? {});
+          const dex = Number(abilities?.dex ?? abilities?.dexterity ?? 10);
+          baseFromDex = Number.isFinite(dex) ? Math.floor((dex - 10) / 2) : 0;
+        } catch { baseFromDex = 0; }
         if (Number.isFinite(storedInit) && storedInit !== 0) {
           initBonus = storedInit;
         } else {
-          try {
-            const rawAbilities = charRow.ability_scores;
-            const abilities = typeof rawAbilities === 'string' ? JSON.parse(rawAbilities) : (rawAbilities ?? {});
-            const dex = Number(abilities?.dex ?? abilities?.dexterity ?? 10);
-            initBonus = Number.isFinite(dex) ? Math.floor((dex - 10) / 2) : 0;
-          } catch { initBonus = 0; }
+          initBonus = baseFromDex;
         }
+        // Alert feat: +5 initiative. Check the character's features
+        // blob directly — the DDB pipeline stamps `initiative` to
+        // include Alert when importing, but homebrew / manually-created
+        // characters only get the raw DEX mod. Scanning the features
+        // here makes the bonus reliable regardless of provenance, and
+        // protects against the DDB pipeline changing shape.
+        try {
+          const rawFeatures = charRow.features;
+          const features = typeof rawFeatures === 'string' ? JSON.parse(rawFeatures) : (rawFeatures ?? []);
+          const featureList: Array<{ name?: string }> = Array.isArray(features) ? features : [];
+          const hasAlert = featureList.some((f) => typeof f?.name === 'string' && /^\s*alert\s*$/i.test(f.name));
+          if (hasAlert) {
+            // If storedInit already included Alert, we'd double-count.
+            // Detect by comparing against the raw DEX mod — stored
+            // >= DEX+5 means Alert is already baked in. Heuristic but
+            // resilient.
+            if (initBonus < baseFromDex + 5) {
+              initBonus = baseFromDex + 5;
+            }
+          }
+        } catch { /* features blob unparseable — skip */ }
         const charUserId = charRow.user_id as string | null;
         isNPC = !token.ownerUserId || charUserId === 'npc';
       }
