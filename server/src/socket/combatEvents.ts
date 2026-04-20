@@ -252,6 +252,18 @@ export function registerCombatEvents(io: Server, socket: Socket): void {
     if (!ctx || ctx.player.role !== 'dm') return;
 
     try {
+      // Snapshot defeated NPCs + PC count BEFORE endCombat clears
+      // combatState. Auto-summarise XP the party earned so the DM
+      // can run `!xp` with the right number (or accept the default).
+      const defeatedNames: string[] = [];
+      let pcCount = 0;
+      if (ctx.room.combatState) {
+        for (const cm of ctx.room.combatState.combatants) {
+          if (cm.isNPC && cm.hp <= 0) defeatedNames.push(cm.name);
+          else if (!cm.isNPC) pcCount += 1;
+        }
+      }
+
       await CombatService.endCombat(ctx.room.sessionId);
       // R7 — turn/round hooks are scoped to the encounter. Wipe them
       // when combat ends so a new combat starts with a clean slate.
@@ -262,6 +274,60 @@ export function registerCombatEvents(io: Server, socket: Socket): void {
         title: '🏳️ Combat Ended',
         color: 0x27ae60,
       });
+
+      // ── XP summary ──────────────────────────────────────
+      // Look up each defeated monster in compendium_monsters by name
+      // (case-insensitive exact match). Sum CR → XP. Split by PC
+      // count. Emit a system chat line so DM can accept or adjust.
+      if (defeatedNames.length > 0 && pcCount > 0) {
+        const { default: dbPool } = await import('../db/connection.js');
+        const CR_XP: Record<number, number> = {
+          0: 10, 0.125: 25, 0.25: 50, 0.5: 100,
+          1: 200, 2: 450, 3: 700, 4: 1100, 5: 1800, 6: 2300,
+          7: 2900, 8: 3900, 9: 5000, 10: 5900, 11: 7200, 12: 8400,
+          13: 10000, 14: 11500, 15: 13000, 16: 15000, 17: 18000,
+          18: 20000, 19: 22000, 20: 25000, 21: 33000, 22: 41000,
+          23: 50000, 24: 62000, 25: 75000, 26: 90000, 27: 105000,
+          28: 120000, 29: 135000, 30: 155000,
+        };
+        let totalXp = 0;
+        const perMonster: string[] = [];
+        for (const name of defeatedNames) {
+          try {
+            const { rows } = await dbPool.query(
+              'SELECT cr_numeric FROM compendium_monsters WHERE LOWER(name) = LOWER($1) ORDER BY source LIMIT 1',
+              [name],
+            );
+            const cr = Number((rows[0] as Record<string, unknown> | undefined)?.cr_numeric);
+            if (Number.isFinite(cr)) {
+              const xp = CR_XP[cr] ?? 0;
+              totalXp += xp;
+              perMonster.push(`${name} (CR ${cr}, ${xp} XP)`);
+            } else {
+              perMonster.push(`${name} (unknown CR)`);
+            }
+          } catch {
+            perMonster.push(`${name} (CR lookup failed)`);
+          }
+        }
+        const perPc = Math.floor(totalXp / pcCount);
+        const lines: string[] = [];
+        lines.push(`🏆 Combat ended — ${defeatedNames.length} defeated, ${pcCount} PC${pcCount === 1 ? '' : 's'}:`);
+        for (const line of perMonster) lines.push(`  • ${line}`);
+        lines.push(`  **Total: ${totalXp} XP → ${perPc} per PC**. Award via \`!xp <target…> ${perPc}\`.`);
+        io.to(ctx.room.sessionId).emit('chat:new-message', {
+          id: uuidv4(),
+          sessionId: ctx.room.sessionId,
+          userId: 'system',
+          displayName: 'System',
+          type: 'system',
+          content: lines.join('\n'),
+          characterName: null,
+          whisperTo: null,
+          rollData: null,
+          createdAt: new Date().toISOString(),
+        });
+      }
     } catch (err) {
       socket.emit('session:error', {
         message: err instanceof Error ? err.message : 'Failed to end combat',

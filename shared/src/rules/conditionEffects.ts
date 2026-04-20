@@ -414,6 +414,18 @@ export const PSEUDO_CONDITION_EFFECTS: Record<string, ConditionEffect> = {
     name: 'bear-raging',
     notes: ['While raging, resistance to ALL damage types except psychic'],
   },
+  vowed: {
+    // Vengeance Paladin's Vow of Enmity. Paladin has advantage on
+    // attacks against this target. One-sided — only the caster gets
+    // the advantage, so we don't use selfAttackAdvantage here; the
+    // attack resolver needs to check the casterTokenId match
+    // (similar to Hex / Hunter's Mark).
+    name: 'vowed',
+    notes: [
+      'Caster has advantage on attack rolls against this target',
+      'Lasts 1 minute (concentration-free) per Channel Divinity',
+    ],
+  },
 };
 
 /**

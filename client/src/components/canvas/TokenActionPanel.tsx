@@ -1232,6 +1232,28 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
         );
         const wCombined = combineAttackModifiers(wAttackerOwn, wTargetIncoming);
 
+        // Vow of Enmity (Vengeance Paladin): caster has advantage
+        // vs cursed target. Only the caster benefits, so we check
+        // the attacker's features against the target's vowed meta.
+        if (wTargetConds.includes('vowed') && wCasterToken?.characterId) {
+          const vowedCaster = useCharacterStore.getState().allCharacters[wCasterToken.characterId];
+          try {
+            const rawFeats = (vowedCaster as any)?.features;
+            const feats = typeof rawFeats === 'string' ? JSON.parse(rawFeats) : (rawFeats || []);
+            const hasIt = Array.isArray(feats) && feats.some(
+              (f: { name?: string }) => typeof f?.name === 'string' && /vow\s+of\s+enmity/i.test(f.name),
+            );
+            if (hasIt) {
+              if (wCombined.attackAdvantage === 'disadvantage') {
+                wCombined.attackAdvantage = 'normal';
+              } else {
+                wCombined.attackAdvantage = 'advantage';
+              }
+              wCombined.notes.push('Vow of Enmity (advantage)');
+            }
+          } catch { /* ignore */ }
+        }
+
         // Heavy weapon + Small creature: RAW disadvantage. Halflings
         // and gnomes with a greataxe just don't get the full swing.
         // The flag is buried in character.characteristics.size and can
