@@ -9,6 +9,7 @@ vi.mock('../db/connection.js', () => ({
 
 import * as CombatService from '../services/CombatService.js';
 import * as OAService from '../services/OpportunityAttackService.js';
+import * as ConditionService from '../services/ConditionService.js';
 import { createRoom, getAllRooms } from '../utils/roomState.js';
 
 beforeEach(() => {
@@ -499,5 +500,73 @@ describe('OpportunityAttackService — reach cache', () => {
       sessionId, 'tMover', 0, 0, GRID * 4, 0,
     );
     expect(ops).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Grapple auto-release — when a grappler becomes incapacitated, the
+// grappled creature is immediately freed per RAW.
+// ---------------------------------------------------------------------------
+
+describe('ConditionService — grapple auto-release', () => {
+  it('releases a grappled creature when the grappler gets stunned', async () => {
+    const sessionId = 's-grapple-release';
+    const grappler = makeToken('tGrappler');
+    const victim = makeToken('tVictim', { conditions: ['grappled' as unknown as Condition] });
+    seedRoom(sessionId, [grappler, victim], [
+      makeCombatant('tGrappler'),
+      makeCombatant('tVictim'),
+    ]);
+    const { getRoom } = await import('../utils/roomState.js');
+    const room = getRoom(sessionId)!;
+    // Seed the grapple meta — casterTokenId points at grappler.
+    room.conditionMeta.set('tVictim', new Map([
+      ['grappled', {
+        name: 'grappled',
+        source: 'tGrappler (!grapple)',
+        appliedRound: 1,
+        casterTokenId: 'tGrappler',
+      }],
+    ]));
+
+    const freed = ConditionService.applyConditionWithMeta(sessionId, 'tGrappler', {
+      name: 'stunned',
+      source: 'monster stun ray',
+      appliedRound: 1,
+    });
+
+    expect(freed).toContain('tVictim');
+    expect((victim.conditions as string[]).includes('grappled')).toBe(false);
+  });
+
+  it('does not release unrelated grapples when an innocent token gets stunned', async () => {
+    const sessionId = 's-grapple-unrelated';
+    const innocent = makeToken('tInnocent');
+    const grappler = makeToken('tGrappler');
+    const victim = makeToken('tVictim', { conditions: ['grappled' as unknown as Condition] });
+    seedRoom(sessionId, [innocent, grappler, victim], [
+      makeCombatant('tInnocent'),
+      makeCombatant('tGrappler'),
+      makeCombatant('tVictim'),
+    ]);
+    const { getRoom } = await import('../utils/roomState.js');
+    const room = getRoom(sessionId)!;
+    room.conditionMeta.set('tVictim', new Map([
+      ['grappled', {
+        name: 'grappled',
+        source: 'tGrappler (!grapple)',
+        appliedRound: 1,
+        casterTokenId: 'tGrappler', // NOT tInnocent
+      }],
+    ]));
+
+    const freed = ConditionService.applyConditionWithMeta(sessionId, 'tInnocent', {
+      name: 'stunned',
+      source: 'monster stun ray',
+      appliedRound: 1,
+    });
+
+    expect(freed).toEqual([]);
+    expect((victim.conditions as string[]).includes('grappled')).toBe(true);
   });
 });
