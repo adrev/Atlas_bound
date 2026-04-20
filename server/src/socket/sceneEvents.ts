@@ -15,7 +15,7 @@ import { rowToToken } from '../utils/tokenMapper.js';
 
 const MAP_SUMMARY_SELECT = `
   SELECT m.id, m.name, m.image_url, m.thumbnail_url, m.width, m.height, m.grid_size,
-         m.created_at, m.display_order,
+         m.created_at, m.display_order, m.folder_id,
          (SELECT COUNT(*) FROM tokens t WHERE t.map_id = m.id) AS token_count,
          -- walls is a TEXT JSON array. jsonb_array_length needs a cast.
          -- COALESCE so a NULL or unparseable value silently becomes 0
@@ -42,6 +42,7 @@ function rowToSummary(r: Record<string, unknown>, playerMapId: string | null): M
     createdAt: r.created_at as string,
     isPlayerMap: r.id === playerMapId,
     displayOrder: Number(r.display_order) || 0,
+    folderId: (r.folder_id as string | null) ?? null,
   };
 }
 

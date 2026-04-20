@@ -170,4 +170,21 @@ export interface MapSummary {
    * Legacy maps get a created_at-based backfill, so this is always set.
    */
   displayOrder: number;
+  /**
+   * Optional folder id grouping this map in the DM's Scene Manager.
+   * `null` means the map lives at the session root (unfiled).
+   */
+  folderId: string | null;
+}
+
+/**
+ * Session-scoped map organization folder. One level (flat) for the
+ * MVP; nested folders are follow-up work.
+ */
+export interface MapFolder {
+  id: string;
+  sessionId: string;
+  name: string;
+  displayOrder: number;
+  createdAt: string;
 }

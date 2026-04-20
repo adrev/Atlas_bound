@@ -15,7 +15,7 @@ export { abilityModifier, proficiencyBonusForLevel, SKILL_ABILITY_MAP } from './
 export type {
   GameMap, WallSegment, FogPolygon, Token, TokenAura, TokenFaction,
   LightSource, Condition, MapZone,
-  PrebuiltMap, MapPing, MapSummary,
+  PrebuiltMap, MapPing, MapSummary, MapFolder,
 } from './types/map.js';
 export type {
   Drawing, DrawingKind, DrawingVisibility, DrawingGeometry,

@@ -3,6 +3,7 @@ import { theme } from '../../styles/theme';
 import { EMOJI } from '../../styles/emoji';
 import { useSceneStore } from '../../stores/useSceneStore';
 import { useMapStore } from '../../stores/useMapStore';
+import { useSessionStore } from '../../stores/useSessionStore';
 import {
   emitListMaps, emitPreviewLoadMap, emitActivateMapForPlayers, emitDeleteMap,
   emitRenameMap, emitDuplicateMap, emitReorderMaps,
@@ -24,9 +25,20 @@ import type { MapSummary } from '@dnd-vtt/shared';
  */
 export function SceneManager() {
   const maps = useSceneStore((s) => s.maps);
+  const folders = useSceneStore((s) => s.folders);
+  const setFolders = useSceneStore((s) => s.setFolders);
+  const addFolderLocal = useSceneStore((s) => s.addFolder);
+  const renameFolderLocal = useSceneStore((s) => s.renameFolder);
+  const removeFolderLocal = useSceneStore((s) => s.removeFolder);
+  const moveMapLocal = useSceneStore((s) => s.moveMapToFolder);
   const loaded = useSceneStore((s) => s.loaded);
   const currentMap = useMapStore((s) => s.currentMap);
   const playerMapId = useMapStore((s) => s.playerMapId);
+  const sessionId = useSessionStore((s) => s.sessionId);
+  const [moveMenuFor, setMoveMenuFor] = useState<string | null>(null);
+  const [collapsedFolders, setCollapsedFolders] = useState<Set<string>>(new Set());
+  const [renamingFolderId, setRenamingFolderId] = useState<string | null>(null);
+  const [folderRenameDraft, setFolderRenameDraft] = useState('');
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [renamingId, setRenamingId] = useState<string | null>(null);
@@ -42,6 +54,101 @@ export function SceneManager() {
   const [optimisticOrder, setOptimisticOrder] = useState<string[] | null>(null);
 
   useEffect(() => { emitListMaps(); }, [playerMapId]);
+
+  // Folders live on the REST surface (server/routes/maps.ts) rather
+  // than the socket — folder ops are rare compared to token moves so
+  // they don't justify socket plumbing. Fetch once per session; the
+  // client-local store handles optimistic updates.
+  useEffect(() => {
+    if (!sessionId) return;
+    fetch(`/api/sessions/${sessionId}/map-folders`)
+      .then((r) => (r.ok ? r.json() : []))
+      .then((rows: Array<{ id: string; session_id: string; sessionId?: string; name: string; display_order?: number; displayOrder?: number; created_at?: string; createdAt?: string }>) => {
+        setFolders(rows.map((r) => ({
+          id: r.id,
+          sessionId: r.sessionId ?? r.session_id,
+          name: r.name,
+          displayOrder: r.displayOrder ?? r.display_order ?? 0,
+          createdAt: r.createdAt ?? r.created_at ?? '',
+        })));
+      })
+      .catch(() => { /* ignore — fresh session, empty list is fine */ });
+  }, [sessionId, setFolders]);
+
+  const handleNewFolder = async () => {
+    if (!sessionId) return;
+    const name = window.prompt('Folder name (e.g. "Act II", "Waterdeep dungeons")');
+    if (!name || !name.trim()) return;
+    try {
+      const resp = await fetch(`/api/sessions/${sessionId}/map-folders`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: name.trim() }),
+        credentials: 'include',
+      });
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      const folder = await resp.json();
+      addFolderLocal({
+        id: folder.id,
+        sessionId: folder.sessionId,
+        name: folder.name,
+        displayOrder: folder.displayOrder ?? 0,
+        createdAt: new Date().toISOString(),
+      });
+    } catch {
+      setError('Failed to create folder.');
+    }
+  };
+
+  const handleRenameFolder = async (folderId: string) => {
+    const name = folderRenameDraft.trim();
+    setRenamingFolderId(null);
+    setFolderRenameDraft('');
+    if (!name) return;
+    try {
+      await fetch(`/api/map-folders/${folderId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name }),
+        credentials: 'include',
+      });
+      renameFolderLocal(folderId, name);
+    } catch { /* ignore */ }
+  };
+
+  const handleDeleteFolder = async (folderId: string) => {
+    const folder = folders.find((f) => f.id === folderId);
+    if (!folder) return;
+    if (!window.confirm(`Delete folder "${folder.name}"? Maps inside will move to the root.`)) return;
+    try {
+      await fetch(`/api/map-folders/${folderId}`, {
+        method: 'DELETE',
+        credentials: 'include',
+      });
+      removeFolderLocal(folderId);
+    } catch { /* ignore */ }
+  };
+
+  const handleMoveMap = async (mapId: string, folderId: string | null) => {
+    setMoveMenuFor(null);
+    try {
+      await fetch(`/api/maps/${mapId}/folder`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ folderId }),
+        credentials: 'include',
+      });
+      moveMapLocal(mapId, folderId);
+    } catch { /* ignore */ }
+  };
+
+  const toggleFolder = (id: string) => {
+    setCollapsedFolders((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
 
   useEffect(() => {
     if (!error) return;
@@ -182,14 +289,39 @@ export function SceneManager() {
     ? ` (${visibleCount} of ${totalCount})`
     : totalCount > 0 ? ` (${totalCount})` : '';
 
+  // Partition visible maps into folder buckets (including a "null"
+  // bucket for anything without a folder). Sorted folder list drives
+  // render order; the null bucket always renders first so "unfiled"
+  // scenes stay at the top of the DM's eye line.
+  const mapsByFolder = useMemo(() => {
+    const buckets = new Map<string | null, MapSummary[]>();
+    for (const m of visibleMaps) {
+      const key = m.folderId ?? null;
+      if (!buckets.has(key)) buckets.set(key, []);
+      buckets.get(key)!.push(m);
+    }
+    return buckets;
+  }, [visibleMaps]);
+
+  const sortedFolders = useMemo(
+    () => [...folders].sort((a, b) =>
+      a.displayOrder - b.displayOrder || a.name.localeCompare(b.name)),
+    [folders],
+  );
+
   return (
     <Section
       title={`Scenes${titleSuffix}`}
       emoji={EMOJI.map.scene}
       action={
-        <Button size="sm" variant="primary" onClick={handleAddMap}>
-          + Add Map
-        </Button>
+        <div style={{ display: 'flex', gap: 6 }}>
+          <Button size="sm" variant="ghost" onClick={handleNewFolder} title="Create folder">
+            📁 +
+          </Button>
+          <Button size="sm" variant="primary" onClick={handleAddMap}>
+            + Add Map
+          </Button>
+        </div>
       }
       spacing="compact"
     >
@@ -267,7 +399,12 @@ export function SceneManager() {
         />
       )}
 
-      {visibleMaps.map((map) => {
+      {/* Unfiled maps render first so "no folder" scenes stay at the
+          top of the eye line; then each folder gets its own collapsible
+          section. Each bucket renders via the same inline loop so
+          maintenance stays in one place. */}
+      {(() => {
+        const renderMap = (map: MapSummary) => {
         const isRibbon = map.id === playerMapId;
         const isDmView = map.id === currentMap?.id;
         const imgSrc = getMapThumbnail(map);
@@ -427,6 +564,7 @@ export function SceneManager() {
                       display: 'flex',
                       gap: theme.space.xs,
                       marginTop: theme.space.xs,
+                      position: 'relative',
                     }}
                   >
                     {!isRibbon && (
@@ -467,6 +605,80 @@ export function SceneManager() {
                         </Button>
                       </>
                     )}
+                    {/* Per-card folder selector. Compact dropdown shows
+                        every folder + a "Move to root" option. Using a
+                        click-outside close would be over-engineering
+                        for a single menu; stopPropagation on the
+                        button keeps the card's own onClick from
+                        swallowing the toggle. */}
+                    <div style={{ position: 'relative', marginLeft: 'auto' }}>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setMoveMenuFor((prev) => (prev === map.id ? null : map.id));
+                        }}
+                        title="Move to folder"
+                      >
+                        📁
+                      </Button>
+                      {moveMenuFor === map.id && (
+                        <div
+                          onClick={(e) => e.stopPropagation()}
+                          style={{
+                            position: 'absolute',
+                            top: '100%',
+                            right: 0,
+                            marginTop: 4,
+                            minWidth: 160,
+                            maxHeight: 220,
+                            overflowY: 'auto',
+                            padding: 4,
+                            background: theme.bg.card,
+                            border: `1px solid ${theme.gold.border}`,
+                            borderRadius: 6,
+                            boxShadow: '0 4px 16px rgba(0,0,0,0.55)',
+                            zIndex: 30,
+                          }}
+                        >
+                          <div style={{
+                            fontSize: 9, textTransform: 'uppercase' as const,
+                            letterSpacing: '0.08em', color: theme.text.muted,
+                            padding: '4px 8px',
+                          }}>
+                            Move to
+                          </div>
+                          <button
+                            onClick={() => handleMoveMap(map.id, null)}
+                            style={{
+                              display: 'block', width: '100%', textAlign: 'left' as const,
+                              padding: '5px 10px', fontSize: 11, fontWeight: 600,
+                              background: map.folderId === null ? theme.gold.bg : 'transparent',
+                              color: theme.text.primary, border: 'none', cursor: 'pointer',
+                              fontFamily: 'inherit', borderRadius: 3,
+                            }}
+                          >
+                            (Root)
+                          </button>
+                          {sortedFolders.map((f) => (
+                            <button
+                              key={f.id}
+                              onClick={() => handleMoveMap(map.id, f.id)}
+                              style={{
+                                display: 'block', width: '100%', textAlign: 'left' as const,
+                                padding: '5px 10px', fontSize: 11, fontWeight: 600,
+                                background: map.folderId === f.id ? theme.gold.bg : 'transparent',
+                                color: theme.text.primary, border: 'none', cursor: 'pointer',
+                                fontFamily: 'inherit', borderRadius: 3,
+                              }}
+                            >
+                              📁 {f.name}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
                   </div>
                 )}
               </div>
@@ -474,7 +686,93 @@ export function SceneManager() {
           </Card>
           </div>
         );
-      })}
+        };
+
+        const rootBucket = mapsByFolder.get(null) ?? [];
+        return (
+          <>
+            {rootBucket.map(renderMap)}
+            {sortedFolders.map((folder) => {
+              const bucket = mapsByFolder.get(folder.id) ?? [];
+              if (bucket.length === 0 && !folders.some((f) => f.id === folder.id)) return null;
+              const collapsed = collapsedFolders.has(folder.id);
+              const isRenamingThis = renamingFolderId === folder.id;
+              return (
+                <div key={folder.id} style={{ marginTop: theme.space.sm }}>
+                  <div
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 6,
+                      padding: '4px 8px',
+                      background: theme.bg.deep,
+                      border: `1px solid ${theme.border.default}`,
+                      borderRadius: theme.radius.sm,
+                      cursor: 'pointer',
+                      marginBottom: 4,
+                    }}
+                    onClick={() => toggleFolder(folder.id)}
+                  >
+                    <span style={{ fontSize: 11 }}>{collapsed ? '▸' : '▾'}</span>
+                    <span style={{ fontSize: 14, lineHeight: 1 }}>📁</span>
+                    {isRenamingThis ? (
+                      <input
+                        type="text"
+                        autoFocus
+                        value={folderRenameDraft}
+                        onChange={(e) => setFolderRenameDraft(e.target.value)}
+                        onBlur={() => handleRenameFolder(folder.id)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
+                          if (e.key === 'Escape') { setRenamingFolderId(null); setFolderRenameDraft(''); }
+                        }}
+                        onClick={(e) => e.stopPropagation()}
+                        style={{
+                          flex: 1, padding: '2px 6px', fontSize: 12,
+                          background: theme.bg.base, color: theme.text.primary,
+                          border: `1px solid ${theme.gold.border}`, borderRadius: 3,
+                          outline: 'none',
+                        }}
+                      />
+                    ) : (
+                      <span
+                        style={{ fontSize: 12, fontWeight: 600, color: theme.text.primary, flex: 1 }}
+                        onDoubleClick={(e) => {
+                          e.stopPropagation();
+                          setRenamingFolderId(folder.id);
+                          setFolderRenameDraft(folder.name);
+                        }}
+                        title="Double-click to rename"
+                      >
+                        {folder.name}
+                      </span>
+                    )}
+                    <span style={{ fontSize: 10, color: theme.text.muted }}>
+                      {bucket.length}
+                    </span>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); handleDeleteFolder(folder.id); }}
+                      title="Delete folder (maps go to root)"
+                      style={{
+                        marginLeft: 4,
+                        padding: '2px 6px',
+                        fontSize: 10,
+                        background: 'transparent',
+                        color: theme.text.muted,
+                        border: 'none',
+                        cursor: 'pointer',
+                      }}
+                    >
+                      ✕
+                    </button>
+                  </div>
+                  {!collapsed && bucket.map(renderMap)}
+                </div>
+              );
+            })}
+          </>
+        );
+      })()}
     </Section>
   );
 }
