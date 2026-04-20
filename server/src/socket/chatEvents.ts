@@ -36,6 +36,7 @@ import '../services/chatCommands/monkHandler.js';
 import '../services/chatCommands/sorcererHandler.js';
 import '../services/chatCommands/xpAndWildShapeHandler.js';
 import '../services/chatCommands/miscClassHandlers.js';
+import '../services/chatCommands/encounterAndRestHandlers.js';
 
 export function registerChatEvents(io: Server, socket: Socket): void {
 

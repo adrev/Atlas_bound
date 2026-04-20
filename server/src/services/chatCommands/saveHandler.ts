@@ -65,22 +65,26 @@ function rollDice(notation: string): { total: number; rolls: number[] } {
 async function loadSaveMod(
   characterId: string,
   ability: Ability,
-): Promise<{ mod: number; name: string }> {
+): Promise<{ mod: number; name: string; race: string | null }> {
   const { rows } = await pool.query(
-    'SELECT ability_scores, saving_throws, proficiency_bonus, name FROM characters WHERE id = $1',
+    'SELECT ability_scores, saving_throws, proficiency_bonus, name, race FROM characters WHERE id = $1',
     [characterId],
   );
   const row = rows[0] as Record<string, unknown> | undefined;
-  if (!row) return { mod: 0, name: '' };
+  if (!row) return { mod: 0, name: '', race: null };
   try {
     const scores = typeof row.ability_scores === 'string' ? JSON.parse(row.ability_scores) : (row.ability_scores ?? {});
     const ab = Math.floor((((scores as Record<string, number>)[ability] ?? 10) - 10) / 2);
     const prof = Number(row.proficiency_bonus) || 2;
     const saves = typeof row.saving_throws === 'string' ? JSON.parse(row.saving_throws) : (row.saving_throws ?? []);
     const isProf = Array.isArray(saves) && saves.includes(ability);
-    return { mod: ab + (isProf ? prof : 0), name: (row.name as string) || '' };
+    return {
+      mod: ab + (isProf ? prof : 0),
+      name: (row.name as string) || '',
+      race: (row.race as string) ?? null,
+    };
   } catch {
-    return { mod: 0, name: '' };
+    return { mod: 0, name: '', race: null };
   }
 }
 
@@ -153,15 +157,23 @@ async function handleSave(c: ChatCommandContext): Promise<boolean> {
     // Exhaustion level lookup — combatant row carries it, else default.
     const combatant = c.ctx.room.combatState?.combatants.find((cm) => cm.tokenId === target.id);
     const exhaustion = combatant?.exhaustionLevel ?? 0;
-    const mods = computeSaveModifiers(targetConds, ability, exhaustion);
 
     let saveMod = 0;
     let tName = target.name;
+    let tRace: string | null = null;
     if (target.characterId) {
       const info = await loadSaveMod(target.characterId, ability);
       saveMod = info.mod;
       if (info.name) tName = info.name;
+      tRace = info.race;
     }
+
+    // Hand the damage type to computeSaveModifiers as the `savingAgainst`
+    // tag so race traits fire (dwarf Resilience vs poison, tiefling vs
+    // fire, aasimar vs necrotic/radiant). For save-or-effect commands
+    // the DM would run the dedicated spell command which passes its own
+    // tag (frightened / charmed / magic).
+    const mods = computeSaveModifiers(targetConds, ability, exhaustion, tRace, dmgType || null);
 
     // Aura of Protection (Paladin L6): when the target or any ally
     // within 10 ft of a Paladin with the aura makes a save, add the
