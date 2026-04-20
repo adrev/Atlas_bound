@@ -38,6 +38,7 @@ import '../services/chatCommands/xpAndWildShapeHandler.js';
 import '../services/chatCommands/miscClassHandlers.js';
 import '../services/chatCommands/encounterAndRestHandlers.js';
 import '../services/chatCommands/subclassHandlers.js';
+import '../services/chatCommands/subclassFeaturesHandler.js';
 
 export function registerChatEvents(io: Server, socket: Socket): void {
 

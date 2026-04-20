@@ -566,12 +566,20 @@ export function applyDamageWithResist(
   // 4. Raging (Barbarian) → resistance to bludgeoning, piercing, slashing
   // regardless of magical/non-magical (5e: "you have resistance to
   // bludgeoning, piercing, and slashing damage" while raging — no
-  // magic qualifier). Path of the Bear totem adds all other types at
-  // L3, but that's a follow-up.
+  // magic qualifier).
   if (set.has('raging')) {
     if (dt === 'bludgeoning' || dt === 'piercing' || dt === 'slashing') {
       if (multiplier > 0.5) multiplier = 0.5;
       sourceParts.push(`Rage (resist ${dt})`);
+    }
+  }
+  // 5. Bear Totem (Path of the Totem Warrior L3) — while raging,
+  // resistance to ALL damage except psychic. Stacks with standard
+  // Rage resistance; psychic is explicitly excluded per RAW.
+  if (set.has('bear-raging') && set.has('raging')) {
+    if (dt !== 'psychic' && dt !== '') {
+      if (multiplier > 0.5) multiplier = 0.5;
+      sourceParts.push(`Bear Totem (resist ${dt})`);
     }
   }
 

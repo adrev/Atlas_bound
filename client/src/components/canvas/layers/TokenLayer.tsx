@@ -295,6 +295,8 @@ function TokenSprite({ token, isSelected, isCurrentTurn, showTokenLabels }: Toke
     marked: '#c0392b',
     stable: '#27ae60',
     reckless: '#d35400',
+    'hexblade-cursed': '#6c3483',
+    'bear-raging': '#6e2c00',
   };
 
   const isDM = useSessionStore.getState().isDM;

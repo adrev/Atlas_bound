@@ -396,6 +396,24 @@ export const PSEUDO_CONDITION_EFFECTS: Record<string, ConditionEffect> = {
       'Attack rolls against you have advantage until your next turn',
     ],
   },
+  'hexblade-cursed': {
+    // Hexblade Warlock's Hexblade's Curse. +prof-bonus damage vs
+    // cursed target, crits on 19-20 against it, regain HP = lvl+CHA
+    // mod if the target dies. Duration 1 min, concentration-ish.
+    name: 'hexblade-cursed',
+    notes: [
+      'Caster deals +prof bonus damage vs cursed target',
+      'Caster crits on 19-20 against cursed target',
+      'Caster regains HP = warlock level + CHA mod if target dies',
+    ],
+  },
+  'bear-raging': {
+    // Path of the Totem Warrior Bear totem spirit (L3). While raging,
+    // resistance to ALL damage types except psychic. Stacks with
+    // normal Rage resistance — effectively near-invulnerability.
+    name: 'bear-raging',
+    notes: ['While raging, resistance to ALL damage types except psychic'],
+  },
 };
 
 /**

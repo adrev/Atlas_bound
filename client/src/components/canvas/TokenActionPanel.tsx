@@ -1663,6 +1663,23 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
               }
             } catch { /* ignore */ }
           }
+          // Hexblade's Curse: +proficiency bonus damage when the
+          // caster (Hexblade Warlock) hits the cursed target. Rides
+          // on the weapon damage type + magical-if-weapon-is-magical.
+          let wHexbladeBonus = 0;
+          if (wTargetConds.includes('hexblade-cursed')) {
+            try {
+              const rawFeats = (wCasterChar as any)?.features;
+              const feats = typeof rawFeats === 'string' ? JSON.parse(rawFeats) : (rawFeats || []);
+              const hasIt = Array.isArray(feats) && feats.some(
+                (f: { name?: string }) => typeof f?.name === 'string' && /hexblade'?s\s+curse/i.test(f.name),
+              );
+              if (hasIt) {
+                const profBonus = Number((wCasterChar as any)?.proficiencyBonus) || 2;
+                wHexbladeBonus = profBonus;
+              }
+            } catch { /* ignore */ }
+          }
 
           const wFreshChar = useCharacterStore.getState().allCharacters[effectiveCharId];
           const wFreshHp = wFreshChar ? (typeof wFreshChar.hitPoints === 'number' ? wFreshChar.hitPoints : parseInt(String(wFreshChar.hitPoints)) || 0) : targetHp;
@@ -1684,6 +1701,7 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
           const wResisted = applyDamageWithResist(wRolledDmg, weaponDmgType, wDefenses, wTargetConds, wIsMagicalWeapon);
           let wResistedHex = { amount: 0, source: '' };
           let wResistedMark = { amount: 0, source: '' };
+          let wResistedHexblade = { amount: 0, source: '' };
           if (wHexBonus > 0) {
             wResistedHex = applyDamageWithResist(wHexBonus, 'necrotic', wDefenses, wTargetConds, true) as { amount: number; source: string };
           }
@@ -1692,9 +1710,13 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
             // magical because it's a spell-sourced rider.
             wResistedMark = applyDamageWithResist(wMarkBonus, weaponDmgType, wDefenses, wTargetConds, true) as { amount: number; source: string };
           }
+          if (wHexbladeBonus > 0) {
+            // Hexblade's Curse rides on the weapon type (same instance).
+            wResistedHexblade = applyDamageWithResist(wHexbladeBonus, weaponDmgType, wDefenses, wTargetConds, wIsMagicalWeapon) as { amount: number; source: string };
+          }
           // Combine resisted totals into a single "incoming damage"
           // figure for HP reduction + the side-effect pipeline.
-          const wTotalResisted = wResisted.amount + wResistedHex.amount + wResistedMark.amount;
+          const wTotalResisted = wResisted.amount + wResistedHex.amount + wResistedMark.amount + wResistedHexblade.amount;
           const wNewHp = Math.max(0, wFreshHp - wTotalResisted);
           const wResistTag = wResisted.source ? ` [${wResisted.source}]` : '';
           const wRageTag = wRageBonus > 0 ? ` [Rage +${wRageBonus}]` : '';
@@ -1711,9 +1733,12 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
           const wMarkTag = wMarkBonus > 0
             ? ` [Mark ${wResistedMark.amount !== wMarkBonus ? `${wMarkBonus}→${wResistedMark.amount}` : `+${wMarkBonus}`}]`
             : '';
+          const wHexbladeTag = wHexbladeBonus > 0
+            ? ` [Hexblade Curse +${wResistedHexblade.amount}]`
+            : '';
           const wMagicWeaponTag = wIsMagicalWeapon ? ' [magic]' : '';
           const wDmgChange = wResisted.amount !== wRolledDmg ? `${wRolledDmg}→${wResisted.amount}` : `${wResisted.amount}`;
-          wParts.push(`${wDmgChange} ${weaponDmgWord}dmg${wMagicWeaponTag}${wRageTag}${wSneakTag}${wPowerTag}${wDuelingTag}${wTwfTag}${wGwfTag}${wHexTag}${wMarkTag}${wResistTag} (HP ${wFreshHp}→${wNewHp})${wIsCrit ? ' [CRIT]' : ''}`);
+          wParts.push(`${wDmgChange} ${weaponDmgWord}dmg${wMagicWeaponTag}${wRageTag}${wSneakTag}${wPowerTag}${wDuelingTag}${wTwfTag}${wGwfTag}${wHexTag}${wMarkTag}${wHexbladeTag}${wResistTag} (HP ${wFreshHp}→${wNewHp})${wIsCrit ? ' [CRIT]' : ''}`);
           if (wNewHp === 0) wParts.push('💀 DOWN');
           setTimeout(() => {
             updateTargetHp(effectiveCharId, wNewHp);
