@@ -1225,6 +1225,29 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
         const wTargetIncoming = getTargetRollModifiers(wTargetConds);
         const wCombined = combineAttackModifiers(wAttackerOwn, wTargetIncoming);
 
+        // Prone refinement: getTargetRollModifiers grants advantage
+        // unconditionally because it doesn't know if we're ranged or
+        // melee. Per RAW, prone means advantage for melee attackers
+        // AND disadvantage for ranged attackers. If the target is
+        // prone AND this is a ranged weapon attack, flip the outcome.
+        const wIsMeleeCheck = ((atk.properties as string[] | undefined) || []).includes('Melee');
+        const wIsRangedForProne = !wIsMeleeCheck
+          && ((atk.properties as string[] | undefined) || []).some(p => /(range|ammunition)/i.test(p));
+        if (wTargetConds.includes('prone') && wIsRangedForProne) {
+          // Strip the advantage the target-side helper added, replace
+          // with disadvantage. If another source already gave
+          // disadvantage too, keep it; otherwise cancel + re-apply.
+          if (wCombined.attackAdvantage === 'advantage') {
+            wCombined.attackAdvantage = 'disadvantage';
+          } else if (wCombined.attackAdvantage === 'normal') {
+            wCombined.attackAdvantage = 'disadvantage';
+          }
+          // Swap the note so the chat log reflects the real outcome.
+          wCombined.notes = wCombined.notes.map((n) =>
+            n === 'Target Prone' ? 'Target Prone — ranged attack (disadv)' : n,
+          );
+        }
+
         // Ranged attack disadvantage when an enemy is within 5 ft.
         // Per RAW: "You have disadvantage on a ranged attack roll if
         // you are within 5 feet of a hostile creature who can see you
