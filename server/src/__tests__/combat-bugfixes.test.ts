@@ -570,3 +570,90 @@ describe('ConditionService — grapple auto-release', () => {
     expect((victim.conditions as string[]).includes('grappled')).toBe(true);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Combat start: Tough + Defense fighting style application for
+// manually-created characters (ones with no dndbeyond_id). DDB imports
+// skip both bonuses since their max_hit_points / armor_class rows
+// already include them.
+// ---------------------------------------------------------------------------
+
+describe('CombatService.startCombatAsync — manual-character feat bonuses', () => {
+  it('Tough adds 2*level HP and Defense adds 1 AC when no DDB id', async () => {
+    const sessionId = 's-manual-bonuses';
+    const tPC = makeToken('tPC', {
+      characterId: 'char-pc', ownerUserId: 'user-pc',
+    });
+    seedRoom(sessionId, [tPC], []);
+
+    // Mock the character load — no dndbeyond_id, features include
+    // Tough + Defense, level 3, raw HP 20, AC 15.
+    mockQuery.mockImplementation((sql: string) => {
+      if (sql.includes('SELECT * FROM characters')) {
+        return Promise.resolve({
+          rows: [{
+            hit_points: 20, max_hit_points: 20, temp_hit_points: 0,
+            armor_class: 15, speed: 30,
+            ability_scores: JSON.stringify({ str: 10, dex: 14, con: 14, int: 10, wis: 10, cha: 10 }),
+            saving_throws: JSON.stringify(['con']),
+            proficiency_bonus: 2, level: 3,
+            features: JSON.stringify([{ name: 'Tough' }, { name: 'Defense' }]),
+            dndbeyond_id: null,
+            user_id: 'user-pc',
+            portrait_url: null,
+            inventory: JSON.stringify([]),
+            extras: JSON.stringify({}),
+            initiative: 2,
+            exhaustion_level: 0,
+          }],
+        });
+      }
+      return Promise.resolve({ rows: [] });
+    });
+
+    const state = await CombatService.startCombatAsync(sessionId, ['tPC']);
+    const combatant = state.combatants[0];
+    // Tough: +2 * level(3) = +6 HP → 26 max
+    expect(combatant.maxHp).toBe(26);
+    // Defense: +1 AC → 16
+    expect(combatant.armorClass).toBe(16);
+  });
+
+  it('skips bonuses when the character has a dndbeyond_id', async () => {
+    const sessionId = 's-ddb-char';
+    const tPC = makeToken('tPC', {
+      characterId: 'char-ddb', ownerUserId: 'user-pc',
+    });
+    seedRoom(sessionId, [tPC], []);
+
+    mockQuery.mockImplementation((sql: string) => {
+      if (sql.includes('SELECT * FROM characters')) {
+        return Promise.resolve({
+          rows: [{
+            hit_points: 40, max_hit_points: 40, temp_hit_points: 0,
+            armor_class: 18, speed: 30,
+            ability_scores: JSON.stringify({ str: 10, dex: 14, con: 14, int: 10, wis: 10, cha: 10 }),
+            saving_throws: JSON.stringify(['con']),
+            proficiency_bonus: 2, level: 3,
+            features: JSON.stringify([{ name: 'Tough' }, { name: 'Defense' }]),
+            dndbeyond_id: 'beyond-42',
+            user_id: 'user-pc',
+            portrait_url: null,
+            inventory: JSON.stringify([]),
+            extras: JSON.stringify({}),
+            initiative: 2,
+            exhaustion_level: 0,
+          }],
+        });
+      }
+      return Promise.resolve({ rows: [] });
+    });
+
+    const state = await CombatService.startCombatAsync(sessionId, ['tPC']);
+    const combatant = state.combatants[0];
+    // DDB already baked the bonuses — combat should honour the
+    // stored values verbatim.
+    expect(combatant.maxHp).toBe(40);
+    expect(combatant.armorClass).toBe(18);
+  });
+});
