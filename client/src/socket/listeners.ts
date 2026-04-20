@@ -521,6 +521,28 @@ export function registerListeners(socket: Socket): () => void {
     pushHandout(payload);
   });
 
+  // --- Rest trigger from !rest chat command ---
+  // The DM fires `!rest long` or `!rest short [target]` and the
+  // server broadcasts `rest:party-trigger` to every client in the
+  // session. Each client checks: is this for me? (either no target
+  // given = party-wide, or the target matches my active character's
+  // linked token). If yes, run the existing local performLongRest /
+  // performShortRest helper — keeps the rest logic in one place
+  // (client/src/utils/rest.ts) instead of duplicating it server-side.
+  socket.on('rest:party-trigger', async (payload: { kind: 'short' | 'long'; targetTokenId?: string; triggeredBy?: string }) => {
+    const myChar = useCharacterStore.getState().myCharacter;
+    if (!myChar) return;
+    if (payload.targetTokenId) {
+      // Targeted rest — only fire for the owner of that token.
+      const tokens = useMapStore.getState().tokens;
+      const targetToken = tokens[payload.targetTokenId];
+      if (!targetToken || targetToken.characterId !== myChar.id) return;
+    }
+    const { performLongRest, performShortRest } = await import('../utils/rest');
+    if (payload.kind === 'long') performLongRest(myChar);
+    else performShortRest(myChar);
+  });
+
   // Return cleanup function
   return () => {
     socket.off('session:state-sync');
@@ -582,5 +604,6 @@ export function registerListeners(socket: Socket): () => void {
     socket.off('drawing:streamed');
     socket.off('drawing:stream-end');
     socket.off('session:handout-received');
+    socket.off('rest:party-trigger');
   };
 }

@@ -40,6 +40,12 @@ const GROUPS: Array<{ title: string; entries: Entry[] }> = [
     ],
   },
   {
+    title: 'Rests',
+    entries: [
+      { name: 'rest', usage: '!rest <short|long> [target]', dmOnly: true, desc: 'Trigger a rest on the whole party or a single target — runs performLongRest/ShortRest on each PC\'s client.' },
+    ],
+  },
+  {
     title: 'Combat — maneuvers',
     entries: [
       { name: 'grapple', usage: '!grapple <target>', desc: 'Caller Athletics vs target Athletics/Acrobatics — on win, target is grappled.' },
