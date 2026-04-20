@@ -44,6 +44,7 @@ export {
   CONDITION_EFFECTS,
   PSEUDO_CONDITION_EFFECTS,
   effectForCondition,
+  colorForCondition,
   computeAttackModifiers,
   computeSaveModifiers,
   computeEffectiveAC,

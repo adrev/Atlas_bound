@@ -97,11 +97,19 @@ export interface ConditionEffect {
    * DM can explain to players why a modifier landed. Not authoritative.
    */
   notes?: string[];
+  /**
+   * Hex color for the token badge. Source of truth for both the
+   * Konva canvas badge strip (TokenLayer) and the wiki glossary
+   * entry. Optional — missing entries fall back to a neutral grey
+   * at the render site.
+   */
+  color?: string;
 }
 
 export const CONDITION_EFFECTS: Record<Condition, ConditionEffect> = {
   blinded: {
     name: 'blinded',
+    color: '#4a4a4a',
     selfAttack: 'disadvantage',
     attacksAgainst: 'advantage',
     autoFailSightChecks: true,
@@ -109,29 +117,31 @@ export const CONDITION_EFFECTS: Record<Condition, ConditionEffect> = {
   },
   charmed: {
     name: 'charmed',
-    // The "can't attack charmer" restriction needs the charmer's
-    // identity, handled at resolve time. The social-check advantage
-    // is asymmetric (charmer side) — also resolve-time.
+    color: '#ff69b4',
     notes: ['Cannot attack the charmer', 'Charmer has advantage on social checks'],
   },
   deafened: {
     name: 'deafened',
+    color: '#7f8c8d',
     autoFailHearingChecks: true,
     notes: ['Auto-fail hearing-based ability checks'],
   },
   frightened: {
     name: 'frightened',
+    color: '#9b59b6',
     selfAttack: 'disadvantage',
     disadvantageAbilityChecks: true,
     notes: ['Disadvantage on attacks + checks while source in sight', 'Cannot willingly move closer to the source of fear'],
   },
   grappled: {
     name: 'grappled',
+    color: '#e67e22',
     speedMultiplier: 0,
     notes: ['Speed 0', 'Ends when grappler incapacitated or removed'],
   },
   incapacitated: {
     name: 'incapacitated',
+    color: '#95a5a6',
     blocksActions: true,
     blocksReactions: true,
     blocksBonusActions: true,
@@ -140,12 +150,14 @@ export const CONDITION_EFFECTS: Record<Condition, ConditionEffect> = {
   },
   invisible: {
     name: 'invisible',
+    color: '#3498db',
     selfAttack: 'advantage',
     attacksAgainst: 'disadvantage',
     notes: ['Own attacks have advantage', 'Attacks against have disadvantage'],
   },
   paralyzed: {
     name: 'paralyzed',
+    color: '#f1c40f',
     speedMultiplier: 0,
     blocksActions: true,
     blocksReactions: true,
@@ -159,6 +171,7 @@ export const CONDITION_EFFECTS: Record<Condition, ConditionEffect> = {
   },
   petrified: {
     name: 'petrified',
+    color: '#7f8c8d',
     speedMultiplier: 0,
     blocksActions: true,
     blocksReactions: true,
@@ -175,28 +188,30 @@ export const CONDITION_EFFECTS: Record<Condition, ConditionEffect> = {
   },
   poisoned: {
     name: 'poisoned',
+    color: '#27ae60',
     selfAttack: 'disadvantage',
     disadvantageAbilityChecks: true,
     notes: ['Disadvantage on attacks + ability checks'],
   },
   prone: {
     name: 'prone',
+    color: '#d35400',
     selfAttack: 'disadvantage',
     speedMultiplier: 0.5,
-    // attacksAgainst depends on range: melee = advantage, ranged =
-    // disadvantage. Encoded separately at resolve time.
     notes: ['Attacks roll with disadvantage', 'Melee attacks against have advantage', 'Ranged attacks against have disadvantage', 'Half speed to stand or crawl'],
   },
   restrained: {
     name: 'restrained',
+    color: '#c0392b',
     selfAttack: 'disadvantage',
     attacksAgainst: 'advantage',
     speedMultiplier: 0,
-    disadvantageOwnRolls: { saves: true }, // DEX saves specifically
+    disadvantageOwnRolls: { saves: true },
     notes: ['Speed 0', 'Attacks roll disadvantage', 'Attacks against advantage', 'DEX saves with disadvantage'],
   },
   stunned: {
     name: 'stunned',
+    color: '#f39c12',
     speedMultiplier: 0,
     blocksActions: true,
     blocksReactions: true,
@@ -208,6 +223,7 @@ export const CONDITION_EFFECTS: Record<Condition, ConditionEffect> = {
   },
   unconscious: {
     name: 'unconscious',
+    color: '#2c3e50',
     speedMultiplier: 0,
     blocksActions: true,
     blocksReactions: true,
@@ -222,10 +238,7 @@ export const CONDITION_EFFECTS: Record<Condition, ConditionEffect> = {
   },
   exhaustion: {
     name: 'exhaustion',
-    // Exhaustion is multi-level (1–6) and the effect depends on
-    // level. Stored separately on the character; the condition tag
-    // here just indicates "has at least level 1". Level-specific
-    // effects resolve via characterExhaustionLevel().
+    color: '#566573',
     disadvantageAbilityChecks: true,
     notes: ['L1: disadvantage on ability checks', 'L2: speed halved', 'L3: disadvantage on attacks + saves', 'L4: HP max halved', 'L5: speed 0', 'L6: death'],
   },
@@ -247,36 +260,42 @@ export const PSEUDO_CONDITION_EFFECTS: Record<string, ConditionEffect> = {
   // Spells / class-feature buffs that grant mechanical bonuses
   blessed: {
     name: 'blessed',
+    color: '#f1c40f',
     attackBonusDice: '+1d4',
     saveBonusDice: '+1d4',
     notes: ['+1d4 to attacks + saves (Bless)'],
   },
   baned: {
     name: 'baned',
+    color: '#922b21',
     attackBonusDice: '-1d4',
     saveBonusDice: '-1d4',
     notes: ['-1d4 to attacks + saves (Bane)'],
   },
   hasted: {
     name: 'hasted',
+    color: '#3498db',
     acBonus: 2,
     saveAdvantage: { dex: 'advantage' },
     notes: ['+2 AC', 'advantage on DEX saves', 'speed doubled'],
   },
   slowed: {
     name: 'slowed',
+    color: '#5d6d7e',
     acBonus: -2,
     saveAdvantage: { dex: 'disadvantage' },
     notes: ['-2 AC', '-2 DEX saves', 'half speed'],
   },
   dodging: {
     name: 'dodging',
+    color: '#16a085',
     attacksAgainst: 'disadvantage',
     saveAdvantage: { dex: 'advantage' },
     notes: ['attacks against have disadvantage', 'advantage on DEX saves'],
   },
   inspired: {
     name: 'inspired',
+    color: '#f39c12',
     selfAttackAdvantage: true,
     saveAdvantage: { str: 'advantage', dex: 'advantage', con: 'advantage', int: 'advantage', wis: 'advantage', cha: 'advantage' },
     checkAdvantage: { str: 'advantage', dex: 'advantage', con: 'advantage', int: 'advantage', wis: 'advantage', cha: 'advantage' },
@@ -284,111 +303,117 @@ export const PSEUDO_CONDITION_EFFECTS: Record<string, ConditionEffect> = {
   },
   helped: {
     name: 'helped',
+    color: '#5cb77a',
     selfAttackAdvantage: true,
     checkAdvantage: { str: 'advantage', dex: 'advantage', con: 'advantage', int: 'advantage', wis: 'advantage', cha: 'advantage' },
     notes: ['Helped: advantage on attack + ability checks (spend to use)'],
   },
   outlined: {
     name: 'outlined',
+    color: '#f4d03f',
     attacksAgainst: 'advantage',
     notes: ['Faerie Fire: attacks against have advantage'],
   },
   raging: {
-    // Rage — damage bonus + resistance applied in the damage pipeline,
-    // not via the roll-engine helpers. Metadata here for badge / glossary
-    // consistency.
     name: 'raging',
+    color: '#c0392b',
     checkAdvantage: { str: 'advantage' },
     saveAdvantage: { str: 'advantage' },
     notes: ['Advantage on STR checks + saves', 'Resist bludgeoning / piercing / slashing', '+2/+3/+4 damage on STR melee'],
   },
-  // AC floors from spells
   'mage-armored': {
     name: 'mage-armored',
+    color: '#5499c7',
     acFloor: 13,
     acFloorAddDex: true,
     notes: ['AC floor = 13 + DEX (Mage Armor)'],
   },
   barkskin: {
     name: 'barkskin',
+    color: '#7b6140',
     acFloor: 16,
     notes: ['AC floor = 16 (Barkskin)'],
   },
-  // Flat AC bonuses
   shielded: {
     name: 'shielded',
+    color: '#aed6f1',
     acBonus: 2,
     notes: ['+2 AC (Shield of Faith)'],
   },
   'shield-spell': {
     name: 'shield-spell',
+    color: '#2980b9',
     acBonus: 5,
     notes: ['+5 AC until next turn (Shield cantrip reaction)'],
   },
   'half-cover': {
     name: 'half-cover',
+    color: '#7f8c8d',
     acBonus: 2,
-    saveAdvantage: {}, // +2 DEX saves actually flat — tracked separately
+    saveAdvantage: {},
     notes: ['+2 AC + DEX saves (half cover)'],
   },
   'three-quarters-cover': {
     name: 'three-quarters-cover',
+    color: '#576574',
     acBonus: 5,
     notes: ['+5 AC + DEX saves (three-quarters cover)'],
   },
   'full-cover': {
     name: 'full-cover',
+    color: '#2c3e50',
     notes: ['Cannot be targeted directly'],
   },
   'power-attack': {
     name: 'power-attack',
+    color: '#e67e22',
     notes: ['GWM / Sharpshooter: -5 to hit, +10 damage (heavy melee / ranged)'],
   },
   concentrating: {
     name: 'concentrating',
+    color: '#1abc9c',
     notes: ['Maintaining a concentration spell'],
   },
   'bardic-inspired': {
     name: 'bardic-inspired',
+    color: '#9b59b6',
     notes: ['Holds a Bardic Inspiration die (spend to add to attack / save / check)'],
   },
   protected: {
-    // Protection fighting style: an ally within 5 ft used their
-    // reaction + shield to impose disadvantage on attacks against
-    // this creature. One-shot; the badge auto-expires next round.
     name: 'protected',
+    color: '#34495e',
     attacksAgainst: 'disadvantage',
     notes: ['Attacks against have disadvantage (Protection fighting style)'],
   },
   hidden: {
     name: 'hidden',
+    color: '#95a5a6',
     attacksAgainst: 'disadvantage',
     notes: ['Attacks against have disadvantage until spotted'],
   },
   disengaged: {
     name: 'disengaged',
+    color: '#27ae60',
     notes: ['Movement this turn doesn\'t provoke opportunity attacks'],
   },
   hexed: {
-    // Hex spell — caster's attacks against target deal +1d6 necrotic.
-    // Mechanical application lives in the attack resolver (checks
-    // ConditionMetadata.casterTokenId matches the current attacker).
     name: 'hexed',
+    color: '#8e44ad',
     notes: ['Caster\'s attacks against this target deal +1d6 necrotic', 'Target has disadvantage on caster\'s chosen ability checks'],
   },
   marked: {
-    // Hunter's Mark — caster's weapon attacks deal +1d6 to target.
     name: 'marked',
+    color: '#c0392b',
     notes: ['Caster\'s weapon attacks against this target deal +1d6', 'Caster has adv on Perception / Survival checks to find target'],
   },
   stable: {
     name: 'stable',
+    color: '#27ae60',
     notes: ['No longer rolls death saves; HP stays at 0'],
   },
   reckless: {
-    // Barbarian Reckless Attack. Advantage on own melee STR attacks,
-    // attacks against have advantage until the start of next turn.
     name: 'reckless',
+    color: '#d35400',
     selfAttackAdvantage: true,
     attacksAgainst: 'advantage',
     notes: [
@@ -397,10 +422,8 @@ export const PSEUDO_CONDITION_EFFECTS: Record<string, ConditionEffect> = {
     ],
   },
   'hexblade-cursed': {
-    // Hexblade Warlock's Hexblade's Curse. +prof-bonus damage vs
-    // cursed target, crits on 19-20 against it, regain HP = lvl+CHA
-    // mod if the target dies. Duration 1 min, concentration-ish.
     name: 'hexblade-cursed',
+    color: '#6c3483',
     notes: [
       'Caster deals +prof bonus damage vs cursed target',
       'Caster crits on 19-20 against cursed target',
@@ -408,19 +431,13 @@ export const PSEUDO_CONDITION_EFFECTS: Record<string, ConditionEffect> = {
     ],
   },
   'bear-raging': {
-    // Path of the Totem Warrior Bear totem spirit (L3). While raging,
-    // resistance to ALL damage types except psychic. Stacks with
-    // normal Rage resistance — effectively near-invulnerability.
     name: 'bear-raging',
+    color: '#6e2c00',
     notes: ['While raging, resistance to ALL damage types except psychic'],
   },
   vowed: {
-    // Vengeance Paladin's Vow of Enmity. Paladin has advantage on
-    // attacks against this target. One-sided — only the caster gets
-    // the advantage, so we don't use selfAttackAdvantage here; the
-    // attack resolver needs to check the casterTokenId match
-    // (similar to Hex / Hunter's Mark).
     name: 'vowed',
+    color: '#b03a2e',
     notes: [
       'Caster has advantage on attack rolls against this target',
       'Lasts 1 minute (concentration-free) per Channel Divinity',
@@ -432,11 +449,21 @@ export const PSEUDO_CONDITION_EFFECTS: Record<string, ConditionEffect> = {
  * Look up an effect for any condition name — iterates both the 5e
  * standard map and the pseudo-condition map. Returns `undefined` when
  * the name is unknown (a common outcome for transient flags that
- * aren't fully modeled, e.g. `stable`, `dead`).
+ * aren't fully modeled, e.g. `dead`).
  */
 export function effectForCondition(name: string): ConditionEffect | undefined {
   const key = name.toLowerCase();
   return CONDITION_EFFECTS[key as Condition] ?? PSEUDO_CONDITION_EFFECTS[key];
+}
+
+/**
+ * Badge color for a condition name. Returns the effect's `color`
+ * field if defined, otherwise a neutral fallback so the UI always
+ * renders something. Source of truth — don't hard-code these colors
+ * at render sites.
+ */
+export function colorForCondition(name: string, fallback: string = '#888'): string {
+  return effectForCondition(name)?.color ?? fallback;
 }
 
 /**

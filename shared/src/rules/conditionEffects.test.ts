@@ -3,6 +3,7 @@ import {
   CONDITION_EFFECTS,
   PSEUDO_CONDITION_EFFECTS,
   effectForCondition,
+  colorForCondition,
   speedMultiplierFor,
   blocksActions,
   blocksReactions,
@@ -201,6 +202,41 @@ describe('computeEffectiveSpeed', () => {
 
   it('speed-0 condition beats half-speed condition', () => {
     expect(computeEffectiveSpeed(30, ['prone', 'paralyzed']).value).toBe(0);
+  });
+});
+
+describe('colorForCondition', () => {
+  it('returns the entry\'s color for known standard conditions', () => {
+    expect(colorForCondition('paralyzed')).toBe('#f1c40f');
+    expect(colorForCondition('unconscious')).toBe('#2c3e50');
+  });
+
+  it('returns the entry\'s color for known pseudo-conditions', () => {
+    expect(colorForCondition('blessed')).toBe('#f1c40f');
+    expect(colorForCondition('hexed')).toBe('#8e44ad');
+    expect(colorForCondition('bear-raging')).toBe('#6e2c00');
+  });
+
+  it('is case-insensitive', () => {
+    expect(colorForCondition('PARALYZED')).toBe('#f1c40f');
+    expect(colorForCondition('Hexblade-Cursed')).toBe('#6c3483');
+  });
+
+  it('returns the fallback for unknown names', () => {
+    expect(colorForCondition('bogus')).toBe('#888');
+    expect(colorForCondition('bogus', '#ff0000')).toBe('#ff0000');
+  });
+
+  it('every standard condition has a color defined', () => {
+    for (const [key, eff] of Object.entries(CONDITION_EFFECTS)) {
+      expect(eff.color, `${key} missing color`).toBeDefined();
+    }
+  });
+
+  it('every pseudo-condition has a color defined', () => {
+    for (const [key, eff] of Object.entries(PSEUDO_CONDITION_EFFECTS)) {
+      expect(eff.color, `${key} missing color`).toBeDefined();
+    }
   });
 });
 

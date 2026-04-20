@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, useMemo } from 'react';
 import { Group, Circle, Rect, Text, Ring, Shape, Line, Arrow } from 'react-konva';
 import type { Token, TokenAura } from '@dnd-vtt/shared';
+import { colorForCondition } from '@dnd-vtt/shared';
 import { useMapStore } from '../../../stores/useMapStore';
 import { useCombatStore } from '../../../stores/useCombatStore';
 import { useSessionStore } from '../../../stores/useSessionStore';
@@ -268,37 +269,10 @@ function TokenSprite({ token, isSelected, isCurrentTurn, showTokenLabels }: Toke
       ? theme.hp.half
       : theme.hp.low;
 
-  const conditionColors: Record<string, string> = {
-    blinded: '#4a4a4a',
-    charmed: '#ff69b4',
-    deafened: '#7f8c8d',
-    frightened: '#9b59b6',
-    grappled: '#e67e22',
-    incapacitated: '#95a5a6',
-    invisible: '#3498db',
-    paralyzed: '#f1c40f',
-    petrified: '#7f8c8d',
-    poisoned: '#27ae60',
-    prone: '#d35400',
-    restrained: '#c0392b',
-    stunned: '#f39c12',
-    unconscious: '#2c3e50',
-    'half-cover': '#7f8c8d',
-    'three-quarters-cover': '#576574',
-    'full-cover': '#2c3e50',
-    'power-attack': '#e67e22',
-    inspired: '#f39c12',
-    helped: '#5cb77a',
-    'bardic-inspired': '#9b59b6',
-    protected: '#34495e',
-    hexed: '#8e44ad',
-    marked: '#c0392b',
-    stable: '#27ae60',
-    reckless: '#d35400',
-    'hexblade-cursed': '#6c3483',
-    'bear-raging': '#6e2c00',
-    vowed: '#b03a2e',
-  };
+  // Badge colors sourced from shared CONDITION_EFFECTS +
+  // PSEUDO_CONDITION_EFFECTS via colorForCondition(). Drop the old
+  // hand-maintained map — the shared helper is the source of truth
+  // for both colors and mechanical effects.
 
   const isDM = useSessionStore.getState().isDM;
   const userId = useSessionStore.getState().userId;
@@ -700,7 +674,7 @@ function TokenSprite({ token, isSelected, isCurrentTurn, showTokenLabels }: Toke
               x={-((token.conditions.length - 1) * 8) / 2 + i * 8}
               y={0}
               radius={4}
-              fill={conditionColors[cond] || '#888'}
+              fill={colorForCondition(cond)}
               stroke="rgba(0,0,0,0.5)"
               strokeWidth={1}
             />
