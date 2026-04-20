@@ -202,6 +202,63 @@ async function handleCover(c: ChatCommandContext): Promise<boolean> {
   return true;
 }
 
+/**
+ *   !power [target] [on|off]
+ *       Toggle the `power-attack` pseudo-condition on a token. The
+ *       client-side attack resolver only applies the -5 / +10
+ *       trade-off if the attacker has GWM (for heavy melee) or
+ *       Sharpshooter (for ranged) — so toggling on a character
+ *       without the feat is a no-op mechanically, but still leaves
+ *       the badge on the token. Defaults to the caller's own token.
+ *       No-arg form is a toggle.
+ */
+async function handlePower(c: ChatCommandContext): Promise<boolean> {
+  const parts = c.rest.split(/\s+/).filter(Boolean);
+  // Last token might be on/off; rest is target name.
+  let mode: 'on' | 'off' | 'toggle' = 'toggle';
+  if (parts.length && /^(on|off|toggle)$/i.test(parts[parts.length - 1])) {
+    mode = parts.pop()!.toLowerCase() as 'on' | 'off' | 'toggle';
+  }
+  const targetName = parts.join(' ');
+  const target = resolveTargetOrSelf(c.ctx, targetName);
+  if (!target) {
+    whisperToCaller(c.io, c.ctx, '!power: no token matched (or no owned token to default to).');
+    return true;
+  }
+  if (!canTarget(c.ctx, target)) {
+    whisperToCaller(c.io, c.ctx, `!power: you don't own ${target.name}.`);
+    return true;
+  }
+
+  const has = (target.conditions as string[]).some((c2) => c2.toLowerCase() === 'power-attack');
+  const shouldApply = mode === 'on' ? true : mode === 'off' ? false : !has;
+
+  if (shouldApply && !has) {
+    const currentRound = c.ctx.room.combatState?.roundNumber ?? 0;
+    ConditionService.applyConditionWithMeta(c.ctx.room.sessionId, target.id, {
+      name: 'power-attack',
+      source: `${c.ctx.player.displayName} (!power)`,
+      appliedRound: currentRound,
+    });
+  } else if (!shouldApply && has) {
+    ConditionService.removeCondition(c.ctx.room.sessionId, target.id, 'power-attack');
+  } else {
+    whisperToCaller(c.io, c.ctx, `!power: ${target.name} already ${has ? 'has' : 'does not have'} power-attack.`);
+    return true;
+  }
+
+  c.io.to(c.ctx.room.sessionId).emit('map:token-updated', {
+    tokenId: target.id,
+    changes: { conditions: target.conditions },
+  });
+  broadcastSystem(
+    c.io, c.ctx,
+    `⚡ ${target.name} ${shouldApply ? 'commits to a Power Attack (-5 / +10)' : 'stops Power Attacking'}.`,
+  );
+  return true;
+}
+
 registerChatCommand('rage', handleRage);
 registerChatCommand('unrage', handleUnrage);
 registerChatCommand('cover', handleCover);
+registerChatCommand(['power', 'powerattack'], handlePower);

@@ -1274,7 +1274,52 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
           }
         }
 
-        const wAtkResult = rollAttackWithModifiers(atkBonus, wCombined);
+        // GWM / Sharpshooter power attack (-5 to hit / +10 damage) and
+        // Sharpshooter's cover-ignore. We check the attacker's features
+        // blob once here and branch on weapon type. The `power-attack`
+        // pseudo-condition on the attacker toggles the trade-off — the
+        // feat itself is required to actually take the penalty.
+        let wPowerAttackActive = false;
+        let wIgnoreCoverAc = 0;
+        {
+          const pCasterChar = wCasterToken?.characterId
+            ? useCharacterStore.getState().allCharacters[wCasterToken.characterId]
+            : null;
+          let hasGWM = false, hasSharp = false;
+          try {
+            const raw = (pCasterChar as any)?.features;
+            const feats = typeof raw === 'string' ? JSON.parse(raw) : (raw || []);
+            if (Array.isArray(feats)) {
+              for (const f of feats) {
+                const n = String(f?.name || '').toLowerCase();
+                if (/^great\s+weapon\s+master$/.test(n)) hasGWM = true;
+                if (/^sharpshooter$/.test(n)) hasSharp = true;
+              }
+            }
+          } catch { /* ignore */ }
+          const wIsRangedAttack = ((atk.properties as string[] | undefined) || [])
+            .some(p => /(range|ammunition|thrown)/i.test(p))
+            && !((atk.properties as string[] | undefined) || []).includes('Melee');
+          const wIsHeavyMelee = ((atk.properties as string[] | undefined) || []).includes('Melee')
+            && ((atk.properties as string[] | undefined) || []).some(p => /heavy/i.test(p));
+
+          if (wCasterConds.includes('power-attack')) {
+            if ((hasGWM && wIsHeavyMelee) || (hasSharp && wIsRangedAttack)) {
+              wPowerAttackActive = true;
+              wCombined.notes.push('Power Attack (-5 hit / +10 dmg)');
+            }
+          }
+          // Sharpshooter negates half / three-quarters cover AC. We
+          // pre-compute the amount here and subtract it from the AC
+          // below so the roll resolution stays simple.
+          if (hasSharp && wIsRangedAttack) {
+            if (wTargetConds.includes('half-cover')) wIgnoreCoverAc += 2;
+            if (wTargetConds.includes('three-quarters-cover')) wIgnoreCoverAc += 5;
+          }
+        }
+
+        const wAttackBonusFinal = wPowerAttackActive ? atkBonus - 5 : atkBonus;
+        const wAtkResult = rollAttackWithModifiers(wAttackBonusFinal, wCombined);
 
         // Effective AC accounts for Hasted / Shield / Mage Armor / etc.
         const wTargetScores = targetChar?.abilityScores
@@ -1283,6 +1328,10 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
         const wTargetDex = abilityModifier((wTargetScores as any).dex || 10);
         const wAcResult = effectiveAC(targetChar?.armorClass ?? 10, wTargetConds, wTargetDex);
         let wTargetAC = wAcResult.value;
+        if (wIgnoreCoverAc > 0) {
+          wTargetAC -= wIgnoreCoverAc;
+          wCombined.notes.push(`Sharpshooter: ignore ${wIgnoreCoverAc} cover AC`);
+        }
         let wIsHit = wAtkResult.isCritical || (!wAtkResult.isFumble && wAtkResult.total >= wTargetAC);
         const wIsMelee = (atk.properties as string[] | undefined)?.includes('Melee');
         let wIsCrit = wAtkResult.isCritical || (wIsHit && wAtkResult.forceCritOnHit && wIsMelee);
@@ -1415,6 +1464,12 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
             }
           }
 
+          // GWM / Sharpshooter power attack: +10 damage if the
+          // toggle+feat+weapon-type combination qualified earlier.
+          if (wPowerAttackActive) {
+            wRolledDmg += 10;
+          }
+
           const wFreshChar = useCharacterStore.getState().allCharacters[effectiveCharId];
           const wFreshHp = wFreshChar ? (typeof wFreshChar.hitPoints === 'number' ? wFreshChar.hitPoints : parseInt(String(wFreshChar.hitPoints)) || 0) : targetHp;
           // Weapon attacks are NONMAGICAL by default — Stoneskin matters
@@ -1424,8 +1479,9 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
           const wResistTag = wResisted.source ? ` [${wResisted.source}]` : '';
           const wRageTag = wRageBonus > 0 ? ` [Rage +${wRageBonus}]` : '';
           const wSneakTag = wSneakDice > 0 ? ` [Sneak +${wSneakDice}d6 → ${wSneakRolled}]` : '';
+          const wPowerTag = wPowerAttackActive ? ' [Power Attack +10]' : '';
           const wDmgChange = wResisted.amount !== wRolledDmg ? `${wRolledDmg}→${wResisted.amount}` : `${wResisted.amount}`;
-          wParts.push(`${wDmgChange} ${weaponDmgWord}dmg${wRageTag}${wSneakTag}${wResistTag} (HP ${wFreshHp}→${wNewHp})${wIsCrit ? ' [CRIT]' : ''}`);
+          wParts.push(`${wDmgChange} ${weaponDmgWord}dmg${wRageTag}${wSneakTag}${wPowerTag}${wResistTag} (HP ${wFreshHp}→${wNewHp})${wIsCrit ? ' [CRIT]' : ''}`);
           if (wNewHp === 0) wParts.push('💀 DOWN');
           setTimeout(() => {
             updateTargetHp(effectiveCharId, wNewHp);

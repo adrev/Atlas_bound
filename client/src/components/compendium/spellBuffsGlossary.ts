@@ -129,4 +129,16 @@ export const SPELL_BUFFS: SpellBuffEntry[] = [
       'DM toggles with `!cover <target> full`. Clear with `!cover <target> none`.',
     ].join('\n\n'),
   },
+  {
+    slug: 'power-attack',
+    name: 'Power Attack',
+    color: '#e67e22',
+    snippet: '-5 to hit, +10 damage (GWM heavy melee or Sharpshooter ranged).',
+    description: [
+      'The **Great Weapon Master** and **Sharpshooter** feats let an attacker trade accuracy for damage: **-5 on the attack roll, +10 on the damage roll**.',
+      '- GWM requires a **heavy melee weapon** (greatsword, maul, greataxe, polearm with the Heavy tag).',
+      '- Sharpshooter requires a **ranged weapon attack**. Also lets the attacker ignore half and three-quarters cover.',
+      'The attacker must actually have the matching feat for the trade-off to apply. Toggle with `!power [target] [on|off]`. Leave the badge on to keep committing each round.',
+    ].join('\n\n'),
+  },
 ];
