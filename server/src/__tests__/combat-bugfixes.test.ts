@@ -377,3 +377,127 @@ describe('Opportunity attacks honor token faction', () => {
     expect(ops).toEqual([]);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Mobile feat — OA detector skips enemies the mover melee-attacked
+// this turn. Keyed on mobileMeleeTargets set populated via the
+// combat:mobile-attacked socket handler.
+// ---------------------------------------------------------------------------
+
+describe('OpportunityAttackService.detectOpportunityAttacks — Mobile feat', () => {
+  const GRID = 70;
+
+  it('suppresses an OA from an enemy the mover melee-attacked this turn', async () => {
+    const sessionId = 's-mobile';
+    const mover = makeToken('tMover', {
+      x: 0, y: 0, ownerUserId: 'player-1',
+    });
+    const enemy = makeToken('tEnemy', {
+      x: GRID, y: 0, ownerUserId: null,
+    });
+    seedRoom(sessionId, [mover, enemy], [
+      makeCombatant('tMover', { isNPC: false }),
+      makeCombatant('tEnemy'),
+    ]);
+    const { getRoom } = await import('../utils/roomState.js');
+    const room = getRoom(sessionId)!;
+    room.mobileMeleeTargets.set('tMover', new Set(['tEnemy']));
+    room.mapGridSizes.set('map-1', GRID);
+
+    // Mover steps 2 cells east → was in reach, now isn't.
+    const ops = OAService.detectOpportunityAttacks(
+      sessionId, 'tMover', 0, 0, GRID * 3, 0,
+    );
+    expect(ops).toEqual([]);
+  });
+
+  it('still fires the OA for a separate enemy the mover never touched', async () => {
+    const sessionId = 's-mobile-mixed';
+    const mover = makeToken('tMover', {
+      x: 0, y: 0, ownerUserId: 'player-1',
+    });
+    const attackedEnemy = makeToken('tEnemyA', {
+      x: GRID, y: 0, ownerUserId: null,
+    });
+    const innocentEnemy = makeToken('tEnemyB', {
+      x: -GRID, y: 0, ownerUserId: null,
+    });
+    seedRoom(sessionId, [mover, attackedEnemy, innocentEnemy], [
+      makeCombatant('tMover', { isNPC: false }),
+      makeCombatant('tEnemyA'),
+      makeCombatant('tEnemyB'),
+    ]);
+    const { getRoom } = await import('../utils/roomState.js');
+    const room = getRoom(sessionId)!;
+    // Only attacked tEnemyA — tEnemyB should still get their OA.
+    room.mobileMeleeTargets.set('tMover', new Set(['tEnemyA']));
+    room.mapGridSizes.set('map-1', GRID);
+
+    const ops = OAService.detectOpportunityAttacks(
+      sessionId, 'tMover', 0, 0, GRID * 3, 0,
+    );
+    expect(ops.length).toBe(1);
+    expect(ops[0].attackerTokenId).toBe('tEnemyB');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// tokenMeleeReach cache — sync OA detector reads reach-2 attackers
+// (glaives, halberds) from the pre-populated map so a mover 10 ft
+// away still triggers their OA on exit.
+// ---------------------------------------------------------------------------
+
+describe('OpportunityAttackService — reach cache', () => {
+  const GRID = 70;
+
+  it('fires OA from a reach-2 attacker 10 ft away', async () => {
+    const sessionId = 's-reach-2';
+    const mover = makeToken('tMover', {
+      x: 0, y: 0, ownerUserId: 'player-1',
+    });
+    const enemy = makeToken('tEnemy', {
+      x: GRID * 2, y: 0, ownerUserId: null,
+    });
+    seedRoom(sessionId, [mover, enemy], [
+      makeCombatant('tMover', { isNPC: false }),
+      makeCombatant('tEnemy'),
+    ]);
+    const { getRoom } = await import('../utils/roomState.js');
+    const room = getRoom(sessionId)!;
+    room.tokenMeleeReach.set('tEnemy', 2);
+    room.mapGridSizes.set('map-1', GRID);
+
+    // Mover was 10 ft east (in reach for a polearm) → now far east
+    // so the edge distance exceeds the 2-cell reach (140 px). Landing
+    // at x = 8 cells east gives ~350 px edge distance, well outside.
+    const ops = OAService.detectOpportunityAttacks(
+      sessionId, 'tMover', 0, 0, GRID * 8, 0,
+    );
+    expect(ops.length).toBe(1);
+    expect(ops[0].attackerTokenId).toBe('tEnemy');
+  });
+
+  it('does not fire OA from a reach-1 attacker when mover was 10 ft away', async () => {
+    const sessionId = 's-reach-1';
+    const mover = makeToken('tMover', {
+      x: 0, y: 0, ownerUserId: 'player-1',
+    });
+    const enemy = makeToken('tEnemy', {
+      x: GRID * 2, y: 0, ownerUserId: null,
+    });
+    seedRoom(sessionId, [mover, enemy], [
+      makeCombatant('tMover', { isNPC: false }),
+      makeCombatant('tEnemy'),
+    ]);
+    const { getRoom } = await import('../utils/roomState.js');
+    const room = getRoom(sessionId)!;
+    // Explicit reach-1 in the cache — standard short sword / rapier.
+    room.tokenMeleeReach.set('tEnemy', 1);
+    room.mapGridSizes.set('map-1', GRID);
+
+    const ops = OAService.detectOpportunityAttacks(
+      sessionId, 'tMover', 0, 0, GRID * 4, 0,
+    );
+    expect(ops).toEqual([]);
+  });
+});
