@@ -283,6 +283,9 @@ function TokenSprite({ token, isSelected, isCurrentTurn, showTokenLabels }: Toke
     restrained: '#c0392b',
     stunned: '#f39c12',
     unconscious: '#2c3e50',
+    'half-cover': '#7f8c8d',
+    'three-quarters-cover': '#576574',
+    'full-cover': '#2c3e50',
   };
 
   const isDM = useSessionStore.getState().isDM;

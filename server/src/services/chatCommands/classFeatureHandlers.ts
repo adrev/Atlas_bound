@@ -132,5 +132,76 @@ async function handleUnrage(c: ChatCommandContext): Promise<boolean> {
   return true;
 }
 
+/**
+ *   !cover <target> <half|three|full|none>
+ *       Apply / change / remove cover on a target. Half = +2 AC,
+ *       three = +5 AC, full = not attackable (pass to DM), none =
+ *       clears any existing cover. DM-only since cover is a
+ *       battlefield call, not a per-token choice.
+ */
+const COVER_LEVEL_ALIASES: Record<string, 'half-cover' | 'three-quarters-cover' | 'full-cover' | 'none'> = {
+  none: 'none', off: 'none', clear: 'none',
+  half: 'half-cover', '½': 'half-cover', '1/2': 'half-cover',
+  three: 'three-quarters-cover', '3/4': 'three-quarters-cover', 'threequarters': 'three-quarters-cover',
+  full: 'full-cover', total: 'full-cover',
+};
+
+async function handleCover(c: ChatCommandContext): Promise<boolean> {
+  if (c.ctx.player.role !== 'dm') {
+    whisperToCaller(c.io, c.ctx, '!cover: DM only.');
+    return true;
+  }
+  const parts = c.rest.split(/\s+/).filter(Boolean);
+  if (parts.length < 2) {
+    whisperToCaller(c.io, c.ctx, '!cover: usage `!cover <target> <none|half|three|full>`');
+    return true;
+  }
+  const levelRaw = parts.pop()!.toLowerCase();
+  const targetName = parts.join(' ');
+  const level = COVER_LEVEL_ALIASES[levelRaw];
+  if (!level) {
+    whisperToCaller(c.io, c.ctx, `!cover: unknown level "${levelRaw}". Try none / half / three / full.`);
+    return true;
+  }
+
+  const all = Array.from(c.ctx.room.tokens.values());
+  const matches = all.filter((t) => t.name.toLowerCase() === targetName.toLowerCase());
+  matches.sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
+  const target = matches[0];
+  if (!target) {
+    whisperToCaller(c.io, c.ctx, `!cover: no token named "${targetName}" on this map.`);
+    return true;
+  }
+
+  // Clear any prior cover first — only one cover grade at a time.
+  for (const existing of ['half-cover', 'three-quarters-cover', 'full-cover']) {
+    if ((target.conditions as string[]).includes(existing)) {
+      ConditionService.removeCondition(c.ctx.room.sessionId, target.id, existing);
+    }
+  }
+
+  if (level !== 'none') {
+    const currentRound = c.ctx.room.combatState?.roundNumber ?? 0;
+    ConditionService.applyConditionWithMeta(c.ctx.room.sessionId, target.id, {
+      name: level,
+      source: `${c.ctx.player.displayName} (!cover)`,
+      appliedRound: currentRound,
+    });
+  }
+
+  c.io.to(c.ctx.room.sessionId).emit('map:token-updated', {
+    tokenId: target.id,
+    changes: { conditions: target.conditions },
+  });
+
+  const label = level === 'none' ? 'no cover' :
+    level === 'half-cover' ? 'half cover (+2 AC)' :
+    level === 'three-quarters-cover' ? 'three-quarters cover (+5 AC)' :
+    'full cover (cannot be targeted)';
+  broadcastSystem(c.io, c.ctx, `🛡 ${target.name} now has ${label}.`);
+  return true;
+}
+
 registerChatCommand('rage', handleRage);
 registerChatCommand('unrage', handleUnrage);
+registerChatCommand('cover', handleCover);

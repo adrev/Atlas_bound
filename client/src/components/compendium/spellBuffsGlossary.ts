@@ -99,4 +99,34 @@ export const SPELL_BUFFS: SpellBuffEntry[] = [
       'You can only concentrate on one spell at a time — casting a new concentration spell immediately ends the old one. Becoming incapacitated (stunned, unconscious, paralyzed, petrified) also drops concentration.',
     ].join('\n\n'),
   },
+  {
+    slug: 'half-cover',
+    name: 'Half Cover',
+    color: '#7f8c8d',
+    snippet: '+2 AC and +2 DEX saves against ranged/targeted effects.',
+    description: [
+      'Standing behind a low wall, a piece of furniture, another creature, or a narrow tree. **+2 bonus to AC** and **+2 to DEX saves** against attacks or effects that originate from the other side of the cover.',
+      'DM toggles with `!cover <target> half`. Clear with `!cover <target> none`.',
+    ].join('\n\n'),
+  },
+  {
+    slug: 'three-quarters-cover',
+    name: 'Three-Quarters Cover',
+    color: '#576574',
+    snippet: '+5 AC and +5 DEX saves against ranged/targeted effects.',
+    description: [
+      'Behind an arrow slit, thick tree trunk, portcullis, or partially open doorway. **+5 bonus to AC** and **+5 to DEX saves** against attacks or effects that originate from the other side.',
+      'DM toggles with `!cover <target> three`. Clear with `!cover <target> none`.',
+    ].join('\n\n'),
+  },
+  {
+    slug: 'full-cover',
+    name: 'Full Cover',
+    color: '#2c3e50',
+    snippet: 'Cannot be targeted directly by attack or targeted spell.',
+    description: [
+      'Completely obscured — behind a solid wall, total blockage, etc. **Cannot be targeted directly** by attacks or targeted spells. Area-of-effect spells may still reach around corners depending on shape.',
+      'DM toggles with `!cover <target> full`. Clear with `!cover <target> none`.',
+    ].join('\n\n'),
+  },
 ];

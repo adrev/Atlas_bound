@@ -536,6 +536,18 @@ export function effectiveAC(baseAC: number, conditions: string[], dexMod: number
     out.value += 5;
     out.notes.push('+5 Shield spell');
   }
+  // Cover (DMG p.196). Pseudo-conditions managed via !cover — the
+  // DM toggles when a target ducks behind something partial. Full
+  // cover is handled by line-of-sight, not AC, so only half / three-
+  // quarters show up here.
+  if (set.has('half-cover')) {
+    out.value += 2;
+    out.notes.push('+2 half cover');
+  }
+  if (set.has('three-quarters-cover')) {
+    out.value += 5;
+    out.notes.push('+5 three-quarters cover');
+  }
 
   return out;
 }
