@@ -1,4 +1,10 @@
 import type { AbilityName } from '@dnd-vtt/shared';
+import {
+  computeEffectiveAC,
+  computeEffectiveSpeed,
+  effectForCondition,
+  type EffectiveStat as SharedEffectiveStat,
+} from '@dnd-vtt/shared';
 
 /**
  * Centralized roll engine that reads a token's conditions/buffs and
@@ -131,6 +137,68 @@ export function hasMagicResistance(character: unknown): boolean {
  * `attackAdvantage` reflects whether THIS token's attacks are made with
  * advantage/disadvantage.
  */
+const ALL_ABILITIES: AbilityName[] = ['str', 'dex', 'con', 'int', 'wis', 'cha'];
+
+/**
+ * Translate a single shared `ConditionEffect` entry into deltas on the
+ * `RollModifiers` bag the roll engine outputs. Split out so both
+ * getOwnRollModifiers (rolling side) and getTargetRollModifiers (target
+ * side) can walk the SAME data without hard-coding each condition
+ * individually.
+ *
+ * The `side` discriminator controls which fields we read: the rolling
+ * side reads `selfAttack` / `selfAttackAdvantage` / `saveAdvantage` /
+ * `checkAdvantage` / `autoFailSaves` / `attackBonusDice` / etc., while
+ * the target side reads `attacksAgainst` / `meleeCritWithin5ft`.
+ */
+function applyEffectOwn(out: RollModifiers, key: string): void {
+  const eff = effectForCondition(key);
+  if (!eff) return;
+
+  // Attack advantage / disadvantage from the rolling side.
+  if (eff.selfAttack === 'advantage' || eff.selfAttackAdvantage) {
+    applyAdvantage(out, 'attack', 'advantage');
+  }
+  if (eff.selfAttack === 'disadvantage') {
+    applyAdvantage(out, 'attack', 'disadvantage');
+  }
+  // Bonus dice (Bless +1d4, Bane -1d4). Last non-empty wins — sessions
+  // rarely stack two bonus-dice sources, and when they do it's a DM
+  // call which to honour.
+  if (eff.attackBonusDice) out.attackBonusDice = eff.attackBonusDice;
+  if (eff.saveBonusDice) out.saveBonusDice = eff.saveBonusDice;
+  // Auto-fail saves (paralyzed / stunned / unconscious / petrified).
+  if (eff.autoFailSaves) {
+    for (const ab of eff.autoFailSaves) {
+      if (!out.autoFailSaves.includes(ab as AbilityName)) out.autoFailSaves.push(ab as AbilityName);
+    }
+  }
+  // Per-ability save + check advantage.
+  if (eff.saveAdvantage) {
+    for (const [ab, dir] of Object.entries(eff.saveAdvantage)) {
+      if (dir) applyAdvantage(out, 'save', dir, ab as AbilityName);
+    }
+  }
+  if (eff.checkAdvantage) {
+    for (const [ab, dir] of Object.entries(eff.checkAdvantage)) {
+      if (dir) applyAdvantage(out, 'check', dir, ab as AbilityName);
+    }
+  }
+  // Disadvantage on ALL ability checks (poisoned / frightened / exhaustion).
+  if (eff.disadvantageAbilityChecks) {
+    for (const ab of ALL_ABILITIES) applyAdvantage(out, 'check', 'disadvantage', ab);
+  }
+  // Restrained: disadvantage on DEX saves via the legacy flag.
+  if (eff.disadvantageOwnRolls?.saves && eff.name === 'restrained') {
+    applyAdvantage(out, 'save', 'disadvantage', 'dex');
+  }
+  // Pick a nice single note. If the effect has multiple, join them.
+  if (eff.notes && eff.notes.length > 0) {
+    const display = eff.name.charAt(0).toUpperCase() + eff.name.slice(1).replace(/-/g, ' ');
+    out.notes.push(`${display}: ${eff.notes[0]}`);
+  }
+}
+
 export function getOwnRollModifiers(conditions: string[]): RollModifiers {
   const out: RollModifiers = {
     attackAdvantage: 'normal',
@@ -144,116 +212,7 @@ export function getOwnRollModifiers(conditions: string[]): RollModifiers {
     notes: [],
   };
 
-  const set = new Set(conditions.map(c => c.toLowerCase()));
-
-  // Bonus dice (Bless / Bane)
-  if (set.has('blessed')) {
-    out.attackBonusDice = '+1d4';
-    out.saveBonusDice = '+1d4';
-    out.notes.push('Blessed (+1d4)');
-  }
-  if (set.has('baned')) {
-    out.attackBonusDice = '-1d4';
-    out.saveBonusDice = '-1d4';
-    out.notes.push('Baned (-1d4)');
-  }
-
-  // Disadvantage on attacks
-  if (set.has('poisoned')) {
-    applyAdvantage(out, 'attack', 'disadvantage');
-    out.notes.push('Poisoned (disadv. attacks)');
-  }
-  if (set.has('frightened')) {
-    applyAdvantage(out, 'attack', 'disadvantage');
-    out.notes.push('Frightened (disadv. attacks)');
-  }
-  if (set.has('restrained')) {
-    applyAdvantage(out, 'attack', 'disadvantage');
-    applyAdvantage(out, 'save', 'disadvantage', 'dex');
-    out.notes.push('Restrained (disadv. attacks/DEX saves)');
-  }
-  if (set.has('prone')) {
-    applyAdvantage(out, 'attack', 'disadvantage');
-    out.notes.push('Prone (disadv. attacks)');
-  }
-  if (set.has('blinded')) {
-    applyAdvantage(out, 'attack', 'disadvantage');
-    out.notes.push('Blinded (disadv. attacks)');
-  }
-
-  // Disadvantage on ability checks (treated like saves for our purposes)
-  if (set.has('poisoned')) {
-    for (const ab of ['str', 'dex', 'con', 'int', 'wis', 'cha'] as AbilityName[]) {
-      applyAdvantage(out, 'check', 'disadvantage', ab);
-    }
-  }
-  // Frightened: disadvantage on ability checks while source of fear
-  // is in sight. We can't easily track line-of-sight here, so the
-  // disadvantage applies whenever the condition is active — DM can
-  // clear the badge when LoS is broken.
-  if (set.has('frightened')) {
-    for (const ab of ['str', 'dex', 'con', 'int', 'wis', 'cha'] as AbilityName[]) {
-      applyAdvantage(out, 'check', 'disadvantage', ab);
-    }
-  }
-  // Exhaustion levels 1+: disadvantage on ability checks. L3+ adds
-  // disadvantage on attacks + saves (handled in computeSaveModifiers
-  // via the set check — this block only covers the level-1 trigger
-  // on checks since the attack / save paths already saw it).
-  if (set.has('exhaustion')) {
-    for (const ab of ['str', 'dex', 'con', 'int', 'wis', 'cha'] as AbilityName[]) {
-      applyAdvantage(out, 'check', 'disadvantage', ab);
-    }
-  }
-
-  // Auto-fail saves
-  if (set.has('paralyzed') || set.has('stunned') || set.has('unconscious') || set.has('petrified')) {
-    out.autoFailSaves = ['str', 'dex'];
-    if (set.has('paralyzed')) out.notes.push('Paralyzed (auto-fail STR/DEX)');
-    if (set.has('stunned')) out.notes.push('Stunned (auto-fail STR/DEX)');
-    if (set.has('unconscious')) out.notes.push('Unconscious (auto-fail STR/DEX)');
-    if (set.has('petrified')) out.notes.push('Petrified (auto-fail STR/DEX)');
-  }
-
-  // Hasted: advantage on DEX saves
-  if (set.has('hasted')) {
-    applyAdvantage(out, 'save', 'advantage', 'dex');
-    out.notes.push('Hasted (adv. DEX saves)');
-  }
-
-  // Dodging: advantage on DEX saves until the start of your next turn.
-  // (Attacks against you get disadvantage — that's handled in
-  // getTargetRollModifiers.)
-  if (set.has('dodging')) {
-    applyAdvantage(out, 'save', 'advantage', 'dex');
-    out.notes.push('Dodging (adv. DEX saves)');
-  }
-
-  // Inspiration — "if you have inspiration, you can expend it when
-  // you make an attack roll, saving throw, or ability check" to gain
-  // advantage. We grant the advantage on attack rolls here and on
-  // saves / checks in computeSaveModifiers via the same set check.
-  // The condition is persistent until cleared (simpler than a one-
-  // shot model that would require a follow-up server write every
-  // time a roll resolves).
-  if (set.has('inspired')) {
-    applyAdvantage(out, 'attack', 'advantage');
-    out.notes.push('Inspired (adv. attack)');
-  }
-
-  // Help action: the recipient is tagged `helped` until they take
-  // their next attack or check. For simplicity we grant advantage
-  // on both attacks and ability checks while the badge persists —
-  // the DM clears after the assisted action lands.
-  if (set.has('helped')) {
-    applyAdvantage(out, 'attack', 'advantage');
-    for (const ab of ['str', 'dex', 'con', 'int', 'wis', 'cha'] as AbilityName[]) {
-      applyAdvantage(out, 'check', 'advantage', ab);
-    }
-    out.notes.push('Helped (adv. attack + checks)');
-  }
-
-  // Slowed: handled in Phase 2 as a save penalty (-2)
+  for (const c of conditions) applyEffectOwn(out, String(c).toLowerCase());
 
   return out;
 }
@@ -284,66 +243,41 @@ export function getTargetRollModifiers(
     notes: [],
   };
 
-  const set = new Set(conditions.map(c => c.toLowerCase()));
+  for (const raw of conditions) {
+    const key = String(raw).toLowerCase();
+    const eff = effectForCondition(key);
+    if (!eff) continue;
 
-  // Advantage to attackers (target is easier to hit)
-  if (set.has('blinded')) {
-    applyAdvantage(out, 'attack', 'advantage');
-    out.notes.push('Target Blinded (adv. to attackers)');
-  }
-  if (set.has('paralyzed')) {
-    applyAdvantage(out, 'attack', 'advantage');
-    out.meleeCritWithin5ft = true;
-    out.notes.push('Target Paralyzed (adv. + melee crit ≤5ft)');
-  }
-  if (set.has('stunned')) {
-    applyAdvantage(out, 'attack', 'advantage');
-    out.notes.push('Target Stunned (adv.)');
-  }
-  if (set.has('unconscious')) {
-    applyAdvantage(out, 'attack', 'advantage');
-    out.meleeCritWithin5ft = true;
-    out.notes.push('Target Unconscious (adv. + melee crit ≤5ft)');
-  }
-  if (set.has('petrified')) {
-    applyAdvantage(out, 'attack', 'advantage');
-    out.notes.push('Target Petrified (adv.)');
-  }
-  if (set.has('restrained')) {
-    applyAdvantage(out, 'attack', 'advantage');
-    out.notes.push('Target Restrained (adv.)');
-  }
-  if (set.has('prone')) {
-    // RAW: prone → advantage for melee attackers, disadvantage for
-    // ranged attackers. The caller supplies `attackRange`, defaulting
-    // to melee so the legacy "assume advantage" behaviour still holds
-    // on any untouched call sites.
-    if (attackRange === 'ranged') {
-      applyAdvantage(out, 'attack', 'disadvantage');
-      out.notes.push('Target Prone (ranged → disadv)');
-    } else {
-      applyAdvantage(out, 'attack', 'advantage');
-      out.notes.push('Target Prone (melee → adv)');
+    // Prone is the one rule that's range-sensitive: melee → adv,
+    // ranged → disadv. Handle it explicitly so the data file can
+    // stay range-agnostic.
+    if (eff.name === 'prone') {
+      if (attackRange === 'ranged') {
+        applyAdvantage(out, 'attack', 'disadvantage');
+        out.notes.push('Target Prone (ranged → disadv)');
+      } else {
+        applyAdvantage(out, 'attack', 'advantage');
+        out.notes.push('Target Prone (melee → adv)');
+      }
+      if (eff.meleeCritWithin5ft && attackRange !== 'ranged') {
+        out.meleeCritWithin5ft = true;
+      }
+      continue;
     }
-  }
-  if (set.has('outlined')) {
-    // Faerie Fire
-    applyAdvantage(out, 'attack', 'advantage');
-    out.notes.push('Target Outlined (Faerie Fire)');
-  }
 
-  // Invisible target → disadvantage to attackers
-  if (set.has('invisible')) {
-    applyAdvantage(out, 'attack', 'disadvantage');
-    out.notes.push('Target Invisible (disadv. to attackers)');
-  }
+    if (eff.attacksAgainst === 'advantage') {
+      applyAdvantage(out, 'attack', 'advantage');
+      const display = eff.name.charAt(0).toUpperCase() + eff.name.slice(1).replace(/-/g, ' ');
+      out.notes.push(`Target ${display} (adv. to attackers)`);
+    } else if (eff.attacksAgainst === 'disadvantage') {
+      applyAdvantage(out, 'attack', 'disadvantage');
+      const display = eff.name.charAt(0).toUpperCase() + eff.name.slice(1).replace(/-/g, ' ');
+      out.notes.push(`Target ${display} (disadv. to attackers)`);
+    }
 
-  // Dodging target → disadvantage to attackers (target took the Dodge
-  // action). This is applied to the target so any incoming attack is
-  // rolled with disadvantage via the combine step.
-  if (set.has('dodging')) {
-    applyAdvantage(out, 'attack', 'disadvantage');
-    out.notes.push('Target Dodging (disadv. to attackers)');
+    if (eff.meleeCritWithin5ft) {
+      out.meleeCritWithin5ft = true;
+    }
   }
 
   return out;
@@ -535,129 +469,21 @@ export interface EffectiveStat {
 
 /**
  * Compute the effective AC for a token, applying all condition modifiers.
- * Pass the base AC from the character record (the value already includes
- * worn armor, shield, DEX, etc.). This adds Hasted, Slowed, Shield of Faith,
- * Mage Armor floor, Barkskin floor, etc.
+ * Thin wrapper over the shared `computeEffectiveAC` helper — the actual
+ * rules data (which conditions add AC, which floor) lives in
+ * shared/rules/conditionEffects.ts so the server can reason about the
+ * same effects.
  */
 export function effectiveAC(baseAC: number, conditions: string[], dexMod: number): EffectiveStat {
-  const out: EffectiveStat = { value: baseAC, base: baseAC, notes: [] };
-  const set = new Set(conditions.map(c => c.toLowerCase()));
-
-  // ── Step 1: Resolve the "base" AC (floor effects from Mage Armor /
-  // Barkskin). These REPLACE the base AC when they're higher; they are
-  // NOT additive. Applying them first ensures the flat bonuses below
-  // stack on top of them cleanly (rather than being absorbed when the
-  // floor overwrites whatever the bonuses produced).
-  if (set.has('mage-armored')) {
-    const mageArmorAC = 13 + dexMod;
-    if (mageArmorAC > out.value) {
-      const diff = mageArmorAC - out.value;
-      out.value = mageArmorAC;
-      out.notes.push(`+${diff} Mage Armor (13+DEX)`);
-    }
-  }
-
-  if (set.has('barkskin')) {
-    if (16 > out.value) {
-      const diff = 16 - out.value;
-      out.value = 16;
-      out.notes.push(`+${diff} Barkskin (min 16)`);
-    }
-  }
-
-  // ── Step 2: Apply flat bonuses / penalties on top of the (possibly
-  // replaced) base AC. Order doesn't matter within this block since
-  // they're all additive.
-  if (set.has('hasted')) {
-    out.value += 2;
-    out.notes.push('+2 Hasted');
-  }
-  if (set.has('slowed')) {
-    out.value -= 2;
-    out.notes.push('-2 Slowed');
-  }
-  if (set.has('shielded')) {
-    // Shield of Faith
-    out.value += 2;
-    out.notes.push('+2 Shield of Faith');
-  }
-  if (set.has('shield-spell')) {
-    // The Shield cantrip (1st-level abjuration) — +5 AC until the
-    // start of the caster's next turn. Applied retroactively to the
-    // triggering attack by the cast resolver, AND persists as a
-    // condition so subsequent attacks in the same round also get
-    // the bonus.
-    out.value += 5;
-    out.notes.push('+5 Shield spell');
-  }
-  // Cover (DMG p.196). Pseudo-conditions managed via !cover — the
-  // DM toggles when a target ducks behind something partial. Full
-  // cover is handled by line-of-sight, not AC, so only half / three-
-  // quarters show up here.
-  if (set.has('half-cover')) {
-    out.value += 2;
-    out.notes.push('+2 half cover');
-  }
-  if (set.has('three-quarters-cover')) {
-    out.value += 5;
-    out.notes.push('+5 three-quarters cover');
-  }
-
-  return out;
+  return computeEffectiveAC(baseAC, conditions, dexMod) as SharedEffectiveStat;
 }
 
 /**
- * Compute the effective movement speed for a token in feet, applying
- * speed-changing conditions. Returns 0 for grappled/restrained/paralyzed/
- * stunned/petrified/unconscious. Hasted doubles, Slowed halves.
+ * Compute the effective movement speed for a token in feet. Thin
+ * wrapper over the shared `computeEffectiveSpeed` helper.
  */
 export function effectiveSpeed(baseSpeed: number, conditions: string[]): EffectiveStat {
-  const out: EffectiveStat = { value: baseSpeed, base: baseSpeed, notes: [] };
-  const set = new Set(conditions.map(c => c.toLowerCase()));
-
-  // Speed = 0 conditions (these all set the speed to 0 outright per RAW)
-  if (set.has('grappled')) {
-    out.value = 0;
-    out.notes.push('Grappled (speed 0)');
-    return out;
-  }
-  if (set.has('restrained')) {
-    out.value = 0;
-    out.notes.push('Restrained (speed 0)');
-    return out;
-  }
-  if (set.has('paralyzed')) {
-    out.value = 0;
-    out.notes.push('Paralyzed (speed 0)');
-    return out;
-  }
-  if (set.has('stunned')) {
-    out.value = 0;
-    out.notes.push('Stunned (speed 0)');
-    return out;
-  }
-  if (set.has('petrified')) {
-    out.value = 0;
-    out.notes.push('Petrified (speed 0)');
-    return out;
-  }
-  if (set.has('unconscious')) {
-    out.value = 0;
-    out.notes.push('Unconscious (speed 0)');
-    return out;
-  }
-
-  // Speed multipliers
-  if (set.has('hasted')) {
-    out.value *= 2;
-    out.notes.push(`×2 Hasted`);
-  }
-  if (set.has('slowed')) {
-    out.value = Math.floor(out.value / 2);
-    out.notes.push(`÷2 Slowed`);
-  }
-
-  return out;
+  return computeEffectiveSpeed(baseSpeed, conditions) as SharedEffectiveStat;
 }
 
 // --- Damage resistance / immunity / vulnerability (Phase 3) ---

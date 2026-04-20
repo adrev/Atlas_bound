@@ -12,9 +12,11 @@ import type { Condition } from '../types/map.js';
  * the same record.
  */
 
+export type Ability = 'str' | 'dex' | 'con' | 'int' | 'wis' | 'cha';
+
 export interface ConditionEffect {
   /** Short name tag for the condition (matches the Condition union). */
-  name: Condition;
+  name: string;
   /** When this condition is on the ROLLING creature, how its own rolls react. */
   selfAttack?: 'advantage' | 'disadvantage';
   /** When this condition is on the TARGET of a roll, how attacks against them react. */
@@ -30,7 +32,7 @@ export interface ConditionEffect {
   /** Auto-fail ability checks that require hearing. */
   autoFailHearingChecks?: boolean;
   /** Auto-fail saving throws on this list of abilities. */
-  autoFailSaves?: Array<'str' | 'dex' | 'con' | 'int' | 'wis' | 'cha'>;
+  autoFailSaves?: Ability[];
   /** Disadvantage on ability checks. */
   disadvantageAbilityChecks?: boolean;
   /** Disadvantage on attacks — covered by selfAttack but split here for clarity when the rule fires only for attack rolls. */
@@ -57,6 +59,39 @@ export interface ConditionEffect {
   immuneToPoison?: boolean;
   /** Immune to disease (petrified). */
   immuneToDisease?: boolean;
+  /**
+   * Flat AC bonus (positive or negative). Hasted +2, Slowed -2,
+   * Shield of Faith +2, Shield spell +5, half cover +2, 3/4 cover +5.
+   */
+  acBonus?: number;
+  /**
+   * AC floor — the effective AC is max(current, floor). Lets Mage
+   * Armor (floor = 13 + DEX) and Barkskin (floor = 16) lift low-AC
+   * targets without stacking past what they already wore.
+   */
+  acFloor?: number;
+  /** If true, acFloor is added to dexMod at compute time (Mage Armor). */
+  acFloorAddDex?: boolean;
+  /**
+   * Bonus dice added to attack rolls (Bless +1d4, Bane -1d4). Value
+   * is a notation string prefixed with + or - so callers can parse /
+   * display consistently.
+   */
+  attackBonusDice?: string;
+  /** Bonus dice added to saves. Same shape as attackBonusDice. */
+  saveBonusDice?: string;
+  /** Grants advantage on attacks (pseudo-conditions like Inspired, Helped). */
+  selfAttackAdvantage?: boolean;
+  /**
+   * Per-ability save advantage/disadvantage. Hasted / Dodging grant
+   * advantage on DEX saves; exhaustion L3 imposes disadvantage on all.
+   */
+  saveAdvantage?: Partial<Record<Ability, 'advantage' | 'disadvantage'>>;
+  /**
+   * Per-ability check advantage. Helped gives advantage on all, a few
+   * rages grant advantage on STR checks.
+   */
+  checkAdvantage?: Partial<Record<Ability, 'advantage' | 'disadvantage'>>;
   /**
    * Freeform rules notes the roll breakdown can surface inline so the
    * DM can explain to players why a modifier landed. Not authoritative.
@@ -197,6 +232,136 @@ export const CONDITION_EFFECTS: Record<Condition, ConditionEffect> = {
 };
 
 /**
+ * Pseudo-conditions the VTT tracks outside the 15 canonical 5e
+ * conditions — buffs from spells, class features, per-action flags.
+ * Same schema as CONDITION_EFFECTS so compute helpers can iterate
+ * both maps transparently. Names here should match the strings the
+ * rest of the codebase uses (lowercase, hyphenated).
+ *
+ * Source of truth: both client (roll-engine modifier computation,
+ * TokenLayer badge colors, wiki glossary) and server (chat-command
+ * validators, future server-side attack resolution) should read
+ * from this map rather than hard-coding the lists inline.
+ */
+export const PSEUDO_CONDITION_EFFECTS: Record<string, ConditionEffect> = {
+  // Spells / class-feature buffs that grant mechanical bonuses
+  blessed: {
+    name: 'blessed',
+    attackBonusDice: '+1d4',
+    saveBonusDice: '+1d4',
+    notes: ['+1d4 to attacks + saves (Bless)'],
+  },
+  baned: {
+    name: 'baned',
+    attackBonusDice: '-1d4',
+    saveBonusDice: '-1d4',
+    notes: ['-1d4 to attacks + saves (Bane)'],
+  },
+  hasted: {
+    name: 'hasted',
+    acBonus: 2,
+    saveAdvantage: { dex: 'advantage' },
+    notes: ['+2 AC', 'advantage on DEX saves', 'speed doubled'],
+  },
+  slowed: {
+    name: 'slowed',
+    acBonus: -2,
+    saveAdvantage: { dex: 'disadvantage' },
+    notes: ['-2 AC', '-2 DEX saves', 'half speed'],
+  },
+  dodging: {
+    name: 'dodging',
+    attacksAgainst: 'disadvantage',
+    saveAdvantage: { dex: 'advantage' },
+    notes: ['attacks against have disadvantage', 'advantage on DEX saves'],
+  },
+  inspired: {
+    name: 'inspired',
+    selfAttackAdvantage: true,
+    saveAdvantage: { str: 'advantage', dex: 'advantage', con: 'advantage', int: 'advantage', wis: 'advantage', cha: 'advantage' },
+    checkAdvantage: { str: 'advantage', dex: 'advantage', con: 'advantage', int: 'advantage', wis: 'advantage', cha: 'advantage' },
+    notes: ['Inspiration: advantage on attack, save, or check (spend to use)'],
+  },
+  helped: {
+    name: 'helped',
+    selfAttackAdvantage: true,
+    checkAdvantage: { str: 'advantage', dex: 'advantage', con: 'advantage', int: 'advantage', wis: 'advantage', cha: 'advantage' },
+    notes: ['Helped: advantage on attack + ability checks (spend to use)'],
+  },
+  outlined: {
+    name: 'outlined',
+    attacksAgainst: 'advantage',
+    notes: ['Faerie Fire: attacks against have advantage'],
+  },
+  raging: {
+    // Rage — damage bonus + resistance applied in the damage pipeline,
+    // not via the roll-engine helpers. Metadata here for badge / glossary
+    // consistency.
+    name: 'raging',
+    checkAdvantage: { str: 'advantage' },
+    saveAdvantage: { str: 'advantage' },
+    notes: ['Advantage on STR checks + saves', 'Resist bludgeoning / piercing / slashing', '+2/+3/+4 damage on STR melee'],
+  },
+  // AC floors from spells
+  'mage-armored': {
+    name: 'mage-armored',
+    acFloor: 13,
+    acFloorAddDex: true,
+    notes: ['AC floor = 13 + DEX (Mage Armor)'],
+  },
+  barkskin: {
+    name: 'barkskin',
+    acFloor: 16,
+    notes: ['AC floor = 16 (Barkskin)'],
+  },
+  // Flat AC bonuses
+  shielded: {
+    name: 'shielded',
+    acBonus: 2,
+    notes: ['+2 AC (Shield of Faith)'],
+  },
+  'shield-spell': {
+    name: 'shield-spell',
+    acBonus: 5,
+    notes: ['+5 AC until next turn (Shield cantrip reaction)'],
+  },
+  'half-cover': {
+    name: 'half-cover',
+    acBonus: 2,
+    saveAdvantage: {}, // +2 DEX saves actually flat — tracked separately
+    notes: ['+2 AC + DEX saves (half cover)'],
+  },
+  'three-quarters-cover': {
+    name: 'three-quarters-cover',
+    acBonus: 5,
+    notes: ['+5 AC + DEX saves (three-quarters cover)'],
+  },
+  'full-cover': {
+    name: 'full-cover',
+    notes: ['Cannot be targeted directly'],
+  },
+  'power-attack': {
+    name: 'power-attack',
+    notes: ['GWM / Sharpshooter: -5 to hit, +10 damage (heavy melee / ranged)'],
+  },
+  concentrating: {
+    name: 'concentrating',
+    notes: ['Maintaining a concentration spell'],
+  },
+};
+
+/**
+ * Look up an effect for any condition name — iterates both the 5e
+ * standard map and the pseudo-condition map. Returns `undefined` when
+ * the name is unknown (a common outcome for transient flags that
+ * aren't fully modeled, e.g. `stable`, `dead`).
+ */
+export function effectForCondition(name: string): ConditionEffect | undefined {
+  const key = name.toLowerCase();
+  return CONDITION_EFFECTS[key as Condition] ?? PSEUDO_CONDITION_EFFECTS[key];
+}
+
+/**
  * Derived speed multiplier for a token with a set of conditions. The
  * minimum wins — a paralyzed + prone combatant is still speed 0, not
  * half. Also supports exhaustion levels (2 = half, 5 = 0).
@@ -207,7 +372,7 @@ export function speedMultiplierFor(
 ): number {
   let mul = 1;
   for (const c of conditions) {
-    const eff = CONDITION_EFFECTS[c as Condition];
+    const eff = effectForCondition(String(c));
     if (!eff) continue;
     if (eff.speedMultiplier !== undefined && eff.speedMultiplier < mul) {
       mul = eff.speedMultiplier;
@@ -221,7 +386,7 @@ export function speedMultiplierFor(
 /** Returns true if ANY condition in the set blocks the action slot. */
 export function blocksActions(conditions: Iterable<Condition | string>): boolean {
   for (const c of conditions) {
-    if (CONDITION_EFFECTS[c as Condition]?.blocksActions) return true;
+    if (effectForCondition(String(c))?.blocksActions) return true;
   }
   return false;
 }
@@ -229,7 +394,7 @@ export function blocksActions(conditions: Iterable<Condition | string>): boolean
 /** Returns true if ANY condition blocks reactions. */
 export function blocksReactions(conditions: Iterable<Condition | string>): boolean {
   for (const c of conditions) {
-    if (CONDITION_EFFECTS[c as Condition]?.blocksReactions) return true;
+    if (effectForCondition(String(c))?.blocksReactions) return true;
   }
   return false;
 }
@@ -256,13 +421,19 @@ export function computeAttackModifiers(
   const notes: string[] = [];
 
   for (const c of sourceConditions) {
-    const eff = CONDITION_EFFECTS[c as Condition];
+    const eff = effectForCondition(String(c));
     if (!eff) continue;
-    if (eff.selfAttack === 'advantage') { hasAdv = true; notes.push(`${eff.name}: advantage`); }
-    if (eff.selfAttack === 'disadvantage') { hasDis = true; notes.push(`${eff.name}: disadvantage`); }
+    if (eff.selfAttack === 'advantage' || eff.selfAttackAdvantage) {
+      hasAdv = true;
+      notes.push(`${eff.name}: advantage`);
+    }
+    if (eff.selfAttack === 'disadvantage') {
+      hasDis = true;
+      notes.push(`${eff.name}: disadvantage`);
+    }
   }
   for (const c of targetConditions) {
-    const eff = CONDITION_EFFECTS[c as Condition];
+    const eff = effectForCondition(String(c));
     if (!eff) continue;
     if (eff.attacksAgainst === 'advantage') { hasAdv = true; notes.push(`target ${eff.name}: attacks against have advantage`); }
     if (eff.attacksAgainst === 'disadvantage') { hasDis = true; notes.push(`target ${eff.name}: attacks against have disadvantage`); }
@@ -316,6 +487,19 @@ export function computeSaveModifiers(
     }
   }
 
+  for (const c of targetConditions) {
+    const eff = effectForCondition(String(c));
+    if (!eff) continue;
+    const adv = eff.saveAdvantage?.[ability];
+    if (adv === 'advantage') {
+      hasAdv = true;
+      notes.push(`${eff.name}: advantage on ${ability.toUpperCase()} save`);
+    } else if (adv === 'disadvantage') {
+      hasDis = true;
+      notes.push(`${eff.name}: disadvantage on ${ability.toUpperCase()} save`);
+    }
+  }
+
   // Exhaustion level 3 → disadvantage on ALL saves
   if (exhaustionLevel >= 3) {
     hasDis = true;
@@ -328,4 +512,118 @@ export function computeSaveModifiers(
   else if (hasDis) effectiveAdvantage = 'disadvantage';
 
   return { effectiveAdvantage, autoFail, notes };
+}
+
+// --- Effective-stat helpers (AC, speed) — computed with notes ----------
+
+export interface EffectiveStat {
+  /** Final value after all modifiers */
+  value: number;
+  /** Base value before modifiers */
+  base: number;
+  /** Per-source notes for tooltip ("+2 Hasted", "-2 Slowed") */
+  notes: string[];
+}
+
+/**
+ * Compute effective AC. `baseAC` is the character's stored armor_class
+ * (already includes worn armor, shield, DEX, magical bonuses, feats).
+ * We then apply:
+ *   1. AC floors (Mage Armor, Barkskin) — only lift if the floor is higher
+ *   2. Flat bonuses / penalties (Hasted +2, Slowed -2, Shield of Faith +2,
+ *      Shield spell +5, half cover +2, three-quarters cover +5)
+ *
+ * `dexMod` is needed for Mage Armor's 13 + DEX floor.
+ */
+export function computeEffectiveAC(
+  baseAC: number,
+  conditions: Iterable<Condition | string>,
+  dexMod: number,
+): EffectiveStat {
+  const out: EffectiveStat = { value: baseAC, base: baseAC, notes: [] };
+  // Two passes: first apply floors (Mage Armor, Barkskin) so additive
+  // bonuses stack correctly; then apply acBonus deltas.
+  for (const c of conditions) {
+    const eff = effectForCondition(String(c));
+    if (!eff) continue;
+    if (eff.acFloor !== undefined) {
+      const floor = eff.acFloor + (eff.acFloorAddDex ? dexMod : 0);
+      if (floor > out.value) {
+        const diff = floor - out.value;
+        out.value = floor;
+        out.notes.push(`+${diff} ${eff.name} (floor ${eff.acFloor}${eff.acFloorAddDex ? '+DEX' : ''})`);
+      }
+    }
+  }
+  for (const c of conditions) {
+    const eff = effectForCondition(String(c));
+    if (!eff) continue;
+    if (eff.acBonus !== undefined && eff.acBonus !== 0) {
+      out.value += eff.acBonus;
+      const sign = eff.acBonus > 0 ? '+' : '';
+      out.notes.push(`${sign}${eff.acBonus} ${eff.name}`);
+    }
+  }
+  return out;
+}
+
+/**
+ * Compute effective movement speed with per-source notes. Returns 0 for
+ * any speed-0 condition (grappled / restrained / paralyzed / stunned /
+ * petrified / unconscious). Prone halves speed (matches RAW — the cost
+ * of crawling or standing). Hasted doubles, Slowed halves. Exhaustion
+ * L2 halves, L5 zeros.
+ */
+export function computeEffectiveSpeed(
+  baseSpeed: number,
+  conditions: Iterable<Condition | string>,
+  exhaustionLevel: number = 0,
+): EffectiveStat {
+  const out: EffectiveStat = { value: baseSpeed, base: baseSpeed, notes: [] };
+
+  // Scan for speed-0 first (short-circuit). Hand-coded map so note text
+  // matches the legacy client output verbatim.
+  const ZERO_WORDS: Record<string, string> = {
+    grappled: 'Grappled (speed 0)',
+    restrained: 'Restrained (speed 0)',
+    paralyzed: 'Paralyzed (speed 0)',
+    stunned: 'Stunned (speed 0)',
+    petrified: 'Petrified (speed 0)',
+    unconscious: 'Unconscious (speed 0)',
+  };
+  for (const c of conditions) {
+    const key = String(c).toLowerCase();
+    if (key in ZERO_WORDS) {
+      out.value = 0;
+      out.notes.push(ZERO_WORDS[key]);
+      return out;
+    }
+  }
+  if (exhaustionLevel >= 5) {
+    out.value = 0;
+    out.notes.push(`Exhaustion L${exhaustionLevel} (speed 0)`);
+    return out;
+  }
+
+  // Multipliers: hasted x2, slowed/prone/exhaustion-2 x0.5.
+  const set = new Set<string>();
+  for (const c of conditions) set.add(String(c).toLowerCase());
+  if (set.has('hasted')) {
+    out.value *= 2;
+    out.notes.push('×2 Hasted');
+  }
+  if (set.has('slowed')) {
+    out.value = Math.floor(out.value / 2);
+    out.notes.push('÷2 Slowed');
+  }
+  if (set.has('prone')) {
+    out.value = Math.floor(out.value / 2);
+    out.notes.push('÷2 Prone (crawl)');
+  }
+  if (exhaustionLevel >= 2) {
+    out.value = Math.floor(out.value / 2);
+    out.notes.push(`÷2 Exhaustion L${exhaustionLevel}`);
+  }
+
+  return out;
 }

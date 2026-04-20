@@ -42,13 +42,17 @@ export { calculateEquipmentBonuses } from './utils/equipmentBonuses.js';
 export { CONDITIONS, CONDITION_MAP } from './constants/conditions.js';
 export {
   CONDITION_EFFECTS,
+  PSEUDO_CONDITION_EFFECTS,
+  effectForCondition,
   computeAttackModifiers,
   computeSaveModifiers,
+  computeEffectiveAC,
+  computeEffectiveSpeed,
   speedMultiplierFor,
   blocksActions,
   blocksReactions,
 } from './rules/conditionEffects.js';
-export type { ConditionEffect, AttackModifierResult, SaveModifierResult } from './rules/conditionEffects.js';
+export type { ConditionEffect, AttackModifierResult, SaveModifierResult, EffectiveStat, Ability } from './rules/conditionEffects.js';
 export { SPELL_CONDITIONS, SPELL_BUFFS } from './constants/spell-conditions.js';
 export type { ConditionInfo } from './constants/conditions.js';
 export { SPELL_ANIMATIONS, getSpellAnimation } from './constants/spell-animations.js';
