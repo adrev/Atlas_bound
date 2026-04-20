@@ -760,6 +760,286 @@ async function handleDiscipleOfLife(c: ChatCommandContext): Promise<boolean> {
   return true;
 }
 
+// ────── Dark One's Blessing (Fiend Warlock L1) ──────────
+/**
+ * When you reduce a hostile creature to 0 HP, you gain temporary
+ * HP equal to your CHA mod + Warlock level (minimum 1).
+ *
+ *   !darkblessing   fires after the kill. Auto-adds temp HP.
+ */
+async function handleDarkBlessing(c: ChatCommandContext): Promise<boolean> {
+  const caller = resolveCallerToken(c.ctx);
+  if (!caller?.characterId) {
+    whisperToCaller(c.io, c.ctx, '!darkblessing: no owned PC token.');
+    return true;
+  }
+  const { rows } = await pool.query(
+    'SELECT class, level, ability_scores, features, name, temp_hit_points FROM characters WHERE id = $1',
+    [caller.characterId],
+  );
+  const row = rows[0] as Record<string, unknown> | undefined;
+  const classLower = String(row?.class || '').toLowerCase();
+  if (!classLower.includes('warlock')) {
+    whisperToCaller(c.io, c.ctx, `!darkblessing: ${caller.name} isn't a Warlock.`);
+    return true;
+  }
+  let hasIt = false;
+  try {
+    const rawF = row?.features;
+    const feats = typeof rawF === 'string' ? JSON.parse(rawF as string) : (rawF ?? []);
+    hasIt = Array.isArray(feats) && feats.some(
+      (f: { name?: string }) => typeof f?.name === 'string' && /dark\s+one'?s\s+blessing/i.test(f.name),
+    );
+  } catch { /* ignore */ }
+  if (!hasIt && !classLower.includes('fiend')) {
+    whisperToCaller(c.io, c.ctx, `!darkblessing: ${caller.name} isn't a Fiend Warlock.`);
+    return true;
+  }
+  const lvl = Number(row?.level) || 1;
+  const scores = typeof row?.ability_scores === 'string' ? JSON.parse(row.ability_scores as string) : (row?.ability_scores ?? {});
+  const chaMod = Math.floor((((scores as Record<string, number>).cha ?? 10) - 10) / 2);
+  const thp = Math.max(1, chaMod + lvl);
+  const currentThp = Number(row?.temp_hit_points) || 0;
+  const newThp = Math.max(currentThp, thp); // RAW: keep higher
+  await pool.query('UPDATE characters SET temp_hit_points = $1 WHERE id = $2', [newThp, caller.characterId])
+    .catch((e) => console.warn('[!darkblessing] temp_hp write failed:', e));
+  c.io.to(c.ctx.room.sessionId).emit('character:updated', {
+    characterId: caller.characterId,
+    changes: { tempHitPoints: newThp },
+  });
+  const charName = (row?.name as string) || caller.name;
+  broadcastSystem(
+    c.io, c.ctx,
+    `🔥 **Dark One's Blessing** — ${charName} kills a hostile, gains **${thp} temp HP** (now ${newThp}).`,
+  );
+  return true;
+}
+
+// ────── Fey Presence (Archfey Warlock L1) ──────────────
+/**
+ * Action: each creature in 10-ft cube originating from you must make
+ * a WIS save (DC = spell save DC) or be charmed or frightened by
+ * you (your choice) until the end of your next turn.
+ *
+ *   !feypresence <choice> <target1> [target2 …]
+ *     choice = charm | fear
+ */
+async function handleFeyPresence(c: ChatCommandContext): Promise<boolean> {
+  const parts = c.rest.split(/\s+/).filter(Boolean);
+  if (parts.length < 2 || !['charm', 'fear'].includes(parts[0].toLowerCase())) {
+    whisperToCaller(c.io, c.ctx, '!feypresence: usage `!feypresence <charm|fear> <target1> [target2 …]`');
+    return true;
+  }
+  const effect = parts[0].toLowerCase();
+  const targets = parts.slice(1);
+  const caller = resolveCallerToken(c.ctx);
+  if (!caller?.characterId) {
+    whisperToCaller(c.io, c.ctx, '!feypresence: no owned PC token.');
+    return true;
+  }
+  const { rows } = await pool.query('SELECT class, features, spell_save_dc, name FROM characters WHERE id = $1', [caller.characterId]);
+  const row = rows[0] as Record<string, unknown> | undefined;
+  const classLower = String(row?.class || '').toLowerCase();
+  if (!classLower.includes('warlock')) {
+    whisperToCaller(c.io, c.ctx, `!feypresence: ${caller.name} isn't a Warlock.`);
+    return true;
+  }
+  let hasIt = false;
+  try {
+    const rawF = row?.features;
+    const feats = typeof rawF === 'string' ? JSON.parse(rawF as string) : (rawF ?? []);
+    hasIt = Array.isArray(feats) && feats.some(
+      (f: { name?: string }) => typeof f?.name === 'string' && /fey\s+presence/i.test(f.name),
+    );
+  } catch { /* ignore */ }
+  if (!hasIt && !classLower.includes('archfey')) {
+    whisperToCaller(c.io, c.ctx, `!feypresence: ${caller.name} isn't an Archfey Warlock.`);
+    return true;
+  }
+  const dc = Number(row?.spell_save_dc) || 13;
+  const callerName = (row?.name as string) || caller.name;
+  const condName = effect === 'charm' ? 'charmed' : 'frightened';
+  const lines: string[] = [];
+  lines.push(`🌿 **Fey Presence** — ${callerName} unleashes ${effect}ing magic (WIS DC ${dc}):`);
+  for (const targetName of targets) {
+    const target = resolveTargetByName(c.ctx, targetName);
+    if (!target) { lines.push(`  • ${targetName}: not found`); continue; }
+    // Roll WIS save.
+    let saveMod = 0;
+    let tName = target.name;
+    if (target.characterId) {
+      const { rows: trows } = await pool.query(
+        'SELECT ability_scores, saving_throws, proficiency_bonus, name FROM characters WHERE id = $1',
+        [target.characterId],
+      );
+      const trow = trows[0] as Record<string, unknown> | undefined;
+      try {
+        const scores = typeof trow?.ability_scores === 'string' ? JSON.parse(trow.ability_scores as string) : (trow?.ability_scores ?? {});
+        const wis = Math.floor((((scores as Record<string, number>).wis ?? 10) - 10) / 2);
+        const prof = Number(trow?.proficiency_bonus) || 2;
+        const saves = typeof trow?.saving_throws === 'string' ? JSON.parse(trow.saving_throws as string) : (trow?.saving_throws ?? []);
+        saveMod = wis + (Array.isArray(saves) && saves.includes('wis') ? prof : 0);
+        if (trow?.name) tName = trow.name as string;
+      } catch { /* ignore */ }
+    }
+    const d20 = Math.floor(Math.random() * 20) + 1;
+    const total = d20 + saveMod;
+    const saved = total >= dc;
+    const sign = saveMod >= 0 ? '+' : '';
+    lines.push(`  • ${tName}: d20=${d20}${sign}${saveMod}=${total} vs ${dc} → ${saved ? 'SAVED' : `${condName.toUpperCase()} until end of ${callerName}'s next turn`}`);
+    if (!saved) {
+      const currentRound = c.ctx.room.combatState?.roundNumber ?? 0;
+      ConditionService.applyConditionWithMeta(c.ctx.room.sessionId, target.id, {
+        name: condName,
+        source: `${callerName} (Fey Presence)`,
+        casterTokenId: caller.id,
+        appliedRound: currentRound,
+        expiresAfterRound: currentRound + 1,
+      });
+      c.io.to(c.ctx.room.sessionId).emit('map:token-updated', {
+        tokenId: target.id,
+        changes: { conditions: target.conditions },
+      });
+    }
+  }
+  broadcastSystem(c.io, c.ctx, lines.join('\n'));
+  return true;
+}
+
+// ────── Warding Flare (Light Cleric L1 reaction) ──────
+/**
+ * Reaction: when a creature within 30 ft makes an attack roll
+ * against you, impose disadvantage on the attack. Unless it can't
+ * be blinded. Uses = WIS mod per long rest (min 1).
+ *
+ *   !wardingflare <attacker>   reaction vs attacker
+ */
+async function handleWardingFlare(c: ChatCommandContext): Promise<boolean> {
+  const targetName = c.rest.trim();
+  if (!targetName) {
+    whisperToCaller(c.io, c.ctx, '!wardingflare: usage `!wardingflare <attacker>`');
+    return true;
+  }
+  const caller = resolveCallerToken(c.ctx);
+  if (!caller?.characterId) {
+    whisperToCaller(c.io, c.ctx, '!wardingflare: no owned PC token.');
+    return true;
+  }
+  const { rows } = await pool.query('SELECT class, features, name FROM characters WHERE id = $1', [caller.characterId]);
+  const row = rows[0] as Record<string, unknown> | undefined;
+  const classLower = String(row?.class || '').toLowerCase();
+  if (!classLower.includes('cleric')) {
+    whisperToCaller(c.io, c.ctx, `!wardingflare: ${caller.name} isn't a Cleric.`);
+    return true;
+  }
+  let hasIt = false;
+  try {
+    const rawF = row?.features;
+    const feats = typeof rawF === 'string' ? JSON.parse(rawF as string) : (rawF ?? []);
+    hasIt = Array.isArray(feats) && feats.some(
+      (f: { name?: string }) => typeof f?.name === 'string' && /warding\s+flare/i.test(f.name),
+    );
+  } catch { /* ignore */ }
+  if (!hasIt && !classLower.includes('light')) {
+    whisperToCaller(c.io, c.ctx, `!wardingflare: ${caller.name} isn't a Light Cleric.`);
+    return true;
+  }
+  // Burn reaction.
+  const economy = c.ctx.room.actionEconomies.get(caller.id);
+  if (economy?.reaction) {
+    whisperToCaller(c.io, c.ctx, `!wardingflare: reaction already spent.`);
+    return true;
+  }
+  if (economy) {
+    economy.reaction = true;
+    c.io.to(c.ctx.room.sessionId).emit('combat:action-used', {
+      tokenId: caller.id,
+      actionType: 'reaction',
+      economy,
+    });
+  }
+  const callerName = (row?.name as string) || caller.name;
+  broadcastSystem(
+    c.io, c.ctx,
+    `💥 **Warding Flare** — ${callerName} interposes radiance, imposing disadvantage on ${targetName}'s attack roll (reaction).`,
+  );
+  return true;
+}
+
+// ────── Grim Harvest (Necromancy Wizard L2) ───────────
+/**
+ * Once per turn when you kill a creature with a spell of 1st level
+ * or higher, you regain HP = 2× spell level (3× if necromancy spell).
+ * Not applicable vs constructs or undead.
+ *
+ *   !grimharvest <spell-level> [necro]
+ */
+const grimHarvestUsed = new Set<string>();
+
+async function handleGrimHarvest(c: ChatCommandContext): Promise<boolean> {
+  const parts = c.rest.split(/\s+/).filter(Boolean);
+  const lvl = parseInt(parts[0], 10);
+  if (!Number.isFinite(lvl) || lvl < 1 || lvl > 9) {
+    whisperToCaller(c.io, c.ctx, '!grimharvest: usage `!grimharvest <spell-level> [necro]`');
+    return true;
+  }
+  const isNecromancy = parts[1]?.toLowerCase() === 'necro';
+  const caller = resolveCallerToken(c.ctx);
+  if (!caller?.characterId) {
+    whisperToCaller(c.io, c.ctx, '!grimharvest: no owned PC token.');
+    return true;
+  }
+  const { rows } = await pool.query('SELECT class, features, hit_points, max_hit_points, name FROM characters WHERE id = $1', [caller.characterId]);
+  const row = rows[0] as Record<string, unknown> | undefined;
+  const classLower = String(row?.class || '').toLowerCase();
+  if (!classLower.includes('wizard')) {
+    whisperToCaller(c.io, c.ctx, `!grimharvest: ${caller.name} isn't a Wizard.`);
+    return true;
+  }
+  let hasIt = false;
+  try {
+    const rawF = row?.features;
+    const feats = typeof rawF === 'string' ? JSON.parse(rawF as string) : (rawF ?? []);
+    hasIt = Array.isArray(feats) && feats.some(
+      (f: { name?: string }) => typeof f?.name === 'string' && /grim\s+harvest/i.test(f.name),
+    );
+  } catch { /* ignore */ }
+  if (!hasIt && !classLower.includes('necromancy')) {
+    whisperToCaller(c.io, c.ctx, `!grimharvest: ${caller.name} isn't a Necromancy Wizard.`);
+    return true;
+  }
+  const combat = c.ctx.room.combatState;
+  const turnKey = `${combat?.roundNumber ?? 0}_${combat?.currentTurnIndex ?? 0}_${caller.characterId}`;
+  if (grimHarvestUsed.has(turnKey)) {
+    whisperToCaller(c.io, c.ctx, '!grimharvest: already used this turn.');
+    return true;
+  }
+  grimHarvestUsed.add(turnKey);
+  const heal = lvl * (isNecromancy ? 3 : 2);
+  const hp = Number(row?.hit_points) || 0;
+  const maxHp = Number(row?.max_hit_points) || 0;
+  const newHp = Math.min(maxHp, hp + heal);
+  await pool.query('UPDATE characters SET hit_points = $1 WHERE id = $2', [newHp, caller.characterId])
+    .catch((e) => console.warn('[!grimharvest] hp write failed:', e));
+  c.io.to(c.ctx.room.sessionId).emit('character:updated', {
+    characterId: caller.characterId,
+    changes: { hitPoints: newHp },
+  });
+  c.io.to(c.ctx.room.sessionId).emit('combat:hp-changed', {
+    tokenId: caller.id,
+    hp: newHp,
+    tempHp: 0,
+    change: heal,
+    type: 'heal',
+  });
+  const callerName = (row?.name as string) || caller.name;
+  broadcastSystem(
+    c.io, c.ctx,
+    `💀 **Grim Harvest** — ${callerName} drains life from the kill, regains **${heal} HP** (${isNecromancy ? '3×' : '2×'} spell level ${lvl}) → ${newHp}/${maxHp}.`,
+  );
+  return true;
+}
+
 registerChatCommand('portent', handlePortent);
 registerChatCommand(['colossus', 'colossusslayer'], handleColossus);
 registerChatCommand(['assassinate', 'assassin'], handleAssassinate);
@@ -772,3 +1052,7 @@ registerChatCommand(['fasthands', 'fh'], handleFastHands);
 registerChatCommand(['sacredweapon', 'sw-paladin'], handleSacredWeapon);
 registerChatCommand(['vow', 'vowofenmity'], handleVowOfEnmity);
 registerChatCommand(['discipleoflife', 'dol'], handleDiscipleOfLife);
+registerChatCommand(['darkblessing', 'dob'], handleDarkBlessing);
+registerChatCommand(['feypresence', 'fp'], handleFeyPresence);
+registerChatCommand(['wardingflare', 'wf'], handleWardingFlare);
+registerChatCommand(['grimharvest', 'gh'], handleGrimHarvest);
