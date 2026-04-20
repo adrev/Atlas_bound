@@ -2,6 +2,7 @@ import type { Combatant, CombatState, ActionEconomy, ActionType, Condition } fro
 import { speedMultiplierFor } from '@dnd-vtt/shared';
 import { getRoom, type RoomState } from '../utils/roomState.js';
 import pool from '../db/connection.js';
+import { releaseGrapplesByGrappler } from './ConditionService.js';
 
 /**
  * 5e movement cap for a combatant's turn. Pulls base speed from the
@@ -518,6 +519,12 @@ export interface HpChangeResult {
    * client's token badges refresh in lockstep.
    */
   autoAppliedConditions?: string[];
+  /**
+   * TokenIds whose grapple auto-released because the grappler just
+   * went unconscious. Empty when nothing was freed. Caller should
+   * broadcast `map:token-updated` for each.
+   */
+  releasedGrappleTokenIds?: string[];
 }
 
 export async function applyDamage(sessionId: string, tokenId: string, amount: number): Promise<HpChangeResult> {
@@ -553,6 +560,7 @@ export async function applyDamage(sessionId: string, tokenId: string, amount: nu
   // combatant wasn't already down (so we don't toggle back on a heal
   // that gets re-killed in the same damage tick).
   let autoAppliedConditions: string[] | undefined;
+  let releasedGrappleTokenIds: string[] | undefined;
   if (!wasAlreadyDown && combatant.hp === 0 && !combatant.isNPC) {
     const token = room.tokens.get(tokenId);
     if (token) {
@@ -579,6 +587,10 @@ export async function applyDamage(sessionId: string, tokenId: string, amount: nu
           [combatant.characterId],
         ).catch((e) => console.warn('[applyDamage] concentration clear failed:', e));
       }
+      // Release any creature this PC was grappling — unconscious
+      // automatically breaks the hold per RAW.
+      const freed = releaseGrapplesByGrappler(sessionId, tokenId);
+      if (freed.length > 0) releasedGrappleTokenIds = freed;
     }
   }
 
@@ -594,6 +606,7 @@ export async function applyDamage(sessionId: string, tokenId: string, amount: nu
     characterId: combatant.characterId ?? null,
     autoDeathSaveFailure,
     autoAppliedConditions,
+    releasedGrappleTokenIds,
   };
 }
 

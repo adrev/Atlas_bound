@@ -20,11 +20,19 @@ const INCAPACITATING_CONDITIONS = new Set([
   'incapacitated', 'stunned', 'paralyzed', 'unconscious', 'petrified',
 ]);
 
-export function applyConditionWithMeta(sessionId: string, tokenId: string, meta: ConditionMetadata): void {
+/**
+ * Returns tokenIds of creatures whose `grappled` condition was auto-
+ * released because the grappler became incapacitated. Callers should
+ * broadcast `map:token-updated` for each so clients repaint badges.
+ * Empty array when no side-effect fired.
+ */
+export function applyConditionWithMeta(
+  sessionId: string, tokenId: string, meta: ConditionMetadata,
+): string[] {
   const room = getRoom(sessionId);
-  if (!room) return;
+  if (!room) return [];
   const token = room.tokens.get(tokenId);
-  if (!token) return;
+  if (!token) return [];
 
   if (!(token.conditions as string[]).includes(meta.name)) {
     (token.conditions as string[]).push(meta.name);
@@ -34,22 +42,27 @@ export function applyConditionWithMeta(sessionId: string, tokenId: string, meta:
 
   metaForToken(sessionId, tokenId).set(meta.name.toLowerCase(), meta);
 
+  const freedTokenIds: string[] = [];
+
   // Drop concentration on any incapacitating condition. 5e rule: if
   // you become incapacitated, you lose concentration automatically.
   // Applies symmetrically across the family (stunned, paralyzed,
   // unconscious, petrified all imply incapacitation).
-  if (INCAPACITATING_CONDITIONS.has(meta.name.toLowerCase()) && token.characterId) {
-    pool.query(
-      'UPDATE characters SET concentrating_on = NULL WHERE id = $1 AND concentrating_on IS NOT NULL',
-      [token.characterId],
-    ).catch((err) => console.warn('[applyConditionWithMeta] concentration drop failed:', err));
-    // Clear any conditions on other tokens that were sourced from this
-    // caster's concentration spell — matches processDamageSideEffects's
-    // cleanup pattern so the side-effect stays symmetric.
-    // (clearConcentrationConditions is internal to this module and is
-    // referenced later in the file by processDamageSideEffects; declared
-    // below so the reference resolves regardless of order.)
+  if (INCAPACITATING_CONDITIONS.has(meta.name.toLowerCase())) {
+    if (token.characterId) {
+      pool.query(
+        'UPDATE characters SET concentrating_on = NULL WHERE id = $1 AND concentrating_on IS NOT NULL',
+        [token.characterId],
+      ).catch((err) => console.warn('[applyConditionWithMeta] concentration drop failed:', err));
+    }
+    // Auto-release any grapple this token was holding. RAW: "the
+    // grappled condition ends if the grappler is incapacitated."
+    for (const id of releaseGrapplesByGrappler(sessionId, tokenId)) {
+      freedTokenIds.push(id);
+    }
   }
+
+  return freedTokenIds;
 }
 
 export function removeCondition(sessionId: string, tokenId: string, conditionName: string): void {
@@ -270,6 +283,32 @@ export async function processDamageSideEffects(
   }
 
   return result;
+}
+
+/**
+ * Release any creature grappled by `grapplerTokenId`. Called when the
+ * grappler becomes incapacitated (or is removed / dead). Returns the
+ * tokenIds that were freed so callers can broadcast map:token-updated.
+ */
+export function releaseGrapplesByGrappler(
+  sessionId: string, grapplerTokenId: string,
+): string[] {
+  const room = getRoom(sessionId);
+  if (!room) return [];
+  const freed: string[] = [];
+  for (const [otherTokenId, otherMeta] of room.conditionMeta.entries()) {
+    const grappleMeta = otherMeta.get('grappled');
+    if (!grappleMeta || grappleMeta.casterTokenId !== grapplerTokenId) continue;
+    const other = room.tokens.get(otherTokenId);
+    if (!other) continue;
+    other.conditions = ((other.conditions as string[]).filter((c) => c.toLowerCase() !== 'grappled')) as never;
+    otherMeta.delete('grappled');
+    pool.query('UPDATE tokens SET conditions = $1 WHERE id = $2',
+      [JSON.stringify(other.conditions), otherTokenId],
+    ).catch((e) => console.warn('[releaseGrapplesByGrappler] DB update failed:', e));
+    freed.push(otherTokenId);
+  }
+  return freed;
 }
 
 export function clearConcentrationConditions(

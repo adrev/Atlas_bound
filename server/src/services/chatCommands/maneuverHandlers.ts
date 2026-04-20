@@ -127,6 +127,9 @@ async function handleGrapple(c: ChatCommandContext): Promise<boolean> {
       name: 'grappled',
       source: `${callerAth.name} (!grapple)`,
       appliedRound: c.ctx.room.combatState?.roundNumber ?? 0,
+      // Stamp the grappler's tokenId so ConditionService can
+      // auto-release the grapple when the grappler gets incapacitated.
+      casterTokenId: caller.id,
     });
     c.io.to(c.ctx.room.sessionId).emit('map:token-updated', {
       tokenId: target.id,

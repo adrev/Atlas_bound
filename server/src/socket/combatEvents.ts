@@ -542,6 +542,18 @@ export function registerCombatEvents(io: Server, socket: Socket): void {
           changes: { conditions: result.autoAppliedConditions },
         });
       }
+      // Any creatures this PC was grappling now go free — broadcast
+      // their updated condition arrays so badges clear on every client.
+      if (result.releasedGrappleTokenIds) {
+        for (const freedId of result.releasedGrappleTokenIds) {
+          const freedToken = ctx.room.tokens.get(freedId);
+          if (!freedToken) continue;
+          io.to(ctx.room.sessionId).emit('map:token-updated', {
+            tokenId: freedId,
+            changes: { conditions: freedToken.conditions },
+          });
+        }
+      }
       // R2: auto-run damage side effects (concentration save, Sleep
       // break, etc.). Used to require the client to emit a separate
       // `damage:side-effects` event; now it runs server-side the moment
@@ -1159,8 +1171,10 @@ export function registerCombatEvents(io: Server, socket: Socket): void {
     }
 
     // Apply via the service which handles both the conditions array AND
-    // the metadata map
-    ConditionService.applyConditionWithMeta(ctx.room.sessionId, parsed.data.targetTokenId, {
+    // the metadata map. Returns any tokens whose grapple auto-released
+    // because the grappler became incapacitated — broadcast those too.
+    const freedTokenIds = ConditionService.applyConditionWithMeta(
+      ctx.room.sessionId, parsed.data.targetTokenId, {
       name: parsed.data.conditionName.toLowerCase(),
       source: parsed.data.source,
       casterTokenId: parsed.data.casterTokenId,
@@ -1175,6 +1189,14 @@ export function registerCombatEvents(io: Server, socket: Socket): void {
       tokenId: parsed.data.targetTokenId,
       changes: { conditions: targetToken.conditions },
     });
+    for (const freed of freedTokenIds) {
+      const freedToken = ctx.room.tokens.get(freed);
+      if (!freedToken) continue;
+      io.to(ctx.room.sessionId).emit('map:token-updated', {
+        tokenId: freed,
+        changes: { conditions: freedToken.conditions },
+      });
+    }
   }));
 
   // ----------------------------------------------------------------------
