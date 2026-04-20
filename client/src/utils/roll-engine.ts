@@ -250,8 +250,16 @@ export function getOwnRollModifiers(conditions: string[]): RollModifiers {
  * Compute the modifier set for rolls AGAINST this token (when this token
  * is the target). The `attackAdvantage` reflects whether INCOMING attacks
  * have advantage/disadvantage.
+ *
+ * `attackRange` refines prone handling — melee attackers get advantage
+ * against a prone target, ranged attackers get disadvantage. Defaults
+ * to 'melee' since most combat is melee and that matches the prior
+ * behaviour of this function (advantage was always granted on prone).
  */
-export function getTargetRollModifiers(conditions: string[]): RollModifiers {
+export function getTargetRollModifiers(
+  conditions: string[],
+  attackRange: 'melee' | 'ranged' = 'melee',
+): RollModifiers {
   const out: RollModifiers = {
     attackAdvantage: 'normal',
     saveAdvantage: {},
@@ -294,13 +302,17 @@ export function getTargetRollModifiers(conditions: string[]): RollModifiers {
     out.notes.push('Target Restrained (adv.)');
   }
   if (set.has('prone')) {
-    // Prone is conditional on melee vs ranged. We can't know which here
-    // without more context, so we conservatively give NO advantage and
-    // let the caller pass `attackKind` to a more detailed function. For
-    // single-target spells we just give advantage (most spells are
-    // ranged but prone targets are more often hit by melee in practice).
-    applyAdvantage(out, 'attack', 'advantage');
-    out.notes.push('Target Prone');
+    // RAW: prone → advantage for melee attackers, disadvantage for
+    // ranged attackers. The caller supplies `attackRange`, defaulting
+    // to melee so the legacy "assume advantage" behaviour still holds
+    // on any untouched call sites.
+    if (attackRange === 'ranged') {
+      applyAdvantage(out, 'attack', 'disadvantage');
+      out.notes.push('Target Prone (ranged → disadv)');
+    } else {
+      applyAdvantage(out, 'attack', 'advantage');
+      out.notes.push('Target Prone (melee → adv)');
+    }
   }
   if (set.has('outlined')) {
     // Faerie Fire
