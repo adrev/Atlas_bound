@@ -36,5 +36,8 @@ export function rowToToken(r: Record<string, unknown>): Token {
     faction,
     createdAt: r.created_at as string,
     aura: safeParseJSON<TokenAura | null>(r.aura, null, 'tokens.aura'),
+    visionOverrides: safeParseJSON<Token['visionOverrides']>(
+      r.vision_overrides, undefined, 'tokens.vision_overrides',
+    ),
   };
 }

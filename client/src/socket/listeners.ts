@@ -183,6 +183,8 @@ export function registerListeners(socket: Socket): () => void {
         walls: map.walls,
         fogState: map.fogState,
         zones: map.zones,
+        ambientLight: map.ambientLight,
+        ambientOpacity: map.ambientOpacity,
       },
       tokens,
       isPreview,
@@ -268,6 +270,31 @@ export function registerListeners(socket: Socket): () => void {
     const current = useMapStore.getState().currentMap?.id;
     if (p.mapId && p.mapId !== current) return;
     useMapStore.getState().addPing(ping);
+  });
+
+  /**
+   * Ambient-light setting changed for a map. Server broadcasts this
+   * only to sockets rendering the affected map, so we just patch the
+   * local `currentMap` (and skip if the incoming mapId is stale).
+   * FogLayer re-renders from the store and the fog alpha / vision
+   * tiering update without a full `map:load` round-trip.
+   */
+  socket.on('map:lighting-updated', (payload: {
+    mapId: string;
+    ambientLight?: 'bright' | 'dim' | 'dark' | 'custom';
+    ambientOpacity?: number | null;
+  }) => {
+    const current = useMapStore.getState().currentMap;
+    if (!current || current.id !== payload.mapId) return;
+    useMapStore.setState({
+      currentMap: {
+        ...current,
+        ambientLight: payload.ambientLight ?? current.ambientLight,
+        ambientOpacity: payload.ambientOpacity === null
+          ? undefined
+          : (payload.ambientOpacity ?? current.ambientOpacity),
+      },
+    });
   });
 
   // --- Combat ---
@@ -569,6 +596,7 @@ export function registerListeners(socket: Socket): () => void {
     socket.off('map:fog-updated');
     socket.off('map:walls-updated');
     socket.off('map:zones-updated');
+    socket.off('map:lighting-updated');
     socket.off('map:pinged');
     socket.off('combat:started');
     socket.off('combat:review-complete');

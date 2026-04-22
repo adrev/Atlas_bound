@@ -166,6 +166,14 @@ export async function initDatabase(): Promise<void> {
       REFERENCES map_folders(id) ON DELETE SET NULL;
     CREATE INDEX IF NOT EXISTS idx_maps_folder ON maps(folder_id);
 
+    -- Ambient light per map, added 2026-04-22 for the vision system.
+    -- Four tiers: bright (0 fog alpha), dim (0.45), dark (0.85),
+    -- custom (use ambient_opacity). Default 'bright' so existing maps
+    -- behave identically to pre-feature code paths. ambient_opacity is
+    -- only consulted when ambient_light = 'custom'; otherwise NULL.
+    ALTER TABLE maps ADD COLUMN IF NOT EXISTS ambient_light TEXT NOT NULL DEFAULT 'bright';
+    ALTER TABLE maps ADD COLUMN IF NOT EXISTS ambient_opacity DOUBLE PRECISION;
+
     CREATE TABLE IF NOT EXISTS tokens (
       id TEXT PRIMARY KEY,
       map_id TEXT NOT NULL REFERENCES maps(id) ON DELETE CASCADE,
@@ -211,6 +219,16 @@ export async function initDatabase(): Promise<void> {
     -- client renders it. Added post-MVP so older sessions get NULL and
     -- the aura UI simply shows "no aura" until the DM sets one.
     ALTER TABLE tokens ADD COLUMN IF NOT EXISTS aura TEXT;
+
+    -- vision_overrides is a JSON blob
+    -- ({darkvision?,blindsight?,truesight?,tremorsense?}) or NULL,
+    -- added 2026-04-22 with the ambient-light / darkvision system.
+    -- NPC tokens with no characterId use this as their primary senses;
+    -- PC tokens overlay these fields over the character sheet's senses
+    -- (undefined = fall through, 0 = explicit "no sense"). Kept as
+    -- TEXT because the renderer is the only consumer — no server-side
+    -- queries need the fields individually.
+    ALTER TABLE tokens ADD COLUMN IF NOT EXISTS vision_overrides TEXT;
 
     CREATE TABLE IF NOT EXISTS combat_state (
       session_id TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,

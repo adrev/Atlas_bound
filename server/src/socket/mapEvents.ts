@@ -74,6 +74,8 @@ export function registerMapEvents(io: Server, socket: Socket): void {
       gridOffsetX: mapRow.grid_offset_x as number, gridOffsetY: mapRow.grid_offset_y as number,
       walls: safeParseJSON<WallSegment[]>(mapRow.walls, [], 'map.walls'),
       fogState: safeParseJSON<FogPolygon[]>(mapRow.fog_state, [], 'map.fog_state'),
+      ambientLight: (mapRow.ambient_light as string) ?? 'bright',
+      ambientOpacity: (mapRow.ambient_opacity as number | null) ?? undefined,
     };
 
     // Per-recipient filtering: DMs see everything, players get only
@@ -93,6 +95,106 @@ export function registerMapEvents(io: Server, socket: Socket): void {
       };
       io.to(player.socketId).emit('map:loaded', { map: mapData, tokens: playerTokens, drawings: visibleDrawings });
     }
+  }));
+
+  /**
+   * DM-only. Update a map's ambient light tier and optional custom
+   * opacity. Persists to the row, then broadcasts `map:lighting-updated`
+   * to every socket on that map so the FogLayer repaints without
+   * requiring a full `map:load`.
+   *
+   * Payload: { mapId, ambientLight?: 'bright'|'dim'|'dark'|'custom',
+   *            ambientOpacity?: number|null }
+   */
+  socket.on('map:update-lighting', safeHandler(socket, async (data) => {
+    const ctx = getPlayerBySocketId(socket.id);
+    if (!ctx || ctx.player.role !== 'dm') return;
+    const raw = data as Record<string, unknown> | undefined;
+    const mapId = typeof raw?.mapId === 'string' ? raw.mapId : null;
+    if (!mapId) return;
+
+    const { rows: check } = await pool.query(
+      'SELECT 1 FROM maps WHERE id = $1 AND session_id = $2',
+      [mapId, ctx.room.sessionId],
+    );
+    if (check.length === 0) return;
+
+    const VALID = ['bright', 'dim', 'dark', 'custom'];
+    const tier = typeof raw?.ambientLight === 'string' && VALID.includes(raw.ambientLight as string)
+      ? (raw.ambientLight as string)
+      : null;
+    let opacity: number | null | undefined = undefined;
+    if (raw?.ambientOpacity === null) opacity = null;
+    else if (typeof raw?.ambientOpacity === 'number' && Number.isFinite(raw.ambientOpacity)) {
+      opacity = Math.max(0, Math.min(1, raw.ambientOpacity));
+    }
+
+    const updates: string[] = [];
+    const values: unknown[] = [];
+    let i = 1;
+    if (tier) { updates.push(`ambient_light = $${i++}`); values.push(tier); }
+    if (opacity === null) updates.push(`ambient_opacity = NULL`);
+    else if (typeof opacity === 'number') { updates.push(`ambient_opacity = $${i++}`); values.push(opacity); }
+    if (updates.length === 0) return;
+    values.push(mapId);
+    await pool.query(`UPDATE maps SET ${updates.join(', ')} WHERE id = $${i}`, values);
+
+    // Broadcast to every socket rendering this map. Uses socketsOnMap
+    // so the DM's preview view + the player ribbon both update, while
+    // sockets viewing a different map don't get a spurious repaint.
+    const payload = {
+      mapId,
+      ambientLight: tier ?? undefined,
+      ambientOpacity: opacity,
+    };
+    for (const sid of socketsOnMap(ctx.room, mapId)) {
+      io.to(sid).emit('map:lighting-updated', payload);
+    }
+  }));
+
+  /**
+   * DM-only. Set or clear a token's vision_overrides JSON blob. Pass
+   * null to clear (revert to character sheet senses); pass a partial
+   * object to set specific senses. Broadcasts the merged token.
+   *
+   * Payload: { tokenId, visionOverrides: Token['visionOverrides']|null }
+   */
+  socket.on('token:update-vision-overrides', safeHandler(socket, async (data) => {
+    const ctx = getPlayerBySocketId(socket.id);
+    if (!ctx || ctx.player.role !== 'dm') return;
+    const raw = data as Record<string, unknown> | undefined;
+    const tokenId = typeof raw?.tokenId === 'string' ? raw.tokenId : null;
+    if (!tokenId) return;
+    const token = ctx.room.tokens.get(tokenId);
+    if (!token) return;
+
+    const overrides = raw?.visionOverrides;
+    let cleanOverrides: Token['visionOverrides'] | null = null;
+    if (overrides !== null && typeof overrides === 'object') {
+      const src = overrides as Record<string, unknown>;
+      const pick = (k: string): number | undefined => {
+        const v = src[k];
+        if (typeof v === 'number' && Number.isFinite(v) && v >= 0 && v <= 1000) return v;
+        return undefined;
+      };
+      cleanOverrides = {
+        darkvision: pick('darkvision'),
+        blindsight: pick('blindsight'),
+        truesight: pick('truesight'),
+        tremorsense: pick('tremorsense'),
+      };
+      const anySet = Object.values(cleanOverrides).some((v) => v !== undefined);
+      if (!anySet) cleanOverrides = null;
+    }
+
+    const blob = cleanOverrides === null ? null : JSON.stringify(cleanOverrides);
+    await pool.query('UPDATE tokens SET vision_overrides = $1 WHERE id = $2', [blob, tokenId]);
+    token.visionOverrides = cleanOverrides ?? undefined;
+
+    io.to(ctx.room.sessionId).emit('map:token-updated', {
+      tokenId,
+      changes: { visionOverrides: cleanOverrides ?? undefined },
+    });
   }));
 
   socket.on('map:ping', safeHandler(socket, async (data) => {

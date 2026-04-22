@@ -82,6 +82,8 @@ router.post(
           walls: safeParseJSON<unknown[]>(existing.walls, [], 'maps.walls'),
           fogState: safeParseJSON<unknown[]>(existing.fog_state, [], 'maps.fog_state'),
           createdAt: existing.created_at,
+          ambientLight: existing.ambient_light ?? 'bright',
+          ambientOpacity: (existing.ambient_opacity as number | null) ?? undefined,
           reused: true,
         });
         return;
@@ -142,6 +144,8 @@ router.post(
       walls: safeParseJSON<unknown[]>(map.walls, [], 'maps.walls'),
       fogState: safeParseJSON<unknown[]>(map.fog_state, [], 'maps.fog_state'),
       createdAt: map.created_at,
+      ambientLight: map.ambient_light ?? 'bright',
+      ambientOpacity: (map.ambient_opacity as number | null) ?? undefined,
       reused: false,
     });
   },
@@ -271,6 +275,8 @@ router.get('/maps/:id', async (req: Request, res: Response) => {
     walls: safeParseJSON<unknown[]>(map.walls, [], 'maps.walls'),
     fogState: safeParseJSON<unknown[]>(map.fog_state, [], 'maps.fog_state'),
     createdAt: map.created_at,
+    ambientLight: map.ambient_light ?? 'bright',
+    ambientOpacity: (map.ambient_opacity as number | null) ?? undefined,
     tokens: visibleTokens,
   });
 });

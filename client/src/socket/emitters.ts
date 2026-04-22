@@ -98,6 +98,43 @@ export function emitReorderMaps(mapIds: string[]) {
   getSocket().emit('map:reorder', { mapIds });
 }
 
+/**
+ * DM-only. Update a map's ambient light settings. Tier is the
+ * 5e preset; opacity is a 0..1 override consulted only when
+ * tier === 'custom'. Pass `null` to clear the override back to the
+ * tier's default alpha. Server persists and broadcasts
+ * `map:lighting-updated` to every socket rendering that map.
+ */
+export function emitUpdateMapLighting(
+  mapId: string,
+  payload: {
+    ambientLight?: 'bright' | 'dim' | 'dark' | 'custom';
+    ambientOpacity?: number | null;
+  },
+) {
+  getSocket().emit('map:update-lighting', { mapId, ...payload });
+}
+
+/**
+ * DM-only. Set or clear a token's vision overrides
+ * (darkvision / blindsight / truesight / tremorsense). Pass null to
+ * revert to the character sheet's senses. Numeric fields are in feet,
+ * 0 means "explicitly no sense" (strips the character-sheet value
+ * too — useful when a condition suppresses vision). Undefined fields
+ * in the overrides object fall through to the character.
+ */
+export function emitUpdateTokenVisionOverrides(
+  tokenId: string,
+  visionOverrides: {
+    darkvision?: number;
+    blindsight?: number;
+    truesight?: number;
+    tremorsense?: number;
+  } | null,
+) {
+  getSocket().emit('token:update-vision-overrides', { tokenId, visionOverrides });
+}
+
 export function emitTokenMove(tokenId: string, x: number, y: number) {
   getSocket().emit('map:token-move', { tokenId, x, y });
 }

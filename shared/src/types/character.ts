@@ -94,11 +94,31 @@ export interface CharacterProficiencies {
   languages: string[];
 }
 
+/**
+ * 5e sight-range senses. All measured in feet; 0 (or undefined for
+ * the new ones) means the creature doesn't have that sense.
+ *
+ * - `darkvision`  — sees in dim light as if bright, darkness as if
+ *                   dim. Typical 60 ft, Superior Darkvision 120 ft.
+ * - `blindsight`  — perceives surroundings without relying on sight
+ *                   within range. Bats, swarms, Warlock Devil's Sight.
+ * - `truesight`   — as blindsight plus see through invisibility,
+ *                   illusions, into the Ethereal. Archdevils etc.
+ * - `tremorsense` — detects + localizes creatures in contact with
+ *                   the same surface (ground, water). Earth elementals.
+ *
+ * FogLayer uses the max of `darkvision / blindsight / truesight` as
+ * the vision radius in `dark` ambient. Tremorsense is tracked but
+ * not yet consumed by the renderer (requires line-of-surface logic).
+ */
 export interface CharacterSenses {
   passivePerception: number;
   passiveInvestigation: number;
   passiveInsight: number;
   darkvision: number;
+  blindsight?: number;
+  truesight?: number;
+  tremorsense?: number;
 }
 
 export interface CharacterDefenses {

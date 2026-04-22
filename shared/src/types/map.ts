@@ -1,3 +1,26 @@
+/**
+ * 5e ambient-light tiers per PHB "Vision and Light" (p. 183).
+ *
+ * - `bright`  — creatures see normally. Fog layer renders at 0 alpha
+ *               (map fully visible); vision bubble is just the
+ *               fogVisionCells radius.
+ * - `dim`     — lightly obscured. Disadvantage on sight-based
+ *               Perception. Fog renders ~45% alpha; darkvision
+ *               grants no extra range here because dim light is
+ *               already bright for a darkvision creature.
+ * - `dark`    — heavily obscured. Effectively blinded vs targets in
+ *               darkness. Fog renders ~85% alpha; vision bubble
+ *               shrinks to the max of lightRadius + darkvision +
+ *               blindsight + truesight.
+ *
+ * `custom` is the escape hatch when the DM wants a specific
+ * opacity (e.g. 0.65 for moonlit woods). `ambientOpacity` overrides
+ * the preset alpha; vision math still uses the tier closest to the
+ * opacity (≥ 0.7 treated as dark, ≥ 0.25 as dim, else bright) so
+ * darkvision tiering stays deterministic.
+ */
+export type AmbientLight = 'bright' | 'dim' | 'dark' | 'custom';
+
 export interface GameMap {
   id: string;
   sessionId: string;
@@ -12,6 +35,18 @@ export interface GameMap {
   walls: WallSegment[];
   fogState: FogPolygon[];
   createdAt: string;
+  /**
+   * Ambient light tier for this map. Defaults to 'bright' so
+   * existing maps behave exactly as they did before the feature
+   * landed. Hex values in the fog-alpha table above are authoritative.
+   */
+  ambientLight?: AmbientLight;
+  /**
+   * Optional 0..1 opacity override. Only consulted when
+   * ambientLight === 'custom'. Outside 'custom' the preset alpha is
+   * used and this field is ignored.
+   */
+  ambientOpacity?: number;
 }
 
 export interface WallSegment {
@@ -69,6 +104,20 @@ export interface Token {
   faction?: TokenFaction;
   createdAt: string;
   aura?: TokenAura | null;
+  /**
+   * DM-only override for a token's vision senses. Merged on top of
+   * the linked character's `senses` object at render time — set a
+   * field to extend (e.g. temporarily grant Darkvision 60 via the
+   * Darkvision spell); set to 0 to explicitly strip the sense.
+   * `undefined` fields fall back to the character sheet. NPC tokens
+   * (no characterId) read these as their primary values.
+   */
+  visionOverrides?: {
+    darkvision?: number;
+    blindsight?: number;
+    truesight?: number;
+    tremorsense?: number;
+  };
 }
 
 export interface TokenAura {

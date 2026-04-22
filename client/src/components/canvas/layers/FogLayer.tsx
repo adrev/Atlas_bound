@@ -3,10 +3,95 @@ import { Group, Rect, Shape } from 'react-konva';
 import { useMapStore } from '../../../stores/useMapStore';
 import { useSessionStore } from '../../../stores/useSessionStore';
 import { useCharacterStore } from '../../../stores/useCharacterStore';
+import type { AmbientLight, Token } from '@dnd-vtt/shared';
 
 interface FogLayerProps {
   mapWidth: number;
   mapHeight: number;
+}
+
+/**
+ * Resolve the 5e-mechanical ambient tier from the raw `ambientLight`
+ * string + optional custom opacity. `custom` maps to the nearest
+ * preset for vision purposes so darkvision tiering stays deterministic
+ * (≥ 0.7 dark, ≥ 0.25 dim, else bright), while the actual rendered
+ * alpha uses the supplied opacity directly.
+ */
+function resolveAmbient(
+  tier: AmbientLight | undefined,
+  opacity: number | undefined,
+): { tier: 'bright' | 'dim' | 'dark'; alpha: number } {
+  if (tier === 'custom') {
+    const a = typeof opacity === 'number' ? Math.max(0, Math.min(1, opacity)) : 0;
+    const nearest = a >= 0.7 ? 'dark' : a >= 0.25 ? 'dim' : 'bright';
+    return { tier: nearest, alpha: a };
+  }
+  if (tier === 'dark') return { tier: 'dark', alpha: 0.85 };
+  if (tier === 'dim') return { tier: 'dim', alpha: 0.45 };
+  return { tier: 'bright', alpha: 0 };
+}
+
+/**
+ * 5e darkvision tiering. Given the mechanical ambient tier, return
+ * the effective radii at which a creature with darkvision sees:
+ *
+ *   bright  → darkvision adds no range (already bright everywhere)
+ *   dim     → darkvision also adds no range; dim is already bright
+ *             to darkvision creatures, but regular sight also works
+ *             at vision radius.
+ *   dark    → first `darkvisionFt` ft are "bright" (inner cutout);
+ *             beyond the vision radius everything stays obscured.
+ *
+ * Returns the combined cutout radius in pixels — use max() of the
+ * normal vision bubble and this function's output.
+ */
+function darkvisionReachPx(
+  tier: 'bright' | 'dim' | 'dark',
+  darkvisionFt: number,
+  gridSize: number,
+): number {
+  if (tier !== 'dark') return 0;
+  return (darkvisionFt / 5) * gridSize;
+}
+
+/**
+ * Merge a token's visionOverrides (DM-set) with its character's
+ * senses (sheet-derived). Override fields win where present; missing
+ * override fields fall back to the character. NPC tokens (no
+ * character) read the overrides as their primary senses.
+ */
+function resolveTokenSenses(
+  token: Token,
+  char: { senses?: unknown } | null | undefined,
+): { darkvision: number; blindsight: number; truesight: number; tremorsense: number } {
+  let fromChar = { darkvision: 0, blindsight: 0, truesight: 0, tremorsense: 0 };
+  if (char?.senses) {
+    const raw = typeof char.senses === 'string' ? tryParse(char.senses) : (char.senses as Record<string, unknown>);
+    if (raw && typeof raw === 'object') {
+      fromChar = {
+        darkvision: toNumber(raw.darkvision),
+        blindsight: toNumber(raw.blindsight),
+        truesight: toNumber(raw.truesight),
+        tremorsense: toNumber(raw.tremorsense),
+      };
+    }
+  }
+  const ov = token.visionOverrides;
+  if (!ov) return fromChar;
+  return {
+    darkvision: ov.darkvision !== undefined ? ov.darkvision : fromChar.darkvision,
+    blindsight: ov.blindsight !== undefined ? ov.blindsight : fromChar.blindsight,
+    truesight: ov.truesight !== undefined ? ov.truesight : fromChar.truesight,
+    tremorsense: ov.tremorsense !== undefined ? ov.tremorsense : fromChar.tremorsense,
+  };
+}
+
+function tryParse(s: string): Record<string, unknown> | null {
+  try { return JSON.parse(s); } catch { return null; }
+}
+
+function toNumber(v: unknown): number {
+  return typeof v === 'number' && Number.isFinite(v) ? v : 0;
 }
 
 /**
@@ -31,7 +116,10 @@ export function FogLayer({ mapWidth, mapHeight }: FogLayerProps) {
   const tokens = useMapStore((s) => s.tokens);
   const userId = useSessionStore((s) => s.userId);
   const gridSize = useMapStore((s) => s.currentMap?.gridSize ?? 70);
+  const ambientLight = useMapStore((s) => s.currentMap?.ambientLight) as AmbientLight | undefined;
+  const ambientOpacity = useMapStore((s) => s.currentMap?.ambientOpacity);
   const fogPreviewCharacterId = useMapStore((s) => s.fogPreviewCharacterId);
+  const ambient = resolveAmbient(ambientLight, ambientOpacity);
 
   // Find all tokens owned by this player (heroes). When the DM has
   // opted into "see player fog" mode, we treat every PC token (any
@@ -87,12 +175,25 @@ export function FogLayer({ mapWidth, mapHeight }: FogLayerProps) {
     );
   }
 
-  if (!enableFog) return null;
+  // Fog renders only when either:
+  //   - the session has enableFogOfWar on (standard exploration fog), OR
+  //   - the active map has dim / dark / custom ambient light (environmental
+  //     obscurement — fog represents "you can't see" rather than "you
+  //     haven't explored"). This lets a DM drop the party into a dark
+  //     cavern without needing to also toggle the fog setting.
+  if (!enableFog && ambient.tier === 'bright') return null;
 
-  // DM viewing player fog gets a lighter overlay — the point is to
-  // *see* what the players can't, so the map underneath stays readable.
-  // Players get the full 85% black.
-  const fogAlpha = isDM && dmSeesPlayerFog ? 0.45 : 0.85;
+  // Preset alpha from the mechanical ambient tier. DM viewing player
+  // fog gets a lighter overlay so the map underneath stays readable —
+  // the point is to *see* what the players can't, not to hide the
+  // canvas from the DM too. Players get the full ambient alpha.
+  // In bright ambient with fog enabled, fall back to the classic
+  // 0.85 so the exploration mask still reads as pitch-black outside
+  // vision radius.
+  const presetAlpha = ambient.tier === 'bright' ? 0.85 : ambient.alpha;
+  const fogAlpha = isDM && dmSeesPlayerFog
+    ? Math.min(presetAlpha, 0.45)
+    : presetAlpha;
 
   return (
     <Group listening={false}>
@@ -105,27 +206,31 @@ export function FogLayer({ mapWidth, mapHeight }: FogLayerProps) {
         fill={`rgba(0, 0, 0, ${fogAlpha})`}
       />
 
-      {/* Cut out vision circles around each hero token. Per-token
-          radius = max(map-wide fogVisionCells, the linked character's
-          darkvision). So a half-orc barbarian with 60 ft darkvision
-          reveals a bigger bubble than a human fighter with nothing,
-          and the DM's cap still applies for the base. Character
-          darkvision is in feet, converted to pixels via gridSize / 5. */}
+      {/* Cut out vision circles around each hero token. Radius math:
+          - In BRIGHT / DIM ambient: regular sight works; darkvision
+            grants no extra range (already lit for darkvision eyes).
+            Bubble = fogVisionCells (DM's line-of-sight cap).
+          - In DARK ambient: regular sight doesn't work beyond 0 ft.
+            Bubble = max(darkvision, blindsight, truesight); token's
+            own carried light (lightRadius) handled by litTokens
+            below. Falls back to fogVisionCells if the token has no
+            senses at all — matches the old behavior so a DM sliding
+            the cap still affects pitch-black maps.
+          - Tremorsense is tracked on senses but not consumed here —
+            requires line-of-surface logic (target must touch the
+            same ground). Future work. */}
       {heroTokens.map((token) => {
         const char = token.characterId
           ? useCharacterStore.getState().allCharacters[token.characterId]
           : null;
-        const darkvisionFt = (() => {
-          const s = char?.senses;
-          if (!s) return 0;
-          if (typeof s === 'string') {
-            try { return Number((JSON.parse(s) as { darkvision?: number })?.darkvision ?? 0) || 0; }
-            catch { return 0; }
-          }
-          return Number(s.darkvision ?? 0) || 0;
-        })();
-        const darkvisionPx = darkvisionFt > 0 ? (darkvisionFt / 5) * gridSize : 0;
-        const radius = Math.max(visionRadius, darkvisionPx);
+        const senses = resolveTokenSenses(token, char);
+        const dvPx = darkvisionReachPx(ambient.tier, senses.darkvision, gridSize);
+        const bsPx = (senses.blindsight / 5) * gridSize;
+        const tsPx = (senses.truesight / 5) * gridSize;
+        const specialPx = Math.max(dvPx, bsPx, tsPx);
+        const radius = ambient.tier === 'dark'
+          ? Math.max(specialPx, visionRadius)
+          : Math.max(visionRadius, bsPx, tsPx);
         return (
           <VisionCutout
             key={token.id}

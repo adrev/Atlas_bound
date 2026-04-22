@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { Token, WallSegment, FogPolygon, MapZone } from '@dnd-vtt/shared';
+import type { Token, WallSegment, FogPolygon, MapZone, AmbientLight } from '@dnd-vtt/shared';
 
 type ActiveTool = 'select' | 'measure' | 'fog-reveal' | 'fog-hide' | 'wall' | 'ping' | 'zone';
 
@@ -36,6 +36,10 @@ interface MapData {
   gridType: 'square' | 'hex';
   gridOffsetX: number;
   gridOffsetY: number;
+  /** 5e ambient light tier. Omitted on legacy rows — treat as 'bright'. */
+  ambientLight?: AmbientLight;
+  /** Only read when ambientLight === 'custom'. 0..1 opacity override. */
+  ambientOpacity?: number;
 }
 
 interface Viewport {

@@ -2,7 +2,8 @@ import { useState, useEffect } from 'react';
 import { ArrowLeft } from 'lucide-react';
 import { useMapStore } from '../../stores/useMapStore';
 import { useSessionStore } from '../../stores/useSessionStore';
-import { emitUpdateSettings } from '../../socket/emitters';
+import { emitUpdateSettings, emitUpdateMapLighting } from '../../socket/emitters';
+import type { AmbientLight } from '@dnd-vtt/shared';
 import { CreatureLibrary } from './CreatureLibrary';
 import { SceneManager } from './SceneManager';
 import { EncounterBuilder } from './EncounterBuilder';
@@ -161,7 +162,7 @@ export function DMToolbar() {
 
         {activePanel === 'encounters' && <EncounterBuilder />}
 
-        {activePanel === 'settings' && <SettingsPanel settings={settings} />}
+        {activePanel === 'settings' && <SettingsPanel settings={settings} currentMap={currentMap} />}
 
         {activePanel === 'handouts' && <HandoutSender />}
 
@@ -183,6 +184,7 @@ export function DMToolbar() {
 
 function SettingsPanel({
   settings,
+  currentMap,
 }: {
   settings: {
     gridSize: number;
@@ -196,6 +198,7 @@ function SettingsPanel({
     fogVisionCells?: number;
     ruleSources?: RuleSource[];
   };
+  currentMap: { id: string; ambientLight?: AmbientLight; ambientOpacity?: number } | null;
 }) {
   const visionCells = settings.fogVisionCells ?? 8;
   const activeSources = new Set<RuleSource>(settings.ruleSources ?? ['phb']);
@@ -292,6 +295,19 @@ function SettingsPanel({
       <p style={styles.hint}>
         Uses walls to block line of sight and cast shadows from light sources.
       </p>
+
+      {/* Per-map ambient light (5e Vision & Light). Bright = no fog,
+          Dim = 45% overlay + disadvantage on Perception (DM narrates),
+          Dark = 85% overlay + darkvision/blindsight/truesight become
+          the primary vision sources. Custom lets the DM fine-tune the
+          fog alpha while keeping the nearest preset's vision math. */}
+      {currentMap && (
+        <AmbientLightControl
+          mapId={currentMap.id}
+          tier={(currentMap.ambientLight as AmbientLight | undefined) ?? 'bright'}
+          opacity={currentMap.ambientOpacity}
+        />
+      )}
 
       <div
         style={styles.settingRow}
@@ -464,6 +480,103 @@ function DiscordWebhookField({
           {saved ? 'Saved' : 'Save'}
         </button>
       </div>
+    </FieldGroup>
+  );
+}
+
+/**
+ * DM control for per-map ambient light. Three preset buttons (Bright
+ * / Dim / Dark) plus a "Custom" slider that only renders when the
+ * `custom` tier is active. Changes emit `map:update-lighting`, which
+ * the server persists + broadcasts to every client on this map.
+ *
+ * Mechanical mapping (from shared/src/types/map.ts):
+ *   bright → 0.00 alpha, darkvision adds nothing
+ *   dim    → 0.45 alpha, darkvision adds nothing
+ *   dark   → 0.85 alpha, darkvision / blindsight / truesight become
+ *            the primary vision sources
+ *   custom → whatever the slider is at; vision math uses the nearest
+ *            preset (≥0.7 dark, ≥0.25 dim, else bright)
+ */
+function AmbientLightControl({
+  mapId,
+  tier,
+  opacity,
+}: {
+  mapId: string;
+  tier: AmbientLight;
+  opacity: number | undefined;
+}) {
+  const tiers: Array<{ id: AmbientLight; label: string; emoji: string }> = [
+    { id: 'bright', label: 'Bright', emoji: '☀️' },
+    { id: 'dim', label: 'Dim', emoji: '🌆' },
+    { id: 'dark', label: 'Dark', emoji: '🌑' },
+    { id: 'custom', label: 'Custom', emoji: '🎚️' },
+  ];
+  const sliderVal = typeof opacity === 'number'
+    ? Math.round(opacity * 100)
+    : tier === 'dark' ? 85 : tier === 'dim' ? 45 : 0;
+
+  return (
+    <FieldGroup
+      label="Ambient Light"
+      helperText="5e Vision & Light — affects fog alpha + darkvision tiering for every token on this map."
+    >
+      <div style={{ display: 'flex', gap: 6, marginBottom: 8 }}>
+        {tiers.map(({ id, label, emoji }) => {
+          const active = tier === id;
+          return (
+            <button
+              key={id}
+              onClick={() => emitUpdateMapLighting(mapId, {
+                ambientLight: id,
+                // Clear opacity when switching away from 'custom' so
+                // the preset alpha takes over cleanly. Keep existing
+                // opacity when going INTO 'custom'.
+                ambientOpacity: id === 'custom' ? undefined : null,
+              })}
+              title={`Set ambient to ${label}`}
+              style={{
+                flex: 1,
+                padding: '6px 4px',
+                fontSize: 10,
+                fontWeight: 700,
+                letterSpacing: '0.06em',
+                textTransform: 'uppercase' as const,
+                borderRadius: theme.radius.sm,
+                cursor: 'pointer',
+                background: active
+                  ? `linear-gradient(180deg, rgba(232,196,85,0.18), ${theme.gold.bg})`
+                  : theme.bg.deep,
+                color: active ? theme.gold.bright : theme.text.secondary,
+                border: `1px solid ${active ? theme.gold.border : theme.border.default}`,
+                fontFamily: theme.font.body,
+              }}
+            >
+              <span style={{ marginRight: 4 }}>{emoji}</span>{label}
+            </button>
+          );
+        })}
+      </div>
+      {tier === 'custom' && (
+        <div style={{ marginTop: 2 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, color: theme.text.muted, marginBottom: 4 }}>
+            <span>Opacity</span>
+            <span>{sliderVal}%</span>
+          </div>
+          <input
+            type="range"
+            min={0}
+            max={100}
+            step={1}
+            value={sliderVal}
+            onChange={(e) => emitUpdateMapLighting(mapId, {
+              ambientOpacity: Number(e.target.value) / 100,
+            })}
+            style={styles.rangeInput}
+          />
+        </div>
+      )}
     </FieldGroup>
   );
 }

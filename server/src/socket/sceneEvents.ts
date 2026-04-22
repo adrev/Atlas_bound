@@ -133,6 +133,8 @@ export function registerSceneEvents(io: Server, socket: Socket): void {
       gridOffsetX: mapRow.grid_offset_x as number, gridOffsetY: mapRow.grid_offset_y as number,
       walls: safeParseJSON<WallSegment[]>(mapRow.walls, [], 'map.walls'),
       fogState: safeParseJSON<FogPolygon[]>(mapRow.fog_state, [], 'map.fog_state'),
+      ambientLight: (mapRow.ambient_light as string) ?? 'bright',
+      ambientOpacity: (mapRow.ambient_opacity as number | null) ?? undefined,
       zones,
     };
 
@@ -247,6 +249,8 @@ export function registerSceneEvents(io: Server, socket: Socket): void {
       gridOffsetX: mapRow.grid_offset_x as number, gridOffsetY: mapRow.grid_offset_y as number,
       walls: safeParseJSON<WallSegment[]>(mapRow.walls, [], 'map.walls'),
       fogState: safeParseJSON<FogPolygon[]>(mapRow.fog_state, [], 'map.fog_state'),
+      ambientLight: (mapRow.ambient_light as string) ?? 'bright',
+      ambientOpacity: (mapRow.ambient_opacity as number | null) ?? undefined,
     };
 
     for (const player of ctx.room.players.values()) {
