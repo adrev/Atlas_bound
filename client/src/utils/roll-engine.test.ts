@@ -5,6 +5,7 @@ import {
   combineAttackModifiers,
   effectiveAC,
   effectiveSpeed,
+  applyDamageWithResist,
 } from './roll-engine';
 
 /**
@@ -176,3 +177,89 @@ describe('effectiveSpeed (shared delegation)', () => {
     expect(out.value).toBe(0);
   });
 });
+
+// ═══════════════════════════════════════════════════════════════════
+// Silvered / adamantine / cold-iron weapon material bypass
+// ═══════════════════════════════════════════════════════════════════
+
+describe('applyDamageWithResist — weapon material exemptions', () => {
+  const werewolfDefenses = {
+    resistances: [
+      "bludgeoning, piercing, and slashing from nonmagical attacks that aren't silvered",
+    ],
+    immunities: [],
+    vulnerabilities: [],
+  };
+
+  it('werewolf halves damage from a nonmagical non-silvered longsword', () => {
+    const result = applyDamageWithResist(
+      20, 'slashing', werewolfDefenses, [], false, null,
+    );
+    expect(result.amount).toBe(10);
+    expect(result.multiplier).toBe(0.5);
+  });
+
+  it('silvered longsword bypasses the werewolf resistance', () => {
+    const result = applyDamageWithResist(
+      20, 'slashing', werewolfDefenses, [], false, 'silvered',
+    );
+    expect(result.amount).toBe(20);
+    expect(result.multiplier).toBe(1);
+  });
+
+  it('magical longsword bypasses the werewolf resistance (isMagical branch)', () => {
+    const result = applyDamageWithResist(
+      20, 'slashing', werewolfDefenses, [], true, null,
+    );
+    expect(result.amount).toBe(20);
+    expect(result.multiplier).toBe(1);
+  });
+
+  const stoneGolemDefenses = {
+    resistances: [],
+    immunities: [
+      "bludgeoning, piercing, and slashing from nonmagical attacks that aren't adamantine",
+    ],
+    vulnerabilities: [],
+  };
+
+  it('stone golem immune to a nonmagical non-adamantine attack', () => {
+    const result = applyDamageWithResist(
+      30, 'bludgeoning', stoneGolemDefenses, [], false, null,
+    );
+    expect(result.amount).toBe(0);
+    expect(result.multiplier).toBe(0);
+  });
+
+  it('adamantine weapon lands full damage vs a stone golem', () => {
+    const result = applyDamageWithResist(
+      30, 'bludgeoning', stoneGolemDefenses, [], false, 'adamantine',
+    );
+    expect(result.amount).toBe(30);
+    expect(result.multiplier).toBe(1);
+  });
+
+  const fiendDefenses = {
+    resistances: [
+      "bludgeoning, piercing, and slashing from nonmagical attacks that aren't cold iron",
+    ],
+    immunities: [],
+    vulnerabilities: [],
+  };
+
+  it('cold-iron weapon bypasses a fey-style resistance (aren\'t cold iron)', () => {
+    const result = applyDamageWithResist(
+      16, 'slashing', fiendDefenses, [], false, 'cold-iron',
+    );
+    expect(result.amount).toBe(16);
+  });
+
+  it('silvered weapon does NOT bypass a cold-iron-only resistance', () => {
+    const result = applyDamageWithResist(
+      16, 'slashing', fiendDefenses, [], false, 'silvered',
+    );
+    expect(result.amount).toBe(8);
+    expect(result.multiplier).toBe(0.5);
+  });
+});
+
