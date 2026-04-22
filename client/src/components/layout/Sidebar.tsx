@@ -731,6 +731,13 @@ function CombatPanel() {
   const readyCheck = useCombatStore((s) => s.readyCheck);
   const lastRecap = useCombatStore((s) => s.lastRecap);
   const setShowRecap = useCombatStore((s) => s.setShowRecap);
+  // Hoisted above the conditional early-returns below so the hook
+  // sequence doesn't change when `combatActive` flips from false → true.
+  // Without this, React throws error #310 ("Rendered more hooks than
+  // during the previous render") the first time the DM clicks
+  // "Start Combat" because this hook was previously skipped by the
+  // !combatActive early return.
+  const reviewPhase = useCombatStore((s) => s.reviewPhase);
   const isDM = useSessionStore((s) => s.isDM);
   const players = useSessionStore((s) => s.players);
   const tokens = useMapStore((s) => s.tokens);
@@ -865,8 +872,9 @@ function CombatPanel() {
   // InitiativeReviewModal covers the same turn-order view with
   // editable inputs, and showing both at once double-draws the same
   // combatants. Falls back to a small placeholder for the DM so the
-  // Combat tab doesn't look empty mid-review.
-  const reviewPhase = useCombatStore((s) => s.reviewPhase);
+  // Combat tab doesn't look empty mid-review. `reviewPhase` was hoisted
+  // to the top of the component so the hook call order stays stable
+  // across the !combatActive early-return branch.
   if (reviewPhase) {
     return (
       <div style={styles.combatPanel}>
