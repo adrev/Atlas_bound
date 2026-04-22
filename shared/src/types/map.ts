@@ -118,6 +118,20 @@ export interface Token {
     truesight?: number;
     tremorsense?: number;
   };
+  /**
+   * Condensed view of the source token for each active condition.
+   * Populated server-side from roomState.conditionMeta at every token
+   * broadcast. Clients use it to enforce:
+   *   • Charmed: can't attack the charmer (conditionSources.charmed)
+   *   • Frightened: can't move closer to the fear source (enforced
+   *     server-side, but the flag is available client-side too for
+   *     UI hints)
+   *   • Any future "source-coupled" rule (Hex / Hunter's Mark /
+   *     Vow of Enmity already track via feature regex; this is for
+   *     condition-level tracking).
+   * Absent = no source known / no conditions with source tracking.
+   */
+  conditionSources?: Record<string, string | null>;
 }
 
 export interface TokenAura {

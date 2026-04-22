@@ -7,6 +7,7 @@ import { mapLoadSchema, mapPingSchema } from '../utils/validation.js';
 import { safeHandler } from '../utils/socketHelpers.js';
 import { safeParseJSON } from '../utils/safeJson.js';
 import { rowToToken } from '../utils/tokenMapper.js';
+import { withConditionSources } from '../utils/conditionSources.js';
 
 import { registerTokenEvents } from './tokenEvents.js';
 import { registerFogEvents } from './fogEvents.js';
@@ -44,7 +45,9 @@ export function registerMapEvents(io: Server, socket: Socket): void {
     if (!mapRow) return;
 
     const { rows: tokenRows } = await pool.query('SELECT * FROM tokens WHERE map_id = $1', [mapId]);
-    const tokens: Token[] = tokenRows.map(rowToToken);
+    const tokens: Token[] = tokenRows
+      .map(rowToToken)
+      .map((t) => withConditionSources(ctx.room, t));
 
     ctx.room.currentMapId = mapId;
     // Cache grid size so OA / other sync reach calculations can read

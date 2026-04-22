@@ -155,7 +155,7 @@ function showHpUndoToast(
 import { enrichSpellFromDescription } from '../../utils/spell-enrich';
 import { effectiveSpellSaveDC, effectiveSpellAttackBonus } from '../../utils/spell-stats';
 import { InfoTooltip } from '../ui/InfoTooltip';
-import { Button } from '../ui';
+import { Button, showToast } from '../ui';
 import { lookupCombatAction, lookupCondition, lookupWeaponProperty } from '../../utils/rules-text';
 import {
   getOwnRollModifiers,
@@ -506,6 +506,27 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
 
       // Range check: calculate distance between caster and target
       const casterTok = useMapStore.getState().tokens[currentTargeting.casterTokenId];
+
+      // Charmed: the caster cannot target its charmer with harmful
+      // spells or attacks. 5e RAW (PHB p.290). Server ships a
+      // condensed `conditionSources` record with each token; when the
+      // caster is charmed AND the source id matches the target, abort
+      // with a chat whisper explaining why. DM override: if the caller
+      // is the DM, we still allow (useful for pre-emptive adjudication).
+      try {
+        const isDM = useSessionStore.getState().isDM;
+        const charmerId = (casterTok as { conditionSources?: Record<string, string> })
+          ?.conditionSources?.charmed;
+        if (!isDM && charmerId && charmerId === targetTokenId) {
+          showToast({
+            message: `${casterTok?.name ?? 'The caster'} is charmed by ${targetToken.name} — can't target them.`,
+            variant: 'danger',
+          });
+          useMapStore.getState().cancelTargetingMode();
+          return;
+        }
+      } catch { /* guard is best-effort */ }
+
       if (casterTok) {
         const gridSize = useMapStore.getState().currentMap?.gridSize ?? 70;
         const dx = targetToken.x - casterTok.x;

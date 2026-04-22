@@ -51,6 +51,47 @@ export function registerTokenEvents(io: Server, socket: Socket): void {
     const oldX = token.x;
     const oldY = token.y;
 
+    // ── Frightened: can't willingly move CLOSER to the fear source ──
+    // RAW (PHB p.291): "A frightened creature … can't willingly move
+    // closer to the source of its fear." The condition metadata tracks
+    // `casterTokenId` as the source (set by e.g. `!fear`, Dreadful
+    // Aspect, Conquering Presence). If the move decreases euclidean
+    // distance to that source AND the DM didn't issue the move,
+    // abort: reply with the original position so the client rubber-
+    // bands back and whisper the player a reason.
+    if ((token.conditions as string[]).includes('frightened') && ctx.player.role !== 'dm') {
+      const metaMap = ctx.room.conditionMeta.get(tokenId);
+      const fearMeta = metaMap?.get('frightened');
+      const sourceId = fearMeta?.casterTokenId;
+      if (sourceId) {
+        const sourceToken = ctx.room.tokens.get(sourceId);
+        if (sourceToken) {
+          const oldDist = Math.hypot(sourceToken.x - oldX, sourceToken.y - oldY);
+          const newDist = Math.hypot(sourceToken.x - x, sourceToken.y - y);
+          if (newDist < oldDist - 1) { // 1-px tolerance for snap rounding
+            // Reject: emit the token back to its original position for
+            // the moving client and whisper the reason.
+            io.to(socket.id).emit('map:token-moved', {
+              tokenId, x: oldX, y: oldY, mapId: token.mapId,
+            });
+            io.to(socket.id).emit('chat:new-message', {
+              id: `frightened-${Date.now()}`,
+              sessionId: ctx.room.sessionId,
+              userId: 'system',
+              displayName: 'System',
+              type: 'whisper',
+              content: `⛔ ${token.name} is frightened of ${sourceToken.name} — can't willingly move closer.`,
+              characterName: null,
+              whisperTo: ctx.player.userId,
+              rollData: null,
+              createdAt: new Date().toISOString(),
+            });
+            return;
+          }
+        }
+      }
+    }
+
     if (ctx.room.tokens.has(tokenId)) { token.x = x; token.y = y; }
 
     await pool.query('UPDATE tokens SET x = $1, y = $2 WHERE id = $3', [x, y, tokenId]);
