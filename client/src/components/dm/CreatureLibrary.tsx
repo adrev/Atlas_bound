@@ -5,6 +5,7 @@ import { emitTokenAdd } from '../../socket/emitters';
 import { theme } from '../../styles/theme';
 import type { CompendiumMonster } from '@dnd-vtt/shared';
 import { getCreatureImageUrl, getCreatureImageSvgUrl, getCreatureIconUrl } from '../../utils/compendiumIcons';
+import { splitCommaList, accentForSense, accentForLanguage, SENSE_LANG_CHIP_BASE } from '../../utils/senseLanguageChips';
 
 // --- Helpers ---
 
@@ -76,6 +77,52 @@ const TYPE_COLORS: Record<string, string> = {
 
 function getTokenColor(type: string): string {
   return TYPE_COLORS[type] || '#666666';
+}
+
+// ── Action preview helpers ─────────────────────────────────────
+// Some sources (A5E, homebrew) don't split attack_bonus +
+// damage_dice into structured fields — the info lives inside the
+// freeform `desc` text. extractAttackStats falls back to regex when
+// the structured fields are absent so the preview card shows useful
+// numbers instead of just bare action names.
+
+interface MonsterActionShape {
+  name: string;
+  desc?: string;
+  attack_bonus?: number;
+  damage_dice?: string;
+}
+
+function extractAttackStats(a: MonsterActionShape): {
+  attackBonus: number | null;
+  damage: string | null;
+  summary: string | null;
+} {
+  // Structured wins.
+  if (a.attack_bonus != null || a.damage_dice) {
+    return {
+      attackBonus: a.attack_bonus ?? null,
+      damage: a.damage_dice ?? null,
+      summary: null,
+    };
+  }
+  const desc = a.desc ?? '';
+  // "Melee Weapon Attack: +X to hit" / "Ranged Weapon Attack: +X to hit"
+  const hitMatch = desc.match(/([+-]\d+)\s+to\s+hit/i);
+  // "Hit: NdM+K bludgeoning/piercing/slashing/… damage"
+  const dmgMatch = desc.match(/(\d+d\d+(?:\s*[+-]\s*\d+)?)\s*(?:\([^)]*\))?\s*\b(?:bludgeoning|piercing|slashing|fire|cold|lightning|thunder|acid|poison|necrotic|radiant|force|psychic)?\s*damage/i);
+  const attackBonus = hitMatch ? parseInt(hitMatch[1], 10) : null;
+  const damage = dmgMatch ? dmgMatch[1].replace(/\s+/g, '') : null;
+  // Summary fallback: first phrase of the description, capped so
+  // the preview card doesn't grow unbounded for long actions.
+  let summary: string | null = null;
+  if (!attackBonus && !damage) {
+    const trimmed = desc.replace(/\*\*/g, '').trim();
+    const firstSentence = trimmed.split(/[.!?]\s/, 1)[0];
+    summary = firstSentence.length > 60 ? firstSentence.slice(0, 57) + '…' : firstSentence;
+    if (!summary) summary = null;
+  }
+  return { attackBonus, damage, summary };
 }
 
 // --- Filter options ---
@@ -529,16 +576,29 @@ function CreatureCard({
               <span style={styles.detailValue}>{monster.alignment}</span>
             </div>
           )}
+          {/* Senses + Languages as chip rows — the raw monster data
+              stores these as a comma-joined string like
+              "darkvision 60 ft., passive Perception 15". Splitting by
+              comma + rendering each as a badge reads much better at
+              card scale than running prose. */}
           {monster.senses && (
             <div style={styles.detailRow}>
               <span style={styles.detailLabel}>Senses:</span>
-              <span style={styles.detailValue}>{monster.senses}</span>
+              <span style={styles.detailChipRow}>
+                {splitCommaList(monster.senses).map((s, i) => (
+                  <span key={i} style={{ ...SENSE_LANG_CHIP_BASE, ...accentForSense(s) }}>{s}</span>
+                ))}
+              </span>
             </div>
           )}
           {monster.languages && (
             <div style={styles.detailRow}>
               <span style={styles.detailLabel}>Languages:</span>
-              <span style={styles.detailValue}>{monster.languages}</span>
+              <span style={styles.detailChipRow}>
+                {splitCommaList(monster.languages).map((s, i) => (
+                  <span key={i} style={{ ...SENSE_LANG_CHIP_BASE, ...accentForLanguage(s) }}>{s}</span>
+                ))}
+              </span>
             </div>
           )}
 
@@ -558,19 +618,35 @@ function CreatureCard({
             )}
           </div>
 
-          {/* Actions preview */}
+          {/* Actions preview. Structured attack_bonus + damage_dice
+              are surfaced first when present. Falls back to
+              extractAttackStats() (regex over `a.desc`) for monsters
+              like Corrupted Unicorn / A5E content where the
+              seed-time parser didn't split them out. Last resort:
+              show a short description snippet so the card isn't a
+              wall of bare action names. */}
           {monster.actions && monster.actions.length > 0 && (
             <div style={{ marginTop: 4, borderTop: `1px solid ${theme.border.default}`, paddingTop: 4 }}>
               <div style={{ fontSize: 9, fontWeight: 700, color: theme.gold.dim, marginBottom: 2, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
                 Actions
               </div>
-              {monster.actions.slice(0, 4).map((a, i) => (
-                <div key={i} style={{ fontSize: 10, color: theme.text.secondary, padding: '1px 0' }}>
-                  <span style={{ fontWeight: 600, color: theme.text.primary }}>{a.name}</span>
-                  {a.attack_bonus != null && <span style={{ color: theme.text.muted }}> +{a.attack_bonus}</span>}
-                  {a.damage_dice && <span style={{ color: theme.danger }}> ({a.damage_dice})</span>}
-                </div>
-              ))}
+              {monster.actions.slice(0, 4).map((a, i) => {
+                const stats = extractAttackStats(a);
+                return (
+                  <div key={i} style={{ fontSize: 10, color: theme.text.secondary, padding: '1px 0' }}>
+                    <span style={{ fontWeight: 600, color: theme.text.primary }}>{a.name}</span>
+                    {stats.attackBonus != null && (
+                      <span style={{ color: theme.text.muted }}> +{stats.attackBonus}</span>
+                    )}
+                    {stats.damage && (
+                      <span style={{ color: theme.danger }}> ({stats.damage})</span>
+                    )}
+                    {!stats.attackBonus && !stats.damage && stats.summary && (
+                      <span style={{ color: theme.text.muted }}> — {stats.summary}</span>
+                    )}
+                  </div>
+                );
+              })}
               {monster.actions.length > 4 && (
                 <div style={{ fontSize: 9, color: theme.text.muted }}>+{monster.actions.length - 4} more</div>
               )}
@@ -777,6 +853,18 @@ const styles: Record<string, React.CSSProperties> = {
   detailValue: {
     color: theme.text.secondary,
     fontWeight: 600,
+  },
+  // Senses + Languages: chip layout so each distinct sense /
+  // language stands apart visually instead of melting into a
+  // comma-separated string that wraps awkwardly on narrow cards.
+  detailChipRow: {
+    display: 'flex',
+    flexWrap: 'wrap' as const,
+    gap: 3,
+    rowGap: 3,
+    justifyContent: 'flex-end',
+    flex: 1,
+    marginLeft: 8,
   },
   abilityScoresRow: {
     display: 'grid',

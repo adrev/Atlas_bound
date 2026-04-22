@@ -8,6 +8,7 @@ import { useCharacterStore } from '../../stores/useCharacterStore';
 import { emitCharacterUpdate } from '../../socket/emitters';
 import { resolveSpellSlug } from '../../utils/spell-aliases';
 import { getCreatureIconUrl, getCreatureImageUrl, getCreatureImageSvgUrl, getSpellIconUrl, getSpellImageUrl, getItemIconUrl, getItemImageUrl } from '../../utils/compendiumIcons';
+import { splitCommaList, accentForSense, accentForLanguage, SENSE_LANG_CHIP_BASE } from '../../utils/senseLanguageChips';
 import type {
   CompendiumMonster,
   CompendiumSpell,
@@ -363,12 +364,22 @@ function MonsterDetail({ monster: initialMonster }: { monster: CompendiumMonster
       )}
       {monster.senses && (
         <div style={detailStyles.statLine}>
-          <span style={detailStyles.statLabel}>Senses</span> {monster.senses}
+          <span style={detailStyles.statLabel}>Senses</span>{' '}
+          <span style={{ display: 'inline-flex', flexWrap: 'wrap', gap: 4, verticalAlign: 'middle' }}>
+            {splitCommaList(monster.senses).map((s, i) => (
+              <span key={i} style={{ ...SENSE_LANG_CHIP_BASE, ...accentForSense(s) }}>{s}</span>
+            ))}
+          </span>
         </div>
       )}
       {monster.languages && (
         <div style={detailStyles.statLine}>
-          <span style={detailStyles.statLabel}>Languages</span> {monster.languages}
+          <span style={detailStyles.statLabel}>Languages</span>{' '}
+          <span style={{ display: 'inline-flex', flexWrap: 'wrap', gap: 4, verticalAlign: 'middle' }}>
+            {splitCommaList(monster.languages).map((s, i) => (
+              <span key={i} style={{ ...SENSE_LANG_CHIP_BASE, ...accentForLanguage(s) }}>{s}</span>
+            ))}
+          </span>
         </div>
       )}
       <div style={detailStyles.statLine}>
