@@ -2,6 +2,7 @@ import type { ConditionMetadata } from '../utils/roomState.js';
 import { getRoom } from '../utils/roomState.js';
 import pool from '../db/connection.js';
 import { safeParseJSON } from '../utils/safeJson.js';
+import { effectForCondition } from '@dnd-vtt/shared';
 
 const DEFAULT_ABILITY_SCORES = { str: 10, dex: 10, con: 10, int: 10, wis: 10, cha: 10 };
 
@@ -13,12 +14,15 @@ function metaForToken(sessionId: string, tokenId: string): Map<string, Condition
   return map;
 }
 
-// 5e conditions that imply Incapacitated (no actions / reactions /
-// bonus actions) and therefore drop any concentration the token has.
-// Kept as a const set so applyConditionWithMeta can gate cleanly.
-const INCAPACITATING_CONDITIONS = new Set([
-  'incapacitated', 'stunned', 'paralyzed', 'unconscious', 'petrified',
-]);
+/**
+ * 5e rule: any condition that drops concentration when applied. Reads
+ * from the shared `dropsConcentration` flag on conditionEffects.ts so
+ * adding a new incap-adjacent condition just needs the flag set
+ * there — no hunting for a hardcoded list.
+ */
+function dropsConcentrationOnApply(conditionName: string): boolean {
+  return effectForCondition(conditionName)?.dropsConcentration === true;
+}
 
 /**
  * Returns tokenIds of creatures whose `grappled` condition was auto-
@@ -47,8 +51,10 @@ export function applyConditionWithMeta(
   // Drop concentration on any incapacitating condition. 5e rule: if
   // you become incapacitated, you lose concentration automatically.
   // Applies symmetrically across the family (stunned, paralyzed,
-  // unconscious, petrified all imply incapacitation).
-  if (INCAPACITATING_CONDITIONS.has(meta.name.toLowerCase())) {
+  // unconscious, petrified all imply incapacitation) — driven by the
+  // shared `dropsConcentration` flag so adding a new condition that
+  // breaks focus needs only a data edit.
+  if (dropsConcentrationOnApply(meta.name)) {
     if (token.characterId) {
       pool.query(
         'UPDATE characters SET concentrating_on = NULL WHERE id = $1 AND concentrating_on IS NOT NULL',
