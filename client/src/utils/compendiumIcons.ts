@@ -116,17 +116,55 @@ export function getItemIconUrl(name: string, type?: string): string {
 }
 
 /**
+ * BG3-style FLUX.2 portraits for Wiki entries — races (9), classes
+ * (13), backgrounds (13). All live under the same `gs://atlas-bound-data/`
+ * bucket as the other compendium art, one directory per category.
+ * Slug is the lowercase-hyphenated wiki slug (e.g. `half-orc`,
+ * `folk-hero`). Fallback is an initial-letter SVG keyed on a
+ * category-appropriate hue.
+ */
+export function getRaceImageUrl(slug: string): string {
+  return `${CDN}/races/${slugOrName(slug)}.png`;
+}
+
+export function getRaceIconUrl(name: string): string {
+  const initial = name.charAt(0).toUpperCase();
+  return makeSvgFallback(initial, '#8e7b5a');
+}
+
+export function getClassImageUrl(slug: string): string {
+  return `${CDN}/classes/${slugOrName(slug)}.png`;
+}
+
+export function getClassIconUrl(name: string): string {
+  const initial = name.charAt(0).toUpperCase();
+  return makeSvgFallback(initial, '#5c6a8a');
+}
+
+export function getBackgroundImageUrl(slug: string): string {
+  return `${CDN}/backgrounds/${slugOrName(slug)}.png`;
+}
+
+export function getBackgroundIconUrl(name: string): string {
+  const initial = name.charAt(0).toUpperCase();
+  return makeSvgFallback(initial, '#6a5a4a');
+}
+
+/**
  * Returns the primary GCS image URL for any compendium category.
  * Use with an onError fallback to getCompendiumFallbackUrl.
  */
 export function getCompendiumImageUrl(
   name: string,
-  category: 'monsters' | 'spells' | 'items' | string,
+  category: 'monsters' | 'spells' | 'items' | 'races' | 'classes' | 'backgrounds' | string,
 ): string {
   switch (category) {
     case 'monsters': return getCreatureImageUrl(name);
     case 'spells': return getSpellImageUrl(name);
     case 'items': return getItemImageUrl(name);
+    case 'races': return getRaceImageUrl(name);
+    case 'classes': return getClassImageUrl(name);
+    case 'backgrounds': return getBackgroundImageUrl(name);
     default: return makeSvgFallback(name.charAt(0).toUpperCase(), '#555');
   }
 }
@@ -136,13 +174,16 @@ export function getCompendiumImageUrl(
  */
 export function getCompendiumFallbackUrl(
   name: string,
-  category: 'monsters' | 'spells' | 'items' | string,
+  category: 'monsters' | 'spells' | 'items' | 'races' | 'classes' | 'backgrounds' | string,
   subtype?: string,
 ): string {
   switch (category) {
     case 'monsters': return getCreatureIconUrl(name, subtype);
     case 'spells': return getSpellIconUrl(name, subtype);
     case 'items': return getItemIconUrl(name, subtype);
+    case 'races': return getRaceIconUrl(name);
+    case 'classes': return getClassIconUrl(name);
+    case 'backgrounds': return getBackgroundIconUrl(name);
     default: return makeSvgFallback(name.charAt(0).toUpperCase(), '#555');
   }
 }

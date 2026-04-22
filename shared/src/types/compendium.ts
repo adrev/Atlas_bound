@@ -1,4 +1,4 @@
-export type CompendiumCategory = 'monsters' | 'spells' | 'items' | 'conditions' | 'classes' | 'races' | 'feats';
+export type CompendiumCategory = 'monsters' | 'spells' | 'items' | 'conditions' | 'classes' | 'races' | 'feats' | 'backgrounds';
 
 export type ItemRarity = 'common' | 'uncommon' | 'rare' | 'very_rare' | 'legendary' | 'artifact';
 

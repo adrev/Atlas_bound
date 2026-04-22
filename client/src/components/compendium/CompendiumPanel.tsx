@@ -44,6 +44,7 @@ const CATEGORY_BADGE_COLORS: Record<CompendiumCategory, string> = {
   classes: '#9b59b6',
   races: '#1abc9c',
   feats: '#d4a843',
+  backgrounds: '#b07942',
 };
 
 const RARITY_COLORS: Record<string, string> = {
@@ -173,7 +174,7 @@ export function CompendiumPanel({
       setResults(BACKGROUNDS.filter((b) => isSourceEnabled(b.source)).map((b) => ({
         slug: b.slug,
         name: b.name,
-        category: 'conditions' as const,
+        category: 'backgrounds' as const,
         snippet: `${b.skills.join(', ')} · ${b.snippet}`,
       })));
       setLoading(false);
@@ -534,13 +535,21 @@ const styles: Record<string, React.CSSProperties> = {
   },
   pillRow: {
     display: 'flex',
-    gap: 6,
+    gap: 4,
     padding: '10px 12px 0',
     flexShrink: 0,
+    // 10 category pills on a narrow sidebar overflow horizontally
+    // without wrap. Wrap keeps every pill in view; `rowGap` adds
+    // breathing room when pills wrap to a second line so the two
+    // rows don't crowd each other.
+    flexWrap: 'wrap',
+    rowGap: 6,
   },
   pill: {
-    padding: '4px 10px',
-    fontSize: 11,
+    // Tighter padding + smaller font so more pills fit per row on
+    // narrow sidebars before wrapping kicks in.
+    padding: '3px 9px',
+    fontSize: 10,
     fontWeight: 600,
     borderRadius: 12,
     border: `1px solid ${theme.border.default}`,
@@ -548,6 +557,8 @@ const styles: Record<string, React.CSSProperties> = {
     color: theme.text.muted,
     cursor: 'pointer',
     transition: 'all 0.15s ease',
+    whiteSpace: 'nowrap',
+    flexShrink: 0,
   },
   pillActive: {
     background: 'rgba(197, 49, 49, 0.15)',
