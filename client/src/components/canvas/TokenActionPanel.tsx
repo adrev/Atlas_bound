@@ -1737,11 +1737,29 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
             const nm = String(atk.name || '');
             if (/\+\d/.test(nm) || /magic(al)?\b/i.test(nm)) wIsMagicalWeapon = true;
           }
+          // Weapon material detection — silvered / adamantine / cold-
+          // iron weapons bypass specific resistance qualifiers on
+          // werewolves, golems, fey, etc. The atk might carry a
+          // `material` field, or the weapon's properties or name may
+          // mark it. We check all three; "silver" in the name catches
+          // Silvered Longsword but false-positive-avoids "silverwrought".
+          let wMaterial: 'silvered' | 'adamantine' | 'cold-iron' | null = null;
+          const atkMat = String((atk as Record<string, unknown>)?.material ?? '').toLowerCase();
+          const atkProps = ((atk as Record<string, unknown>)?.properties as string[] | undefined) || [];
+          const propText = atkProps.map((p) => String(p).toLowerCase()).join(' ');
+          const atkNameLower = String(atk.name || '').toLowerCase();
+          if (atkMat === 'silvered' || /\bsilvered\b/.test(propText) || /\bsilvered\b/.test(atkNameLower)) {
+            wMaterial = 'silvered';
+          } else if (atkMat === 'adamantine' || /\badamantine\b/.test(propText) || /\badamantine\b/.test(atkNameLower)) {
+            wMaterial = 'adamantine';
+          } else if (atkMat === 'cold-iron' || atkMat === 'cold iron' || /cold[\s-]?iron/.test(propText) || /cold[\s-]?iron/.test(atkNameLower)) {
+            wMaterial = 'cold-iron';
+          }
           const wDefenses = (wFreshChar as any)?.defenses ? (typeof (wFreshChar as any).defenses === 'string' ? JSON.parse((wFreshChar as any).defenses) : (wFreshChar as any).defenses) : { resistances: [], immunities: [], vulnerabilities: [] };
-          // Resolve the main weapon damage (weapon type, magic flag)
-          // and the rider instances (hex = necrotic magical, mark = same
-          // weapon type & magic flag) independently.
-          const wResisted = applyDamageWithResist(wRolledDmg, weaponDmgType, wDefenses, wTargetConds, wIsMagicalWeapon);
+          // Resolve the main weapon damage (weapon type, magic flag,
+          // material) and the rider instances (hex = necrotic magical,
+          // mark = same weapon type & magic flag) independently.
+          const wResisted = applyDamageWithResist(wRolledDmg, weaponDmgType, wDefenses, wTargetConds, wIsMagicalWeapon, wMaterial);
           let wResistedHex = { amount: 0, source: '' };
           let wResistedMark = { amount: 0, source: '' };
           let wResistedHexblade = { amount: 0, source: '' };
@@ -1754,8 +1772,9 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
             wResistedMark = applyDamageWithResist(wMarkBonus, weaponDmgType, wDefenses, wTargetConds, true) as { amount: number; source: string };
           }
           if (wHexbladeBonus > 0) {
-            // Hexblade's Curse rides on the weapon type (same instance).
-            wResistedHexblade = applyDamageWithResist(wHexbladeBonus, weaponDmgType, wDefenses, wTargetConds, wIsMagicalWeapon) as { amount: number; source: string };
+            // Hexblade's Curse rides on the weapon type (same instance),
+            // so it inherits magical + material flags from the strike.
+            wResistedHexblade = applyDamageWithResist(wHexbladeBonus, weaponDmgType, wDefenses, wTargetConds, wIsMagicalWeapon, wMaterial) as { amount: number; source: string };
           }
           // Combine resisted totals into a single "incoming damage"
           // figure for HP reduction + the side-effect pipeline.

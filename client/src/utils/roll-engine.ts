@@ -514,33 +514,73 @@ interface DefenseLists {
  *
  * Returns the adjusted amount + a label for chat output.
  */
+/**
+ * Weapon material markers that matter for resistance-bypass rules.
+ * Werewolves / werebears / lycanthropes resist non-magical non-silvered
+ * weapon damage; golems / many constructs resist non-magical
+ * non-adamantine weapon damage. Optional fourth parameter on
+ * `applyDamageWithResist`.
+ */
+export type WeaponMaterial = 'silvered' | 'adamantine' | 'cold-iron' | null;
+
+/**
+ * True when a resistance / immunity string should be SKIPPED for this
+ * attack because the attack satisfies an exemption qualifier in the
+ * string itself. Handles the three 5e monster-manual formats:
+ *   "nonmagical attacks"                         → skip if isMagical
+ *   "nonmagical attacks that aren't silvered"    → skip if silvered
+ *   "nonmagical attacks that aren't adamantine"  → skip if adamantine
+ *
+ * Returns true = this particular resistance entry is exempted.
+ */
+function resistanceExempted(
+  entry: string, isMagical: boolean, material: WeaponMaterial,
+): boolean {
+  const e = entry.toLowerCase();
+  // The entry only applies to NONMAGICAL attacks. Magical attacks skip.
+  if (/\bnon[\s-]?magical\b/.test(e)) {
+    if (isMagical) return true;
+    // Silvered / adamantine / cold-iron weapons bypass the remaining
+    // non-magical resistance via explicit "that aren't X" clause.
+    if (material === 'silvered' && /aren'?t\s+silvered|except\s+silvered/.test(e)) return true;
+    if (material === 'adamantine' && /aren'?t\s+adamantine|except\s+adamantine/.test(e)) return true;
+    if (material === 'cold-iron' && /aren'?t\s+cold[\s-]?iron|except\s+cold[\s-]?iron/.test(e)) return true;
+  }
+  return false;
+}
+
 export function applyDamageWithResist(
   baseAmount: number,
   damageType: string,
   defenses: Partial<DefenseLists> | undefined,
   conditions: string[],
   isMagical: boolean = true,
+  material: WeaponMaterial = null,
 ): DamageResult {
   const dt = (damageType || '').toLowerCase();
   const set = new Set(conditions.map(c => c.toLowerCase()));
   const sourceParts: string[] = [];
   let multiplier = 1;
 
-  // 1. Character racial / class defenses
+  // 1. Character racial / class defenses. Each entry is checked against
+  // the damage type substring — AND against the "nonmagical" /
+  // "aren't silvered" / "aren't adamantine" exemptions. Silvered
+  // longsword vs werewolf: the werewolf's "non-magical non-silvered"
+  // resistance is skipped, so full damage lands.
   const lists: DefenseLists = {
     resistances: (defenses?.resistances || []).map(s => s.toLowerCase()),
     immunities: (defenses?.immunities || []).map(s => s.toLowerCase()),
     vulnerabilities: (defenses?.vulnerabilities || []).map(s => s.toLowerCase()),
   };
 
-  if (dt && lists.immunities.some(d => d.includes(dt))) {
+  if (dt && lists.immunities.some(d => d.includes(dt) && !resistanceExempted(d, isMagical, material))) {
     return {
       amount: 0,
       multiplier: 0,
       source: `immune to ${dt}`,
     };
   }
-  if (dt && lists.resistances.some(d => d.includes(dt))) {
+  if (dt && lists.resistances.some(d => d.includes(dt) && !resistanceExempted(d, isMagical, material))) {
     multiplier = 0.5;
     sourceParts.push(`resist ${dt}`);
   }
