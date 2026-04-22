@@ -39,6 +39,17 @@ import '../services/chatCommands/miscClassHandlers.js';
 import '../services/chatCommands/encounterAndRestHandlers.js';
 import '../services/chatCommands/subclassHandlers.js';
 import '../services/chatCommands/subclassFeaturesHandler.js';
+import '../services/chatCommands/subclassFeaturesTier10Handler.js';
+import '../services/chatCommands/subclassFeaturesTier11Handler.js';
+import '../services/chatCommands/spellsTier12Handler.js';
+import '../services/chatCommands/subclassFeaturesTier13Handler.js';
+import '../services/chatCommands/subclassFeaturesTier14Handler.js';
+import '../services/chatCommands/subclassFeaturesTier15Handler.js';
+import '../services/chatCommands/spellsTier16Handler.js';
+import '../services/chatCommands/spellsTier17Handler.js';
+import '../services/chatCommands/featsTier18Handler.js';
+import '../services/chatCommands/racesTier19Handler.js';
+import '../services/chatCommands/itemsTier20Handler.js';
 
 export function registerChatEvents(io: Server, socket: Socket): void {
 

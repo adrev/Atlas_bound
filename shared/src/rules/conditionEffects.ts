@@ -321,6 +321,83 @@ export const PSEUDO_CONDITION_EFFECTS: Record<string, ConditionEffect> = {
     saveAdvantage: { str: 'advantage' },
     notes: ['Advantage on STR checks + saves', 'Resist bludgeoning / piercing / slashing', '+2/+3/+4 damage on STR melee'],
   },
+  frenzied: {
+    name: 'frenzied',
+    color: '#922b21',
+    notes: ['Berserker: bonus-action melee attack each turn while raging', '+1 exhaustion when Rage ends'],
+  },
+  'cav-marked': {
+    name: 'cav-marked',
+    color: '#34495e',
+    notes: ['Cavalier Unwavering Mark: disadvantage vs anyone other than the Cavalier', 'Cavalier can reaction-attack if this creature attacks someone else'],
+  },
+  'no-reactions': {
+    name: 'no-reactions',
+    color: '#7f8c8d',
+    blocksReactions: true,
+    notes: ['Cannot take reactions (Open Hand Technique, etc.)'],
+  },
+  commanded: {
+    name: 'commanded',
+    color: '#d4a017',
+    notes: ['Command spell: follows 1-word order (approach/drop/flee/grovel/halt) on next turn'],
+  },
+  sanctuary: {
+    name: 'sanctuary',
+    color: '#ecf0f1',
+    notes: ['Attackers must succeed on WIS save or target someone else', 'Drops if warded creature attacks or casts harmful spell'],
+  },
+  banished: {
+    name: 'banished',
+    color: '#7d3c98',
+    blocksActions: true,
+    blocksReactions: true,
+    blocksBonusActions: true,
+    notes: ['Banished to another plane — removed from combat', 'Returns when concentration drops'],
+  },
+  'marked-for-grave': {
+    name: 'marked-for-grave',
+    color: '#1b2631',
+    notes: ['Grave Cleric Path to the Grave: next attack against this creature has vulnerability to ALL damage types'],
+  },
+  bonded: {
+    name: 'bonded',
+    color: '#d2b4de',
+    notes: ['Peace Cleric Emboldening Bond: +1d4 to one attack/save/check while within 30 ft of another bonded creature (1/turn)'],
+  },
+  challenged: {
+    name: 'challenged',
+    color: '#a04000',
+    notes: ["Crown Paladin Champion Challenge: can't willingly move more than 30 ft from caller"],
+  },
+  'giant-size': {
+    name: 'giant-size',
+    color: '#566573',
+    checkAdvantage: { str: 'advantage' },
+    saveAdvantage: { str: 'advantage' },
+    notes: ['Rune Knight Giant\'s Might: Large size, advantage on STR checks + saves, +1d6/d8/d10 weapon dmg (1/turn)'],
+  },
+  'insight-marked': {
+    name: 'insight-marked',
+    color: '#3498db',
+    notes: ['Inquisitive Insightful Fighting: caster has Sneak Attack vs this target without needing advantage (1 min)'],
+  },
+  blur: {
+    name: 'blur',
+    color: '#bdc3c7',
+    attacksAgainst: 'disadvantage',
+    notes: ['Blur spell: attack rolls against have disadvantage unless attacker has blindsight / truesight'],
+  },
+  stoneskin: {
+    name: 'stoneskin',
+    color: '#797d7f',
+    notes: ['Stoneskin spell: resistance to non-magical bludgeoning/piercing/slashing damage'],
+  },
+  'death-warded': {
+    name: 'death-warded',
+    color: '#f8c471',
+    notes: ['Death Ward spell: first time you would drop to 0 HP, drop to 1 instead. 8 hours or single use.'],
+  },
   'mage-armored': {
     name: 'mage-armored',
     color: '#5499c7',
