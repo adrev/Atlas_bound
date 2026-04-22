@@ -80,6 +80,36 @@ export function CompendiumPanel({
   const [createMode, setCreateMode] = useState<'monster' | 'spell' | 'item' | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
 
+  /**
+   * Sub-filter state. Rendered as a second row under the primary
+   * category pills, scoped to whichever category is active.
+   *
+   *   spells   → level (0–9 or 'any') + school + class
+   *   items    → rarity + type substring
+   *   monsters → CR band + creature type substring
+   *
+   * All fields are optional; absence = "any". Reset whenever the
+   * primary category changes.
+   */
+  const [spellLevel, setSpellLevel] = useState<number | 'any'>('any');
+  const [spellSchool, setSpellSchool] = useState<string>('');
+  const [spellClass, setSpellClass] = useState<string>('');
+  const [itemRarity, setItemRarity] = useState<string>('');
+  const [itemType, setItemType] = useState<string>('');
+  const [monsterCrBand, setMonsterCrBand] = useState<string>('');
+  const [monsterType, setMonsterType] = useState<string>('');
+  // Reset sub-filters when the primary category changes so stale
+  // state doesn't leak across tabs.
+  useEffect(() => {
+    setSpellLevel('any');
+    setSpellSchool('');
+    setSpellClass('');
+    setItemRarity('');
+    setItemType('');
+    setMonsterCrBand('');
+    setMonsterType('');
+  }, [category]);
+
   const sessionId = useSessionStore((s) => s.sessionId);
   const isDM = useSessionStore((s) => s.isDM);
   const ruleSources = useSessionStore((s) => s.settings.ruleSources ?? ['phb']);
@@ -235,19 +265,61 @@ export function CompendiumPanel({
         setLoading(false);
       });
     } else {
-      const endpoint = cat === 'monsters' ? '/api/compendium/monsters?limit=30'
-        : cat === 'spells' ? '/api/compendium/spells?limit=30'
-        : '/api/compendium/items?limit=30';
+      // Apply the active sub-filters to each endpoint's query string.
+      // The server already supports these params — the sub-filter bar
+      // just surfaces them in the UI.
+      let endpoint: string;
+      if (cat === 'monsters') {
+        const qs = new URLSearchParams();
+        qs.set('limit', '60');
+        if (monsterType) qs.set('type', monsterType);
+        // CR band format: "0-1" | "1-5" | "5-10" | "10-20" | "20+"
+        if (monsterCrBand) {
+          const [lo, hi] = monsterCrBand.split('-');
+          if (lo) qs.set('cr_min', lo);
+          if (hi && hi !== '+') qs.set('cr_max', hi);
+        }
+        endpoint = `/api/compendium/monsters?${qs}`;
+      } else if (cat === 'spells') {
+        const qs = new URLSearchParams();
+        qs.set('limit', '120');
+        if (spellLevel !== 'any') qs.set('level', String(spellLevel));
+        if (spellSchool) qs.set('school', spellSchool);
+        if (spellClass) qs.set('class', spellClass);
+        endpoint = `/api/compendium/spells?${qs}`;
+      } else {
+        const qs = new URLSearchParams();
+        qs.set('limit', '60');
+        if (itemRarity) qs.set('rarity', itemRarity);
+        endpoint = `/api/compendium/items?${qs}`;
+      }
       fetch(endpoint).then(r => r.json()).then((data: any[]) => {
-        setResults(data.map((d: any) => ({
+        let mapped = data.map((d: any) => ({
           slug: d.slug, name: d.name, category: cat as CompendiumCategory,
-          snippet: '', cr: d.challengeRating, level: d.level, rarity: d.rarity,
-        })));
+          snippet: cat === 'spells'
+            ? [d.school, d.level === 0 ? 'Cantrip' : `L${d.level}`].filter(Boolean).join(' · ')
+            : cat === 'monsters'
+            ? [d.size, d.type, d.challengeRating ? `CR ${d.challengeRating}` : ''].filter(Boolean).join(' · ')
+            : [d.type, d.rarity].filter(Boolean).join(' · '),
+          cr: d.challengeRating, level: d.level, rarity: d.rarity,
+          // Keep the original `type` around so we can post-filter items
+          // by type substring (API doesn't support an item-type filter).
+          _rawType: d.type as string | undefined,
+        }));
+        // Items: client-side type filter (API doesn't support it).
+        if (cat === 'items' && itemType) {
+          const needle = itemType.toLowerCase();
+          mapped = mapped.filter((r) => (r._rawType ?? '').toLowerCase().includes(needle));
+        }
+        setResults(mapped);
         setLoading(false);
       }).catch(() => { setResults([]); setLoading(false); });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [category, query, sessionId, refreshKey, ruleSources.join(',')]);
+  }, [category, query, sessionId, refreshKey, ruleSources.join(','),
+      spellLevel, spellSchool, spellClass,
+      itemRarity, itemType,
+      monsterCrBand, monsterType]);
 
   const fetchResults = useCallback((q: string, cat: FilterCategory) => {
     if (!q.trim()) return; // Default browse handles empty state
@@ -354,6 +426,23 @@ export function CompendiumPanel({
             </button>
           ))}
         </div>
+      )}
+
+      {/* Secondary sub-filters — rendered per-category so the DM
+          doesn't have to scroll through 300+ spells to find the L3
+          evocation ones. Mirrors the wikidot.com "Spells by Level /
+          by School / by Class" pattern.  */}
+      {!lockCategory && !query.trim() && (
+        <SubFilterBar
+          category={category}
+          spellLevel={spellLevel} setSpellLevel={setSpellLevel}
+          spellSchool={spellSchool} setSpellSchool={setSpellSchool}
+          spellClass={spellClass} setSpellClass={setSpellClass}
+          itemRarity={itemRarity} setItemRarity={setItemRarity}
+          itemType={itemType} setItemType={setItemType}
+          monsterCrBand={monsterCrBand} setMonsterCrBand={setMonsterCrBand}
+          monsterType={monsterType} setMonsterType={setMonsterType}
+        />
       )}
 
       {/* Homebrew creation buttons */}
@@ -627,5 +716,242 @@ const styles: Record<string, React.CSSProperties> = {
     overflow: 'hidden',
     textOverflow: 'ellipsis',
     whiteSpace: 'nowrap',
+  },
+};
+
+// ═══════════════════════════════════════════════════════════════════
+// Sub-filter constants — wikidot.com-style secondary indexing.
+// ═══════════════════════════════════════════════════════════════════
+
+const SPELL_LEVELS: Array<{ v: number | 'any'; label: string }> = [
+  { v: 'any', label: 'All' },
+  { v: 0, label: 'Cantrip' },
+  { v: 1, label: '1' }, { v: 2, label: '2' }, { v: 3, label: '3' },
+  { v: 4, label: '4' }, { v: 5, label: '5' }, { v: 6, label: '6' },
+  { v: 7, label: '7' }, { v: 8, label: '8' }, { v: 9, label: '9' },
+];
+
+const SPELL_SCHOOLS = [
+  'Abjuration', 'Conjuration', 'Divination', 'Enchantment',
+  'Evocation', 'Illusion', 'Necromancy', 'Transmutation',
+];
+
+const SPELL_CLASSES = [
+  'Artificer', 'Bard', 'Cleric', 'Druid', 'Paladin',
+  'Ranger', 'Sorcerer', 'Warlock', 'Wizard',
+];
+
+const ITEM_RARITIES: Array<{ v: string; label: string; color: string }> = [
+  { v: 'common', label: 'Common', color: '#888' },
+  { v: 'uncommon', label: 'Uncommon', color: '#27ae60' },
+  { v: 'rare', label: 'Rare', color: '#3498db' },
+  { v: 'very_rare', label: 'Very Rare', color: '#9b59b6' },
+  { v: 'legendary', label: 'Legendary', color: '#e67e22' },
+  { v: 'artifact', label: 'Artifact', color: '#c0392b' },
+];
+
+const ITEM_TYPES = [
+  'Weapon', 'Armor', 'Shield', 'Wondrous item', 'Potion', 'Scroll',
+  'Wand', 'Rod', 'Staff', 'Ring', 'Ammunition', 'Tool',
+];
+
+const CR_BANDS: Array<{ v: string; label: string }> = [
+  { v: '0-1', label: '0–1 (warm-up)' },
+  { v: '1-5', label: '1–5 (tier 1)' },
+  { v: '5-10', label: '5–10 (tier 2)' },
+  { v: '10-20', label: '10–20 (tier 3)' },
+  { v: '20-+', label: '20+ (tier 4)' },
+];
+
+const MONSTER_TYPES = [
+  'Aberration', 'Beast', 'Celestial', 'Construct', 'Dragon',
+  'Elemental', 'Fey', 'Fiend', 'Giant', 'Humanoid', 'Monstrosity',
+  'Ooze', 'Plant', 'Undead',
+];
+
+interface SubFilterBarProps {
+  category: FilterCategory;
+  spellLevel: number | 'any'; setSpellLevel: (v: number | 'any') => void;
+  spellSchool: string; setSpellSchool: (v: string) => void;
+  spellClass: string; setSpellClass: (v: string) => void;
+  itemRarity: string; setItemRarity: (v: string) => void;
+  itemType: string; setItemType: (v: string) => void;
+  monsterCrBand: string; setMonsterCrBand: (v: string) => void;
+  monsterType: string; setMonsterType: (v: string) => void;
+}
+
+/**
+ * Secondary filter row. Renders a different control set depending on
+ * the active primary category. Mirrors the wikidot.com pattern of
+ * "by Level / by School / by Class" for spells + "by Rarity / by
+ * Type" for items + "by CR / by Type" for monsters.
+ *
+ * Returns null for categories without a sub-filter (classes / races /
+ * backgrounds / feats / conditions / rules / homebrew / all) so the
+ * UI stays flat for small lists where a secondary index would be
+ * noise.
+ */
+function SubFilterBar(p: SubFilterBarProps) {
+  if (p.category === 'spells') {
+    return (
+      <div style={subStyles.wrap}>
+        <div style={subStyles.row}>
+          {SPELL_LEVELS.map((lvl) => (
+            <button
+              key={String(lvl.v)}
+              onClick={() => p.setSpellLevel(lvl.v)}
+              style={{ ...subStyles.chip, ...(p.spellLevel === lvl.v ? subStyles.chipActive : {}) }}
+            >
+              {lvl.label}
+            </button>
+          ))}
+        </div>
+        <div style={subStyles.row}>
+          <label style={subStyles.label}>School</label>
+          <select
+            value={p.spellSchool}
+            onChange={(e) => p.setSpellSchool(e.target.value)}
+            style={subStyles.select}
+          >
+            <option value="">Any</option>
+            {SPELL_SCHOOLS.map((s) => (<option key={s} value={s.toLowerCase()}>{s}</option>))}
+          </select>
+          <label style={subStyles.label}>Class</label>
+          <select
+            value={p.spellClass}
+            onChange={(e) => p.setSpellClass(e.target.value)}
+            style={subStyles.select}
+          >
+            <option value="">Any</option>
+            {SPELL_CLASSES.map((c) => (<option key={c} value={c.toLowerCase()}>{c}</option>))}
+          </select>
+        </div>
+      </div>
+    );
+  }
+  if (p.category === 'items') {
+    return (
+      <div style={subStyles.wrap}>
+        <div style={subStyles.row}>
+          {ITEM_RARITIES.map((r) => {
+            const active = p.itemRarity === r.v;
+            return (
+              <button
+                key={r.v}
+                onClick={() => p.setItemRarity(active ? '' : r.v)}
+                style={{
+                  ...subStyles.chip,
+                  ...(active ? {
+                    ...subStyles.chipActive,
+                    background: `${r.color}22`,
+                    borderColor: `${r.color}66`,
+                    color: r.color,
+                  } : {}),
+                }}
+              >
+                {r.label}
+              </button>
+            );
+          })}
+        </div>
+        <div style={subStyles.row}>
+          <label style={subStyles.label}>Type</label>
+          <select
+            value={p.itemType}
+            onChange={(e) => p.setItemType(e.target.value)}
+            style={subStyles.select}
+          >
+            <option value="">Any</option>
+            {ITEM_TYPES.map((t) => (<option key={t} value={t.toLowerCase()}>{t}</option>))}
+          </select>
+        </div>
+      </div>
+    );
+  }
+  if (p.category === 'monsters') {
+    return (
+      <div style={subStyles.wrap}>
+        <div style={subStyles.row}>
+          {CR_BANDS.map((b) => (
+            <button
+              key={b.v}
+              onClick={() => p.setMonsterCrBand(p.monsterCrBand === b.v ? '' : b.v)}
+              style={{ ...subStyles.chip, ...(p.monsterCrBand === b.v ? subStyles.chipActive : {}) }}
+            >
+              {b.label}
+            </button>
+          ))}
+        </div>
+        <div style={subStyles.row}>
+          <label style={subStyles.label}>Type</label>
+          <select
+            value={p.monsterType}
+            onChange={(e) => p.setMonsterType(e.target.value)}
+            style={subStyles.select}
+          >
+            <option value="">Any</option>
+            {MONSTER_TYPES.map((t) => (<option key={t} value={t.toLowerCase()}>{t}</option>))}
+          </select>
+        </div>
+      </div>
+    );
+  }
+  return null;
+}
+
+const subStyles: Record<string, React.CSSProperties> = {
+  wrap: {
+    display: 'flex',
+    flexDirection: 'column' as const,
+    gap: 6,
+    padding: '8px 12px 10px',
+    borderBottom: `1px solid ${theme.border.default}`,
+    flexShrink: 0,
+    background: theme.bg.deep,
+  },
+  row: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 4,
+    flexWrap: 'wrap' as const,
+    rowGap: 4,
+  },
+  chip: {
+    padding: '3px 8px',
+    fontSize: 9,
+    fontWeight: 600,
+    letterSpacing: '0.04em',
+    borderRadius: 10,
+    border: `1px solid ${theme.border.default}`,
+    background: 'transparent',
+    color: theme.text.muted,
+    cursor: 'pointer',
+    transition: 'all 0.15s ease',
+    whiteSpace: 'nowrap' as const,
+    flexShrink: 0,
+  },
+  chipActive: {
+    background: 'rgba(212, 168, 67, 0.16)',
+    borderColor: 'rgba(212, 168, 67, 0.5)',
+    color: theme.gold.primary,
+  },
+  label: {
+    fontSize: 9,
+    fontWeight: 700,
+    letterSpacing: '0.1em',
+    textTransform: 'uppercase' as const,
+    color: theme.text.muted,
+    marginLeft: 4,
+  },
+  select: {
+    padding: '3px 6px',
+    fontSize: 11,
+    background: theme.bg.elevated,
+    color: theme.text.primary,
+    border: `1px solid ${theme.border.default}`,
+    borderRadius: 4,
+    cursor: 'pointer',
+    outline: 'none',
+    fontFamily: theme.font.body,
   },
 };
