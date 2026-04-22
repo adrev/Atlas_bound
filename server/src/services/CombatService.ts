@@ -280,6 +280,68 @@ export async function startCombatAsync(sessionId: string, tokenIds: string[]): P
         speed = (charRow.speed as number) ?? 30;
         portrait = charRow.portrait_url as string | null;
 
+        // ── Unarmored Defense (Barbarian + Monk) ───────────────
+        // RAW: class features compute AC from ability scores when
+        // the PC isn't wearing armor. The stored armor_class column
+        // is "what the sheet says" — for homebrew / manually-created
+        // characters without gear tracking, it's often just 10 even
+        // though the character should be 14-18 once DEX / CON / WIS
+        // modifiers apply. DDB imports already bake this correctly
+        // so we gate on no-ddb-id to avoid double-applying.
+        try {
+          const ddbId = charRow.dndbeyond_id as string | null;
+          if (!ddbId) {
+            const classLower = String(charRow.class || '').toLowerCase();
+            const rawAbilities = charRow.ability_scores;
+            const scores = (typeof rawAbilities === 'string'
+              ? JSON.parse(rawAbilities)
+              : (rawAbilities ?? {})) as Record<string, number>;
+            const mod = (s: string): number => {
+              const v = Number(scores?.[s] ?? scores?.[s.toLowerCase()] ?? 10);
+              return Number.isFinite(v) ? Math.floor((v - 10) / 2) : 0;
+            };
+            // Detect equipped armor — if the character has any item
+            // with category 'armor' AND equipped=true (DDB shape) we
+            // assume the stored AC is correct. Absence of armor lets
+            // Unarmored Defense kick in.
+            let hasArmor = false;
+            let hasShield = false;
+            try {
+              const invRaw = charRow.inventory;
+              const inv = typeof invRaw === 'string' ? JSON.parse(invRaw) : (invRaw ?? []);
+              if (Array.isArray(inv)) {
+                for (const item of inv) {
+                  const it = item as Record<string, unknown>;
+                  const cat = String(it?.category ?? it?.type ?? '').toLowerCase();
+                  const equipped = it?.equipped !== false; // default true when field absent
+                  if (!equipped) continue;
+                  if (/armor/.test(cat) && !/shield/.test(cat)) hasArmor = true;
+                  if (/shield/.test(cat) || /shield/i.test(String(it?.name ?? ''))) hasShield = true;
+                }
+              }
+            } catch { /* inventory unparseable — fall through */ }
+
+            if (!hasArmor) {
+              // Barbarian: 10 + DEX + CON (shield allowed).
+              if (classLower.includes('barbarian')) {
+                const barbAc = 10 + mod('dex') + mod('con') + (hasShield ? 2 : 0);
+                if (barbAc > ac) ac = barbAc;
+              }
+              // Monk: 10 + DEX + WIS (no shield).
+              if (classLower.includes('monk') && !hasShield) {
+                const monkAc = 10 + mod('dex') + mod('wis');
+                if (monkAc > ac) ac = monkAc;
+              }
+              // Draconic Sorcerer passive: 13 + DEX (no shield).
+              // Only lifts AC — doesn't downgrade.
+              if (classLower.includes('draconic')) {
+                const dragAc = 13 + mod('dex');
+                if (dragAc > ac) ac = dragAc;
+              }
+            }
+          }
+        } catch { /* unarmored-defense best-effort */ }
+
         // Race traits: merge race-granted resistances into the
         // character's defenses JSON so the damage resolver picks them
         // up. Halfling Brave / Gnome Cunning / Elf charm-adv are
@@ -572,6 +634,29 @@ export function setInitiative(sessionId: string, tokenId: string, total: number)
   return combatant;
 }
 
+/**
+ * DM-only. Toggle the Surprise flag on a combatant. Called during the
+ * Initiative Review phase — after initiative is rolled but before the
+ * DM locks it, they check off which creatures were ambushed. The
+ * corresponding combatant's first turn gets skipped by `nextTurn`.
+ *
+ * Alert feat is immune to surprise (PHB p.165); this helper refuses
+ * to flag a combatant with `hasAlert`. Caller should listen for the
+ * `null` return and surface "Alert feat: immune to surprise" in the UI.
+ */
+export function setSurprise(
+  sessionId: string, tokenId: string, surprised: boolean,
+): Combatant | null {
+  const room = getRoom(sessionId);
+  if (!room?.combatState) return null;
+  const combatant = room.combatState.combatants.find(c => c.tokenId === tokenId);
+  if (!combatant) return null;
+  if (surprised && combatant.hasAlert) return null; // Alert feat immunity
+  combatant.surprised = surprised;
+  persistCombatState(room.combatState);
+  return combatant;
+}
+
 export function sortInitiative(sessionId: string): Combatant[] {
   const room = getRoom(sessionId);
   if (!room?.combatState) return [];
@@ -603,10 +688,19 @@ export function nextTurn(sessionId: string): {
   // Cap iterations at combatants.length to guarantee termination even
   // if every participant is dead (avoids infinite loops).
   let safety = state.combatants.length + 1;
+  const previousRound = state.roundNumber;
 
   while (safety-- > 0) {
     state.currentTurnIndex++;
-    if (state.currentTurnIndex >= state.combatants.length) { state.currentTurnIndex = 0; state.roundNumber++; }
+    if (state.currentTurnIndex >= state.combatants.length) {
+      state.currentTurnIndex = 0;
+      state.roundNumber++;
+      // Round advanced — any surprised combatants now act normally
+      // (5e RAW: surprise only applies to the first turn of combat).
+      if (state.roundNumber > 1) {
+        for (const c of state.combatants) if (c.surprised) c.surprised = false;
+      }
+    }
     const candidate = state.combatants[state.currentTurnIndex];
     if (!candidate) break;
 
@@ -633,6 +727,17 @@ export function nextTurn(sessionId: string): {
     if (isDown && isPlayerCharacter && hasDeathSaves &&
         candidate.deathSaves.failures >= 3) {
       skippedTokenIds.push(candidate.tokenId); continue;
+    }
+
+    // Surprise: during round 1, surprised combatants lose their turn
+    // entirely (no action, no movement, no reaction). `previousRound`
+    // is captured BEFORE the while loop; we only skip on the very
+    // first round so a combatant that stayed surprised after a round
+    // rollover (shouldn't happen since we clear above) would still
+    // get their turn. The flag auto-clears when round advances above.
+    if (candidate.surprised && state.roundNumber === 1 && previousRound === 1) {
+      skippedTokenIds.push(candidate.tokenId);
+      continue;
     }
 
     // Downed PC who still has death saves to roll — they get a turn

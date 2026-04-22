@@ -390,6 +390,31 @@ export function registerCombatEvents(io: Server, socket: Socket): void {
     }
   }));
 
+  /**
+   * DM-only. Toggle the Surprise flag on a combatant during the
+   * review phase. Broadcasts `combat:surprise-set` so every client's
+   * InitiativeReviewModal + stored combatant state stay in sync.
+   * Alert feat immunity is enforced in CombatService.setSurprise —
+   * null return means "blocked (probably Alert)".
+   */
+  socket.on('combat:set-surprise', safeHandler(socket, async (data) => {
+    const raw = data as Record<string, unknown> | undefined;
+    const tokenId = typeof raw?.tokenId === 'string' ? raw.tokenId : null;
+    const surprised = Boolean(raw?.surprised);
+    if (!tokenId) return;
+    const ctx = getPlayerBySocketId(socket.id);
+    if (!ctx || !playerIsDM(ctx)) return;
+    const combatant = CombatService.setSurprise(ctx.room.sessionId, tokenId, surprised);
+    if (!combatant) {
+      io.to(socket.id).emit('combat:set-surprise-rejected', { tokenId, reason: 'alert-immune-or-missing' });
+      return;
+    }
+    io.to(ctx.room.sessionId).emit('combat:surprise-set', {
+      tokenId,
+      surprised: combatant.surprised === true,
+    });
+  }));
+
   socket.on('combat:next-turn', safeHandler(socket, async () => {
     const ctx = getPlayerBySocketId(socket.id);
     if (!ctx) return;

@@ -341,6 +341,24 @@ export function registerListeners(socket: Socket): () => void {
     useCombatStore.getState().setInitiative(tokenId, total);
   });
 
+  /**
+   * DM flipped the Surprise flag on a combatant. Propagate into the
+   * store so the review modal checkbox + any later UI that shows a
+   * surprised badge stay in sync across every client.
+   */
+  socket.on('combat:surprise-set', (payload: { tokenId: string; surprised: boolean }) => {
+    useCombatStore.getState().setSurprise(payload.tokenId, payload.surprised);
+  });
+
+  /**
+   * Server rejected a surprise toggle (usually because the combatant
+   * has the Alert feat and is immune). Whisper-style notice — no
+   * store mutation; the checkbox stays unchecked on its own.
+   */
+  socket.on('combat:set-surprise-rejected', (payload: { tokenId: string; reason: string }) => {
+    console.warn('[COMBAT] surprise rejected for', payload.tokenId, payload.reason);
+  });
+
   socket.on('combat:all-initiatives-ready', ({ combatants }) => {
     console.log('[COMBAT] all-initiatives-ready',
       combatants.map((c: Combatant) => `${c.name}${c.isNPC ? '' : ' (PC)'}=${c.initiative}`).join(', '),
@@ -605,6 +623,8 @@ export function registerListeners(socket: Socket): () => void {
     socket.off('combat:initiative-prompt');
     socket.off('combat:initiative-set');
     socket.off('combat:all-initiatives-ready');
+    socket.off('combat:surprise-set');
+    socket.off('combat:set-surprise-rejected');
     socket.off('combat:turn-advanced');
     socket.off('combat:hp-changed');
     socket.off('combat:condition-changed');

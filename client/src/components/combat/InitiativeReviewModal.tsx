@@ -3,7 +3,7 @@ import { Swords, X } from 'lucide-react';
 import type { Combatant } from '@dnd-vtt/shared';
 import { useCombatStore } from '../../stores/useCombatStore';
 import { useSessionStore } from '../../stores/useSessionStore';
-import { emitSetInitiative, emitLockInitiative, emitEndCombat } from '../../socket/emitters';
+import { emitSetInitiative, emitLockInitiative, emitEndCombat, emitSetSurprise } from '../../socket/emitters';
 import { theme } from '../../styles/theme';
 
 /**
@@ -93,6 +93,7 @@ function ReviewCard({ combatants }: { combatants: Combatant[] }) {
             <span style={{ ...styles.col, ...styles.colRoll }}>Roll</span>
             <span style={{ ...styles.col, ...styles.colBonus }}>Bonus</span>
             <span style={{ ...styles.col, ...styles.colTotal }}>Total</span>
+            <span style={{ ...styles.col, ...styles.colSurprise }} title="Skip first turn (ambush)">😱</span>
           </div>
           {combatants.map((c, i) => {
             const rawRoll = c.initiative - c.initiativeBonus;
@@ -147,6 +148,18 @@ function ReviewCard({ combatants }: { combatants: Combatant[] }) {
                     style={styles.stepper}
                     aria-label={`Increase ${c.name}'s initiative`}
                   >+</button>
+                </span>
+                <span style={{ ...styles.col, ...styles.colSurprise }}>
+                  <input
+                    type="checkbox"
+                    checked={c.surprised === true}
+                    disabled={c.hasAlert}
+                    title={c.hasAlert
+                      ? 'Alert feat: immune to surprise'
+                      : c.surprised ? 'Surprised — skips first turn' : 'Mark as surprised'}
+                    onChange={(e) => emitSetSurprise(c.tokenId, e.target.checked)}
+                    style={styles.surpriseBox}
+                  />
                 </span>
               </div>
             );
@@ -212,7 +225,7 @@ const styles: Record<string, React.CSSProperties> = {
     padding: 16,
   },
   card: {
-    width: 560,
+    width: 600,
     maxWidth: '100%',
     maxHeight: '85vh',
     overflowY: 'auto',
@@ -289,6 +302,7 @@ const styles: Record<string, React.CSSProperties> = {
   colRoll: { width: 58, justifyContent: 'center' },
   colBonus: { width: 94, justifyContent: 'center', gap: 4 },
   colTotal: { width: 128, justifyContent: 'flex-end', gap: 4 },
+  colSurprise: { width: 28, justifyContent: 'center' },
   portrait: {
     width: 28,
     height: 28,
@@ -376,6 +390,12 @@ const styles: Record<string, React.CSSProperties> = {
     cursor: 'pointer',
     fontSize: 14,
     lineHeight: 1,
+  },
+  surpriseBox: {
+    width: 16,
+    height: 16,
+    cursor: 'pointer',
+    accentColor: theme.gold.primary,
   },
   footer: {
     display: 'flex',

@@ -25,6 +25,15 @@ export interface Combatant {
    * the number is higher than the DEX mod alone would explain.
    */
   hasAlert?: boolean;
+  /**
+   * 5e Surprise Round (PHB p.189): creatures that are surprised at
+   * the start of combat can't move or take an action on their first
+   * turn, and can't take a reaction until that turn ends. Cleared
+   * automatically at the start of round 2. DM toggles this in the
+   * InitiativeReviewModal before locking initiative. Never true for
+   * combatants with Alert (feat grants immunity to surprise).
+   */
+  surprised?: boolean;
 }
 
 export interface CombatState {

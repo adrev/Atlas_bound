@@ -123,6 +123,15 @@ export function emitUpdateMapLighting(
  * too — useful when a condition suppresses vision). Undefined fields
  * in the overrides object fall through to the character.
  */
+/**
+ * DM-only during combat review phase. Flip the Surprise flag on a
+ * combatant so their first turn gets skipped. Server validates
+ * Alert-feat immunity and may reject with `combat:set-surprise-rejected`.
+ */
+export function emitSetSurprise(tokenId: string, surprised: boolean) {
+  getSocket().emit('combat:set-surprise', { tokenId, surprised });
+}
+
 export function emitUpdateTokenVisionOverrides(
   tokenId: string,
   visionOverrides: {

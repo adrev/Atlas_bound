@@ -65,6 +65,7 @@ interface CombatActions {
   setCombatants: (combatants: Combatant[]) => void;
   nextTurn: (currentTurnIndex: number, roundNumber: number, economy: ActionEconomy) => void;
   setInitiative: (tokenId: string, total: number) => void;
+  setSurprise: (tokenId: string, surprised: boolean) => void;
   addInitiativePrompt: (tokenId: string, bonus: number) => void;
   updateHP: (tokenId: string, hp: number, tempHp: number) => void;
   addCondition: (tokenId: string, conditions: Condition[]) => void;
@@ -182,6 +183,13 @@ export const useCombatStore = create<CombatState & CombatActions>((set) => ({
       );
       return { initiativeRolls: newRolls, combatants };
     }),
+
+  setSurprise: (tokenId, surprised) =>
+    set((state) => ({
+      combatants: state.combatants.map((c) =>
+        c.tokenId === tokenId ? { ...c, surprised } : c,
+      ),
+    })),
 
   addInitiativePrompt: (tokenId, bonus) =>
     set((state) => ({
