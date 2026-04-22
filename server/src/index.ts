@@ -21,6 +21,7 @@ import encountersRouter from './routes/encounters.js';
 import errorsRouter from './routes/errors.js';
 import { seedCompendium, isCompendiumSeeded } from './services/Open5eService.js';
 import { seedEquipment, isEquipmentSeeded } from './services/seedEquipment.js';
+import { backfillTokenSnaps } from './services/backfillTokenSnaps.js';
 import { registerSocketHandler } from './socket/handler.js';
 import { setIO } from './socket/ioInstance.js';
 import { setupStaticServing } from './static.js';
@@ -64,6 +65,21 @@ if (!equipmentSeeded) {
   await seedEquipment();
 } else {
   console.log('PHB equipment already seeded');
+}
+
+// One-shot backfill: snap legacy tokens (added before the
+// map:token-add snap path shipped on 2026-04-19) to their nearest
+// cell center. Marker row in `schema_markers` makes this idempotent.
+try {
+  const tokenSnap = await backfillTokenSnaps();
+  if (tokenSnap.skipped) {
+    console.log('Token snap backfill already applied');
+  } else {
+    console.log(`Token snap backfill: ${tokenSnap.updated}/${tokenSnap.scanned} tokens moved`);
+  }
+} catch (err) {
+  // Non-fatal — server should still boot if the backfill trips.
+  console.warn('[backfillTokenSnaps] failed:', err);
 }
 
 // Create Express app
