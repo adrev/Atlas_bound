@@ -18,6 +18,13 @@ export interface Combatant {
   portraitUrl: string | null;
   /** 5e exhaustion level 0–6. Propagated from the character row at combat start. */
   exhaustionLevel?: number;
+  /**
+   * True when the combatant has the Alert feat. Stamped at combat
+   * start by CombatService; used by InitiativeReviewModal to render
+   * a small "Alert" chip next to the +5 bonus so the DM can see why
+   * the number is higher than the DEX mod alone would explain.
+   */
+  hasAlert?: boolean;
 }
 
 export interface CombatState {

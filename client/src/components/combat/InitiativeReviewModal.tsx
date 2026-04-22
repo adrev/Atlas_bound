@@ -122,6 +122,11 @@ function ReviewCard({ combatants }: { combatants: Combatant[] }) {
                 </span>
                 <span style={{ ...styles.col, ...styles.colBonus }}>
                   <span style={styles.bonusText}>{bonusStr}</span>
+                  {c.hasAlert && (
+                    <span style={styles.alertChip} title="Alert feat: +5 initiative">
+                      ALERT
+                    </span>
+                  )}
                 </span>
                 <span style={{ ...styles.col, ...styles.colTotal }}>
                   <button
@@ -282,7 +287,7 @@ const styles: Record<string, React.CSSProperties> = {
     gap: 8,
   },
   colRoll: { width: 58, justifyContent: 'center' },
-  colBonus: { width: 48, justifyContent: 'center' },
+  colBonus: { width: 94, justifyContent: 'center', gap: 4 },
   colTotal: { width: 128, justifyContent: 'flex-end', gap: 4 },
   portrait: {
     width: 28,
@@ -332,6 +337,17 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 12,
     fontFamily: 'monospace',
     color: theme.text.secondary,
+  },
+  alertChip: {
+    fontSize: 8,
+    fontWeight: 700,
+    letterSpacing: '0.08em',
+    color: theme.gold.primary,
+    background: 'rgba(232,196,85,0.14)',
+    border: `1px solid ${theme.gold.border}`,
+    padding: '1px 5px',
+    borderRadius: 3,
+    flexShrink: 0,
   },
   totalInput: {
     width: 52,

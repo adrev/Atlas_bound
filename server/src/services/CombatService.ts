@@ -123,6 +123,10 @@ export async function startCombatAsync(sessionId: string, tokenIds: string[]): P
     let portrait: string | null = null;
     let isNPC = !token.ownerUserId;
     let exhaustionLevel = 0;
+    // Feat flags surfaced to the initiative review UI. `hasAlertFlag`
+    // piggybacks on the Alert-detection path below and tells the DM
+    // table *why* this combatant's bonus is higher than their DEX mod.
+    let hasAlertFlag = false;
 
     if (token.characterId) {
       const { rows } = await pool.query('SELECT * FROM characters WHERE id = $1', [token.characterId]);
@@ -353,6 +357,7 @@ export async function startCombatAsync(sessionId: string, tokenIds: string[]): P
           const hasAlert = featureList.some((f) => typeof f?.name === 'string' && /^\s*alert\s*$/i.test(f.name));
           const hasTough = featureList.some((f) => typeof f?.name === 'string' && /^\s*tough\s*$/i.test(f.name));
           if (hasAlert) {
+            hasAlertFlag = true;
             // If storedInit already included Alert, we'd double-count.
             // Detect by comparing against the raw DEX mod — stored
             // >= DEX+5 means Alert is already baked in. Heuristic but
@@ -404,6 +409,7 @@ export async function startCombatAsync(sessionId: string, tokenIds: string[]): P
       deathSaves: { successes: 0, failures: 0 },
       portraitUrl: portrait ?? token.imageUrl,
       exhaustionLevel,
+      hasAlert: hasAlertFlag,
     });
   }
 
