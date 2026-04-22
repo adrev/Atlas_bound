@@ -15,6 +15,12 @@ interface Note {
   createdBy: string;
   createdAt: string;
   updatedAt: string;
+  /**
+   * Optional image URL. Populated when the note was auto-created
+   * from a `session:handout` with an attached image. Plain notes
+   * created via the Notes panel don't have one.
+   */
+  imageUrl?: string | null;
 }
 
 type CategoryFilter = 'all' | 'npc' | 'location' | 'quest' | 'session-recap';
@@ -306,9 +312,19 @@ export function NotesPanel() {
                         </Button>
                       </>
                     ) : (
-                      <div style={styles.readOnlyContent}>
-                        {note.content || 'No content yet.'}
-                      </div>
+                      <>
+                        {note.imageUrl && (
+                          <img
+                            src={note.imageUrl}
+                            alt="Handout attachment"
+                            style={styles.noteImage}
+                            onError={(e) => { e.currentTarget.style.display = 'none'; }}
+                          />
+                        )}
+                        <div style={styles.readOnlyContent}>
+                          {note.content || 'No content yet.'}
+                        </div>
+                      </>
                     )}
                   </div>
                 );
@@ -479,6 +495,15 @@ const styles: Record<string, React.CSSProperties> = {
     resize: 'vertical' as const,
     fontFamily: theme.font.body,
     boxSizing: 'border-box' as const,
+  },
+  noteImage: {
+    maxWidth: '100%',
+    maxHeight: 240,
+    borderRadius: theme.radius.sm,
+    border: `1px solid ${theme.border.default}`,
+    marginBottom: 8,
+    objectFit: 'contain' as const,
+    display: 'block',
   },
   readOnlyContent: {
     fontSize: 12,

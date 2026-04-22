@@ -1,18 +1,51 @@
-import { useState } from 'react';
-import { Send, X } from 'lucide-react';
+import { useRef, useState } from 'react';
+import { Send, X, Upload } from 'lucide-react';
 import { useSessionStore } from '../../stores/useSessionStore';
 import { getSocket } from '../../socket/client';
 import { theme } from '../../styles/theme';
-import { Button } from '../ui';
+import { Button, showToast } from '../ui';
 
 export function HandoutSender() {
   const [open, setOpen] = useState(false);
   const [title, setTitle] = useState('');
   const [content, setContent] = useState('');
   const [imageUrl, setImageUrl] = useState('');
+  const [uploading, setUploading] = useState(false);
   const [sendToAll, setSendToAll] = useState(true);
   const [selectedPlayers, setSelectedPlayers] = useState<Set<string>>(new Set());
   const players = useSessionStore((s) => s.players);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  /**
+   * Handle file picker: upload the selected image to the handout
+   * upload endpoint, then stuff the returned URL into imageUrl so
+   * it rides along on the outgoing session:handout payload + the
+   * auto-created note row.
+   */
+  const handleFilePicked = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploading(true);
+    try {
+      const form = new FormData();
+      form.append('image', file);
+      const resp = await fetch('/api/uploads/handout', { method: 'POST', body: form });
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({ error: 'Upload failed' }));
+        showToast({ message: `Upload failed: ${err.error || resp.statusText}`, variant: 'danger' });
+        return;
+      }
+      const data = await resp.json() as { url: string };
+      setImageUrl(data.url);
+      showToast({ message: 'Image attached.', variant: 'success' });
+    } catch (err) {
+      showToast({ message: `Upload failed: ${err instanceof Error ? err.message : 'unknown'}`, variant: 'danger' });
+    } finally {
+      setUploading(false);
+      // Reset the input so picking the same file again still fires onChange.
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  };
 
   const connectedPlayers = players.filter((p) => p.role !== 'dm' && p.connected);
 
@@ -87,13 +120,51 @@ export function HandoutSender() {
           rows={4}
         />
 
-        <input
-          type="text"
-          placeholder="Image URL (optional)..."
-          value={imageUrl}
-          onChange={(e) => setImageUrl(e.target.value)}
-          style={styles.input}
-        />
+        {/* Image — either upload a file or paste a URL. Stored with
+            the auto-created note so players see the image when
+            browsing past handouts in the Notes tab. */}
+        <div style={styles.imageRow}>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/png,image/jpeg,image/webp,image/gif"
+            onChange={handleFilePicked}
+            style={{ display: 'none' }}
+          />
+          <Button
+            variant="ghost"
+            size="sm"
+            leadingIcon={<Upload size={12} />}
+            onClick={() => fileInputRef.current?.click()}
+            disabled={uploading}
+          >
+            {uploading ? 'Uploading…' : imageUrl ? 'Replace image' : 'Upload image'}
+          </Button>
+          <input
+            type="text"
+            placeholder="…or paste an image URL"
+            value={imageUrl}
+            onChange={(e) => setImageUrl(e.target.value)}
+            style={{ ...styles.input, flex: 1 }}
+          />
+        </div>
+        {imageUrl && (
+          <div style={styles.imagePreview}>
+            <img
+              src={imageUrl}
+              alt="Handout preview"
+              style={styles.previewImg}
+              onError={(e) => { e.currentTarget.style.display = 'none'; }}
+            />
+            <button
+              style={styles.clearImageBtn}
+              onClick={() => setImageUrl('')}
+              title="Remove image"
+            >
+              <X size={11} /> Clear
+            </button>
+          </div>
+        )}
 
         {/* Player selector */}
         <div style={styles.playerSection}>
@@ -228,5 +299,40 @@ const styles: Record<string, React.CSSProperties> = {
     flexDirection: 'column' as const,
     gap: 4,
     paddingLeft: 16,
+  },
+  imageRow: {
+    display: 'flex',
+    gap: 6,
+    alignItems: 'center',
+  },
+  imagePreview: {
+    position: 'relative' as const,
+    display: 'flex',
+    flexDirection: 'column' as const,
+    alignItems: 'flex-start',
+    gap: 4,
+    padding: 6,
+    background: theme.bg.deep,
+    border: `1px solid ${theme.border.default}`,
+    borderRadius: theme.radius.sm,
+  },
+  previewImg: {
+    maxWidth: '100%',
+    maxHeight: 160,
+    borderRadius: theme.radius.sm,
+    objectFit: 'contain' as const,
+    display: 'block',
+  },
+  clearImageBtn: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 4,
+    padding: '2px 8px',
+    fontSize: 10,
+    background: 'transparent',
+    border: `1px solid ${theme.border.default}`,
+    borderRadius: 4,
+    color: theme.text.muted,
+    cursor: 'pointer',
   },
 };

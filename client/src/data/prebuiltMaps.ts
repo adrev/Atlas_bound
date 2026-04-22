@@ -90,6 +90,8 @@ export const PREBUILT_MAPS: PrebuiltMap[] = [
   map('sandstone-arena', 'Sandstone Arena', 'Sunlit colosseum battle pit with gates, spike traps, broken cover, and tiered stone stands', 'combat', 30, 30, 513),
   map('prison-wagon-ambush', 'Prison Wagon Ambush', 'Muddy woodland road where a barred transport wagon has been wrecked beside ditches and deadfall', 'combat', 36, 24, 514),
   map('ancient-druid-grove', 'Ancient Druid Grove', 'Moonwell clearing ringed by standing stones, branching forest paths, roots, and a hidden cave mouth', 'combat', 30, 30, 515),
+  map('breached-gatehouse', 'Breached Gatehouse', 'Shattered keep or city gate with rubble, kill lanes, and muddy siege ground outside the walls', 'combat', 32, 22, 516),
+  map('fortified-war-camp', 'Fortified War Camp', 'Entrenched military encampment with command tents, stockades, supply lines, and muddy approach roads', 'combat', 30, 30, 517),
 
   // --- Rest / Camp ---------------------------------------------------------
   map('roadside-night-camp', 'Roadside Night Camp', 'Forest roadside campsite with tents, bedrolls, wagon cover, and campfire light', 'rest', 32, 26, 601),
@@ -129,6 +131,7 @@ export const PREBUILT_MAPS: PrebuiltMap[] = [
   map('ship-belowdecks', 'Ship Belowdecks', 'Cramped sailing-ship interior with cargo hold, crew hammocks, galley, armory, and captain cabin', 'dungeon', 24, 36, 220),
   map('planar-portal-room', 'Planar Portal Room', 'Ancient chamber split by elemental hazards around a glowing central portal and crystal pylons', 'dungeon', 30, 30, 221),
   map('velvet-cult-dungeon', 'Velvet Cult Dungeon', 'Decadent black-marble cult basement with red curtains, masks, wine cellar, restraint chamber, and altar room', 'dungeon', 28, 28, 222),
+  map('sunken-temple', 'Sunken Temple', 'Flooded temple ruins with submerged halls, broken causeways, and a central altar rising from green water', 'dungeon', 30, 30, 224),
 
   // --- Social / Interior ---------------------------------------------------
   map('tavern-common-room', 'Tavern Common Room', 'Warm inn common room with bar, hearth, tables, stage, stairs, and kitchen prep area', 'social', 30, 20, 311),
@@ -148,6 +151,8 @@ export const PREBUILT_MAPS: PrebuiltMap[] = [
   map('grand-library-archive', 'Grand Library Archive', 'Vast marble archive with reading tables, book stacks, study rooms, stair towers, and an arcane vault', 'social', 36, 24, 321),
   map('council-courthouse', 'Council Courthouse', 'Civic council hall with public benches, magistrate office, evidence room, holding cells, and guarded exits', 'social', 28, 28, 322),
   map('grand-cathedral-interior', 'Grand Cathedral Interior', 'Marble cathedral nave with pews, side chapels, stained-glass light, confession booths, and raised altar', 'social', 24, 36, 323),
+  map('frontier-farmstead', 'Frontier Farmstead', 'Raid-scarred rural homestead with a barn, pens, crop rows, orchard, and a muddy central yard', 'social', 34, 24, 324),
+  map('hilltop-monastery', 'Hilltop Monastery', 'Stone cloister monastery with a quiet central garden, chapel, refectory, cells, and crumbling outer walls', 'social', 30, 30, 325),
   map('elfsong-tavern', 'The Elfsong Tavern', 'Two-floor inn with a long bar, hearth, and private booths upstairs', 'social', 25, 20, 909),
   map('cathedral-lathander', 'Cathedral of Lathander', 'Grand worship hall lit by stained-glass windows, with a raised altar', 'social', 35, 30, 1111),
 ];

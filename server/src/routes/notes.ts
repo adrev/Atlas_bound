@@ -70,6 +70,7 @@ router.get('/sessions/:sessionId/notes', async (req: Request, res: Response) => 
     createdBy: r.created_by,
     createdAt: r.created_at,
     updatedAt: r.updated_at,
+    imageUrl: (r.image_url as string | null) ?? null,
   })));
 });
 

@@ -14,8 +14,13 @@ const mapUploadsDir = path.join(UPLOAD_DIR, 'maps');
 const mapThumbsDir = path.join(mapUploadsDir, 'thumbnails');
 const tokenUploadsDir = path.join(UPLOAD_DIR, 'tokens');
 const portraitUploadsDir = path.join(UPLOAD_DIR, 'portraits');
+// Handout images — DM attaches a portrait / map-snippet / sketch
+// when sending a handout. Stored in its own sub-folder so the
+// /uploads/private/ ACL middleware can scope access if we need to
+// restrict by session later. Today every logged-in user can fetch.
+const handoutUploadsDir = path.join(UPLOAD_DIR, 'handouts');
 
-for (const dir of [mapUploadsDir, mapThumbsDir, tokenUploadsDir, portraitUploadsDir]) {
+for (const dir of [mapUploadsDir, mapThumbsDir, tokenUploadsDir, portraitUploadsDir, handoutUploadsDir]) {
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true });
   }
@@ -118,5 +123,6 @@ export function saveMapThumbnail(
 export const mapUpload = createMemoryUpload();
 export const tokenUpload = createMemoryUpload();
 export const portraitUpload = createMemoryUpload();
+export const handoutUpload = createMemoryUpload();
 
 export { detectImageType };

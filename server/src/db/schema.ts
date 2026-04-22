@@ -515,6 +515,13 @@ export async function initDatabase(): Promise<void> {
 
     CREATE INDEX IF NOT EXISTS idx_session_notes_session ON session_notes(session_id);
 
+    -- image_url added 2026-04-22: when a handout carries an image
+    -- (DM uploaded a map snippet, NPC portrait, etc.), the auto-
+    -- created note preserves the URL so players see the image in
+    -- their Notes tab later, not just the title + body text. Absent
+    -- on notes created via the plain !note / !gmnote chat commands.
+    ALTER TABLE session_notes ADD COLUMN IF NOT EXISTS image_url TEXT;
+
     DO $$
     BEGIN
       IF EXISTS (

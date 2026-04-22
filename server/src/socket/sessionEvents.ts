@@ -475,13 +475,15 @@ export function registerSessionEvents(io: Server, socket: Socket): void {
     // players) must NOT be is_shared=true — otherwise a supposedly
     // private DM→rogue handout shows up in the shared notes tab for
     // the entire party. Only broadcast handouts (no targetUserIds)
-    // are truly shared.
+    // are truly shared. The image_url (if any) rides along on the
+    // row so the Notes tab can render the attached image when the
+    // player browses past handouts.
     const isShared = !targetUserIds || targetUserIds.length === 0;
     const noteId = uuidv4();
     await pool.query(
-      `INSERT INTO session_notes (id, session_id, title, content, category, is_shared, created_by)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-      [noteId, ctx.room.sessionId, title, content || '', 'general', isShared, ctx.player.userId]
+      `INSERT INTO session_notes (id, session_id, title, content, category, is_shared, created_by, image_url)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+      [noteId, ctx.room.sessionId, title, content || '', 'general', isShared, ctx.player.userId, imageUrl ?? null]
     );
   }));
 

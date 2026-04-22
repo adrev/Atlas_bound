@@ -24,7 +24,7 @@ import { seedEquipment, isEquipmentSeeded } from './services/seedEquipment.js';
 import { registerSocketHandler } from './socket/handler.js';
 import { setIO } from './socket/ioInstance.js';
 import { setupStaticServing } from './static.js';
-import { tokenUpload, portraitUpload, validateAndSaveUpload } from './routes/uploads.js';
+import { tokenUpload, portraitUpload, handoutUpload, validateAndSaveUpload } from './routes/uploads.js';
 import rateLimit from 'express-rate-limit';
 import authRouter from './auth/routes.js';
 import discordAuth from './auth/oauth/discord.js';
@@ -290,6 +290,25 @@ app.post('/api/uploads/portrait', requireAuth, uploadLimiter, portraitUpload.sin
   try {
     const filename = validateAndSaveUpload(req.file, 'portraits');
     res.json({ url: `/uploads/portraits/${filename}` });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : 'Invalid image file';
+    res.status(400).json({ error: msg });
+  }
+});
+
+/**
+ * Handout image upload endpoint — DM picks a file in HandoutSender
+ * and receives back a `/uploads/handouts/<uuid>.<ext>` URL that gets
+ * stamped on the outgoing `session:handout` payload. Subject to the
+ * same 5 MB / image-magic-byte validation as the other upload endpoints.
+ * Saved alongside the auto-created note so players can browse past
+ * handouts + their images in the Notes tab.
+ */
+app.post('/api/uploads/handout', requireAuth, uploadLimiter, handoutUpload.single('image'), (req, res) => {
+  if (!req.file) { res.status(400).json({ error: 'No image file' }); return; }
+  try {
+    const filename = validateAndSaveUpload(req.file, 'handouts');
+    res.json({ url: `/uploads/handouts/${filename}` });
   } catch (err) {
     const msg = err instanceof Error ? err.message : 'Invalid image file';
     res.status(400).json({ error: msg });
