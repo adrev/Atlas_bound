@@ -8,6 +8,7 @@ import * as ConditionService from '../ConditionService.js';
 import pool from '../../db/connection.js';
 import type { Token } from '@dnd-vtt/shared';
 import type { PlayerContext } from '../../utils/roomState.js';
+import { tokenConditionChanges } from '../../utils/conditionSources.js';
 
 /**
  * Tier 13 — Cleric / Paladin Channel-Divinity subclass features:
@@ -187,7 +188,7 @@ async function handlePathToGrave(c: ChatCommandContext): Promise<boolean> {
   });
   c.io.to(c.ctx.room.sessionId).emit('map:token-updated', {
     tokenId: target.id,
-    changes: { conditions: target.conditions },
+    changes: tokenConditionChanges(c.ctx.room, target.id),
   });
   broadcastSystem(
     c.io, c.ctx,
@@ -264,7 +265,7 @@ async function handleEmboldenBond(c: ChatCommandContext): Promise<boolean> {
     });
     c.io.to(c.ctx.room.sessionId).emit('map:token-updated', {
       tokenId: t.id,
-      changes: { conditions: t.conditions },
+      changes: tokenConditionChanges(c.ctx.room, t.id),
     });
     lines.push(`  • ${t.name}: bonded.`);
   }
@@ -318,7 +319,7 @@ async function handleTwilightSanct(c: ChatCommandContext): Promise<boolean> {
     }
     c.io.to(c.ctx.room.sessionId).emit('map:token-updated', {
       tokenId: target.id,
-      changes: { conditions: target.conditions },
+      changes: tokenConditionChanges(c.ctx.room, target.id),
     });
     broadcastSystem(
       c.io, c.ctx,
@@ -424,7 +425,7 @@ async function handleNaturesWrath(c: ChatCommandContext): Promise<boolean> {
     });
     c.io.to(c.ctx.room.sessionId).emit('map:token-updated', {
       tokenId: target.id,
-      changes: { conditions: target.conditions },
+      changes: tokenConditionChanges(c.ctx.room, target.id),
     });
   }
   broadcastSystem(
@@ -474,7 +475,7 @@ async function handleConqueringPresence(c: ChatCommandContext): Promise<boolean>
       });
       c.io.to(c.ctx.room.sessionId).emit('map:token-updated', {
         tokenId: target.id,
-        changes: { conditions: target.conditions },
+        changes: tokenConditionChanges(c.ctx.room, target.id),
       });
     }
     lines.push(`  • ${displayName}: WIS d20=${d20}${sign}${mod}=${tot} → ${saved ? 'SAVED' : 'FRIGHTENED (save at end of turn, 1 min)'}`);
@@ -523,7 +524,7 @@ async function handleChampionChallenge(c: ChatCommandContext): Promise<boolean> 
       });
       c.io.to(c.ctx.room.sessionId).emit('map:token-updated', {
         tokenId: target.id,
-        changes: { conditions: target.conditions },
+        changes: tokenConditionChanges(c.ctx.room, target.id),
       });
     }
     lines.push(`  • ${displayName}: WIS d20=${d20}${sign}${mod}=${tot} → ${saved ? 'SAVED' : "CHALLENGED (can't willingly move > 30 ft from caster)"}`);
@@ -571,7 +572,7 @@ async function handleDreadfulAspect(c: ChatCommandContext): Promise<boolean> {
       });
       c.io.to(c.ctx.room.sessionId).emit('map:token-updated', {
         tokenId: target.id,
-        changes: { conditions: target.conditions },
+        changes: tokenConditionChanges(c.ctx.room, target.id),
       });
     }
     lines.push(`  • ${displayName}: WIS d20=${d20}${sign}${mod}=${tot} → ${saved ? 'SAVED' : 'FRIGHTENED (1 min, no save mid-duration while in line of sight)'}`);

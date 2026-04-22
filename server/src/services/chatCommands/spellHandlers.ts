@@ -7,6 +7,7 @@ import {
 } from '../ChatCommands.js';
 import * as ConditionService from '../ConditionService.js';
 import type { PlayerContext } from '../../utils/roomState.js';
+import { tokenConditionChanges } from '../../utils/conditionSources.js';
 
 /**
  * Shortcuts for the save-or-suck and buff/debuff spells that come up
@@ -71,7 +72,7 @@ function apply(args: SaveOrSuckArgs): void {
   });
   c.io.to(ctx.room.sessionId).emit('map:token-updated', {
     tokenId: target.id,
-    changes: { conditions: target.conditions },
+    changes: tokenConditionChanges(ctx.room, target.id),
   });
 }
 
@@ -241,7 +242,7 @@ async function handleBless(c: ChatCommandContext): Promise<boolean> {
     });
     c.io.to(c.ctx.room.sessionId).emit('map:token-updated', {
       tokenId: t.id,
-      changes: { conditions: t.conditions },
+      changes: tokenConditionChanges(c.ctx.room, t.id),
     });
     applied.push(t.name);
   }
@@ -284,7 +285,7 @@ async function handleBane(c: ChatCommandContext): Promise<boolean> {
     });
     c.io.to(c.ctx.room.sessionId).emit('map:token-updated', {
       tokenId: t.id,
-      changes: { conditions: t.conditions },
+      changes: tokenConditionChanges(c.ctx.room, t.id),
     });
     applied.push(t.name);
   }
@@ -326,7 +327,7 @@ async function handleFaerieFire(c: ChatCommandContext): Promise<boolean> {
     });
     c.io.to(c.ctx.room.sessionId).emit('map:token-updated', {
       tokenId: t.id,
-      changes: { conditions: t.conditions },
+      changes: tokenConditionChanges(c.ctx.room, t.id),
     });
     applied.push(t.name);
   }

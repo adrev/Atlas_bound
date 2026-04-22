@@ -8,6 +8,7 @@ import * as ConditionService from '../ConditionService.js';
 import pool from '../../db/connection.js';
 import type { Token } from '@dnd-vtt/shared';
 import type { PlayerContext } from '../../utils/roomState.js';
+import { tokenConditionChanges } from '../../utils/conditionSources.js';
 
 /**
  * Tier 21 — additional commonly-cast spells beyond Tiers 12/16/17.
@@ -183,7 +184,7 @@ async function saveOrCharm(
       });
       c.io.to(c.ctx.room.sessionId).emit('map:token-updated', {
         tokenId: target.id,
-        changes: { conditions: target.conditions },
+        changes: tokenConditionChanges(c.ctx.room, target.id),
       });
     }
     lines.push(`  • ${displayName}: ${save.toUpperCase()} d20=${d20}${sign}${mod}=${tot} → ${saved ? 'SAVED' : condName.toUpperCase()}`);
@@ -250,7 +251,7 @@ function dominateHandler(
       });
       c.io.to(c.ctx.room.sessionId).emit('map:token-updated', {
         tokenId: target.id,
-        changes: { conditions: target.conditions },
+        changes: tokenConditionChanges(c.ctx.room, target.id),
       });
     }
     broadcastSystem(
@@ -492,7 +493,7 @@ async function handlePowerWordStun(c: ChatCommandContext): Promise<boolean> {
   });
   c.io.to(c.ctx.room.sessionId).emit('map:token-updated', {
     tokenId: target.id,
-    changes: { conditions: target.conditions },
+    changes: tokenConditionChanges(c.ctx.room, target.id),
   });
   broadcastSystem(c.io, c.ctx,
     `🌀 **Power Word Stun** (L8) — ${loaded.callerName} → ${target.name}: HP ${hp} ≤ 150. **STUNNED** — CHA DC ${loaded.spellSaveDc} save at end of each turn to end.`);

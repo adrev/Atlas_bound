@@ -7,6 +7,7 @@ import {
 } from '../ChatCommands.js';
 import * as ConditionService from '../ConditionService.js';
 import type { PlayerContext } from '../../utils/roomState.js';
+import { tokenConditionChanges } from '../../utils/conditionSources.js';
 
 /**
  * Class-feature toggle commands. These apply the VTT's pseudo-condition
@@ -87,7 +88,7 @@ async function handleRage(c: ChatCommandContext): Promise<boolean> {
 
   c.io.to(c.ctx.room.sessionId).emit('map:token-updated', {
     tokenId: target.id,
-    changes: { conditions: target.conditions },
+    changes: tokenConditionChanges(c.ctx.room, target.id),
   });
 
   const durLabel = expiresAfterRound !== undefined
@@ -126,7 +127,7 @@ async function handleUnrage(c: ChatCommandContext): Promise<boolean> {
 
   c.io.to(c.ctx.room.sessionId).emit('map:token-updated', {
     tokenId: target.id,
-    changes: { conditions: target.conditions },
+    changes: tokenConditionChanges(c.ctx.room, target.id),
   });
   broadcastSystem(c.io, c.ctx, `😮‍💨 ${target.name}'s Rage ends.`);
   return true;
@@ -191,7 +192,7 @@ async function handleCover(c: ChatCommandContext): Promise<boolean> {
 
   c.io.to(c.ctx.room.sessionId).emit('map:token-updated', {
     tokenId: target.id,
-    changes: { conditions: target.conditions },
+    changes: tokenConditionChanges(c.ctx.room, target.id),
   });
 
   const label = level === 'none' ? 'no cover' :
@@ -249,7 +250,7 @@ async function handlePower(c: ChatCommandContext): Promise<boolean> {
 
   c.io.to(c.ctx.room.sessionId).emit('map:token-updated', {
     tokenId: target.id,
-    changes: { conditions: target.conditions },
+    changes: tokenConditionChanges(c.ctx.room, target.id),
   });
   broadcastSystem(
     c.io, c.ctx,
@@ -287,7 +288,7 @@ async function handleInspire(c: ChatCommandContext): Promise<boolean> {
   });
   c.io.to(c.ctx.room.sessionId).emit('map:token-updated', {
     tokenId: target.id,
-    changes: { conditions: target.conditions },
+    changes: tokenConditionChanges(c.ctx.room, target.id),
   });
   broadcastSystem(c.io, c.ctx, `✨ ${target.name} gains Inspiration.`);
   return true;
@@ -317,7 +318,7 @@ async function handleUninspire(c: ChatCommandContext): Promise<boolean> {
   ConditionService.removeCondition(c.ctx.room.sessionId, target.id, 'inspired');
   c.io.to(c.ctx.room.sessionId).emit('map:token-updated', {
     tokenId: target.id,
-    changes: { conditions: target.conditions },
+    changes: tokenConditionChanges(c.ctx.room, target.id),
   });
   broadcastSystem(c.io, c.ctx, `💫 ${target.name} spends their Inspiration.`);
   return true;
@@ -355,7 +356,7 @@ async function handleAssist(c: ChatCommandContext): Promise<boolean> {
   });
   c.io.to(c.ctx.room.sessionId).emit('map:token-updated', {
     tokenId: target.id,
-    changes: { conditions: target.conditions },
+    changes: tokenConditionChanges(c.ctx.room, target.id),
   });
   broadcastSystem(c.io, c.ctx, `🤝 ${c.ctx.player.displayName} helps ${target.name} — advantage on their next attack or check.`);
   return true;
@@ -375,7 +376,7 @@ async function handleUnassist(c: ChatCommandContext): Promise<boolean> {
   ConditionService.removeCondition(c.ctx.room.sessionId, target.id, 'helped');
   c.io.to(c.ctx.room.sessionId).emit('map:token-updated', {
     tokenId: target.id,
-    changes: { conditions: target.conditions },
+    changes: tokenConditionChanges(c.ctx.room, target.id),
   });
   broadcastSystem(c.io, c.ctx, `💪 ${target.name} spends the Help.`);
   return true;

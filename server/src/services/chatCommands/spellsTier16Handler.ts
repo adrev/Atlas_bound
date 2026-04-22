@@ -8,6 +8,7 @@ import * as ConditionService from '../ConditionService.js';
 import pool from '../../db/connection.js';
 import type { Token } from '@dnd-vtt/shared';
 import type { PlayerContext } from '../../utils/roomState.js';
+import { tokenConditionChanges } from '../../utils/conditionSources.js';
 
 /**
  * Tier 16 — Common damage/control spells:
@@ -331,7 +332,7 @@ async function handleEntangle(c: ChatCommandContext): Promise<boolean> {
       });
       c.io.to(c.ctx.room.sessionId).emit('map:token-updated', {
         tokenId: target.id,
-        changes: { conditions: target.conditions },
+        changes: tokenConditionChanges(c.ctx.room, target.id),
       });
     }
     lines.push(`  • ${displayName}: STR d20=${d20}${sign}${mod}=${tot} → ${saved ? 'SAVED' : 'RESTRAINED (save at end of turn)'}`);
@@ -372,7 +373,7 @@ async function handleWeb(c: ChatCommandContext): Promise<boolean> {
       });
       c.io.to(c.ctx.room.sessionId).emit('map:token-updated', {
         tokenId: target.id,
-        changes: { conditions: target.conditions },
+        changes: tokenConditionChanges(c.ctx.room, target.id),
       });
     }
     lines.push(`  • ${displayName}: DEX d20=${d20}${sign}${mod}=${tot} → ${saved ? 'SAVED' : 'RESTRAINED (STR save at end of turn)'}`);

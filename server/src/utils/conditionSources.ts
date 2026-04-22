@@ -37,3 +37,27 @@ export function withConditionSources(room: RoomState, token: Token): Token {
   if (sources) token.conditionSources = sources;
   return token;
 }
+
+/**
+ * Build the `changes` patch for a `map:token-updated` broadcast that
+ * always ships the latest conditions + conditionSources alongside any
+ * extra fields the caller wants to merge. Use this after every
+ * applyConditionWithMeta / removeCondition call so client-side rule
+ * guards (charmed can't attack the charmer, frightened can't advance
+ * toward the fear source) stay in sync without a full `map:load`.
+ *
+ * Sources are always included — an empty `{}` when no tracked sources
+ * remain, so stale entries clear on the client (Zustand's updateToken
+ * is a shallow merge; omitting the field would keep the old value).
+ */
+export function tokenConditionChanges(
+  room: RoomState, tokenId: string, extras: Partial<Token> = {},
+): Partial<Token> {
+  const token = room.tokens.get(tokenId);
+  const sources = serializeConditionSources(room, tokenId) ?? {};
+  return {
+    ...extras,
+    ...(token ? { conditions: token.conditions } : {}),
+    conditionSources: sources,
+  };
+}

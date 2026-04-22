@@ -8,6 +8,7 @@ import {
 import * as ConditionService from '../ConditionService.js';
 import pool from '../../db/connection.js';
 import type { PlayerContext } from '../../utils/roomState.js';
+import { tokenConditionChanges } from '../../utils/conditionSources.js';
 
 /**
  * Opposed-check combat maneuvers: grapple + shove. Both resolve a
@@ -133,7 +134,7 @@ async function handleGrapple(c: ChatCommandContext): Promise<boolean> {
     });
     c.io.to(c.ctx.room.sessionId).emit('map:token-updated', {
       tokenId: target.id,
-      changes: { conditions: target.conditions },
+      changes: tokenConditionChanges(c.ctx.room, target.id),
     });
   }
 
@@ -194,7 +195,7 @@ async function handleShove(c: ChatCommandContext): Promise<boolean> {
     });
     c.io.to(c.ctx.room.sessionId).emit('map:token-updated', {
       tokenId: target.id,
-      changes: { conditions: target.conditions },
+      changes: tokenConditionChanges(c.ctx.room, target.id),
     });
   } else if (callerWon) {
     lines.push(`   → ${callerAth.name} succeeds — DM, move ${targetBest.name} 5 ft away.`);

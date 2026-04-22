@@ -8,6 +8,7 @@ import * as ConditionService from '../ConditionService.js';
 import pool from '../../db/connection.js';
 import type { Token } from '@dnd-vtt/shared';
 import type { PlayerContext } from '../../utils/roomState.js';
+import { tokenConditionChanges } from '../../utils/conditionSources.js';
 
 /**
  * Subclass feature helpers that are high-frequency enough to warrant
@@ -276,7 +277,7 @@ async function handleCourage(c: ChatCommandContext): Promise<boolean> {
     cleared.push(ally.name);
     c.io.to(c.ctx.room.sessionId).emit('map:token-updated', {
       tokenId: ally.id,
-      changes: { conditions: ally.conditions },
+      changes: tokenConditionChanges(c.ctx.room, ally.id),
     });
   }
   if (cleared.length > 0) {

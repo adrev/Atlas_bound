@@ -7,6 +7,7 @@ import {
 import * as ConditionService from '../ConditionService.js';
 import type { PlayerContext } from '../../utils/roomState.js';
 import type { Token } from '@dnd-vtt/shared';
+import { tokenConditionChanges } from '../../utils/conditionSources.js';
 
 /**
  * Bardic Inspiration (PHB Bard class feature). The bard spends a
@@ -96,7 +97,7 @@ async function handleBardic(c: ChatCommandContext): Promise<boolean> {
   });
   c.io.to(c.ctx.room.sessionId).emit('map:token-updated', {
     tokenId: target.id,
-    changes: { conditions: target.conditions },
+    changes: tokenConditionChanges(c.ctx.room, target.id),
   });
   broadcastSystem(
     c.io, c.ctx,
@@ -138,7 +139,7 @@ async function handleUnbardic(c: ChatCommandContext): Promise<boolean> {
   ConditionService.removeCondition(c.ctx.room.sessionId, target.id, 'bardic-inspired');
   c.io.to(c.ctx.room.sessionId).emit('map:token-updated', {
     tokenId: target.id,
-    changes: { conditions: target.conditions },
+    changes: tokenConditionChanges(c.ctx.room, target.id),
   });
 
   if (mode === 'waste') {

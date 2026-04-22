@@ -8,6 +8,7 @@ import * as ConditionService from '../ConditionService.js';
 import pool from '../../db/connection.js';
 import type { Token } from '@dnd-vtt/shared';
 import type { PlayerContext } from '../../utils/roomState.js';
+import { tokenConditionChanges } from '../../utils/conditionSources.js';
 
 /**
  * Misc class / race features that didn't warrant their own file:
@@ -71,7 +72,7 @@ async function handleReckless(c: ChatCommandContext): Promise<boolean> {
     ConditionService.removeCondition(c.ctx.room.sessionId, caller.id, 'reckless');
     c.io.to(c.ctx.room.sessionId).emit('map:token-updated', {
       tokenId: caller.id,
-      changes: { conditions: caller.conditions },
+      changes: tokenConditionChanges(c.ctx.room, caller.id),
     });
     broadcastSystem(c.io, c.ctx, `😤 ${caller.name} drops Reckless Attack.`);
     return true;
@@ -87,7 +88,7 @@ async function handleReckless(c: ChatCommandContext): Promise<boolean> {
   });
   c.io.to(c.ctx.room.sessionId).emit('map:token-updated', {
     tokenId: caller.id,
-    changes: { conditions: caller.conditions },
+    changes: tokenConditionChanges(c.ctx.room, caller.id),
   });
   broadcastSystem(
     c.io, c.ctx,
@@ -522,7 +523,7 @@ async function handleManeuver(c: ChatCommandContext): Promise<boolean> {
         });
         c.io.to(c.ctx.room.sessionId).emit('map:token-updated', {
           tokenId: target.id,
-          changes: { conditions: target.conditions },
+          changes: tokenConditionChanges(c.ctx.room, target.id),
         });
         lines.push(`     → ${target.name} is ${saveMeta.on.toUpperCase()}.`);
       }

@@ -2,6 +2,7 @@ import type { Server } from 'socket.io';
 import { v4 as uuidv4 } from 'uuid';
 import type { RoomState } from '../utils/roomState.js';
 import * as ConditionService from './ConditionService.js';
+import { tokenConditionChanges } from '../utils/conditionSources.js';
 
 /**
  * R2 — central "damage was applied" broadcaster. Runs the side-effect
@@ -36,7 +37,7 @@ export async function applyDamageSideEffects(
     if (t) {
       io.to(room.sessionId).emit('map:token-updated', {
         tokenId: affectedTokenId,
-        changes: { conditions: t.conditions },
+        changes: tokenConditionChanges(room, affectedTokenId),
       });
     }
   }

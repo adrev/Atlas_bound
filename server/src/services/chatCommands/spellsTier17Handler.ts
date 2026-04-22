@@ -8,6 +8,7 @@ import * as ConditionService from '../ConditionService.js';
 import pool from '../../db/connection.js';
 import type { Token } from '@dnd-vtt/shared';
 import type { PlayerContext } from '../../utils/roomState.js';
+import { tokenConditionChanges } from '../../utils/conditionSources.js';
 
 /**
  * Tier 17 — Support / utility / restoration spells:
@@ -169,7 +170,7 @@ async function applyInvisible(c: ChatCommandContext, targetName: string, duratio
   });
   c.io.to(c.ctx.room.sessionId).emit('map:token-updated', {
     tokenId: target.id,
-    changes: { conditions: target.conditions },
+    changes: tokenConditionChanges(c.ctx.room, target.id),
   });
   broadcastSystem(
     c.io, c.ctx,
@@ -220,7 +221,7 @@ async function handleHaste(c: ChatCommandContext): Promise<boolean> {
   });
   c.io.to(c.ctx.room.sessionId).emit('map:token-updated', {
     tokenId: target.id,
-    changes: { conditions: target.conditions },
+    changes: tokenConditionChanges(c.ctx.room, target.id),
   });
   broadcastSystem(
     c.io, c.ctx,
@@ -290,7 +291,7 @@ async function handleLesserRestoration(c: ChatCommandContext): Promise<boolean> 
       ConditionService.removeCondition(c.ctx.room.sessionId, target.id, cond);
       c.io.to(c.ctx.room.sessionId).emit('map:token-updated', {
         tokenId: target.id,
-        changes: { conditions: target.conditions },
+        changes: tokenConditionChanges(c.ctx.room, target.id),
       });
     }
   }
@@ -333,7 +334,7 @@ async function handleGreaterRestoration(c: ChatCommandContext): Promise<boolean>
       ConditionService.removeCondition(c.ctx.room.sessionId, target.id, 'charmed');
       c.io.to(c.ctx.room.sessionId).emit('map:token-updated', {
         tokenId: target.id,
-        changes: { conditions: target.conditions },
+        changes: tokenConditionChanges(c.ctx.room, target.id),
       });
     }
   }
@@ -342,7 +343,7 @@ async function handleGreaterRestoration(c: ChatCommandContext): Promise<boolean>
       ConditionService.removeCondition(c.ctx.room.sessionId, target.id, 'petrified');
       c.io.to(c.ctx.room.sessionId).emit('map:token-updated', {
         tokenId: target.id,
-        changes: { conditions: target.conditions },
+        changes: tokenConditionChanges(c.ctx.room, target.id),
       });
     }
   }
@@ -368,7 +369,7 @@ async function handleBlur(c: ChatCommandContext): Promise<boolean> {
   });
   c.io.to(c.ctx.room.sessionId).emit('map:token-updated', {
     tokenId: caller.id,
-    changes: { conditions: caller.conditions },
+    changes: tokenConditionChanges(c.ctx.room, caller.id),
   });
   broadcastSystem(
     c.io, c.ctx,
@@ -401,7 +402,7 @@ async function handleStoneskin(c: ChatCommandContext): Promise<boolean> {
   });
   c.io.to(c.ctx.room.sessionId).emit('map:token-updated', {
     tokenId: target.id,
-    changes: { conditions: target.conditions },
+    changes: tokenConditionChanges(c.ctx.room, target.id),
   });
   broadcastSystem(
     c.io, c.ctx,
@@ -434,7 +435,7 @@ async function handleDeathWard(c: ChatCommandContext): Promise<boolean> {
   });
   c.io.to(c.ctx.room.sessionId).emit('map:token-updated', {
     tokenId: target.id,
-    changes: { conditions: target.conditions },
+    changes: tokenConditionChanges(c.ctx.room, target.id),
   });
   broadcastSystem(
     c.io, c.ctx,

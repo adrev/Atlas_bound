@@ -8,6 +8,7 @@ import * as ConditionService from '../ConditionService.js';
 import pool from '../../db/connection.js';
 import type { Token } from '@dnd-vtt/shared';
 import type { PlayerContext } from '../../utils/roomState.js';
+import { tokenConditionChanges } from '../../utils/conditionSources.js';
 
 /**
  * Utility commands for common mid-session effects that players
@@ -252,7 +253,7 @@ async function handleStabilize(c: ChatCommandContext): Promise<boolean> {
     ).catch((e) => console.warn('[!stabilize] death-save reset failed:', e));
     c.io.to(c.ctx.room.sessionId).emit('map:token-updated', {
       tokenId: target.id,
-      changes: { conditions: target.conditions },
+      changes: tokenConditionChanges(c.ctx.room, target.id),
     });
     c.io.to(c.ctx.room.sessionId).emit('character:updated', {
       characterId: target.characterId,
@@ -299,7 +300,7 @@ async function handleHex(c: ChatCommandContext): Promise<boolean> {
   });
   c.io.to(c.ctx.room.sessionId).emit('map:token-updated', {
     tokenId: target.id,
-    changes: { conditions: target.conditions },
+    changes: tokenConditionChanges(c.ctx.room, target.id),
   });
   broadcastSystem(
     c.io, c.ctx,
@@ -326,7 +327,7 @@ async function handleUnhex(c: ChatCommandContext): Promise<boolean> {
   ConditionService.removeCondition(c.ctx.room.sessionId, target.id, 'hexed');
   c.io.to(c.ctx.room.sessionId).emit('map:token-updated', {
     tokenId: target.id,
-    changes: { conditions: target.conditions },
+    changes: tokenConditionChanges(c.ctx.room, target.id),
   });
   broadcastSystem(c.io, c.ctx, `🕷 Hex lifted from ${target.name}.`);
   return true;
@@ -363,7 +364,7 @@ async function handleMark(c: ChatCommandContext): Promise<boolean> {
   });
   c.io.to(c.ctx.room.sessionId).emit('map:token-updated', {
     tokenId: target.id,
-    changes: { conditions: target.conditions },
+    changes: tokenConditionChanges(c.ctx.room, target.id),
   });
   broadcastSystem(
     c.io, c.ctx,
@@ -386,7 +387,7 @@ async function handleUnmark(c: ChatCommandContext): Promise<boolean> {
   ConditionService.removeCondition(c.ctx.room.sessionId, target.id, 'marked');
   c.io.to(c.ctx.room.sessionId).emit('map:token-updated', {
     tokenId: target.id,
-    changes: { conditions: target.conditions },
+    changes: tokenConditionChanges(c.ctx.room, target.id),
   });
   broadcastSystem(c.io, c.ctx, `🏹 Hunter's Mark lifted from ${target.name}.`);
   return true;
@@ -473,7 +474,7 @@ async function handleTurnUndead(c: ChatCommandContext): Promise<boolean> {
       });
       c.io.to(c.ctx.room.sessionId).emit('map:token-updated', {
         tokenId: target.id,
-        changes: { conditions: target.conditions },
+        changes: tokenConditionChanges(c.ctx.room, target.id),
       });
       lines.push(`     → Frightened for 1 min; must Dash away.`);
     }

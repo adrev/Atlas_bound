@@ -23,6 +23,7 @@ import {
   combatMobileAttackedSchema,
 } from '../utils/validation.js';
 import { safeHandler } from '../utils/socketHelpers.js';
+import { tokenConditionChanges } from '../utils/conditionSources.js';
 
 /**
  * Shared helper that creates combat state, emits all combat-start events,
@@ -480,7 +481,7 @@ export function registerCombatEvents(io: Server, socket: Socket): void {
         if (updatedToken) {
           io.to(ctx.room.sessionId).emit('map:token-updated', {
             tokenId: endingCombatant.tokenId,
-            changes: { conditions: updatedToken.conditions },
+            changes: tokenConditionChanges(ctx.room, endingCombatant.tokenId),
           });
         }
       }
@@ -505,7 +506,7 @@ export function registerCombatEvents(io: Server, socket: Socket): void {
           if (cleanupChanged || startTickResult.removed.length > 0) {
             io.to(ctx.room.sessionId).emit('map:token-updated', {
               tokenId: startingCombatant.tokenId,
-              changes: { conditions: startingToken.conditions },
+              changes: tokenConditionChanges(ctx.room, startingCombatant.tokenId),
             });
           }
         }
@@ -644,9 +645,13 @@ export function registerCombatEvents(io: Server, socket: Socket): void {
       // token's new condition list so every client's badge tray
       // reflects the new state.
       if (result.autoAppliedConditions) {
+        // Pulls fresh conditions from the live token (CombatService
+        // has already mutated the token's conditions array in-place),
+        // so we don't need to pass the string[] from the result — the
+        // helper reads the room's Condition[]-typed array directly.
         io.to(ctx.room.sessionId).emit('map:token-updated', {
           tokenId: parsed.data.tokenId,
-          changes: { conditions: result.autoAppliedConditions },
+          changes: tokenConditionChanges(ctx.room, parsed.data.tokenId),
         });
       }
       // Any creatures this PC was grappling now go free — broadcast
@@ -657,7 +662,7 @@ export function registerCombatEvents(io: Server, socket: Socket): void {
           if (!freedToken) continue;
           io.to(ctx.room.sessionId).emit('map:token-updated', {
             tokenId: freedId,
-            changes: { conditions: freedToken.conditions },
+            changes: tokenConditionChanges(ctx.room, freedId),
           });
         }
       }
@@ -1294,14 +1299,14 @@ export function registerCombatEvents(io: Server, socket: Socket): void {
     // Broadcast the updated conditions array so clients see the badge
     io.to(ctx.room.sessionId).emit('map:token-updated', {
       tokenId: parsed.data.targetTokenId,
-      changes: { conditions: targetToken.conditions },
+      changes: tokenConditionChanges(ctx.room, parsed.data.targetTokenId),
     });
     for (const freed of freedTokenIds) {
       const freedToken = ctx.room.tokens.get(freed);
       if (!freedToken) continue;
       io.to(ctx.room.sessionId).emit('map:token-updated', {
         tokenId: freed,
-        changes: { conditions: freedToken.conditions },
+        changes: tokenConditionChanges(ctx.room, freed),
       });
     }
   }));
@@ -1361,7 +1366,7 @@ export function registerCombatEvents(io: Server, socket: Socket): void {
       const t = ctx.room.tokens.get(tokenId);
       if (t) {
         io.to(ctx.room.sessionId).emit('map:token-updated', {
-          tokenId, changes: { conditions: t.conditions },
+          tokenId, changes: tokenConditionChanges(ctx.room, tokenId),
         });
       }
     }
@@ -1426,7 +1431,7 @@ export function registerCombatEvents(io: Server, socket: Socket): void {
       const t = ctx.room.tokens.get(tokenId);
       if (t) {
         io.to(ctx.room.sessionId).emit('map:token-updated', {
-          tokenId, changes: { conditions: t.conditions },
+          tokenId, changes: tokenConditionChanges(ctx.room, tokenId),
         });
       }
     }

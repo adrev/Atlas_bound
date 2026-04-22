@@ -7,6 +7,7 @@ import {
 } from '../ChatCommands.js';
 import * as ConditionService from '../ConditionService.js';
 import type { PlayerContext } from '../../utils/roomState.js';
+import { tokenConditionChanges } from '../../utils/conditionSources.js';
 
 /**
  * R5 — Named-condition chat commands. Lets the DM quickly apply / clear
@@ -123,10 +124,12 @@ async function handleCond(c: ChatCommandContext): Promise<boolean> {
     ...(expiresAfterRound !== undefined ? { expiresAfterRound } : {}),
   });
 
-  // Broadcast the updated condition list so all clients repaint token badges.
+  // Broadcast the updated condition list + fresh source map so clients
+  // repaint badges AND have the latest conditionSources for rule guards
+  // (charmed can't attack charmer, frightened blocked from moving closer).
   c.io.to(c.ctx.room.sessionId).emit('map:token-updated', {
     tokenId: target.id,
-    changes: { conditions: target.conditions },
+    changes: tokenConditionChanges(c.ctx.room, target.id),
   });
 
   const durationLabel = hasRounds ? ` for ${maybeRounds} round${maybeRounds === 1 ? '' : 's'}` : '';
@@ -167,7 +170,7 @@ async function handleUncond(c: ChatCommandContext): Promise<boolean> {
 
   c.io.to(c.ctx.room.sessionId).emit('map:token-updated', {
     tokenId: target.id,
-    changes: { conditions: target.conditions },
+    changes: tokenConditionChanges(c.ctx.room, target.id),
   });
 
   whisperToCaller(c.io, c.ctx, `!uncond: cleared ${condition} from ${target.name}.`);
