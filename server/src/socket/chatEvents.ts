@@ -56,6 +56,9 @@ import '../services/chatCommands/itemsTier24Handler.js';
 import '../services/chatCommands/subclassFeaturesTier25Handler.js';
 import '../services/chatCommands/racialSpellsHandler.js';
 import '../services/chatCommands/throwWeaponHandler.js';
+import '../services/chatCommands/hazardsHandler.js';
+import '../services/chatCommands/environmentHandler.js';
+import '../services/chatCommands/downtimeHandler.js';
 
 export function registerChatEvents(io: Server, socket: Socket): void {
 
