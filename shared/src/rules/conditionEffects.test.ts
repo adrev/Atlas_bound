@@ -11,6 +11,7 @@ import {
   computeSaveModifiers,
   computeEffectiveAC,
   computeEffectiveSpeed,
+  resolveAdvantage,
 } from './conditionEffects.js';
 
 /**
@@ -202,6 +203,24 @@ describe('computeEffectiveSpeed', () => {
 
   it('speed-0 condition beats half-speed condition', () => {
     expect(computeEffectiveSpeed(30, ['prone', 'paralyzed']).value).toBe(0);
+  });
+});
+
+describe('resolveAdvantage — 5e RAW cancellation rule', () => {
+  it('returns normal when neither flag is set', () => {
+    expect(resolveAdvantage(false, false)).toBe('normal');
+  });
+
+  it('returns advantage when only hasAdv is set', () => {
+    expect(resolveAdvantage(true, false)).toBe('advantage');
+  });
+
+  it('returns disadvantage when only hasDis is set', () => {
+    expect(resolveAdvantage(false, true)).toBe('disadvantage');
+  });
+
+  it('cancels to normal when both flags are set regardless of count', () => {
+    expect(resolveAdvantage(true, true)).toBe('normal');
   });
 });
 

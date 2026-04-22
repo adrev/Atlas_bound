@@ -582,12 +582,27 @@ export function blocksReactions(conditions: Iterable<Condition | string>): boole
 }
 
 /**
+ * 5e RAW: advantage and disadvantage cancel out to a straight roll
+ * regardless of how many sources of each are present. This is the
+ * single source of truth — `computeAttackModifiers`, `computeSaveModifiers`,
+ * and the client's `combineAttackModifiers` all delegate here so the
+ * rule can't drift between codepaths.
+ */
+export type Advantage = 'advantage' | 'disadvantage' | 'normal';
+export function resolveAdvantage(hasAdv: boolean, hasDis: boolean): Advantage {
+  if (hasAdv && hasDis) return 'normal';
+  if (hasAdv) return 'advantage';
+  if (hasDis) return 'disadvantage';
+  return 'normal';
+}
+
+/**
  * Compute advantage / disadvantage + auto-crit for a roll where
  * `source` is rolling against `target` from `range` ('melee5' | 'melee' | 'ranged').
  * Collapses advantage + disadvantage into 'normal' per 5e rules.
  */
 export interface AttackModifierResult {
-  effectiveAdvantage: 'advantage' | 'disadvantage' | 'normal';
+  effectiveAdvantage: Advantage;
   autoCrit: boolean;
   notes: string[];
 }
@@ -630,16 +645,11 @@ export function computeAttackModifiers(
     }
   }
 
-  let effectiveAdvantage: 'advantage' | 'disadvantage' | 'normal' = 'normal';
-  if (hasAdv && hasDis) effectiveAdvantage = 'normal';
-  else if (hasAdv) effectiveAdvantage = 'advantage';
-  else if (hasDis) effectiveAdvantage = 'disadvantage';
-
-  return { effectiveAdvantage, autoCrit, notes };
+  return { effectiveAdvantage: resolveAdvantage(hasAdv, hasDis), autoCrit, notes };
 }
 
 export interface SaveModifierResult {
-  effectiveAdvantage: 'advantage' | 'disadvantage' | 'normal';
+  effectiveAdvantage: Advantage;
   autoFail: boolean;
   notes: string[];
 }
@@ -739,12 +749,7 @@ export function computeSaveModifiers(
     }
   }
 
-  let effectiveAdvantage: 'advantage' | 'disadvantage' | 'normal' = 'normal';
-  if (hasAdv && hasDis) effectiveAdvantage = 'normal';
-  else if (hasAdv) effectiveAdvantage = 'advantage';
-  else if (hasDis) effectiveAdvantage = 'disadvantage';
-
-  return { effectiveAdvantage, autoFail, notes };
+  return { effectiveAdvantage: resolveAdvantage(hasAdv, hasDis), autoFail, notes };
 }
 
 // --- Effective-stat helpers (AC, speed) — computed with notes ----------

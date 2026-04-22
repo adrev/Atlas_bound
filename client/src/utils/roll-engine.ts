@@ -3,6 +3,7 @@ import {
   computeEffectiveAC,
   computeEffectiveSpeed,
   effectForCondition,
+  resolveAdvantage,
   type EffectiveStat as SharedEffectiveStat,
 } from '@dnd-vtt/shared';
 
@@ -304,16 +305,12 @@ export function combineAttackModifiers(
     notes: [...attackerOwn.notes, ...targetIncoming.notes],
   };
 
-  // Combine advantage flags. Per RAW: any source of advantage AND any
-  // source of disadvantage cancel each other out — you roll one d20.
-  const attackerAdv = attackerOwn.attackAdvantage;
-  const targetAdv = targetIncoming.attackAdvantage;
-  const hasAdvantage = attackerAdv === 'advantage' || targetAdv === 'advantage';
-  const hasDisadvantage = attackerAdv === 'disadvantage' || targetAdv === 'disadvantage';
-  if (hasAdvantage && hasDisadvantage) out.attackAdvantage = 'normal';
-  else if (hasAdvantage) out.attackAdvantage = 'advantage';
-  else if (hasDisadvantage) out.attackAdvantage = 'disadvantage';
-  else out.attackAdvantage = 'normal';
+  // Combine advantage flags via the shared `resolveAdvantage` helper —
+  // single source of truth across client + server for the 5e RAW rule
+  // that any source of advantage AND any source of disadvantage cancel.
+  const hasAdvantage = attackerOwn.attackAdvantage === 'advantage' || targetIncoming.attackAdvantage === 'advantage';
+  const hasDisadvantage = attackerOwn.attackAdvantage === 'disadvantage' || targetIncoming.attackAdvantage === 'disadvantage';
+  out.attackAdvantage = resolveAdvantage(hasAdvantage, hasDisadvantage);
 
   return out;
 }

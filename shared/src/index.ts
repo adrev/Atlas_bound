@@ -52,8 +52,9 @@ export {
   speedMultiplierFor,
   blocksActions,
   blocksReactions,
+  resolveAdvantage,
 } from './rules/conditionEffects.js';
-export type { ConditionEffect, AttackModifierResult, SaveModifierResult, EffectiveStat, Ability } from './rules/conditionEffects.js';
+export type { Advantage, ConditionEffect, AttackModifierResult, SaveModifierResult, EffectiveStat, Ability } from './rules/conditionEffects.js';
 export { RACE_TRAITS, traitsForRace } from './rules/raceFeatures.js';
 export type { RaceTraits, SaveAdvantageFlag, InnateRacialSpell } from './rules/raceFeatures.js';
 export { SPELL_CONDITIONS, SPELL_BUFFS } from './constants/spell-conditions.js';
