@@ -1,4 +1,4 @@
-import type { Token } from '@dnd-vtt/shared';
+import type { Token, SpellCastBreakdown, SpellTargetOutcome } from '@dnd-vtt/shared';
 import {
   registerChatCommand,
   whisperToCaller,
@@ -142,6 +142,7 @@ async function handleSave(c: ChatCommandContext): Promise<boolean> {
   lines.push(
     `🎯 ${c.ctx.player.displayName} resolves save: **${ability.toUpperCase()} DC ${dc}**, damage ${dmgNotation}${typeLabel} (${dmgRolls.join('+')} = ${fullDmg})`,
   );
+  const saveOutcomes: SpellTargetOutcome[] = [];
 
   for (const name of targetNames) {
     const target = resolveTarget(c.ctx, name);
@@ -266,6 +267,52 @@ async function handleSave(c: ChatCommandContext): Promise<boolean> {
       `   • ${tName}: d20=${rollsStr}${mods.autoFail ? '' : `${modSign}${saveMod}=${total}`} vs ${dc}${auraLabel} → ${saved ? 'SAVED (half)' : 'FAILED (full)'} — ${dmg}${typeLabel} dmg`,
     );
 
+    // Collect structured per-target outcome for the breakdown card.
+    const saveModifiersList: Array<{ label: string; value: number; source?: 'ability' | 'magic' | 'other' }> = [];
+    if (saveMod - auraBonus !== 0) {
+      saveModifiersList.push({
+        label: `${ability.toUpperCase()} save mod`,
+        value: saveMod - auraBonus,
+        source: 'ability',
+      });
+    }
+    if (auraBonus > 0) {
+      saveModifiersList.push({
+        label: `Aura of Protection (${auraSource})`,
+        value: auraBonus,
+        source: 'magic',
+      });
+    }
+    const advState =
+      mods.autoFail ? 'normal' :
+      mods.effectiveAdvantage === 'advantage' ? 'advantage' :
+      mods.effectiveAdvantage === 'disadvantage' ? 'disadvantage' : 'normal';
+    saveOutcomes.push({
+      name: tName,
+      tokenId: target.id,
+      kind: 'save',
+      save: {
+        d20,
+        advantage: advState as 'normal' | 'advantage' | 'disadvantage',
+        ability,
+        modifiers: saveModifiersList,
+        total,
+        dc,
+        saved,
+        autoFailed: mods.autoFail || undefined,
+      },
+      damage: dmg > 0 ? {
+        dice: dmgNotation,
+        diceRolls: dmgRolls,
+        mainRoll: fullDmg,
+        bonuses: [],
+        halfDamage: saved || undefined,
+        finalDamage: dmg,
+        targetHpBefore: 0,
+        targetHpAfter: 0,
+      } : undefined,
+    });
+
     // Apply damage. Use CombatService.applyDamage when in combat
     // (runs death-save / unconscious auto-apply). Out of combat, write
     // hp directly.
@@ -329,7 +376,21 @@ async function handleSave(c: ChatCommandContext): Promise<boolean> {
     }
   }
 
-  broadcastSystem(c.io, c.ctx, lines.join('\n'));
+  const saveBreakdown: SpellCastBreakdown = {
+    caster: { name: c.ctx.player.displayName },
+    spell: {
+      name: `DM Save Resolution (${ability.toUpperCase()} DC ${dc})`,
+      level: 0,
+      kind: 'save',
+      damageType: dmgType || undefined,
+      saveAbility: ability,
+      saveDc: dc,
+      halfOnSave: true,
+    },
+    notes: [`Rolled once: ${dmgNotation} = ${fullDmg}, half on save = ${halfDmg}`],
+    targets: saveOutcomes,
+  };
+  broadcastSystem(c.io, c.ctx, lines.join('\n'), { spellResult: saveBreakdown });
   return true;
 }
 

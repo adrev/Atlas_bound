@@ -6,7 +6,7 @@ import {
 } from '../ChatCommands.js';
 import * as ConditionService from '../ConditionService.js';
 import pool from '../../db/connection.js';
-import type { Token } from '@dnd-vtt/shared';
+import type { Token, SpellCastBreakdown, ActionBreakdown } from '@dnd-vtt/shared';
 import type { PlayerContext } from '../../utils/roomState.js';
 import { tokenConditionChanges } from '../../utils/conditionSources.js';
 
@@ -280,9 +280,25 @@ async function applyOngoingDamage(
     tokenId: target.id,
     changes: tokenConditionChanges(c.ctx.room, target.id),
   });
+  const applyBreakdown: ActionBreakdown = {
+    actor: { name: loaded.callerName, tokenId: loaded.caller.id },
+    action: {
+      name: `${label} applied`,
+      category: 'other',
+      icon,
+      cost: `${dice}d${die} per turn`,
+    },
+    effect: `${target.name} takes ${dice}d${die} ${dmgType} at the start of each turn. Use \`!${cmd}tick\` to resolve or \`!${cmd}stop\` to suppress.`,
+    targets: [{
+      name: target.name,
+      tokenId: target.id,
+      conditionsApplied: [`${cmd}-${dice}d${die}`],
+    }],
+  };
   broadcastSystem(
     c.io, c.ctx,
     `${icon} **${label}** — ${target.name} takes **${dice}d${die} ${dmgType}** at the start of its turn. Roll \`!${cmd}tick ${target.name}\` each turn to resolve — or spend an action on \`!${cmd}stop ${target.name}\` to suppress (extinguish / staunch / neutralize).`,
+    { actionResult: applyBreakdown },
   );
   return true;
 }
@@ -335,9 +351,26 @@ async function ongoingDamageTick(
     rolls.push(r);
     sum += r;
   }
+  const tickBreakdown: SpellCastBreakdown = {
+    caster: { name: 'Environment', tokenId: undefined },
+    spell: { name: `${label} tick`, level: 0, kind: 'auto-damage', damageType: dmgType },
+    notes: [`Start-of-turn tick — use \`!${cmd}stop\` to end the effect`],
+    targets: [{
+      name: target.name, tokenId: target.id, kind: 'damage-flat',
+      damage: {
+        dice: `${dice}d${die}`,
+        diceRolls: rolls,
+        mainRoll: sum,
+        bonuses: [],
+        finalDamage: sum,
+        targetHpBefore: 0, targetHpAfter: 0,
+      },
+    }],
+  };
   broadcastSystem(
     c.io, c.ctx,
     `${icon} **${label} tick** — ${target.name}: ${dice}d${die} [${rolls.join(',')}] = **${sum} ${dmgType}** damage.`,
+    { spellResult: tickBreakdown },
   );
   return true;
 }
@@ -369,9 +402,16 @@ async function ongoingDamageStop(
     changes: tokenConditionChanges(c.ctx.room, target.id),
   });
   const caller = resolveCallerToken(c.ctx);
+  const stopBreakdown: ActionBreakdown = {
+    actor: { name: caller?.name ?? 'Someone', tokenId: caller?.id },
+    action: { name: `Suppress ${label}`, category: 'other', icon: '\u26D4' },
+    effect: `${target.name}: ${label} ends (extinguish / staunch / neutralize).`,
+    targets: [{ name: target.name, tokenId: target.id }],
+  };
   broadcastSystem(
     c.io, c.ctx,
     `⛔ ${caller?.name ?? 'Someone'} suppresses **${label}** on ${target.name}.`,
+    { actionResult: stopBreakdown },
   );
   return true;
 }

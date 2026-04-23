@@ -320,9 +320,24 @@ async function handlePolymorph(c: ChatCommandContext): Promise<boolean> {
   const tot = d20 + mod;
   const saved = tot >= loaded.spellSaveDc;
   const sign = mod >= 0 ? '+' : '';
+  const polyBreakdown: SpellCastBreakdown = {
+    caster: { name: loaded.callerName, tokenId: loaded.caller.id },
+    spell: { name: 'Polymorph', level: 4, kind: 'save', saveAbility: 'wis', saveDc: loaded.spellSaveDc },
+    notes: [`Into CR ≤ ${cr} beast (concentration, 1 hr, reverts on 0 HP)`],
+    targets: [{
+      name: displayName, tokenId: target.id, kind: 'save',
+      save: {
+        d20, advantage: 'normal', ability: 'wis',
+        modifiers: mod !== 0 ? [{ label: 'WIS save mod', value: mod, source: 'ability' }] : [],
+        total: tot, dc: loaded.spellSaveDc, saved,
+      },
+      conditionsApplied: saved ? undefined : ['polymorphed'],
+    }],
+  };
   broadcastSystem(
     c.io, c.ctx,
     `🦉 **Polymorph** (L4, WIS DC ${loaded.spellSaveDc}) — ${loaded.callerName} → ${displayName}: d20=${d20}${sign}${mod}=${tot} → ${saved ? 'SAVED — no effect' : `POLYMORPHED into CR ≤ ${cr} beast (concentration, 1 hr, reverts on 0 HP)`}`,
+    { spellResult: polyBreakdown },
   );
   return true;
 }
@@ -346,9 +361,24 @@ async function handleTruePolymorph(c: ChatCommandContext): Promise<boolean> {
   const tot = d20 + mod;
   const saved = tot >= loaded.spellSaveDc;
   const sign = mod >= 0 ? '+' : '';
+  const tpBreakdown: SpellCastBreakdown = {
+    caster: { name: loaded.callerName, tokenId: loaded.caller.id },
+    spell: { name: 'True Polymorph', level: 9, kind: 'save', saveAbility: 'wis', saveDc: loaded.spellSaveDc },
+    notes: ['Any creature/object. Concentration 1 hr → permanent.'],
+    targets: [{
+      name: displayName, tokenId: target.id, kind: 'save',
+      save: {
+        d20, advantage: 'normal', ability: 'wis',
+        modifiers: mod !== 0 ? [{ label: 'WIS save mod', value: mod, source: 'ability' }] : [],
+        total: tot, dc: loaded.spellSaveDc, saved,
+      },
+      conditionsApplied: saved ? undefined : ['true-polymorphed'],
+    }],
+  };
   broadcastSystem(
     c.io, c.ctx,
     `✨ **True Polymorph** (L9, WIS DC ${loaded.spellSaveDc}) — ${loaded.callerName} → ${displayName}: d20=${d20}${sign}${mod}=${tot} → ${saved ? 'SAVED — no effect' : 'TRANSFORMED into any creature or object (concentration, 1 hr → permanent)'}`,
+    { spellResult: tpBreakdown },
   );
   return true;
 }
@@ -375,9 +405,33 @@ async function handleFeeblemind(c: ChatCommandContext): Promise<boolean> {
   const saved = tot >= loaded.spellSaveDc;
   const psychicRoll = roll(4, 8);
   const sign = mod >= 0 ? '+' : '';
+  const fmBreakdown: SpellCastBreakdown = {
+    caster: { name: loaded.callerName, tokenId: loaded.caller.id },
+    spell: { name: 'Feeblemind', level: 8, kind: 'save',
+      saveAbility: 'int', saveDc: loaded.spellSaveDc, damageType: 'psychic' },
+    notes: ['On fail: INT + CHA become 1; INT save end of each 30 days to end.'],
+    targets: [{
+      name: displayName, tokenId: target.id, kind: 'save',
+      save: {
+        d20, advantage: 'normal', ability: 'int',
+        modifiers: mod !== 0 ? [{ label: 'INT save mod', value: mod, source: 'ability' }] : [],
+        total: tot, dc: loaded.spellSaveDc, saved,
+      },
+      damage: {
+        dice: '4d8',
+        diceRolls: psychicRoll.rolls,
+        mainRoll: psychicRoll.sum,
+        bonuses: [],
+        finalDamage: psychicRoll.sum,
+        targetHpBefore: 0, targetHpAfter: 0,
+      },
+      conditionsApplied: saved ? undefined : ['feebleminded'],
+    }],
+  };
   broadcastSystem(
     c.io, c.ctx,
     `🧠 **Feeblemind** (L8, INT DC ${loaded.spellSaveDc}) — ${loaded.callerName} → ${displayName}: d20=${d20}${sign}${mod}=${tot}. Takes ${psychicRoll.sum} psychic [${psychicRoll.rolls.join(',')}]. ${saved ? 'SAVED — no mental reduction' : 'FAILED — INT + CHA become 1, can\'t cast / speak. INT save at end of each 30 days to end.'}`,
+    { spellResult: fmBreakdown },
   );
   return true;
 }
@@ -416,6 +470,7 @@ async function handleCloudkill(c: ChatCommandContext): Promise<boolean> {
   const dice = 5 + Math.max(0, slot - 5);
   const lines: string[] = [];
   lines.push(`☠ **Cloudkill** (L${slot}, 20-ft sphere, CON DC ${loaded.spellSaveDc}, moves 10 ft/turn) — ${loaded.callerName}:`);
+  const ckOutcomes: SpellTargetOutcome[] = [];
   for (const name of targets) {
     const target = resolveTargetByName(c.ctx, name);
     if (!target) { lines.push(`  • ${name}: not found`); continue; }
@@ -427,8 +482,28 @@ async function handleCloudkill(c: ChatCommandContext): Promise<boolean> {
     const dmg = saved ? Math.floor(sum / 2) : sum;
     const sign = mod >= 0 ? '+' : '';
     lines.push(`  • ${displayName}: CON d20=${d20}${sign}${mod}=${tot} → ${saved ? 'SAVED' : 'FAILED'}, **${dmg} poison** [${rolls.join(',')}]`);
+    ckOutcomes.push({
+      name: displayName, tokenId: target.id, kind: 'save',
+      save: {
+        d20, advantage: 'normal', ability: 'con',
+        modifiers: mod !== 0 ? [{ label: 'CON save mod', value: mod, source: 'ability' }] : [],
+        total: tot, dc: loaded.spellSaveDc, saved,
+      },
+      damage: {
+        dice: `${dice}d8`, diceRolls: rolls, mainRoll: sum, bonuses: [],
+        halfDamage: saved || undefined, finalDamage: dmg,
+        targetHpBefore: 0, targetHpAfter: 0,
+      },
+    });
   }
-  broadcastSystem(c.io, c.ctx, lines.join('\n'));
+  const ckBreakdown: SpellCastBreakdown = {
+    caster: { name: loaded.callerName, tokenId: loaded.caller.id },
+    spell: { name: `Cloudkill (L${slot})`, level: slot, kind: 'save',
+      damageType: 'poison', saveAbility: 'con', saveDc: loaded.spellSaveDc, halfOnSave: true },
+    notes: ['20-ft sphere, concentration 10 min, cloud moves 10 ft away from caster each turn'],
+    targets: ckOutcomes,
+  };
+  broadcastSystem(c.io, c.ctx, lines.join('\n'), { spellResult: ckBreakdown });
   return true;
 }
 
@@ -445,6 +520,7 @@ async function handleMeteorSwarm(c: ChatCommandContext): Promise<boolean> {
   if (!loaded) return true;
   const lines: string[] = [];
   lines.push(`☄ **Meteor Swarm** (L9, 4 × 40-ft radius, DEX DC ${loaded.spellSaveDc}) — ${loaded.callerName}:`);
+  const msOutcomes: SpellTargetOutcome[] = [];
   for (const name of parts) {
     const target = resolveTargetByName(c.ctx, name);
     if (!target) { lines.push(`  • ${name}: not found`); continue; }
@@ -458,8 +534,35 @@ async function handleMeteorSwarm(c: ChatCommandContext): Promise<boolean> {
     const dmg = saved ? Math.floor(raw / 2) : raw;
     const sign = mod >= 0 ? '+' : '';
     lines.push(`  • ${displayName}: DEX d20=${d20}${sign}${mod}=${tot} → ${saved ? 'SAVED' : 'FAILED'}, **${dmg}** (${fire.sum} fire + ${bludgeon.sum} bludgeoning)`);
+    msOutcomes.push({
+      name: displayName, tokenId: target.id, kind: 'save',
+      save: {
+        d20, advantage: 'normal', ability: 'dex',
+        modifiers: mod !== 0 ? [{ label: 'DEX save mod', value: mod, source: 'ability' }] : [],
+        total: tot, dc: loaded.spellSaveDc, saved,
+      },
+      damage: {
+        dice: '20d6 fire + 20d6 bludgeoning',
+        diceRolls: [...fire.rolls, ...bludgeon.rolls],
+        mainRoll: raw,
+        bonuses: [
+          { label: 'Fire meteor', amount: saved ? Math.floor(fire.sum / 2) : fire.sum, damageType: 'fire' },
+          { label: 'Bludgeoning crater', amount: saved ? Math.floor(bludgeon.sum / 2) : bludgeon.sum, damageType: 'bludgeoning' },
+        ],
+        halfDamage: saved || undefined,
+        finalDamage: dmg,
+        targetHpBefore: 0, targetHpAfter: 0,
+      },
+    });
   }
-  broadcastSystem(c.io, c.ctx, lines.join('\n'));
+  const msBreakdown: SpellCastBreakdown = {
+    caster: { name: loaded.callerName, tokenId: loaded.caller.id },
+    spell: { name: 'Meteor Swarm', level: 9, kind: 'save',
+      damageType: 'fire + bludgeoning', saveAbility: 'dex', saveDc: loaded.spellSaveDc, halfOnSave: true },
+    notes: ['4 × 40-ft radius. Ignites flammable objects.'],
+    targets: msOutcomes,
+  };
+  broadcastSystem(c.io, c.ctx, lines.join('\n'), { spellResult: msBreakdown });
   return true;
 }
 

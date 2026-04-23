@@ -6,7 +6,7 @@ import {
 } from '../ChatCommands.js';
 import * as ConditionService from '../ConditionService.js';
 import pool from '../../db/connection.js';
-import type { Token, SpellCastBreakdown } from '@dnd-vtt/shared';
+import type { Token, SpellCastBreakdown, SpellTargetOutcome } from '@dnd-vtt/shared';
 import type { PlayerContext } from '../../utils/roomState.js';
 import { tokenConditionChanges } from '../../utils/conditionSources.js';
 
@@ -103,13 +103,29 @@ async function handleAid(c: ChatCommandContext): Promise<boolean> {
   const bonus = 5 + Math.max(0, slot - 2) * 5;
   const lines: string[] = [];
   lines.push(`💚 **Aid** (L${slot}, 8 hrs) — ${loaded.callerName} grants +${bonus} to max + current HP:`);
+  const aidOutcomes: SpellTargetOutcome[] = [];
   for (const name of targets) {
     const target = resolveTargetByName(c.ctx, name);
     if (!target) { lines.push(`  • ${name}: not found`); continue; }
     const result = await bumpMaxHp(target, bonus, c);
     lines.push(result ? `  • ${target.name}: HP ${result.newHp}/${result.newMax}` : `  • ${target.name}: +${bonus} HP`);
+    aidOutcomes.push({
+      name: target.name, tokenId: target.id, kind: 'heal',
+      healing: result
+        ? { dice: '—', diceRolls: [], mainRoll: bonus,
+            targetHpBefore: result.newHp - bonus, targetHpAfter: result.newHp }
+        : { dice: '—', diceRolls: [], mainRoll: bonus,
+            targetHpBefore: 0, targetHpAfter: bonus },
+      notes: [`Max HP also raised by +${bonus} for 8 hours`],
+    });
   }
-  broadcastSystem(c.io, c.ctx, lines.join('\n'));
+  const aidBreakdown: SpellCastBreakdown = {
+    caster: { name: loaded.callerName, tokenId: loaded.caller.id },
+    spell: { name: `Aid (L${slot})`, level: slot, kind: 'heal' },
+    notes: [`+${bonus} to max HP AND current HP for 8 hours`],
+    targets: aidOutcomes,
+  };
+  broadcastSystem(c.io, c.ctx, lines.join('\n'), { spellResult: aidBreakdown });
   return true;
 }
 
@@ -186,9 +202,19 @@ async function applyInvisible(c: ChatCommandContext, targetName: string, duratio
     tokenId: target.id,
     changes: tokenConditionChanges(c.ctx.room, target.id),
   });
+  const invisBreakdown: SpellCastBreakdown = {
+    caster: { name: loaded.callerName, tokenId: loaded.caller.id },
+    spell: { name: label, level: label.includes('Greater') ? 4 : 2, kind: 'utility' },
+    notes: [duration === 600 ? 'Concentration, 1 hour' : 'Concentration, 1 minute'],
+    targets: [{
+      name: target.name, tokenId: target.id, kind: 'buff',
+      conditionsApplied: ['invisible'],
+    }],
+  };
   broadcastSystem(
     c.io, c.ctx,
     `👻 **${label}** — ${loaded.callerName} turns ${target.name} invisible for ${duration === 600 ? '1 hour' : '1 min'} (concentration).`,
+    { spellResult: invisBreakdown },
   );
   return true;
 }
@@ -237,9 +263,19 @@ async function handleHaste(c: ChatCommandContext): Promise<boolean> {
     tokenId: target.id,
     changes: tokenConditionChanges(c.ctx.room, target.id),
   });
+  const hasteBreakdown: SpellCastBreakdown = {
+    caster: { name: loaded.callerName, tokenId: loaded.caller.id },
+    spell: { name: 'Haste', level: 3, kind: 'utility' },
+    notes: ['Concentration, 1 min. +2 AC, adv on DEX saves, speed doubled, extra action'],
+    targets: [{
+      name: target.name, tokenId: target.id, kind: 'buff',
+      conditionsApplied: ['hasted'],
+    }],
+  };
   broadcastSystem(
     c.io, c.ctx,
     `⚡ **Haste** (L3, concentration 1 min) — ${loaded.callerName} hastens ${target.name}: +2 AC, adv on DEX saves, speed doubled, extra action (Attack 1-atk/Dash/Disengage/Hide/Use).`,
+    { spellResult: hasteBreakdown },
   );
   return true;
 }
@@ -261,9 +297,25 @@ async function handleFly(c: ChatCommandContext): Promise<boolean> {
   }
   const loaded = await loadCaster(c, 'fly');
   if (!loaded) return true;
+  const flyOutcomes: SpellTargetOutcome[] = targets.map((name) => {
+    const t = resolveTargetByName(c.ctx, name);
+    return {
+      name: t?.name ?? name,
+      tokenId: t?.id,
+      kind: 'buff',
+      notes: ['60 ft fly speed'],
+    };
+  });
+  const flyBreakdown: SpellCastBreakdown = {
+    caster: { name: loaded.callerName, tokenId: loaded.caller.id },
+    spell: { name: `Fly (L${slot})`, level: slot, kind: 'utility' },
+    notes: ['Concentration, 10 min'],
+    targets: flyOutcomes,
+  };
   broadcastSystem(
     c.io, c.ctx,
     `🪶 **Fly** (L${slot}, concentration 10 min) — ${loaded.callerName} grants **60 ft fly speed** to: ${targets.join(', ')}.`,
+    { spellResult: flyBreakdown },
   );
   return true;
 }
@@ -272,9 +324,16 @@ async function handleFly(c: ChatCommandContext): Promise<boolean> {
 async function handlePassWithoutTrace(c: ChatCommandContext): Promise<boolean> {
   const loaded = await loadCaster(c, 'passwithouttrace');
   if (!loaded) return true;
+  const pwtBreakdown: SpellCastBreakdown = {
+    caster: { name: loaded.callerName, tokenId: loaded.caller.id },
+    spell: { name: 'Pass Without Trace', level: 2, kind: 'utility' },
+    notes: ['30-ft aura, +10 Stealth, leave no tracks. Concentration, 1 hr.'],
+    targets: [],
+  };
   broadcastSystem(
     c.io, c.ctx,
     `🌲 **Pass Without Trace** (L2, concentration 1 hr) — ${loaded.callerName} blesses all creatures within 30 ft: **+10 Stealth**, leave no tracks.`,
+    { spellResult: pwtBreakdown },
   );
   return true;
 }
@@ -309,9 +368,19 @@ async function handleLesserRestoration(c: ChatCommandContext): Promise<boolean> 
       });
     }
   }
+  const lrBreakdown: SpellCastBreakdown = {
+    caster: { name: loaded.callerName, tokenId: loaded.caller.id },
+    spell: { name: 'Lesser Restoration', level: 2, kind: 'utility' },
+    notes: [`Cure ${cond} on target`],
+    targets: [{
+      name: target.name, tokenId: target.id, kind: 'utility',
+      notes: [`Cured of ${cond}`],
+    }],
+  };
   broadcastSystem(
     c.io, c.ctx,
     `✨ **Lesser Restoration** (L2) — ${loaded.callerName} cures ${target.name} of **${cond}**.`,
+    { spellResult: lrBreakdown },
   );
   return true;
 }
@@ -361,9 +430,19 @@ async function handleGreaterRestoration(c: ChatCommandContext): Promise<boolean>
       });
     }
   }
+  const grBreakdown: SpellCastBreakdown = {
+    caster: { name: loaded.callerName, tokenId: loaded.caller.id },
+    spell: { name: 'Greater Restoration', level: 5, kind: 'utility' },
+    notes: [`Restoration effect: ${eff}`],
+    targets: [{
+      name: target.name, tokenId: target.id, kind: 'utility',
+      notes: [`Restored from ${eff}`],
+    }],
+  };
   broadcastSystem(
     c.io, c.ctx,
     `✨ **Greater Restoration** (L5) — ${loaded.callerName} restores ${target.name} from **${eff}**.`,
+    { spellResult: grBreakdown },
   );
   return true;
 }
@@ -385,9 +464,19 @@ async function handleBlur(c: ChatCommandContext): Promise<boolean> {
     tokenId: caller.id,
     changes: tokenConditionChanges(c.ctx.room, caller.id),
   });
+  const blurBreakdown: SpellCastBreakdown = {
+    caster: { name: callerName, tokenId: caller.id },
+    spell: { name: 'Blur', level: 2, kind: 'utility' },
+    notes: ['Concentration, 1 min. Attacks against have disadvantage (blindsight/truesight bypass)'],
+    targets: [{
+      name: callerName, tokenId: caller.id, kind: 'buff',
+      conditionsApplied: ['blur'],
+    }],
+  };
   broadcastSystem(
     c.io, c.ctx,
     `💫 **Blur** (L2, concentration 1 min) — ${callerName} becomes blurred. Attack rolls against have **disadvantage** (unless blindsight / truesight).`,
+    { spellResult: blurBreakdown },
   );
   return true;
 }
@@ -418,9 +507,19 @@ async function handleStoneskin(c: ChatCommandContext): Promise<boolean> {
     tokenId: target.id,
     changes: tokenConditionChanges(c.ctx.room, target.id),
   });
+  const ssBreakdown: SpellCastBreakdown = {
+    caster: { name: loaded.callerName, tokenId: loaded.caller.id },
+    spell: { name: 'Stoneskin', level: 4, kind: 'utility' },
+    notes: ['Concentration, 1 hr. Resistance to non-magical bludgeoning/piercing/slashing'],
+    targets: [{
+      name: target.name, tokenId: target.id, kind: 'buff',
+      conditionsApplied: ['stoneskin'],
+    }],
+  };
   broadcastSystem(
     c.io, c.ctx,
     `🗿 **Stoneskin** (L4, concentration 1 hr) — ${loaded.callerName} grants ${target.name} **resistance to non-magical BPS damage**.`,
+    { spellResult: ssBreakdown },
   );
   return true;
 }
@@ -451,9 +550,19 @@ async function handleDeathWard(c: ChatCommandContext): Promise<boolean> {
     tokenId: target.id,
     changes: tokenConditionChanges(c.ctx.room, target.id),
   });
+  const dwBreakdown: SpellCastBreakdown = {
+    caster: { name: loaded.callerName, tokenId: loaded.caller.id },
+    spell: { name: 'Death Ward', level: 4, kind: 'utility' },
+    notes: ['8 hrs. First time target would drop to 0 HP, drop to 1 instead.'],
+    targets: [{
+      name: target.name, tokenId: target.id, kind: 'buff',
+      conditionsApplied: ['death-warded'],
+    }],
+  };
   broadcastSystem(
     c.io, c.ctx,
     `🛡 **Death Ward** (L4, 8 hrs) — ${loaded.callerName} wards ${target.name}: first time they would drop to 0 HP, drop to 1 instead. Single use.`,
+    { spellResult: dwBreakdown },
   );
   return true;
 }

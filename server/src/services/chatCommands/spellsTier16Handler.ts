@@ -430,6 +430,7 @@ async function handleEntangle(c: ChatCommandContext): Promise<boolean> {
   const currentRound = c.ctx.room.combatState?.roundNumber ?? 0;
   const lines: string[] = [];
   lines.push(`🌿 **Entangle** (20-ft square, STR DC ${spellSaveDc}, concentration 1 min) — ${callerName}:`);
+  const entangleOutcomes: SpellTargetOutcome[] = [];
   for (const name of parts) {
     const target = resolveTargetByName(c.ctx, name);
     if (!target) { lines.push(`  • ${name}: not found`); continue; }
@@ -453,8 +454,26 @@ async function handleEntangle(c: ChatCommandContext): Promise<boolean> {
       });
     }
     lines.push(`  • ${displayName}: STR d20=${d20}${sign}${mod}=${tot} → ${saved ? 'SAVED' : 'RESTRAINED (save at end of turn)'}`);
+    entangleOutcomes.push({
+      name: displayName, tokenId: target.id, kind: 'save',
+      save: {
+        d20, advantage: 'normal', ability: 'str',
+        modifiers: mod !== 0 ? [{ label: 'STR save mod', value: mod, source: 'ability' }] : [],
+        total: tot, dc: spellSaveDc, saved,
+      },
+      conditionsApplied: saved ? undefined : ['restrained'],
+    });
   }
-  broadcastSystem(c.io, c.ctx, lines.join('\n'));
+  const entangleBreakdown: SpellCastBreakdown = {
+    caster: { name: callerName, tokenId: caller.id },
+    spell: {
+      name: 'Entangle', level: 1, kind: 'save',
+      saveAbility: 'str', saveDc: spellSaveDc,
+    },
+    notes: ['20-ft square, concentration 1 min, save at end of each turn'],
+    targets: entangleOutcomes,
+  };
+  broadcastSystem(c.io, c.ctx, lines.join('\n'), { spellResult: entangleBreakdown });
   return true;
 }
 
@@ -471,6 +490,7 @@ async function handleWeb(c: ChatCommandContext): Promise<boolean> {
   const currentRound = c.ctx.room.combatState?.roundNumber ?? 0;
   const lines: string[] = [];
   lines.push(`🕸 **Web** (20-ft cube, DEX DC ${spellSaveDc}, concentration 1 hr) — ${callerName}:`);
+  const webOutcomes: SpellTargetOutcome[] = [];
   for (const name of parts) {
     const target = resolveTargetByName(c.ctx, name);
     if (!target) { lines.push(`  • ${name}: not found`); continue; }
@@ -494,8 +514,23 @@ async function handleWeb(c: ChatCommandContext): Promise<boolean> {
       });
     }
     lines.push(`  • ${displayName}: DEX d20=${d20}${sign}${mod}=${tot} → ${saved ? 'SAVED' : 'RESTRAINED (STR save at end of turn)'}`);
+    webOutcomes.push({
+      name: displayName, tokenId: target.id, kind: 'save',
+      save: {
+        d20, advantage: 'normal', ability: 'dex',
+        modifiers: mod !== 0 ? [{ label: 'DEX save mod', value: mod, source: 'ability' }] : [],
+        total: tot, dc: spellSaveDc, saved,
+      },
+      conditionsApplied: saved ? undefined : ['restrained'],
+    });
   }
-  broadcastSystem(c.io, c.ctx, lines.join('\n'));
+  const webBreakdown: SpellCastBreakdown = {
+    caster: { name: callerName, tokenId: caller.id },
+    spell: { name: 'Web', level: 2, kind: 'save', saveAbility: 'dex', saveDc: spellSaveDc },
+    notes: ['20-ft cube, concentration 1 hr, STR save at end of each turn'],
+    targets: webOutcomes,
+  };
+  broadcastSystem(c.io, c.ctx, lines.join('\n'), { spellResult: webBreakdown });
   return true;
 }
 
@@ -511,7 +546,8 @@ async function handleMoonbeam(c: ChatCommandContext): Promise<boolean> {
   const { slot, targets } = splitSlotAndTargets(parts, 2, 2);
   const dice = 2 + Math.max(0, slot - 2);
   await aoeSaveForHalf(c, 'moonbeam', `Moonbeam (L${slot})`, '🌙', '5-ft radius cylinder',
-    dice, 10, 'radiant', 'con', targets, loaded.spellSaveDc, loaded.callerName);
+    dice, 10, 'radiant', 'con', targets, loaded.spellSaveDc, loaded.callerName,
+    undefined, { level: slot, casterTokenId: loaded.caller.id });
   return true;
 }
 
@@ -527,7 +563,8 @@ async function handleCallLightning(c: ChatCommandContext): Promise<boolean> {
   const { slot, targets } = splitSlotAndTargets(parts, 3, 3);
   const dice = 3 + Math.max(0, slot - 3);
   await aoeSaveForHalf(c, 'calllightning', `Call Lightning (L${slot})`, '⚡', '5-ft cylinder, 100 ft up',
-    dice, 10, 'lightning', 'dex', targets, loaded.spellSaveDc, loaded.callerName);
+    dice, 10, 'lightning', 'dex', targets, loaded.spellSaveDc, loaded.callerName,
+    undefined, { level: slot, casterTokenId: loaded.caller.id });
   return true;
 }
 
@@ -549,9 +586,16 @@ async function handleMistyStep(c: ChatCommandContext): Promise<boolean> {
       economy,
     });
   }
+  const msBreakdown: SpellCastBreakdown = {
+    caster: { name: callerName, tokenId: caller.id },
+    spell: { name: 'Misty Step', level: 2, kind: 'utility' },
+    notes: ['Teleport up to 30 ft to unoccupied space in sight (bonus action)'],
+    targets: [],
+  };
   broadcastSystem(
     c.io, c.ctx,
     `💨 **Misty Step** (L2, bonus action) — ${callerName} teleports up to **30 ft** to an unoccupied space they can see.`,
+    { spellResult: msBreakdown },
   );
   return true;
 }

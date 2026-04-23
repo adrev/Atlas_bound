@@ -462,9 +462,47 @@ async function handleGuidingBolt(c: ChatCommandContext): Promise<boolean> {
     tokenId: target.id,
     changes: tokenConditionChanges(c.ctx.room, target.id),
   });
+  const gbBreakdown: SpellCastBreakdown = {
+    caster: { name: stats.callerName, tokenId: caller.id },
+    spell: {
+      name: `Guiding Bolt (L${slotLvl})`,
+      level: slotLvl,
+      kind: 'attack',
+      damageType: 'radiant',
+      spellAttackBonus: stats.spellAttackBonus,
+    },
+    notes: ['Next attack vs target has advantage (outlined)'],
+    targets: [{
+      name: target.name,
+      tokenId: target.id,
+      kind: 'attack',
+      attack: {
+        d20,
+        advantage: 'normal',
+        modifiers: stats.spellAttackBonus !== 0
+          ? [{ label: 'Spell attack bonus', value: stats.spellAttackBonus, source: 'other' }]
+          : [],
+        total: atkTotal,
+        targetAc: 0,
+        hitResult: d20 === 20 ? 'crit' : d20 === 1 ? 'fumble' : 'hit',
+      },
+      damage: {
+        dice: `${dice}d6`,
+        diceRolls: rolls,
+        mainRoll: total,
+        bonuses: [],
+        finalDamage: total,
+        targetHpBefore: 0,
+        targetHpAfter: 0,
+      },
+      conditionsApplied: ['outlined'],
+      notes: ['DM adjudicates hit vs AC'],
+    }],
+  };
   broadcastSystem(
     c.io, c.ctx,
     `✨ **Guiding Bolt** (L${slotLvl}) — ${stats.callerName} → ${target.name}: atk d20=${d20}${sign}${stats.spellAttackBonus}=${atkTotal} vs AC. On hit: ${dice}d6 = [${rolls.join(',')}] = **${total} radiant**. Next attack vs ${target.name} has advantage.`,
+    { spellResult: gbBreakdown },
   );
   return true;
 }
@@ -495,6 +533,7 @@ async function handleThunderwave(c: ChatCommandContext): Promise<boolean> {
   const dice = 2 + Math.max(0, slotLvl - 1);
   const lines: string[] = [];
   lines.push(`💥 **Thunderwave** (L${slotLvl}, 15-ft cube, CON DC ${stats.spellSaveDc}) — ${stats.callerName}:`);
+  const twOutcomes: SpellTargetOutcome[] = [];
   for (const name of targets) {
     const target = resolveTargetByName(c.ctx, name);
     if (!target) {
@@ -516,8 +555,47 @@ async function handleThunderwave(c: ChatCommandContext): Promise<boolean> {
     const sign = mod >= 0 ? '+' : '';
     const pushText = saved ? 'no push' : 'pushed 10 ft';
     lines.push(`  • ${displayName}: CON d20=${d20}${sign}${mod}=${tot} → ${saved ? 'SAVED' : 'FAILED'}, ${dmg} thunder [${rolls.join(',')}] (${pushText})`);
+    twOutcomes.push({
+      name: displayName,
+      tokenId: target.id,
+      kind: 'save',
+      save: {
+        d20,
+        advantage: 'normal',
+        ability: 'con',
+        modifiers: mod !== 0 ? [{ label: 'CON save mod', value: mod, source: 'ability' }] : [],
+        total: tot,
+        dc: stats.spellSaveDc,
+        saved,
+      },
+      damage: {
+        dice: `${dice}d8`,
+        diceRolls: rolls,
+        mainRoll: raw,
+        bonuses: [],
+        halfDamage: saved || undefined,
+        finalDamage: dmg,
+        targetHpBefore: 0,
+        targetHpAfter: 0,
+      },
+      notes: [saved ? 'No pushback' : 'Pushed 10 ft'],
+    });
   }
-  broadcastSystem(c.io, c.ctx, lines.join('\n'));
+  const twBreakdown: SpellCastBreakdown = {
+    caster: { name: stats.callerName, tokenId: loaded.caller.id },
+    spell: {
+      name: `Thunderwave (L${slotLvl})`,
+      level: slotLvl,
+      kind: 'save',
+      damageType: 'thunder',
+      saveAbility: 'con',
+      saveDc: stats.spellSaveDc,
+      halfOnSave: true,
+    },
+    notes: ['15-ft cube, push 10 ft on fail'],
+    targets: twOutcomes,
+  };
+  broadcastSystem(c.io, c.ctx, lines.join('\n'), { spellResult: twBreakdown });
   return true;
 }
 
@@ -645,6 +723,7 @@ async function handleSpiritGuardians(c: ChatCommandContext): Promise<boolean> {
   const lines: string[] = [];
   lines.push(`✨ **Spirit Guardians** (L${slotLvl}, 15-ft radius, WIS DC ${stats.spellSaveDc}) — ${stats.callerName} (concentration, 10 min):`);
   const currentRound = c.ctx.room.combatState?.roundNumber ?? 0;
+  const sgOutcomes: SpellTargetOutcome[] = [];
   for (const name of targets) {
     const target = resolveTargetByName(c.ctx, name);
     if (!target) {
@@ -676,8 +755,47 @@ async function handleSpiritGuardians(c: ChatCommandContext): Promise<boolean> {
       changes: tokenConditionChanges(c.ctx.room, target.id),
     });
     lines.push(`  • ${displayName}: WIS d20=${d20}${sign}${mod}=${tot} → ${saved ? 'SAVED' : 'FAILED'}, ${dmg} radiant [${rolls.join(',')}]. Speed halved while in area.`);
+    sgOutcomes.push({
+      name: displayName,
+      tokenId: target.id,
+      kind: 'save',
+      save: {
+        d20,
+        advantage: 'normal',
+        ability: 'wis',
+        modifiers: mod !== 0 ? [{ label: 'WIS save mod', value: mod, source: 'ability' }] : [],
+        total: tot,
+        dc: stats.spellSaveDc,
+        saved,
+      },
+      damage: {
+        dice: `${dice}d8`,
+        diceRolls: rolls,
+        mainRoll: raw,
+        bonuses: [],
+        halfDamage: saved || undefined,
+        finalDamage: dmg,
+        targetHpBefore: 0,
+        targetHpAfter: 0,
+      },
+      conditionsApplied: ['slowed'],
+    });
   }
-  broadcastSystem(c.io, c.ctx, lines.join('\n'));
+  const sgBreakdown: SpellCastBreakdown = {
+    caster: { name: stats.callerName, tokenId: loaded.caller.id },
+    spell: {
+      name: `Spirit Guardians (L${slotLvl})`,
+      level: slotLvl,
+      kind: 'save',
+      damageType: 'radiant',
+      saveAbility: 'wis',
+      saveDc: stats.spellSaveDc,
+      halfOnSave: true,
+    },
+    notes: ['15-ft radius, concentration 10 min, speed halved in area'],
+    targets: sgOutcomes,
+  };
+  broadcastSystem(c.io, c.ctx, lines.join('\n'), { spellResult: sgBreakdown });
   return true;
 }
 
@@ -729,9 +847,31 @@ async function handleCommand(c: ChatCommandContext): Promise<boolean> {
       changes: tokenConditionChanges(c.ctx.room, target.id),
     });
   }
+  const commandBreakdown: SpellCastBreakdown = {
+    caster: { name: stats.callerName, tokenId: caller.id },
+    spell: {
+      name: `Command "${word}"`,
+      level: 1,
+      kind: 'save',
+      saveAbility: 'wis',
+      saveDc: stats.spellSaveDc,
+    },
+    notes: [`1-word command — ${word}`],
+    targets: [{
+      name: displayName, tokenId: target.id, kind: 'save',
+      save: {
+        d20, advantage: 'normal', ability: 'wis',
+        modifiers: mod !== 0 ? [{ label: 'WIS save mod', value: mod, source: 'ability' }] : [],
+        total: tot, dc: stats.spellSaveDc, saved,
+      },
+      conditionsApplied: saved ? undefined : ['commanded'],
+      notes: saved ? undefined : [`Must ${word.toUpperCase()} on next turn`],
+    }],
+  };
   broadcastSystem(
     c.io, c.ctx,
     `📢 **Command "${word}"** (WIS DC ${stats.spellSaveDc}) — ${stats.callerName} → ${displayName}: d20=${d20}${sign}${mod}=${tot} → ${saved ? 'SAVED — no effect' : `COMPELLED: ${word.toUpperCase()} on next turn`}`,
+    { spellResult: commandBreakdown },
   );
   return true;
 }
@@ -786,9 +926,19 @@ async function handleSanctuary(c: ChatCommandContext): Promise<boolean> {
     tokenId: target.id,
     changes: tokenConditionChanges(c.ctx.room, target.id),
   });
+  const sanctBreakdown: SpellCastBreakdown = {
+    caster: { name: stats.callerName, tokenId: caller.id },
+    spell: { name: 'Sanctuary', level: 1, kind: 'utility' },
+    notes: [`Attackers must pass WIS DC ${stats.spellSaveDc} or retarget. Drops if warded creature attacks or casts harmful spell.`],
+    targets: [{
+      name: target.name, tokenId: target.id, kind: 'buff',
+      conditionsApplied: ['sanctuary'],
+    }],
+  };
   broadcastSystem(
     c.io, c.ctx,
     `🕊 **Sanctuary** — ${stats.callerName} wards ${target.name} (WIS DC ${stats.spellSaveDc}). Attackers must succeed on WIS save or pick a different target. Drops if ${target.name} attacks or casts harmful spell. (Concentration, 1 min)`,
+    { spellResult: sanctBreakdown },
   );
   return true;
 }
@@ -836,9 +986,30 @@ async function handleBanishment(c: ChatCommandContext): Promise<boolean> {
       changes: tokenConditionChanges(c.ctx.room, target.id),
     });
   }
+  const banishBreakdown: SpellCastBreakdown = {
+    caster: { name: stats.callerName, tokenId: caller.id },
+    spell: {
+      name: `Banishment (L${slotLvl})`,
+      level: slotLvl,
+      kind: 'save',
+      saveAbility: 'cha',
+      saveDc: stats.spellSaveDc,
+    },
+    notes: ['Concentration, 1 min'],
+    targets: [{
+      name: displayName, tokenId: target.id, kind: 'save',
+      save: {
+        d20, advantage: 'normal', ability: 'cha',
+        modifiers: mod !== 0 ? [{ label: 'CHA save mod', value: mod, source: 'ability' }] : [],
+        total: tot, dc: stats.spellSaveDc, saved,
+      },
+      conditionsApplied: saved ? undefined : ['banished'],
+    }],
+  };
   broadcastSystem(
     c.io, c.ctx,
     `🌀 **Banishment** (L${slotLvl}, CHA DC ${stats.spellSaveDc}) — ${stats.callerName} → ${displayName}: d20=${d20}${sign}${mod}=${tot} → ${saved ? 'SAVED — no effect' : 'BANISHED to another plane (concentration, 1 min)'}`,
+    { spellResult: banishBreakdown },
   );
   return true;
 }
@@ -894,9 +1065,20 @@ async function handleSilveryBarbs(c: ChatCommandContext): Promise<boolean> {
     tokenId: ally.id,
     changes: tokenConditionChanges(c.ctx.room, ally.id),
   });
+  const sbBreakdown: SpellCastBreakdown = {
+    caster: { name: stats.callerName, tokenId: caller.id },
+    spell: { name: 'Silvery Barbs', level: 1, kind: 'utility' },
+    notes: [`${enemy.name} must reroll its success (keep new)`],
+    targets: [{
+      name: ally.name, tokenId: ally.id, kind: 'buff',
+      conditionsApplied: ['inspired'],
+      notes: [`Advantage on next attack/save/check within 1 min`],
+    }],
+  };
   broadcastSystem(
     c.io, c.ctx,
     `🎀 **Silvery Barbs** (reaction, 60 ft) — ${stats.callerName} forces ${enemy.name} to reroll its success (keep new, likely worse) AND grants ${ally.name} advantage on its next attack/save/check within 1 min.`,
+    { spellResult: sbBreakdown },
   );
   return true;
 }
@@ -942,9 +1124,19 @@ async function handleCounterspell(c: ChatCommandContext): Promise<boolean> {
   }
   const autoCounter = spellLvl <= mySlot;
   if (autoCounter) {
+    const autoBreakdown: SpellCastBreakdown = {
+      caster: { name: stats.callerName, tokenId: caller.id },
+      spell: { name: `Counterspell (L${mySlot})`, level: mySlot, kind: 'utility' },
+      notes: [`Auto-counters L${spellLvl} spell (my slot \u2265 spell level)`],
+      targets: [{
+        name: casterName, kind: 'utility',
+        notes: [`${casterName}'s spell is countered`],
+      }],
+    };
     broadcastSystem(
       c.io, c.ctx,
       `🚫 **Counterspell** (L${mySlot}) — ${stats.callerName} counters ${casterName}'s L${spellLvl} spell automatically (slot ≥ spell level).`,
+      { spellResult: autoBreakdown },
     );
     return true;
   }
@@ -954,9 +1146,24 @@ async function handleCounterspell(c: ChatCommandContext): Promise<boolean> {
   const tot = d20 + stats.spellMod;
   const success = tot >= dc;
   const sign = stats.spellMod >= 0 ? '+' : '';
+  const csBreakdown = {
+    roller: { name: stats.callerName, tokenId: caller.id },
+    context: `Counterspell L${mySlot} vs L${spellLvl}`,
+    ability: 'cha' as const,
+    d20,
+    advantage: 'normal' as const,
+    modifiers: stats.spellMod !== 0
+      ? [{ label: 'Spellcasting mod', value: stats.spellMod, source: 'ability' as const }]
+      : [],
+    total: tot,
+    dc,
+    passed: success,
+    notes: [success ? `${casterName}'s spell is countered` : `${casterName}'s spell resolves normally`],
+  };
   broadcastSystem(
     c.io, c.ctx,
     `🚫 **Counterspell** (L${mySlot} vs L${spellLvl}) — ${stats.callerName} rolls d20=${d20}${sign}${stats.spellMod}=${tot} vs DC ${dc} → ${success ? 'COUNTERED' : 'FAILS — spell resolves'}`,
+    { saveResult: csBreakdown },
   );
   return true;
 }
@@ -986,9 +1193,19 @@ async function handleDispelMagic(c: ChatCommandContext): Promise<boolean> {
   const { stats } = loaded;
   const autoDispel = effLvl <= mySlot;
   if (autoDispel) {
+    const autoBreakdown: SpellCastBreakdown = {
+      caster: { name: stats.callerName, tokenId: loaded.caller.id },
+      spell: { name: `Dispel Magic (L${mySlot})`, level: mySlot, kind: 'utility' },
+      notes: [`Auto-dispels L${effLvl} effect on ${targetName}`],
+      targets: [{
+        name: targetName, kind: 'utility',
+        notes: ['Effect dispelled'],
+      }],
+    };
     broadcastSystem(
       c.io, c.ctx,
       `🧹 **Dispel Magic** (L${mySlot}) — ${stats.callerName} dispels a L${effLvl} effect on ${targetName} automatically.`,
+      { spellResult: autoBreakdown },
     );
     return true;
   }
@@ -997,9 +1214,22 @@ async function handleDispelMagic(c: ChatCommandContext): Promise<boolean> {
   const tot = d20 + stats.spellMod;
   const success = tot >= dc;
   const sign = stats.spellMod >= 0 ? '+' : '';
+  const dispelSave = {
+    roller: { name: stats.callerName, tokenId: loaded.caller.id },
+    context: `Dispel Magic L${mySlot} vs L${effLvl} effect on ${targetName}`,
+    ability: 'cha' as const,
+    d20,
+    advantage: 'normal' as const,
+    modifiers: stats.spellMod !== 0
+      ? [{ label: 'Spellcasting mod', value: stats.spellMod, source: 'ability' as const }]
+      : [],
+    total: tot, dc, passed: success,
+    notes: [success ? `Effect dispelled` : `Effect persists`],
+  };
   broadcastSystem(
     c.io, c.ctx,
     `🧹 **Dispel Magic** (L${mySlot} vs L${effLvl}) — ${stats.callerName} on ${targetName}: d20=${d20}${sign}${stats.spellMod}=${tot} vs DC ${dc} → ${success ? 'DISPELLED' : 'effect persists'}`,
+    { saveResult: dispelSave },
   );
   return true;
 }
