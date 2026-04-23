@@ -6,7 +6,7 @@ import {
 } from '../ChatCommands.js';
 import * as ConditionService from '../ConditionService.js';
 import pool from '../../db/connection.js';
-import type { Token } from '@dnd-vtt/shared';
+import type { Token, SaveBreakdown, ActionBreakdown } from '@dnd-vtt/shared';
 import type { PlayerContext } from '../../utils/roomState.js';
 import { tokenConditionChanges } from '../../utils/conditionSources.js';
 
@@ -199,7 +199,23 @@ async function handleDisease(c: ChatCommandContext): Promise<boolean> {
       });
     }
   }
-  broadcastSystem(c.io, c.ctx, lines.join('\n'));
+  const diseaseSave: SaveBreakdown = {
+    roller: { name: saveMod.name, tokenId: target.id, characterId: target.characterId ?? undefined },
+    context: `Disease: ${disease.name}`,
+    ability: disease.saveAbility,
+    d20,
+    advantage: 'normal',
+    modifiers: saveMod.mod !== 0
+      ? [{ label: `${disease.saveAbility.toUpperCase()} save mod`, value: saveMod.mod, source: 'ability' }]
+      : [],
+    total,
+    dc: disease.saveDc,
+    passed: saved,
+    notes: saved
+      ? ['Disease does not take hold']
+      : [`Contracted — ${disease.onFail}`, `Cadence: ${disease.cadence}`, `Cure: ${disease.cured}`],
+  };
+  broadcastSystem(c.io, c.ctx, lines.join('\n'), { saveResult: diseaseSave });
   return true;
 }
 
@@ -365,11 +381,12 @@ async function handlePoison(c: ChatCommandContext): Promise<boolean> {
   lines.push(`☠ **${poison.name}** (${poison.kind}, ${poison.priceGp} gp) — ${saveMod.name} ${poison.saveAbility.toUpperCase()} DC ${poison.saveDc}:`);
   lines.push(`   d20=${d20}${sign}${saveMod.mod}=${total} → ${saved ? 'SAVED' : 'FAILED'}`);
 
+  let poisonDmg = 0;
   if (poison.damageDice) {
     const { rolls, sum } = roll(poison.damageDice.count, poison.damageDice.die);
-    const dmg = saved && poison.halfOnSave ? Math.floor(sum / 2) : saved ? 0 : sum;
+    poisonDmg = saved && poison.halfOnSave ? Math.floor(sum / 2) : saved ? 0 : sum;
     const dt = poison.damageType ?? 'poison';
-    lines.push(`   ${poison.damageDice.count}d${poison.damageDice.die} ${dt} [${rolls.join(',')}] = ${dmg} dmg`);
+    lines.push(`   ${poison.damageDice.count}d${poison.damageDice.die} ${dt} [${rolls.join(',')}] = ${poisonDmg} dmg`);
   }
   if (!saved && poison.extraCondition) {
     ConditionService.applyConditionWithMeta(c.ctx.room.sessionId, target.id, {
@@ -385,7 +402,30 @@ async function handlePoison(c: ChatCommandContext): Promise<boolean> {
     lines.push(`   → ${poison.extraCondition.toUpperCase()} ${poison.durationRounds ? `for ~${Math.round(poison.durationRounds / 10)} min` : ''}`);
   }
   lines.push(`   ${poison.effect}`);
-  broadcastSystem(c.io, c.ctx, lines.join('\n'));
+
+  // Emit both a structured save breakdown AND an action card so chat
+  // shows the save math, the damage, and the applied condition all
+  // in one scannable unit.
+  const poisonCard: ActionBreakdown = {
+    actor: { name: c.ctx.player.displayName },
+    action: {
+      name: poison.name,
+      category: 'other',
+      icon: '\u2620',
+      cost: `${poison.kind}, ${poison.priceGp} gp`,
+    },
+    effect: `${saveMod.name} ${poison.saveAbility.toUpperCase()} DC ${poison.saveDc} save \u2192 ${saved ? 'SAVED' : 'FAILED'}. ${poison.effect}`,
+    targets: [{
+      name: saveMod.name,
+      tokenId: target.id,
+      conditionsApplied: !saved && poison.extraCondition ? [poison.extraCondition] : undefined,
+      ...(poisonDmg > 0 && poison.damageType
+        ? { damage: { amount: poisonDmg, damageType: poison.damageType } }
+        : {}),
+    }],
+    notes: [],
+  };
+  broadcastSystem(c.io, c.ctx, lines.join('\n'), { actionResult: poisonCard });
   return true;
 }
 

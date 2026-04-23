@@ -1,4 +1,4 @@
-import type { Token } from '@dnd-vtt/shared';
+import type { Token, ActionBreakdown } from '@dnd-vtt/shared';
 import {
   registerChatCommand,
   whisperToCaller,
@@ -138,7 +138,22 @@ async function handleGrapple(c: ChatCommandContext): Promise<boolean> {
     });
   }
 
-  broadcastSystem(c.io, c.ctx, lines.join('\n'));
+  const grappleCard: ActionBreakdown = {
+    actor: { name: callerAth.name, tokenId: caller.id },
+    action: { name: 'Grapple', category: 'other', icon: '\uD83E\uDD3C' },
+    effect: `${callerAth.name} Athletics d20=${callerRoll.roll}${callerModStr}=${callerRoll.total} vs ${targetBest.name} ${targetBest.skill} d20=${targetBest.roll}${tModStr}=${targetBest.total} — ${callerWon ? 'SUCCESS' : 'RESISTED'}`,
+    targets: [{
+      name: targetBest.name,
+      tokenId: target.id,
+      effect: callerWon ? 'grappled' : 'resisted',
+      conditionsApplied: callerWon ? ['grappled'] : undefined,
+    }],
+    notes: [
+      `Attacker: STR (Athletics) +${callerAth.mod}`,
+      `Defender: max of Athletics/Acrobatics (chose ${targetBest.skill} +${targetBest.mod})`,
+    ],
+  };
+  broadcastSystem(c.io, c.ctx, lines.join('\n'), { actionResult: grappleCard });
   return true;
 }
 
@@ -203,7 +218,28 @@ async function handleShove(c: ChatCommandContext): Promise<boolean> {
     lines.push(`   → ${targetBest.name} resists`);
   }
 
-  broadcastSystem(c.io, c.ctx, lines.join('\n'));
+  const shoveCard: ActionBreakdown = {
+    actor: { name: callerAth.name, tokenId: caller.id },
+    action: {
+      name: mode === 'prone' ? 'Shove (knock prone)' : 'Shove (push 5 ft)',
+      category: 'other',
+      icon: '\uD83D\uDEE1',
+    },
+    effect: `${callerAth.name} Athletics d20=${callerRoll.roll}${callerModStr}=${callerRoll.total} vs ${targetBest.name} ${targetBest.skill} d20=${targetBest.roll}${tModStr}=${targetBest.total} — ${callerWon ? 'SUCCESS' : 'RESISTED'}`,
+    targets: [{
+      name: targetBest.name,
+      tokenId: target.id,
+      effect: callerWon
+        ? (mode === 'prone' ? 'knocked prone' : 'pushed 5 ft')
+        : 'resisted',
+      conditionsApplied: callerWon && mode === 'prone' ? ['prone'] : undefined,
+    }],
+    notes: [
+      `Attacker: STR (Athletics) +${callerAth.mod}`,
+      `Defender: max of Athletics/Acrobatics (chose ${targetBest.skill} +${targetBest.mod})`,
+    ],
+  };
+  broadcastSystem(c.io, c.ctx, lines.join('\n'), { actionResult: shoveCard });
   return true;
 }
 

@@ -332,6 +332,7 @@ async function handleScorchingRay(c: ChatCommandContext): Promise<boolean> {
   const rays = 3 + Math.max(0, slot - 2);
   const lines: string[] = [];
   lines.push(`🔥 **Scorching Ray** (L${slot}, ${rays} rays, ranged spell atk, fire) — ${loaded.callerName}:`);
+  const rayOutcomes: SpellTargetOutcome[] = [];
   for (let i = 0; i < rays; i++) {
     const name = targets[i % targets.length];
     const target = resolveTargetByName(c.ctx, name);
@@ -340,8 +341,45 @@ async function handleScorchingRay(c: ChatCommandContext): Promise<boolean> {
     const { rolls, sum } = roll(2, 6);
     const sign = loaded.spellAttackBonus >= 0 ? '+' : '';
     lines.push(`  • Ray ${i + 1} → ${target?.name ?? name}: atk d20=${d20}${sign}${loaded.spellAttackBonus}=${atk}, 2d6 [${rolls.join(',')}] = **${sum} fire** on hit`);
+    rayOutcomes.push({
+      name: `Ray ${i + 1} \u2192 ${target?.name ?? name}`,
+      tokenId: target?.id,
+      kind: 'attack',
+      attack: {
+        d20,
+        advantage: 'normal',
+        modifiers: loaded.spellAttackBonus !== 0
+          ? [{ label: 'Spell attack bonus', value: loaded.spellAttackBonus, source: 'other' }]
+          : [],
+        total: atk,
+        targetAc: 0,
+        hitResult: d20 === 20 ? 'crit' : d20 === 1 ? 'fumble' : 'hit',
+      },
+      damage: {
+        dice: '2d6',
+        diceRolls: rolls,
+        mainRoll: sum,
+        bonuses: [],
+        finalDamage: sum,
+        targetHpBefore: 0,
+        targetHpAfter: 0,
+      },
+      notes: ['DM adjudicates hit vs AC'],
+    });
   }
-  broadcastSystem(c.io, c.ctx, lines.join('\n'));
+  const srBreakdown: SpellCastBreakdown = {
+    caster: { name: loaded.callerName, tokenId: loaded.caller.id },
+    spell: {
+      name: `Scorching Ray (L${slot})`,
+      level: slot,
+      kind: 'attack',
+      damageType: 'fire',
+      spellAttackBonus: loaded.spellAttackBonus,
+    },
+    notes: [`${rays} rays, distribute among targets`],
+    targets: rayOutcomes,
+  };
+  broadcastSystem(c.io, c.ctx, lines.join('\n'), { spellResult: srBreakdown });
   return true;
 }
 

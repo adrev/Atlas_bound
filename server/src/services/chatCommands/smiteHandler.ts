@@ -5,7 +5,7 @@ import {
   type ChatCommandContext,
 } from '../ChatCommands.js';
 import pool from '../../db/connection.js';
-import type { Token } from '@dnd-vtt/shared';
+import type { Token, SpellCastBreakdown } from '@dnd-vtt/shared';
 import type { PlayerContext } from '../../utils/roomState.js';
 
 /**
@@ -121,7 +121,38 @@ async function handleSmite(c: ChatCommandContext): Promise<boolean> {
   parts2.push(`✨ ${callerName} invokes Divine Smite (level ${level} slot, ${effectiveDice}d8)`);
   parts2.push(`   Radiant damage: ${effectiveDice}d8 (${rolls.join('+')}) = ${total}${isCrit ? ' [CRIT]' : ''}${undeadOrFiend ? ' [+1d8 vs undead/fiend]' : ''}`);
   parts2.push(`   Slot ${level}: ${slots[key].used}/${slots[key].max} used.`);
-  broadcastSystem(c.io, c.ctx, parts2.join('\n'));
+
+  // Structured SpellCastBreakdown — Divine Smite is effectively an
+  // auto-damage rider on a successful attack. Single target implied
+  // by the attack it rides; resolves as "auto-damage" kind since the
+  // paladin has already hit.
+  const smiteNotes: string[] = [`Level ${level} slot spent`];
+  if (undeadOrFiend) smiteNotes.push('+1d8 vs undead/fiend');
+  if (isCrit) smiteNotes.push('Crit — dice doubled');
+  const smiteBreakdown: SpellCastBreakdown = {
+    caster: { name: callerName, tokenId: caller.id },
+    spell: {
+      name: 'Divine Smite',
+      level,
+      kind: 'auto-damage',
+      damageType: 'radiant',
+    },
+    notes: smiteNotes,
+    targets: [{
+      name: 'on hit',
+      kind: 'damage-flat',
+      damage: {
+        dice: `${effectiveDice}d8`,
+        diceRolls: rolls,
+        mainRoll: total,
+        bonuses: [],
+        finalDamage: total,
+        targetHpBefore: 0,
+        targetHpAfter: 0,
+      },
+    }],
+  };
+  broadcastSystem(c.io, c.ctx, parts2.join('\n'), { spellResult: smiteBreakdown });
 
   return true;
 }

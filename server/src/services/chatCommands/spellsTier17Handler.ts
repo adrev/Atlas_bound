@@ -6,7 +6,7 @@ import {
 } from '../ChatCommands.js';
 import * as ConditionService from '../ConditionService.js';
 import pool from '../../db/connection.js';
-import type { Token } from '@dnd-vtt/shared';
+import type { Token, SpellCastBreakdown } from '@dnd-vtt/shared';
 import type { PlayerContext } from '../../utils/roomState.js';
 import { tokenConditionChanges } from '../../utils/conditionSources.js';
 
@@ -144,9 +144,23 @@ async function handleRevivify(c: ChatCommandContext): Promise<boolean> {
     change: 1,
     type: 'heal',
   });
+  const revBreakdown: SpellCastBreakdown = {
+    caster: { name: loaded.callerName, tokenId: loaded.caller.id },
+    spell: { name: 'Revivify', level: 3, kind: 'heal' },
+    notes: ['Returns creature that died within last 1 minute'],
+    targets: [{
+      name: target.name,
+      tokenId: target.id,
+      kind: 'heal',
+      healing: { dice: '—', diceRolls: [], mainRoll: 1,
+        targetHpBefore: 0, targetHpAfter: 1 },
+      notes: ['Death saves reset'],
+    }],
+  };
   broadcastSystem(
     c.io, c.ctx,
     `✨ **Revivify** — ${loaded.callerName} calls ${target.name} back from the brink! Returns at **1 HP** (died within last 1 min).`,
+    { spellResult: revBreakdown },
   );
   return true;
 }

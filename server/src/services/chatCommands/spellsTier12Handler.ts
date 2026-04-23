@@ -6,7 +6,7 @@ import {
 } from '../ChatCommands.js';
 import * as ConditionService from '../ConditionService.js';
 import pool from '../../db/connection.js';
-import type { Token } from '@dnd-vtt/shared';
+import type { Token, SpellCastBreakdown, SpellTargetOutcome } from '@dnd-vtt/shared';
 import type { PlayerContext } from '../../utils/roomState.js';
 import { tokenConditionChanges } from '../../utils/conditionSources.js';
 
@@ -128,10 +128,13 @@ async function loadTargetSaveMod(
   }
 }
 
-async function applyHealToToken(c: ChatCommandContext, target: Token, amount: number): Promise<{ newHp: number; maxHp: number }> {
+async function applyHealToToken(
+  c: ChatCommandContext, target: Token, amount: number,
+): Promise<{ hpBefore: number; newHp: number; maxHp: number }> {
   const combat = c.ctx.room.combatState;
   const combatant = combat?.combatants.find((x) => x.tokenId === target.id);
   if (combatant) {
+    const hpBefore = combatant.hp;
     combatant.hp = Math.min(combatant.maxHp, combatant.hp + amount);
     if (combatant.characterId) {
       await pool.query(
@@ -150,7 +153,7 @@ async function applyHealToToken(c: ChatCommandContext, target: Token, amount: nu
       change: amount,
       type: 'heal',
     });
-    return { newHp: combatant.hp, maxHp: combatant.maxHp };
+    return { hpBefore, newHp: combatant.hp, maxHp: combatant.maxHp };
   }
   if (target.characterId) {
     const { rows } = await pool.query(
@@ -176,9 +179,30 @@ async function applyHealToToken(c: ChatCommandContext, target: Token, amount: nu
       change: amount,
       type: 'heal',
     });
-    return { newHp, maxHp };
+    return { hpBefore: curHp, newHp, maxHp };
   }
-  return { newHp: 0, maxHp: 0 };
+  return { hpBefore: 0, newHp: 0, maxHp: 0 };
+}
+
+/**
+ * Build a SpellCastBreakdown for a heal-only spell cast. The caller
+ * supplies per-target heal dice/rolls/mainRoll + HP before/after
+ * captured by applyHealToToken. Single-target spells pass one entry
+ * in `outcomes`; Mass Healing Word passes one per target.
+ */
+function buildHealBreakdown(
+  spellName: string,
+  level: number,
+  callerName: string,
+  casterTokenId: string,
+  outcomes: SpellTargetOutcome[],
+): SpellCastBreakdown {
+  return {
+    caster: { name: callerName, tokenId: casterTokenId },
+    spell: { name: spellName, level, kind: 'heal' },
+    notes: [],
+    targets: outcomes,
+  };
 }
 
 function parseSlotLevel(parts: string[], fallback: number, min = 1, max = 9): number {
@@ -235,10 +259,25 @@ async function handleHealingWord(c: ChatCommandContext): Promise<boolean> {
     total += r;
   }
   total += stats.spellMod;
-  const { newHp, maxHp } = await applyHealToToken(c, target, total);
+  const { hpBefore, newHp, maxHp } = await applyHealToToken(c, target, total);
+  const hwBreakdown = buildHealBreakdown(
+    `Healing Word (L${slotLvl})`, slotLvl,
+    stats.callerName, caller.id,
+    [{
+      name: target.name, tokenId: target.id, kind: 'heal',
+      healing: {
+        dice: `${slotLvl}d4+${stats.spellMod}`,
+        diceRolls: rolls,
+        mainRoll: total,
+        targetHpBefore: hpBefore,
+        targetHpAfter: newHp,
+      },
+    }],
+  );
   broadcastSystem(
     c.io, c.ctx,
     `💚 **Healing Word** (L${slotLvl}, bonus action, 60 ft) — ${stats.callerName} → ${target.name}: ${slotLvl}d4+${stats.spellMod} [${rolls.join(',')}]+${stats.spellMod} = **${total}**${maxHp ? ` (${newHp}/${maxHp})` : ''}.`,
+    { spellResult: hwBreakdown },
   );
   return true;
 }
@@ -274,10 +313,25 @@ async function handleCureWounds(c: ChatCommandContext): Promise<boolean> {
     total += r;
   }
   total += stats.spellMod;
-  const { newHp, maxHp } = await applyHealToToken(c, target, total);
+  const { hpBefore, newHp, maxHp } = await applyHealToToken(c, target, total);
+  const cwBreakdown = buildHealBreakdown(
+    `Cure Wounds (L${slotLvl})`, slotLvl,
+    stats.callerName, loaded.caller.id,
+    [{
+      name: target.name, tokenId: target.id, kind: 'heal',
+      healing: {
+        dice: `${slotLvl}d8+${stats.spellMod}`,
+        diceRolls: rolls,
+        mainRoll: total,
+        targetHpBefore: hpBefore,
+        targetHpAfter: newHp,
+      },
+    }],
+  );
   broadcastSystem(
     c.io, c.ctx,
     `💚 **Cure Wounds** (L${slotLvl}, action, touch) — ${stats.callerName} → ${target.name}: ${slotLvl}d8+${stats.spellMod} [${rolls.join(',')}]+${stats.spellMod} = **${total}**${maxHp ? ` (${newHp}/${maxHp})` : ''}.`,
+    { spellResult: cwBreakdown },
   );
   return true;
 }
@@ -322,6 +376,7 @@ async function handleMassHealingWord(c: ChatCommandContext): Promise<boolean> {
   const dice = 1 + Math.max(0, castSlot - 3);
   const lines: string[] = [];
   lines.push(`💚 **Mass Healing Word** (L${castSlot}) — ${stats.callerName} heals up to ${targets.length} within 60 ft:`);
+  const mhwOutcomes: SpellTargetOutcome[] = [];
   for (const name of targets) {
     const target = resolveTargetByName(c.ctx, name);
     if (!target) {
@@ -336,10 +391,24 @@ async function handleMassHealingWord(c: ChatCommandContext): Promise<boolean> {
       total += r;
     }
     total += stats.spellMod;
-    const { newHp, maxHp } = await applyHealToToken(c, target, total);
+    const { hpBefore, newHp, maxHp } = await applyHealToToken(c, target, total);
     lines.push(`  • ${target.name}: [${rolls.join(',')}]+${stats.spellMod} = **${total}**${maxHp ? ` (${newHp}/${maxHp})` : ''}`);
+    mhwOutcomes.push({
+      name: target.name, tokenId: target.id, kind: 'heal',
+      healing: {
+        dice: `${dice}d4+${stats.spellMod}`,
+        diceRolls: rolls,
+        mainRoll: total,
+        targetHpBefore: hpBefore,
+        targetHpAfter: newHp,
+      },
+    });
   }
-  broadcastSystem(c.io, c.ctx, lines.join('\n'));
+  const mhwBreakdown = buildHealBreakdown(
+    `Mass Healing Word (L${castSlot})`, castSlot,
+    stats.callerName, caller.id, mhwOutcomes,
+  );
+  broadcastSystem(c.io, c.ctx, lines.join('\n'), { spellResult: mhwBreakdown });
   return true;
 }
 
@@ -505,9 +574,48 @@ async function handleSpiritualWeapon(c: ChatCommandContext): Promise<boolean> {
   }
   total += stats.spellMod;
   const sign = stats.spellAttackBonus >= 0 ? '+' : '';
+  const isCrit = d20 === 20;
+  const isFumble = d20 === 1;
+  const swBreakdown: SpellCastBreakdown = {
+    caster: { name: stats.callerName, tokenId: caller.id },
+    spell: {
+      name: `Spiritual Weapon (L${slotLvl})`,
+      level: slotLvl,
+      kind: 'attack',
+      damageType: 'force',
+      spellAttackBonus: stats.spellAttackBonus,
+    },
+    notes: ['Bonus action to cast + attack subsequent turns. Lasts 1 min.'],
+    targets: [{
+      name: target.name,
+      tokenId: target.id,
+      kind: 'attack',
+      attack: {
+        d20,
+        advantage: 'normal',
+        modifiers: stats.spellAttackBonus !== 0
+          ? [{ label: 'Spell attack bonus', value: stats.spellAttackBonus, source: 'other' }]
+          : [],
+        total: atkTotal,
+        targetAc: 0, // unknown server-side
+        hitResult: isCrit ? 'crit' : isFumble ? 'fumble' : 'hit',
+      },
+      damage: {
+        dice: `${dice}d8+${stats.spellMod}`,
+        diceRolls: rolls,
+        mainRoll: total,
+        bonuses: [],
+        finalDamage: total,
+        targetHpBefore: 0,
+        targetHpAfter: 0,
+      },
+      notes: ['DM adjudicates hit vs AC'],
+    }],
+  };
   broadcastSystem(
     c.io, c.ctx,
     `⚔ **Spiritual Weapon** (L${slotLvl}) — ${stats.callerName} → ${target.name}: atk d20=${d20}${sign}${stats.spellAttackBonus}=${atkTotal}. On hit: ${dice}d8+${stats.spellMod} [${rolls.join(',')}]+${stats.spellMod} = **${total} force**. Lasts 1 min (bonus action to move + attack subsequent turns).`,
+    { spellResult: swBreakdown },
   );
   return true;
 }

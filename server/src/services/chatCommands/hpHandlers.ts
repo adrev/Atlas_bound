@@ -1,5 +1,5 @@
 import type { Server } from 'socket.io';
-import type { Token } from '@dnd-vtt/shared';
+import type { Token, ActionBreakdown } from '@dnd-vtt/shared';
 import pool from '../../db/connection.js';
 import * as CombatService from '../CombatService.js';
 import { applyDamageSideEffects } from '../damageEffects.js';
@@ -7,9 +7,72 @@ import {
   registerChatCommand,
   whisperToCaller,
   isDM,
+  broadcastSystem,
   type ChatCommandContext,
 } from '../ChatCommands.js';
 import type { PlayerContext } from '../../utils/roomState.js';
+
+/**
+ * Emit a compact ActionResultCard summarising an `!damage` / `!heal`
+ * / `!hp` change. Shows actor (DM or whoever ran the command),
+ * target name + HP before/after, and a damage/healing block so chat
+ * logs a clear record of the manual adjustment.
+ */
+function emitHpAdjustCard(
+  c: ChatCommandContext,
+  kind: 'damage' | 'heal' | 'hp-set',
+  targetName: string,
+  targetTokenId: string,
+  hpBefore: number,
+  hpAfter: number,
+  label?: string,
+): void {
+  const delta = hpAfter - hpBefore;
+  const verb = kind === 'damage' ? 'takes damage' : kind === 'heal' ? 'is healed' : 'HP set';
+  const effect = kind === 'damage'
+    ? `${targetName} takes ${Math.abs(delta)} damage.`
+    : kind === 'heal'
+      ? `${targetName} regains ${delta} HP.`
+      : `${targetName}'s HP set to ${hpAfter}.`;
+  const card: ActionBreakdown = {
+    actor: { name: c.ctx.player.displayName },
+    action: {
+      name: label ?? (kind === 'damage' ? 'Damage' : kind === 'heal' ? 'Healing' : 'HP Set'),
+      category: 'other',
+      icon: kind === 'damage' ? '\uD83E\uDE78' : kind === 'heal' ? '\uD83D\uDC9A' : '\u2699\uFE0F',
+    },
+    effect,
+    targets: [{
+      name: targetName,
+      tokenId: targetTokenId,
+      ...(kind === 'damage' && delta < 0
+        ? { damage: { amount: -delta, damageType: 'untyped', hpBefore, hpAfter } }
+        : kind === 'heal' && delta > 0
+          ? { healing: { amount: delta, hpBefore, hpAfter } }
+          : { effect: `${hpBefore} \u2192 ${hpAfter}` }),
+    }],
+  };
+  const text = `${verb === 'HP set' ? '⚙' : kind === 'damage' ? '🩸' : '💚'} ${c.ctx.player.displayName} — ${targetName}: HP ${hpBefore} → ${hpAfter}`;
+  broadcastSystem(c.io, c.ctx, text, { actionResult: card });
+}
+
+/**
+ * Look up the HP for a character before applying a change so the
+ * ActionBreakdown can show before/after. Returns 0 when the row is
+ * missing (treated as "just set to the new value").
+ */
+async function readHpBefore(characterId: string | null | undefined): Promise<number> {
+  if (!characterId) return 0;
+  try {
+    const { rows } = await pool.query(
+      'SELECT hit_points FROM characters WHERE id = $1', [characterId],
+    );
+    const row = rows[0] as Record<string, unknown> | undefined;
+    return Number(row?.hit_points) || 0;
+  } catch {
+    return 0;
+  }
+}
 
 /**
  * R1 — HP / attribute chat commands.
@@ -184,17 +247,27 @@ async function handleDamage(c: ChatCommandContext): Promise<boolean> {
   }
 
   try {
+    let hpBefore = 0;
+    let hpAfter = 0;
     if (c.ctx.room.combatState?.active) {
+      const combatant = c.ctx.room.combatState.combatants.find(
+        (x) => x.tokenId === res.target!.token.id,
+      );
+      hpBefore = combatant?.hp ?? await readHpBefore(res.target.characterId);
       const r = await CombatService.applyDamage(c.ctx.room.sessionId, res.target.token.id, amount);
+      hpAfter = r.hp;
       broadcastHpChange(c.io, c.ctx, res.target.token.id, r.characterId, r.hp, r.tempHp, r.change, 'damage');
     } else if (res.target.characterId) {
+      hpBefore = await readHpBefore(res.target.characterId);
       const r = await applyDirectHp(res.target.characterId, -amount);
       if (!r) { whisperToCaller(c.io, c.ctx, '!damage: character not found'); return true; }
+      hpAfter = r.hp;
       broadcastHpChange(c.io, c.ctx, res.target.token.id, res.target.characterId, r.hp, r.tempHp, -amount, 'damage');
     } else {
       whisperToCaller(c.io, c.ctx, '!damage: this token has no character and combat is not active.');
       return true;
     }
+    emitHpAdjustCard(c, 'damage', res.target.token.name, res.target.token.id, hpBefore, hpAfter);
     // R2: concentration save + endsOnDamage / saveOnDamage side effects.
     await applyDamageSideEffects(c.io, c.ctx.room, res.target.token.id, amount);
   } catch (err) {
@@ -223,17 +296,27 @@ async function handleHeal(c: ChatCommandContext): Promise<boolean> {
   }
 
   try {
+    let hpBefore = 0;
+    let hpAfter = 0;
     if (c.ctx.room.combatState?.active) {
+      const combatant = c.ctx.room.combatState.combatants.find(
+        (x) => x.tokenId === res.target!.token.id,
+      );
+      hpBefore = combatant?.hp ?? await readHpBefore(res.target.characterId);
       const r = await CombatService.applyHeal(c.ctx.room.sessionId, res.target.token.id, amount);
+      hpAfter = r.hp;
       broadcastHpChange(c.io, c.ctx, res.target.token.id, r.characterId, r.hp, r.tempHp, r.change, 'heal');
     } else if (res.target.characterId) {
+      hpBefore = await readHpBefore(res.target.characterId);
       const r = await applyDirectHp(res.target.characterId, amount);
       if (!r) { whisperToCaller(c.io, c.ctx, '!heal: character not found'); return true; }
+      hpAfter = r.hp;
       broadcastHpChange(c.io, c.ctx, res.target.token.id, res.target.characterId, r.hp, r.tempHp, amount, 'heal');
     } else {
       whisperToCaller(c.io, c.ctx, '!heal: this token has no character and combat is not active.');
       return true;
     }
+    emitHpAdjustCard(c, 'heal', res.target.token.name, res.target.token.id, hpBefore, hpAfter);
   } catch (err) {
     whisperToCaller(c.io, c.ctx, `!heal: ${err instanceof Error ? err.message : 'failed'}`);
   }

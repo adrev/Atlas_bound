@@ -763,18 +763,25 @@ async function handleMassHeal(c: ChatCommandContext): Promise<boolean> {
   let healPool = 700;
   const lines: string[] = [];
   lines.push(`💚 **Mass Heal** (L9, 700 HP pool, cures blindness/deafness, no effect on undead/constructs) — ${loaded.callerName}:`);
+  const mhOutcomes: SpellTargetOutcome[] = [];
   for (const name of parts) {
     const target = resolveTargetByName(c.ctx, name);
     if (!target) { lines.push(`  • ${name}: not found`); continue; }
     const combat = c.ctx.room.combatState;
     const combatant = combat?.combatants.find((x) => x.tokenId === target.id);
     if (combatant) {
+      const hpBefore = combatant.hp;
       const needed = combatant.maxHp - combatant.hp;
       const heal = Math.min(needed, healPool);
       combatant.hp += heal;
       healPool -= heal;
       if (combatant.characterId) await writeHp(combatant.characterId, combatant.hp, c);
       lines.push(`  • ${target.name}: +${heal} HP → ${combatant.hp}/${combatant.maxHp}`);
+      mhOutcomes.push({
+        name: target.name, tokenId: target.id, kind: 'heal',
+        healing: { dice: 'pool', diceRolls: [], mainRoll: heal,
+          targetHpBefore: hpBefore, targetHpAfter: combatant.hp },
+      });
     } else if (target.characterId) {
       const { rows } = await pool.query('SELECT hit_points, max_hit_points FROM characters WHERE id = $1', [target.characterId]);
       const row = rows[0] as Record<string, unknown> | undefined;
@@ -786,13 +793,24 @@ async function handleMassHeal(c: ChatCommandContext): Promise<boolean> {
       healPool -= heal;
       await writeHp(target.characterId, newHp, c);
       lines.push(`  • ${target.name}: +${heal} HP → ${newHp}/${max}`);
+      mhOutcomes.push({
+        name: target.name, tokenId: target.id, kind: 'heal',
+        healing: { dice: 'pool', diceRolls: [], mainRoll: heal,
+          targetHpBefore: cur, targetHpAfter: newHp },
+      });
     } else {
       lines.push(`  • ${target.name}: NPC — DM applies heal manually`);
     }
     if (healPool <= 0) break;
   }
   lines.push(`  (pool remaining: ${healPool} HP)`);
-  broadcastSystem(c.io, c.ctx, lines.join('\n'));
+  const mhBreakdown: SpellCastBreakdown = {
+    caster: { name: loaded.callerName, tokenId: loaded.caller.id },
+    spell: { name: 'Mass Heal', level: 9, kind: 'heal' },
+    notes: [`700 HP pool — ${700 - healPool} used, ${healPool} remaining`],
+    targets: mhOutcomes,
+  };
+  broadcastSystem(c.io, c.ctx, lines.join('\n'), { spellResult: mhBreakdown });
   return true;
 }
 
@@ -819,6 +837,7 @@ async function handleMassCureWounds(c: ChatCommandContext): Promise<boolean> {
 
   const lines: string[] = [];
   lines.push(`💚 **Mass Cure Wounds** (L${slot}, 30-ft radius, ${dice}d8+mod per target) — ${loaded.callerName}:`);
+  const mcwOutcomes: SpellTargetOutcome[] = [];
   for (const name of targets) {
     const target = resolveTargetByName(c.ctx, name);
     if (!target) { lines.push(`  • ${name}: not found`); continue; }
@@ -832,11 +851,37 @@ async function handleMassCureWounds(c: ChatCommandContext): Promise<boolean> {
       const newHp = Math.min(max, cur + total);
       await writeHp(target.characterId, newHp, c);
       lines.push(`  • ${target.name}: ${dice}d8+${mod} [${rolls.join(',')}]+${mod} = ${total} → ${newHp}/${max}`);
+      mcwOutcomes.push({
+        name: target.name, tokenId: target.id, kind: 'heal',
+        healing: {
+          dice: `${dice}d8+${mod}`,
+          diceRolls: rolls,
+          mainRoll: total,
+          targetHpBefore: cur,
+          targetHpAfter: newHp,
+        },
+      });
     } else {
       lines.push(`  • ${target.name}: ${total} HP heal (NPC — manual)`);
+      mcwOutcomes.push({
+        name: target.name, tokenId: target.id, kind: 'heal',
+        healing: {
+          dice: `${dice}d8+${mod}`,
+          diceRolls: rolls,
+          mainRoll: total,
+          targetHpBefore: 0,
+          targetHpAfter: total,
+        },
+      });
     }
   }
-  broadcastSystem(c.io, c.ctx, lines.join('\n'));
+  const mcwBreakdown: SpellCastBreakdown = {
+    caster: { name: loaded.callerName, tokenId: loaded.caller.id },
+    spell: { name: `Mass Cure Wounds (L${slot})`, level: slot, kind: 'heal' },
+    notes: [`${dice}d8+${mod} per target`],
+    targets: mcwOutcomes,
+  };
+  broadcastSystem(c.io, c.ctx, lines.join('\n'), { spellResult: mcwBreakdown });
   return true;
 }
 
