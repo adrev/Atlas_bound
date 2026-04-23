@@ -337,13 +337,20 @@ setupStaticServing(app);
 // Create HTTP server
 const httpServer = createServer(app);
 
-// Create Socket.io server with typed events
+// Create Socket.io server with typed events. Aggressive heartbeat so
+// dead clients (backgrounded tabs whose OS paused them, Wi-Fi drops
+// that didn't close the TCP socket, Cloud Run instance replacements
+// mid-connection) get pruned within ~15 s instead of the ~45 s
+// default. Faster pruning = client's reconnect kicks in sooner and
+// broadcasts stop going to ghost socketIds that can't receive.
 const io = new Server<ClientToServerEvents, ServerToClientEvents>(httpServer, {
   cors: {
     origin: CORS_ORIGINS,
     credentials: true,
   },
   maxHttpBufferSize: 5 * 1024 * 1024, // 5MB for larger payloads
+  pingInterval: 15_000,   // server→client ping every 15 s (default 25 s)
+  pingTimeout: 10_000,    // disconnect after 10 s without pong (default 20 s)
 });
 
 // Expose io to non-socket modules (HTTP routes) that need to broadcast.
