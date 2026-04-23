@@ -151,12 +151,46 @@ export function getBackgroundIconUrl(name: string): string {
 }
 
 /**
+ * Feats / Conditions / Rules image URLs. Use the same GCS bucket
+ * layout as races/classes/backgrounds — one directory per category.
+ * Images may not yet exist for every entry; callers should wire the
+ * onError fallback to the matching getXxxIconUrl helper so a missing
+ * PNG degrades to the inline-SVG initial instead of a broken img tag.
+ */
+export function getFeatImageUrl(slug: string): string {
+  return `${CDN}/feats/${slugOrName(slug)}.png`;
+}
+
+export function getFeatIconUrl(name: string): string {
+  const initial = name.charAt(0).toUpperCase();
+  return makeSvgFallback(initial, '#d4a843');
+}
+
+export function getConditionImageUrl(slug: string): string {
+  return `${CDN}/conditions/${slugOrName(slug)}.png`;
+}
+
+export function getConditionIconUrl(name: string): string {
+  const initial = name.charAt(0).toUpperCase();
+  return makeSvgFallback(initial, '#6aa9d1');
+}
+
+export function getRuleImageUrl(slug: string): string {
+  return `${CDN}/rules/${slugOrName(slug)}.png`;
+}
+
+export function getRuleIconUrl(name: string): string {
+  const initial = name.charAt(0).toUpperCase();
+  return makeSvgFallback(initial, '#8e7b9a');
+}
+
+/**
  * Returns the primary GCS image URL for any compendium category.
  * Use with an onError fallback to getCompendiumFallbackUrl.
  */
 export function getCompendiumImageUrl(
   name: string,
-  category: 'monsters' | 'spells' | 'items' | 'races' | 'classes' | 'backgrounds' | string,
+  category: 'monsters' | 'spells' | 'items' | 'races' | 'classes' | 'backgrounds' | 'feats' | 'conditions' | 'rules' | string,
 ): string {
   switch (category) {
     case 'monsters': return getCreatureImageUrl(name);
@@ -165,6 +199,9 @@ export function getCompendiumImageUrl(
     case 'races': return getRaceImageUrl(name);
     case 'classes': return getClassImageUrl(name);
     case 'backgrounds': return getBackgroundImageUrl(name);
+    case 'feats': return getFeatImageUrl(name);
+    case 'conditions': return getConditionImageUrl(name);
+    case 'rules': return getRuleImageUrl(name);
     default: return makeSvgFallback(name.charAt(0).toUpperCase(), '#555');
   }
 }
@@ -174,7 +211,7 @@ export function getCompendiumImageUrl(
  */
 export function getCompendiumFallbackUrl(
   name: string,
-  category: 'monsters' | 'spells' | 'items' | 'races' | 'classes' | 'backgrounds' | string,
+  category: 'monsters' | 'spells' | 'items' | 'races' | 'classes' | 'backgrounds' | 'feats' | 'conditions' | 'rules' | string,
   subtype?: string,
 ): string {
   switch (category) {
@@ -184,6 +221,9 @@ export function getCompendiumFallbackUrl(
     case 'races': return getRaceIconUrl(name);
     case 'classes': return getClassIconUrl(name);
     case 'backgrounds': return getBackgroundIconUrl(name);
+    case 'feats': return getFeatIconUrl(name);
+    case 'conditions': return getConditionIconUrl(name);
+    case 'rules': return getRuleIconUrl(name);
     default: return makeSvgFallback(name.charAt(0).toUpperCase(), '#555');
   }
 }

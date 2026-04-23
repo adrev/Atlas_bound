@@ -561,7 +561,23 @@ export function CompendiumPanel({
                       borderColor: `${CATEGORY_BADGE_COLORS[r.category] ?? '#888'}44`,
                     }}
                   >
-                    {r.category === 'monsters' ? 'Monster' : r.category === 'spells' ? 'Spell' : 'Item'}
+                    {r.category === 'monsters' ? 'Monster'
+                      : r.category === 'spells' ? 'Spell'
+                      : r.category === 'items' ? 'Item'
+                      : r.category === 'classes' ? 'Class'
+                      : r.category === 'races' ? 'Race'
+                      : r.category === 'backgrounds' ? 'Background'
+                      : r.category === 'feats' ? 'Feat'
+                      : r.category === 'conditions'
+                        // Rules, backgrounds, and spell-buffs all ride
+                        // the 'conditions' badge color. Pick the right
+                        // label by looking up the slug against each
+                        // glossary so "Advantage & Disadvantage" reads
+                        // as "Rule" and "Acolyte" reads as "Background".
+                        ? (RULES_GLOSSARY.some((x) => x.slug === r.slug) ? 'Rule'
+                          : BACKGROUNDS.some((x) => x.slug === r.slug) ? 'Background'
+                          : 'Condition')
+                      : 'Item'}
                   </span>
                   <span style={styles.resultName}>{r.name}</span>
                   <span style={styles.resultMeta}>

@@ -7,7 +7,17 @@ import { useSessionStore } from '../../stores/useSessionStore';
 import { useCharacterStore } from '../../stores/useCharacterStore';
 import { emitCharacterUpdate } from '../../socket/emitters';
 import { resolveSpellSlug } from '../../utils/spell-aliases';
-import { getCreatureIconUrl, getCreatureImageUrl, getCreatureImageSvgUrl, getSpellIconUrl, getSpellImageUrl, getItemIconUrl, getItemImageUrl } from '../../utils/compendiumIcons';
+import {
+  getCreatureIconUrl, getCreatureImageUrl, getCreatureImageSvgUrl,
+  getSpellIconUrl, getSpellImageUrl,
+  getItemIconUrl, getItemImageUrl,
+  getClassImageUrl, getClassIconUrl,
+  getRaceImageUrl, getRaceIconUrl,
+  getBackgroundImageUrl, getBackgroundIconUrl,
+  getFeatImageUrl, getFeatIconUrl,
+  getConditionImageUrl, getConditionIconUrl,
+  getRuleImageUrl, getRuleIconUrl,
+} from '../../utils/compendiumIcons';
 import { splitCommaList, accentForSense, accentForLanguage, SENSE_LANG_CHIP_BASE } from '../../utils/senseLanguageChips';
 import type {
   CompendiumMonster,
@@ -1171,7 +1181,21 @@ export function CompendiumDetailPopup({ result, onClose }: Props) {
     | CompendiumMonster
     | CompendiumSpell
     | CompendiumItem
-    | { kind: 'condition' | 'rule'; name: string; description: string; color?: string }
+    | {
+        kind: 'condition' | 'rule';
+        name: string;
+        description: string;
+        color?: string;
+        /** Optional hero image for the detail view (classes, races,
+         *  backgrounds, feats, conditions, rules). Hosted on GCS at
+         *  /{category}/{slug}.png. */
+        imageUrl?: string;
+        /** Inline-SVG fallback when the hero image 404s. */
+        fallbackUrl?: string;
+        /** Overrides the "CONDITION" / "RULE" ribbon so background /
+         *  feat / class / race entries read correctly. */
+        kindLabel?: string;
+      }
     | null
   >(null);
   const [loading, setLoading] = useState(true);
@@ -1189,20 +1213,35 @@ export function CompendiumDetailPopup({ result, onClose }: Props) {
     if (result.category === 'conditions') {
       const rule = RULES_GLOSSARY.find((r) => r.slug === result.slug);
       if (rule) {
-        setData({ kind: 'rule', name: rule.name, description: rule.description });
+        setData({
+          kind: 'rule', name: rule.name, description: rule.description,
+          imageUrl: getRuleImageUrl(rule.slug),
+          fallbackUrl: getRuleIconUrl(rule.name),
+          kindLabel: 'Rule',
+        });
         setLoading(false);
         return;
       }
       const info = CONDITION_MAP.get(result.slug as never);
       if (info) {
-        setData({ kind: 'condition', name: info.label, description: info.description, color: info.color });
+        setData({
+          kind: 'condition', name: info.label, description: info.description, color: info.color,
+          imageUrl: getConditionImageUrl(result.slug),
+          fallbackUrl: getConditionIconUrl(info.label),
+          kindLabel: 'Condition',
+        });
         setLoading(false);
         return;
       }
       // Spell / class-feature pseudo-conditions (blessed, raging, hasted…)
       const buff = SPELL_BUFFS.find((b) => b.slug === result.slug);
       if (buff) {
-        setData({ kind: 'condition', name: buff.name, description: buff.description, color: buff.color });
+        setData({
+          kind: 'condition', name: buff.name, description: buff.description, color: buff.color,
+          imageUrl: getConditionImageUrl(buff.slug),
+          fallbackUrl: getConditionIconUrl(buff.name),
+          kindLabel: 'Buff',
+        });
         setLoading(false);
         return;
       }
@@ -1218,7 +1257,12 @@ export function CompendiumDetailPopup({ result, onClose }: Props) {
           langLine,
           `**Feature:** ${bg.feature}`,
         ].filter(Boolean).join('  \n');
-        setData({ kind: 'rule', name: bg.name, description: `${header}\n\n---\n\n${bg.description}`, color: '#6aa9d1' });
+        setData({
+          kind: 'rule', name: bg.name, description: `${header}\n\n---\n\n${bg.description}`, color: '#6aa9d1',
+          imageUrl: getBackgroundImageUrl(bg.slug),
+          fallbackUrl: getBackgroundIconUrl(bg.name),
+          kindLabel: 'Background',
+        });
         setLoading(false);
         return;
       }
@@ -1232,7 +1276,12 @@ export function CompendiumDetailPopup({ result, onClose }: Props) {
         const body = feat.prerequisite
           ? `_Prerequisite: ${feat.prerequisite}_\n\n${feat.description}`
           : feat.description;
-        setData({ kind: 'rule', name: feat.name, description: body, color: '#d4a843' });
+        setData({
+          kind: 'rule', name: feat.name, description: body, color: '#d4a843',
+          imageUrl: getFeatImageUrl(feat.slug),
+          fallbackUrl: getFeatIconUrl(feat.name),
+          kindLabel: 'Feat',
+        });
         setLoading(false);
         return;
       }
@@ -1249,7 +1298,12 @@ export function CompendiumDetailPopup({ result, onClose }: Props) {
           `**Saving Throws:** ${cls.savingThrows.join(', ')}`,
           `**Subclasses:** ${cls.subclasses.join(', ')}`,
         ].join('  \n');
-        setData({ kind: 'rule', name: cls.name, description: `${header}\n\n---\n\n${cls.description}`, color: '#9b59b6' });
+        setData({
+          kind: 'rule', name: cls.name, description: `${header}\n\n---\n\n${cls.description}`, color: '#9b59b6',
+          imageUrl: getClassImageUrl(cls.slug),
+          fallbackUrl: getClassIconUrl(cls.name),
+          kindLabel: 'Class',
+        });
         setLoading(false);
         return;
       }
@@ -1266,11 +1320,44 @@ export function CompendiumDetailPopup({ result, onClose }: Props) {
           `**Ability Score Increase:** ${race.asi}`,
           `**Subraces:** ${race.subraces.join(', ')}`,
         ].join('  \n');
-        setData({ kind: 'rule', name: race.name, description: `${header}\n\n---\n\n${race.description}`, color: '#1abc9c' });
+        setData({
+          kind: 'rule', name: race.name, description: `${header}\n\n---\n\n${race.description}`, color: '#1abc9c',
+          imageUrl: getRaceImageUrl(race.slug),
+          fallbackUrl: getRaceIconUrl(race.name),
+          kindLabel: 'Race',
+        });
         setLoading(false);
         return;
       }
       setError('Race not found');
+      setLoading(false);
+      return;
+    }
+    // Backgrounds — the panel sends `category: 'backgrounds'` when
+    // filter is set to Backgrounds. Without this branch the click
+    // fell through to the generic /api/compendium/backgrounds/:slug
+    // fetch, which has no backing route → 404.
+    if (result.category === 'backgrounds') {
+      const bg = BACKGROUNDS.find((b) => b.slug === result.slug);
+      if (bg) {
+        const toolsLine = bg.tools ? `**Tool Proficiencies:** ${bg.tools.join(', ')}` : null;
+        const langLine = bg.languages ? `**Languages:** ${bg.languages}` : null;
+        const header = [
+          `**Skill Proficiencies:** ${bg.skills.join(', ')}`,
+          toolsLine,
+          langLine,
+          `**Feature:** ${bg.feature}`,
+        ].filter(Boolean).join('  \n');
+        setData({
+          kind: 'rule', name: bg.name, description: `${header}\n\n---\n\n${bg.description}`, color: '#6aa9d1',
+          imageUrl: getBackgroundImageUrl(bg.slug),
+          fallbackUrl: getBackgroundIconUrl(bg.name),
+          kindLabel: 'Background',
+        });
+        setLoading(false);
+        return;
+      }
+      setError('Background not found');
       setLoading(false);
       return;
     }
@@ -1355,16 +1442,19 @@ export function CompendiumDetailPopup({ result, onClose }: Props) {
             <ItemDetail item={data as CompendiumItem} onClose={onClose} />
           )}
           {!loading && !error && data && result.category === 'conditions' && (
-            <RuleOrConditionDetail entry={data as { kind: 'condition' | 'rule'; name: string; description: string; color?: string }} />
+            <RuleOrConditionDetail entry={data as Parameters<typeof RuleOrConditionDetail>[0]['entry']} />
           )}
           {!loading && !error && data && result.category === 'feats' && (
-            <RuleOrConditionDetail entry={data as { kind: 'condition' | 'rule'; name: string; description: string; color?: string }} />
+            <RuleOrConditionDetail entry={data as Parameters<typeof RuleOrConditionDetail>[0]['entry']} />
           )}
           {!loading && !error && data && result.category === 'classes' && (
-            <RuleOrConditionDetail entry={data as { kind: 'condition' | 'rule'; name: string; description: string; color?: string }} />
+            <RuleOrConditionDetail entry={data as Parameters<typeof RuleOrConditionDetail>[0]['entry']} />
           )}
           {!loading && !error && data && result.category === 'races' && (
-            <RuleOrConditionDetail entry={data as { kind: 'condition' | 'rule'; name: string; description: string; color?: string }} />
+            <RuleOrConditionDetail entry={data as Parameters<typeof RuleOrConditionDetail>[0]['entry']} />
+          )}
+          {!loading && !error && data && result.category === 'backgrounds' && (
+            <RuleOrConditionDetail entry={data as Parameters<typeof RuleOrConditionDetail>[0]['entry']} />
           )}
         </div>
       </div>
@@ -1375,11 +1465,67 @@ export function CompendiumDetailPopup({ result, onClose }: Props) {
 function RuleOrConditionDetail({
   entry,
 }: {
-  entry: { kind: 'condition' | 'rule'; name: string; description: string; color?: string };
+  entry: {
+    kind: 'condition' | 'rule';
+    name: string;
+    description: string;
+    color?: string;
+    /** Optional hero image URL (GCS-hosted). onError falls through to
+     *  the matching getXxxIconUrl so missing artwork degrades to an
+     *  initial-letter SVG rather than a broken img. */
+    imageUrl?: string;
+    fallbackUrl?: string;
+    kindLabel?: string;
+  };
 }) {
   const accent = entry.color ?? theme.gold.primary;
   return (
     <div style={{ padding: '4px 0' }}>
+      {/* Hero image — 100% width, 180px tall, cover-cropped so a FLUX
+          landscape portrait reads cleanly in the popup header. Only
+          renders when an imageUrl is provided. */}
+      {entry.imageUrl && (
+        <div style={{
+          position: 'relative',
+          width: '100%',
+          height: 180,
+          borderRadius: theme.radius.md,
+          overflow: 'hidden',
+          marginBottom: 10,
+          background: theme.bg.deep,
+        }}>
+          <img
+            src={entry.imageUrl}
+            alt=""
+            onError={(e) => {
+              const img = e.currentTarget as HTMLImageElement;
+              if (entry.fallbackUrl && img.src !== entry.fallbackUrl) {
+                img.src = entry.fallbackUrl;
+              } else {
+                img.style.display = 'none';
+              }
+            }}
+            style={{
+              width: '100%',
+              height: '100%',
+              objectFit: 'cover',
+              display: 'block',
+            }}
+          />
+          {/* Accent-tinted bottom fade so the title reads against any
+              image value. Subtle — just a 40% bottom gradient in the
+              card's accent color. */}
+          <div style={{
+            position: 'absolute',
+            bottom: 0,
+            left: 0,
+            right: 0,
+            height: 40,
+            background: `linear-gradient(180deg, transparent 0%, ${accent}55 100%)`,
+            pointerEvents: 'none',
+          }} />
+        </div>
+      )}
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
         <span style={{
           display: 'inline-block', width: 8, height: 24, borderRadius: 2,
@@ -1396,7 +1542,7 @@ function RuleOrConditionDetail({
           letterSpacing: '0.1em', textTransform: 'uppercase',
           color: theme.text.muted,
         }}>
-          {entry.kind === 'condition' ? 'Condition' : 'Rule'}
+          {entry.kindLabel ?? (entry.kind === 'condition' ? 'Condition' : 'Rule')}
         </span>
       </div>
       <div style={{ height: 1, background: theme.border.default, marginBottom: 10 }} />
