@@ -94,14 +94,23 @@ export function NotesPanel() {
   };
 
   const handleSave = async (noteId: string) => {
-    await fetch(`/api/notes/${noteId}`, {
+    const resp = await fetch(`/api/notes/${noteId}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ content: editContent }),
     });
-    setNotes((prev) =>
-      prev.map((n) => (n.id === noteId ? { ...n, content: editContent } : n)),
-    );
+    // Mirror the write into local state even if the server 204s without
+    // echoing the row; then collapse the editor so "clicking Save"
+    // visibly confirms the write — user feedback: "save on notes
+    // doesn't close it." Leaving the editor open made saves feel like
+    // nothing happened, so Close-on-save is the right cue.
+    if (resp.ok) {
+      setNotes((prev) =>
+        prev.map((n) => (n.id === noteId ? { ...n, content: editContent } : n)),
+      );
+      setExpandedId(null);
+      setEditContent('');
+    }
   };
 
   const handleDelete = async (noteId: string) => {
@@ -162,7 +171,16 @@ export function NotesPanel() {
             size="sm"
             fullWidth
             leadingIcon={<Plus size={13} />}
-            onClick={() => setCreating(true)}
+            onClick={() => {
+              setCreating(true);
+              // Pre-select the category the user is currently browsing
+              // so "new note in NPCs" lands in NPCs by default. The
+              // select is still editable, matching user request
+              // ("start by selecting the note you are on but allow
+              // you to change it"). Only 'all' falls back to 'general'
+              // — without a category there's no hint to follow.
+              setNewCategory(filter === 'all' ? 'general' : filter);
+            }}
           >
             New Note
           </Button>

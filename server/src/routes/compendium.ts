@@ -203,8 +203,12 @@ router.get('/spells', async (req: Request, res: Response) => {
     const lvl = parseInt(level, 10);
     if (!isNaN(lvl)) { where += ` AND level = $${paramIdx++}`; params.push(lvl); }
   }
-  if (school) { where += ` AND school LIKE $${paramIdx++}`; params.push(`%${school}%`); }
-  if (classFilter) { where += ` AND classes LIKE $${paramIdx++}`; params.push(`%${classFilter}%`); }
+  // `school` + `classes` are stored mixed-case (e.g. "Conjuration",
+  // `["Sorcerer","Wizard"]`). Client passes them lowercase. Plain LIKE
+  // is case-sensitive in Postgres, so the wiki Class filter silently
+  // returned zero hits on every pick. ILIKE fixes both.
+  if (school) { where += ` AND school ILIKE $${paramIdx++}`; params.push(`%${school}%`); }
+  if (classFilter) { where += ` AND classes ILIKE $${paramIdx++}`; params.push(`%${classFilter}%`); }
 
   const sql = `SELECT * FROM (
     SELECT *, ROW_NUMBER() OVER (PARTITION BY name ORDER BY
