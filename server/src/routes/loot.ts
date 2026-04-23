@@ -542,15 +542,37 @@ router.post('/loot/transfer', async (req: Request, res: Response) => {
   // Must own the source character or be DM
   await assertCharacterOwnerOrDM(String(fromCharacterId), userId);
 
-  // Verify target character is in the same session as the source
-  const { rows: fromSessions } = await pool.query(
-    'SELECT session_id FROM session_players WHERE character_id = $1', [fromCharacterId]
-  );
-  const { rows: toSessions } = await pool.query(
-    'SELECT session_id FROM session_players WHERE character_id = $1', [toCharacterId]
-  );
-  const fromSessionIds = new Set(fromSessions.map(r => r.session_id));
-  const sharedSession = toSessions.some(r => fromSessionIds.has(r.session_id));
+  // Verify target character is in the same session as the source.
+  // `session_players` is only populated for PC rows — NPCs (including
+  // loot bags spawned when a player drops an item) have no such row,
+  // so before 2026-04-23 this check failed any transfer FROM a loot
+  // bag to a player with "Target character is not in the same session"
+  // despite both actually being tied to the same session.
+  //
+  // Fallback: when session_players is empty for either side, look up
+  // the owning session via the `tokens` table (NPCs always show up on
+  // a map, and maps belong to a session). Union both lookups so
+  // PC→PC transfers keep their fast path.
+  async function sessionIdsFor(characterId: string): Promise<Set<string>> {
+    const ids = new Set<string>();
+    const { rows: playerRows } = await pool.query(
+      'SELECT session_id FROM session_players WHERE character_id = $1', [characterId],
+    );
+    for (const r of playerRows) ids.add(r.session_id as string);
+    if (ids.size === 0) {
+      const { rows: tokRows } = await pool.query(
+        `SELECT DISTINCT m.session_id FROM tokens t
+           JOIN maps m ON m.id = t.map_id
+          WHERE t.character_id = $1`,
+        [characterId],
+      );
+      for (const r of tokRows) ids.add(r.session_id as string);
+    }
+    return ids;
+  }
+  const fromSessionIds = await sessionIdsFor(String(fromCharacterId));
+  const toSessionIds = await sessionIdsFor(String(toCharacterId));
+  const sharedSession = [...toSessionIds].some((id) => fromSessionIds.has(id));
   if (!sharedSession) {
     res.status(403).json({ error: 'Target character is not in the same session' });
     return;
