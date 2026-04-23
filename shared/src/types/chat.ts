@@ -113,6 +113,27 @@ export interface AttackBreakdown {
     mainRoll: number;
     /** Additional damage sources (Rage, Sneak, Hex, Smite, etc.). */
     bonuses: AttackBreakdownDamageSource[];
+    /**
+     * Total of all weapon-type damage sources (base + Rage + Sneak +
+     * Power Attack + Dueling + TWF) BEFORE resistance is applied.
+     * Used by the card to show "before" in a resistance block.
+     */
+    weaponTotalPre?: number;
+    /**
+     * Total of all weapon-type damage sources AFTER resistance is
+     * applied. Differs from `weaponTotalPre` when the target has
+     * resistance/vulnerability/immunity to the weapon's damage type.
+     * The card only renders the "before → after" annotation when
+     * these two differ.
+     */
+    weaponTotalPost?: number;
+    /**
+     * Human-readable explanation of the weapon-type resistance that
+     * was applied — e.g. "resists slashing", "vulnerable to slashing",
+     * "immune to bludgeoning". Empty when no resistance/vulnerability
+     * kicked in.
+     */
+    weaponResistanceNote?: string;
     /** Final damage after resistances across ALL sources combined. */
     finalDamage: number;
     /** Target HP before this attack landed. */

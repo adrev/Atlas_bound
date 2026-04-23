@@ -2139,11 +2139,24 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
           // sum (base + Rage + Sneak + Power + Dueling + TWF) was
           // halved once — we surface that resistance here on the base
           // row so the card can annotate it without repeating per-rider.
+          //
+          // `wRolledDmg` at this point is the pre-resistance total of
+          // all weapon-type sources. `wResisted.amount` is that total
+          // after the target's weapon-type defense applied. When they
+          // differ the card shows "before → after" so the user can
+          // verify resistance math without guessing where damage went.
           wDamageBreakdown = {
             dice: wFinalDice,
             diceRolls: wBaseDiceRolls,
             mainRoll: wBaseDmgAmount,
             bonuses: wBonuses,
+            ...(wResisted.amount !== wRolledDmg
+              ? {
+                  weaponTotalPre: wRolledDmg,
+                  weaponTotalPost: wResisted.amount,
+                  weaponResistanceNote: wResisted.source || undefined,
+                }
+              : {}),
             finalDamage: wTotalResisted,
             targetHpBefore: wFreshHp,
             targetHpAfter: wNewHp,

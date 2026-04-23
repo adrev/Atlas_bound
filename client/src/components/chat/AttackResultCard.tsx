@@ -135,6 +135,43 @@ export function AttackResultCard({ result }: { result: AttackBreakdown }) {
             <DamageBonusList bonuses={result.damage.bonuses} />
           )}
 
+          {/* Weapon-type resistance / vulnerability row. Only renders
+              when the target's defenses actually altered the sum of
+              weapon-type sources (base + Rage + Sneak + Power Attack +
+              Dueling + TWF) — so the user can see "base 8 + Rage 2 +
+              Sneak 14 = 24 \u2192 12" instead of the final damage
+              appearing unexplained. */}
+          {result.damage.weaponTotalPre != null
+            && result.damage.weaponTotalPost != null
+            && result.damage.weaponTotalPre !== result.damage.weaponTotalPost && (
+            <div style={{
+              marginTop: 4, padding: '4px 8px',
+              background: 'rgba(230,126,34,0.04)',
+              borderRadius: theme.radius.sm,
+              border: '1px solid rgba(230,126,34,0.2)',
+              display: 'flex', alignItems: 'center', gap: 6,
+              fontSize: 10, flexWrap: 'wrap',
+            }}>
+              <span style={{ color: theme.text.muted, letterSpacing: '0.06em', textTransform: 'uppercase' }}>
+                Weapon-type
+              </span>
+              <span style={{ fontFamily: 'monospace' }}>
+                <span style={{ color: theme.text.muted, textDecoration: 'line-through' }}>
+                  {result.damage.weaponTotalPre}
+                </span>
+                {' \u2192 '}
+                <span style={{ fontWeight: 700, color: '#e67e22' }}>
+                  {result.damage.weaponTotalPost}
+                </span>
+              </span>
+              {result.damage.weaponResistanceNote && (
+                <span style={{ color: theme.text.muted, fontStyle: 'italic' }}>
+                  ({result.damage.weaponResistanceNote})
+                </span>
+              )}
+            </div>
+          )}
+
           {/* Final damage + HP delta. Same 0/0 "unknown HP" sentinel
               as the spell card so rider-style AttackBreakdowns that
               don't know the target's HP don't flash a bogus DOWN. */}
