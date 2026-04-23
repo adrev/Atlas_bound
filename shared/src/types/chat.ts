@@ -238,6 +238,101 @@ export interface SpellCastBreakdown {
   targets: SpellTargetOutcome[];
 }
 
+/**
+ * Structured breakdown for a single d20 save roll. Covers:
+ *   • Concentration saves on incoming damage (fires automatically in
+ *     `ConditionService.processDamageSideEffects`; DC = max(10, dmg/2))
+ *   • Death saves at 0 HP (DC 10, flat, crit rules on nat 20 / nat 1)
+ *   • Standalone `!save` chat-command saves
+ *   • Saving throws from server-side spell effects (Hideous Laughter
+ *     retry at end of turn, end-of-turn Hold Person retry, etc.)
+ *
+ * A spell cast's per-target saves live on SpellCastBreakdown instead
+ * (one message per cast, one row per target). This type is for the
+ * one-off save that resolves in its own chat event.
+ */
+export interface SaveBreakdown {
+  roller: { name: string; tokenId?: string; characterId?: string };
+  /** Human context — "Concentration on Fireball", "Death save",
+   *  "Hideous Laughter retry", "WIS save vs Fear". */
+  context: string;
+  /** Which save was rolled. `'death'` = 5e death save (flat d20). */
+  ability: 'str' | 'dex' | 'con' | 'int' | 'wis' | 'cha' | 'death';
+  d20: number;
+  d20Rolls?: number[];
+  advantage: 'normal' | 'advantage' | 'disadvantage';
+  modifiers: AttackBreakdownModifier[];
+  total: number;
+  /** Target DC. Absent for death saves (implied 10) or rolls without
+   *  a DC target (e.g. shown for the record only). */
+  dc?: number;
+  passed: boolean;
+  notes?: string[];
+  /** Death-save-specific fields. Omit for other save kinds. */
+  deathSave?: {
+    successes: number;
+    failures: number;
+    stabilized?: boolean;
+    dead?: boolean;
+    /** Nat 20 restores 1 HP. */
+    critSuccess?: boolean;
+    /** Nat 1 counts as two failures. */
+    critFailure?: boolean;
+  };
+  /** Concentration-save-specific fields. Omit for other save kinds. */
+  concentration?: {
+    spellName: string;
+    damageAmount: number;
+    /** True when the save failed and the spell was dropped. */
+    dropped: boolean;
+    /** War Caster feat grants advantage on concentration CON saves. */
+    warCaster?: boolean;
+  };
+}
+
+/**
+ * Structured breakdown for non-dice actions — legendary actions, lair
+ * actions, magic-item activations, downtime moves. Captures WHAT was
+ * done and WHO it affected without needing the attack/save/damage
+ * machinery. Renders as a compact card so players can scan what
+ * happened mechanically without parsing paragraph descriptions.
+ */
+export interface ActionBreakdown {
+  actor: { name: string; tokenId?: string };
+  action: {
+    name: string;
+    category:
+      | 'legendary'
+      | 'lair'
+      | 'magic-item'
+      | 'class-feature'
+      | 'racial'
+      | 'environment'
+      | 'downtime'
+      | 'chase'
+      | 'other';
+    /** Optional emoji / icon shown in the header. */
+    icon?: string;
+    /** Optional cost — legendary actions cost 1/2/3 points; magic
+     *  items may list charges used. */
+    cost?: string;
+  };
+  /** One-liner effect description — "1d10 fire damage in 30-ft cone",
+   *  "charmed for 1 minute", "teleport to unoccupied space". */
+  effect: string;
+  /** Per-target notes when the action hits multiple creatures. */
+  targets?: Array<{
+    name: string;
+    tokenId?: string;
+    effect?: string;
+    conditionsApplied?: string[];
+    damage?: { amount: number; damageType: string; hpBefore?: number; hpAfter?: number };
+    healing?: { amount: number; hpBefore?: number; hpAfter?: number };
+  }>;
+  /** Extra situational notes. */
+  notes?: string[];
+}
+
 export interface ChatMessage {
   id: string;
   sessionId: string;
@@ -262,6 +357,19 @@ export interface ChatMessage {
    * damage riders all show transparently.
    */
   spellResult?: SpellCastBreakdown | null;
+  /**
+   * Optional save breakdown — single d20 save with full modifier list.
+   * Used for concentration saves on damage, death saves, and standalone
+   * save rolls (!save). Spell per-target saves live on SpellCastBreakdown
+   * instead.
+   */
+  saveResult?: SaveBreakdown | null;
+  /**
+   * Optional non-dice action breakdown — legendary/lair actions,
+   * magic-item activations, downtime moves. Renders a compact card
+   * when no d20 math is involved but the event still deserves structure.
+   */
+  actionResult?: ActionBreakdown | null;
   hidden?: boolean;
   createdAt: string;
 }

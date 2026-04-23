@@ -6,7 +6,7 @@ import {
 } from '../ChatCommands.js';
 import * as ConditionService from '../ConditionService.js';
 import pool from '../../db/connection.js';
-import type { Token } from '@dnd-vtt/shared';
+import type { Token, SpellCastBreakdown, SpellTargetOutcome } from '@dnd-vtt/shared';
 import type { PlayerContext } from '../../utils/roomState.js';
 import { tokenConditionChanges } from '../../utils/conditionSources.js';
 
@@ -159,11 +159,12 @@ async function saveOrCharm(
   callerName: string,
   casterId: string,
   durationRounds: number,
-  extras: { saveAtEndOfTurn?: boolean; endsOnDamage?: boolean } = {},
+  extras: { saveAtEndOfTurn?: boolean; endsOnDamage?: boolean; level?: number } = {},
 ): Promise<void> {
   const lines: string[] = [];
   lines.push(`${icon} **${spellName}** (${save.toUpperCase()} DC ${dc}) — ${callerName}:`);
   const currentRound = c.ctx.room.combatState?.roundNumber ?? 0;
+  const outcomes: SpellTargetOutcome[] = [];
   for (const name of targets) {
     const target = resolveTargetByName(c.ctx, name);
     if (!target) { lines.push(`  • ${name}: not found`); continue; }
@@ -188,8 +189,37 @@ async function saveOrCharm(
       });
     }
     lines.push(`  • ${displayName}: ${save.toUpperCase()} d20=${d20}${sign}${mod}=${tot} → ${saved ? 'SAVED' : condName.toUpperCase()}`);
+    outcomes.push({
+      name: displayName,
+      tokenId: target.id,
+      kind: 'save',
+      save: {
+        d20,
+        advantage: 'normal',
+        ability: save,
+        modifiers: mod !== 0
+          ? [{ label: `${save.toUpperCase()} save mod`, value: mod, source: 'ability' }]
+          : [],
+        total: tot,
+        dc,
+        saved,
+      },
+      conditionsApplied: saved ? undefined : [condName],
+    });
   }
-  broadcastSystem(c.io, c.ctx, lines.join('\n'));
+  const breakdown: SpellCastBreakdown = {
+    caster: { name: callerName, tokenId: casterId },
+    spell: {
+      name: spellName,
+      level: extras.level ?? 3,
+      kind: 'save',
+      saveAbility: save,
+      saveDc: dc,
+    },
+    notes: [],
+    targets: outcomes,
+  };
+  broadcastSystem(c.io, c.ctx, lines.join('\n'), { spellResult: breakdown });
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -206,7 +236,7 @@ async function handleHypnoticPattern(c: ChatCommandContext): Promise<boolean> {
   await saveOrCharm(
     c, 'Hypnotic Pattern', '🎶', parts,
     'charmed', 'wis', loaded.spellSaveDc, loaded.callerName, loaded.caller.id,
-    10, { endsOnDamage: true },
+    10, { endsOnDamage: true, level: 3 },
   );
   return true;
 }
@@ -366,7 +396,7 @@ async function handleStinkingCloud(c: ChatCommandContext): Promise<boolean> {
   await saveOrCharm(
     c, 'Stinking Cloud', '💨', parts,
     'incapacitated', 'con', loaded.spellSaveDc, loaded.callerName, loaded.caller.id,
-    10, { saveAtEndOfTurn: true },
+    10, { saveAtEndOfTurn: true, level: 3 },
   );
   return true;
 }

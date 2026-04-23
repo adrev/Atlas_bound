@@ -29,6 +29,7 @@ export type {
   ChatMessageType, DiceRollData, ChatMessage, RollTemplate,
   AttackBreakdown, AttackBreakdownModifier, AttackBreakdownDamageSource,
   SpellCastBreakdown, SpellTargetOutcome,
+  SaveBreakdown, ActionBreakdown,
 } from './types/chat.js';
 export type {
   ClientToServerEvents, ServerToClientEvents,

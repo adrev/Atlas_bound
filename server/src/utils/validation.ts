@@ -573,6 +573,83 @@ export const spellCastBreakdownSchema = z.object({
   targets: z.array(spellTargetOutcomeSchema).max(20),
 });
 
+/**
+ * Single d20 save breakdown — concentration, death saves, !save,
+ * end-of-turn spell retry saves. Per-target spell saves live on
+ * spellCastBreakdownSchema instead.
+ */
+export const saveBreakdownSchema = z.object({
+  roller: z.object({
+    name: z.string().min(1).max(100),
+    tokenId: z.string().max(100).optional(),
+    characterId: z.string().max(100).optional(),
+  }),
+  context: z.string().min(1).max(120),
+  ability: z.enum(['str', 'dex', 'con', 'int', 'wis', 'cha', 'death']),
+  d20: z.number().int().min(0).max(40),
+  d20Rolls: z.array(z.number().int().min(0).max(40)).max(4).optional(),
+  advantage: z.enum(['normal', 'advantage', 'disadvantage']),
+  modifiers: z.array(attackBreakdownModifierSchema).max(12),
+  total: z.number().int().min(-1000).max(99),
+  dc: z.number().int().min(0).max(99).optional(),
+  passed: z.boolean(),
+  notes: z.array(z.string().max(120)).max(8).optional(),
+  deathSave: z.object({
+    successes: z.number().int().min(0).max(3),
+    failures: z.number().int().min(0).max(3),
+    stabilized: z.boolean().optional(),
+    dead: z.boolean().optional(),
+    critSuccess: z.boolean().optional(),
+    critFailure: z.boolean().optional(),
+  }).optional(),
+  concentration: z.object({
+    spellName: z.string().min(1).max(80),
+    damageAmount: z.number().int().min(0).max(9999),
+    dropped: z.boolean(),
+    warCaster: z.boolean().optional(),
+  }).optional(),
+});
+
+/**
+ * Non-dice action breakdown — legendary / lair / magic-item /
+ * downtime actions. Captures what happened mechanically without
+ * needing a d20 roll.
+ */
+export const actionBreakdownSchema = z.object({
+  actor: z.object({
+    name: z.string().min(1).max(100),
+    tokenId: z.string().max(100).optional(),
+  }),
+  action: z.object({
+    name: z.string().min(1).max(100),
+    category: z.enum([
+      'legendary', 'lair', 'magic-item', 'class-feature',
+      'racial', 'environment', 'downtime', 'chase', 'other',
+    ]),
+    icon: z.string().max(8).optional(),
+    cost: z.string().max(40).optional(),
+  }),
+  effect: z.string().min(1).max(400),
+  targets: z.array(z.object({
+    name: z.string().min(1).max(100),
+    tokenId: z.string().max(100).optional(),
+    effect: z.string().max(200).optional(),
+    conditionsApplied: z.array(z.string().max(40)).max(8).optional(),
+    damage: z.object({
+      amount: z.number().int().min(0).max(9999),
+      damageType: z.string().min(1).max(40),
+      hpBefore: z.number().int().min(-9999).max(9999).optional(),
+      hpAfter: z.number().int().min(-9999).max(9999).optional(),
+    }).optional(),
+    healing: z.object({
+      amount: z.number().int().min(0).max(9999),
+      hpBefore: z.number().int().min(-9999).max(9999).optional(),
+      hpAfter: z.number().int().min(-9999).max(9999).optional(),
+    }).optional(),
+  })).max(20).optional(),
+  notes: z.array(z.string().max(120)).max(8).optional(),
+});
+
 export const chatMessageSchema = z.object({
   type: z.enum(['ic', 'ooc', 'system']),
   content: z.string().min(1).max(2000),
@@ -584,6 +661,11 @@ export const chatMessageSchema = z.object({
    *  system-type message emitted by the spell resolver. Carries
    *  per-target outcomes for attack/save/heal/damage/buff kinds. */
   spellResult: spellCastBreakdownSchema.optional(),
+  /** Optional single-d20 save breakdown — concentration, death save,
+   *  !save command, end-of-turn spell retry saves. */
+  saveResult: saveBreakdownSchema.optional(),
+  /** Optional non-dice action breakdown — legendary/lair/magic-item. */
+  actionResult: actionBreakdownSchema.optional(),
 });
 
 export const chatWhisperSchema = z.object({

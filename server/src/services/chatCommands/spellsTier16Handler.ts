@@ -6,7 +6,7 @@ import {
 } from '../ChatCommands.js';
 import * as ConditionService from '../ConditionService.js';
 import pool from '../../db/connection.js';
-import type { Token } from '@dnd-vtt/shared';
+import type { Token, SpellCastBreakdown, SpellTargetOutcome } from '@dnd-vtt/shared';
 import type { PlayerContext } from '../../utils/roomState.js';
 import { tokenConditionChanges } from '../../utils/conditionSources.js';
 
@@ -144,7 +144,9 @@ function roll(diceCount: number, sides: number): { rolls: number[]; sum: number 
   return { rolls, sum };
 }
 
-// Generic save-for-half AoE handler.
+// Generic save-for-half AoE handler. Builds a full SpellCastBreakdown
+// alongside the plain text so chat renders a SpellCastCard with
+// per-target save + damage rows, matching the client-resolver path.
 async function aoeSaveForHalf(
   c: ChatCommandContext,
   cmd: string,
@@ -159,9 +161,11 @@ async function aoeSaveForHalf(
   dc: number,
   callerName: string,
   onFail?: (target: Token) => Promise<void>,
+  opts?: { level?: number; casterTokenId?: string },
 ): Promise<void> {
   const lines: string[] = [];
   lines.push(`${icon} **${spellName}** (${shape}, ${save.toUpperCase()} DC ${dc}) — ${callerName}:`);
+  const spellOutcomes: SpellTargetOutcome[] = [];
   for (const name of targets) {
     const target = resolveTargetByName(c.ctx, name);
     if (!target) { lines.push(`  • ${name}: not found`); continue; }
@@ -174,8 +178,52 @@ async function aoeSaveForHalf(
     const sign = mod >= 0 ? '+' : '';
     lines.push(`  • ${displayName}: ${save.toUpperCase()} d20=${d20}${sign}${mod}=${tot} → ${saved ? 'SAVED' : 'FAILED'}, **${dmg} ${dmgType}** [${rolls.join(',')}]`);
     if (!saved && onFail) await onFail(target);
+
+    spellOutcomes.push({
+      name: displayName,
+      tokenId: target.id,
+      kind: 'save',
+      save: {
+        d20,
+        advantage: 'normal',
+        ability: save,
+        modifiers: mod !== 0
+          ? [{ label: `${save.toUpperCase()} save mod`, value: mod, source: 'ability' }]
+          : [],
+        total: tot,
+        dc,
+        saved,
+      },
+      damage: {
+        dice: `${dice}d${die}`,
+        diceRolls: rolls,
+        mainRoll: sum,
+        bonuses: [],
+        halfDamage: saved || undefined,
+        finalDamage: dmg,
+        targetHpBefore: 0,
+        targetHpAfter: 0,
+      },
+    });
   }
-  broadcastSystem(c.io, c.ctx, lines.join('\n'));
+
+  const level = opts?.level ?? 0;
+  const breakdown: SpellCastBreakdown = {
+    caster: { name: callerName, tokenId: opts?.casterTokenId },
+    spell: {
+      name: spellName,
+      level,
+      kind: 'save',
+      damageType: dmgType,
+      saveAbility: save,
+      saveDc: dc,
+      halfOnSave: true,
+    },
+    notes: [shape],
+    targets: spellOutcomes,
+  };
+
+  broadcastSystem(c.io, c.ctx, lines.join('\n'), { spellResult: breakdown });
 }
 
 // ────── Fireball ────────────────────────────────────
@@ -190,7 +238,8 @@ async function handleFireball(c: ChatCommandContext): Promise<boolean> {
   const { slot, targets } = splitSlotAndTargets(parts, 3, 3);
   const dice = 8 + Math.max(0, slot - 3);
   await aoeSaveForHalf(c, 'fireball', `Fireball (L${slot})`, '🔥', '20-ft radius',
-    dice, 6, 'fire', 'dex', targets, loaded.spellSaveDc, loaded.callerName);
+    dice, 6, 'fire', 'dex', targets, loaded.spellSaveDc, loaded.callerName,
+    undefined, { level: slot, casterTokenId: loaded.caller?.id });
   return true;
 }
 
@@ -206,7 +255,8 @@ async function handleLightningBolt(c: ChatCommandContext): Promise<boolean> {
   const { slot, targets } = splitSlotAndTargets(parts, 3, 3);
   const dice = 8 + Math.max(0, slot - 3);
   await aoeSaveForHalf(c, 'lightningbolt', `Lightning Bolt (L${slot})`, '⚡', '100-ft line',
-    dice, 6, 'lightning', 'dex', targets, loaded.spellSaveDc, loaded.callerName);
+    dice, 6, 'lightning', 'dex', targets, loaded.spellSaveDc, loaded.callerName,
+    undefined, { level: slot, casterTokenId: loaded.caller?.id });
   return true;
 }
 
@@ -224,7 +274,7 @@ async function handleMagicMissile(c: ChatCommandContext): Promise<boolean> {
   // Targets repeated round-robin if fewer names than darts.
   const lines: string[] = [];
   lines.push(`🌟 **Magic Missile** (L${slot}, ${darts} darts, auto-hit, force) — ${loaded.callerName}:`);
-  let totals: Record<string, { sum: number; rolls: number[] }> = {};
+  const totals: Record<string, { sum: number; rolls: number[] }> = {};
   for (let i = 0; i < darts; i++) {
     const targetName = targets[i % targets.length];
     const r = Math.floor(Math.random() * 4) + 1 + 1; // 1d4+1
@@ -233,12 +283,39 @@ async function handleMagicMissile(c: ChatCommandContext): Promise<boolean> {
     totals[targetName].sum += r;
     totals[targetName].rolls.push(rawD4);
   }
+  const mmOutcomes: SpellTargetOutcome[] = [];
   for (const [name, data] of Object.entries(totals)) {
     const target = resolveTargetByName(c.ctx, name);
     const count = data.rolls.length;
     lines.push(`  • ${target?.name ?? name}: ${count}× (1d4+1) [${data.rolls.map((r) => `${r}+1`).join(', ')}] = **${data.sum} force**`);
+    mmOutcomes.push({
+      name: target?.name ?? name,
+      tokenId: target?.id,
+      kind: 'damage-flat',
+      damage: {
+        dice: `${count}× 1d4+1`,
+        diceRolls: data.rolls,
+        mainRoll: data.sum,
+        bonuses: [],
+        finalDamage: data.sum,
+        targetHpBefore: 0,
+        targetHpAfter: 0,
+      },
+      notes: [`${count} dart${count !== 1 ? 's' : ''} auto-hit`],
+    });
   }
-  broadcastSystem(c.io, c.ctx, lines.join('\n'));
+  const mmBreakdown: SpellCastBreakdown = {
+    caster: { name: loaded.callerName, tokenId: loaded.caller.id },
+    spell: {
+      name: `Magic Missile (L${slot})`,
+      level: slot,
+      kind: 'auto-damage',
+      damageType: 'force',
+    },
+    notes: [`${darts} darts, auto-hit`],
+    targets: mmOutcomes,
+  };
+  broadcastSystem(c.io, c.ctx, lines.join('\n'), { spellResult: mmBreakdown });
   return true;
 }
 
@@ -280,7 +357,8 @@ async function handleConeOfCold(c: ChatCommandContext): Promise<boolean> {
   const { slot, targets } = splitSlotAndTargets(parts, 5, 5);
   const dice = 8 + Math.max(0, slot - 5);
   await aoeSaveForHalf(c, 'coneofcold', `Cone of Cold (L${slot})`, '❄', '60-ft cone',
-    dice, 8, 'cold', 'con', targets, loaded.spellSaveDc, loaded.callerName);
+    dice, 8, 'cold', 'con', targets, loaded.spellSaveDc, loaded.callerName,
+    undefined, { level: slot, casterTokenId: loaded.caller.id });
   return true;
 }
 
@@ -296,7 +374,8 @@ async function handleShatter(c: ChatCommandContext): Promise<boolean> {
   const { slot, targets } = splitSlotAndTargets(parts, 2, 2);
   const dice = 3 + Math.max(0, slot - 2);
   await aoeSaveForHalf(c, 'shatter', `Shatter (L${slot})`, '💢', '10-ft radius',
-    dice, 8, 'thunder', 'con', targets, loaded.spellSaveDc, loaded.callerName);
+    dice, 8, 'thunder', 'con', targets, loaded.spellSaveDc, loaded.callerName,
+    undefined, { level: slot, casterTokenId: loaded.caller.id });
   return true;
 }
 

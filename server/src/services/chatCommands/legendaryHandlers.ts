@@ -148,6 +148,21 @@ async function handleLegendary(c: ChatCommandContext): Promise<boolean> {
   broadcastSystem(
     c.io, c.ctx,
     `👑 ${target.name} spends a Legendary Action${label}. (${budget.remaining}/${budget.max} remaining)`,
+    {
+      actionResult: {
+        actor: { name: target.name, tokenId: target.id },
+        action: {
+          name: actionName || 'Legendary Action',
+          category: 'legendary',
+          icon: '\uD83D\uDC51',
+          cost: `${budget.remaining}/${budget.max} remaining`,
+        },
+        effect: actionName
+          ? `${target.name} spends a Legendary Action to use ${actionName}.`
+          : `${target.name} spends a Legendary Action.`,
+        notes: [],
+      },
+    },
   );
   return true;
 }

@@ -104,7 +104,22 @@ async function handleLair(c: ChatCommandContext): Promise<boolean> {
     whisperToCaller(c.io, c.ctx, '!lair: specify the lair action name.');
     return true;
   }
-  broadcastSystem(c.io, c.ctx, `🏰 ${target.name} triggers a lair action — ${actionName}`);
+  broadcastSystem(
+    c.io, c.ctx,
+    `🏰 ${target.name} triggers a lair action — ${actionName}`,
+    {
+      actionResult: {
+        actor: { name: target.name, tokenId: target.id },
+        action: {
+          name: actionName,
+          category: 'lair',
+          icon: '\uD83C\uDFF0',
+        },
+        effect: `${target.name} invokes the lair: ${actionName}.`,
+        notes: ['Init 20 (losing ties)'],
+      },
+    },
+  );
   return true;
 }
 

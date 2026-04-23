@@ -621,6 +621,197 @@ describe('chatMessageSchema', () => {
       expect(r.success).toBe(true);
     });
   });
+
+  // -------------------------------------------------------------------
+  // saveResult — single d20 save breakdown (concentration / death /
+  // standalone save / spell retry).
+  // -------------------------------------------------------------------
+  describe('saveResult attachment', () => {
+    it('accepts a concentration save payload', () => {
+      const conc = {
+        roller: { name: 'Vex', tokenId: 't-vex', characterId: 'c-vex' },
+        context: 'Concentration on Hex',
+        ability: 'con' as const,
+        d20: 12,
+        d20Rolls: [8, 12],
+        advantage: 'advantage' as const,
+        modifiers: [
+          { label: 'CON modifier', value: 2, source: 'ability' as const },
+          { label: 'Proficient in CON save', value: 3, source: 'proficiency' as const },
+        ],
+        total: 17,
+        dc: 10,
+        passed: true,
+        concentration: {
+          spellName: 'Hex',
+          damageAmount: 12,
+          dropped: false,
+          warCaster: true,
+        },
+      };
+      const r = chatMessageSchema.safeParse({
+        type: 'system', content: 'x', saveResult: conc,
+      });
+      expect(r.success).toBe(true);
+    });
+
+    it('accepts a death save payload (nat 20)', () => {
+      const ds = {
+        roller: { name: 'Pc', tokenId: 't-pc' },
+        context: 'Death Save',
+        ability: 'death' as const,
+        d20: 20,
+        advantage: 'normal' as const,
+        modifiers: [],
+        total: 20,
+        dc: 10,
+        passed: true,
+        deathSave: {
+          successes: 0,
+          failures: 0,
+          stabilized: true,
+          critSuccess: true,
+        },
+      };
+      const r = chatMessageSchema.safeParse({
+        type: 'system', content: 'x', saveResult: ds,
+      });
+      expect(r.success).toBe(true);
+    });
+
+    it('rejects death save with successes > 3', () => {
+      const bad = {
+        roller: { name: 'Pc' },
+        context: 'Death',
+        ability: 'death' as const,
+        d20: 10,
+        advantage: 'normal' as const,
+        modifiers: [],
+        total: 10, passed: true,
+        deathSave: { successes: 4, failures: 0 },
+      };
+      const r = chatMessageSchema.safeParse({
+        type: 'system', content: 'x', saveResult: bad,
+      });
+      expect(r.success).toBe(false);
+    });
+
+    it('rejects unknown ability', () => {
+      const bad = {
+        roller: { name: 'x' },
+        context: 'y',
+        ability: 'luck',
+        d20: 10,
+        advantage: 'normal' as const,
+        modifiers: [], total: 10, passed: true,
+      };
+      const r = chatMessageSchema.safeParse({
+        type: 'system', content: 'x', saveResult: bad,
+      });
+      expect(r.success).toBe(false);
+    });
+
+    it('accepts a standalone save without dc/concentration/deathSave', () => {
+      const s = {
+        roller: { name: 'PC' },
+        context: 'WIS save vs Fear',
+        ability: 'wis' as const,
+        d20: 15,
+        advantage: 'normal' as const,
+        modifiers: [{ label: 'WIS mod', value: 2 }],
+        total: 17, passed: true,
+      };
+      const r = chatMessageSchema.safeParse({
+        type: 'system', content: 'x', saveResult: s,
+      });
+      expect(r.success).toBe(true);
+    });
+  });
+
+  // -------------------------------------------------------------------
+  // actionResult — non-dice narrative/mechanical event.
+  // -------------------------------------------------------------------
+  describe('actionResult attachment', () => {
+    it('accepts a legendary action', () => {
+      const a = {
+        actor: { name: 'Ancient Red Dragon', tokenId: 't-drag' },
+        action: { name: 'Tail Swipe', category: 'legendary' as const, icon: '\uD83D\uDC09', cost: '1 action' },
+        effect: 'Makes a tail attack against a creature within 15 ft.',
+        notes: [],
+      };
+      const r = chatMessageSchema.safeParse({
+        type: 'system', content: 'x', actionResult: a,
+      });
+      expect(r.success).toBe(true);
+    });
+
+    it('accepts a lair action with per-target effects', () => {
+      const a = {
+        actor: { name: 'Beholder' },
+        action: { name: 'Eye Ray', category: 'lair' as const },
+        effect: 'Beholder shoots 3 eye rays at random targets.',
+        targets: [
+          { name: 'Orc', effect: 'Disintegration — DC 16 DEX save' },
+          { name: 'Goblin', damage: { amount: 22, damageType: 'force', hpBefore: 30, hpAfter: 8 } },
+        ],
+      };
+      const r = chatMessageSchema.safeParse({
+        type: 'system', content: 'x', actionResult: a,
+      });
+      expect(r.success).toBe(true);
+    });
+
+    it('accepts a magic-item activation with conditions', () => {
+      const a = {
+        actor: { name: 'Liraya' },
+        action: { name: 'Cloak of Protection', category: 'magic-item' as const },
+        effect: '+1 AC and +1 to saving throws while worn.',
+        targets: [{ name: 'Liraya', conditionsApplied: ['cloak-of-protection'] }],
+      };
+      const r = chatMessageSchema.safeParse({
+        type: 'system', content: 'x', actionResult: a,
+      });
+      expect(r.success).toBe(true);
+    });
+
+    it('rejects unknown action category', () => {
+      const bad = {
+        actor: { name: 'x' },
+        action: { name: 'y', category: 'boss-fight' },
+        effect: 'z',
+      };
+      const r = chatMessageSchema.safeParse({
+        type: 'system', content: 'x', actionResult: bad,
+      });
+      expect(r.success).toBe(false);
+    });
+
+    it('accepts up to 20 action targets', () => {
+      const big = {
+        actor: { name: 'x' },
+        action: { name: 'y', category: 'environment' as const },
+        effect: 'z',
+        targets: Array.from({ length: 20 }, (_, i) => ({ name: `t${i}` })),
+      };
+      const r = chatMessageSchema.safeParse({
+        type: 'system', content: 'x', actionResult: big,
+      });
+      expect(r.success).toBe(true);
+    });
+
+    it('rejects more than 20 action targets', () => {
+      const bad = {
+        actor: { name: 'x' },
+        action: { name: 'y', category: 'environment' as const },
+        effect: 'z',
+        targets: Array.from({ length: 21 }, (_, i) => ({ name: `t${i}` })),
+      };
+      const r = chatMessageSchema.safeParse({
+        type: 'system', content: 'x', actionResult: bad,
+      });
+      expect(r.success).toBe(false);
+    });
+  });
 });
 
 describe('chatRollSchema', () => {

@@ -5,7 +5,7 @@ import type {
   Token, WallSegment, FogPolygon, Condition, MapPing, MapSummary, MapZone,
 } from './map.js';
 import type { Combatant, ActionType, InitiativeRollResult, SpellCastEvent, ActionEconomy } from './combat.js';
-import type { ChatMessage, DiceRollData, AttackBreakdown, SpellCastBreakdown } from './chat.js';
+import type { ChatMessage, DiceRollData, AttackBreakdown, SpellCastBreakdown, SaveBreakdown, ActionBreakdown } from './chat.js';
 import type { Drawing, DrawingStreamPayload } from './drawing.js';
 
 /** Payload for socket events that carry no data. Typed as an empty
@@ -260,6 +260,10 @@ export interface ClientChatEvents {
     /** Optional structured spell-cast breakdown with per-target
      *  outcomes (attack/save/heal/damage/buff). */
     spellResult?: SpellCastBreakdown;
+    /** Single-d20 save breakdown (concentration, death, !save). */
+    saveResult?: SaveBreakdown;
+    /** Non-dice action (legendary/lair/magic-item/downtime). */
+    actionResult?: ActionBreakdown;
   };
   'chat:whisper': { targetUserId: string; content: string };
   /**

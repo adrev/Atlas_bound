@@ -271,6 +271,19 @@ export async function initDatabase(): Promise<void> {
     -- Wounds. Added 2026-04-23 alongside the attack breakdown.
     ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS spell_result TEXT;
 
+    -- save_result carries one-off d20 saves (concentration save on
+    -- incoming damage, death saves at 0 HP, !save command). Shaped
+    -- like SaveBreakdown (shared/src/types/chat.ts). Per-target
+    -- spell saves live on spell_result instead.
+    ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS save_result TEXT;
+
+    -- action_result carries structured narrative/mechanical events
+    -- with no dice math — legendary actions, lair actions,
+    -- magic-item activations, downtime moves. Shaped like
+    -- ActionBreakdown. Added 2026-04-23 to round out the
+    -- damage-calculator transparency coverage.
+    ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS action_result TEXT;
+
     CREATE INDEX IF NOT EXISTS idx_chat_messages_session
       ON chat_messages(session_id, created_at);
 

@@ -12,6 +12,9 @@ import {
 } from '../../utils/validation.js';
 import { safeHandler } from '../../utils/socketHelpers.js';
 import { tokenConditionChanges } from '../../utils/conditionSources.js';
+import { v4 as uuidv4 } from 'uuid';
+import pool from '../../db/connection.js';
+import type { SaveBreakdown } from '@dnd-vtt/shared';
 
 /**
  * HP-change events: damage, heal, and death saves. The damage path
@@ -223,10 +226,66 @@ export function registerCombatHp(io: Server, socket: Socket): void {
       roll: result.roll,
     });
 
+    // Structured SaveResultCard alongside the tracker update so
+    // chat shows every death-save roll with its counter, not just
+    // the dramatic outcomes. DC 10 is implied for death saves.
+    const dead = combatant.deathSaves.failures >= 3;
+    const stabilized = combatant.hp > 0; // nat 20 heals → hp becomes 1
+    const deathSaveBreakdown: SaveBreakdown = {
+      roller: {
+        name: combatant.name,
+        tokenId,
+        characterId: combatant.characterId ?? undefined,
+      },
+      context: 'Death Save',
+      ability: 'death',
+      d20: result.roll,
+      advantage: 'normal',
+      modifiers: [],
+      total: result.roll,
+      dc: 10,
+      passed: result.isSuccess || result.isCritSuccess,
+      deathSave: {
+        successes: combatant.deathSaves.successes,
+        failures: combatant.deathSaves.failures,
+        stabilized: stabilized || undefined,
+        dead: dead || undefined,
+        critSuccess: result.isCritSuccess || undefined,
+        critFailure: result.isCritFail || undefined,
+      },
+    };
+    const chatContent = result.isCritSuccess
+      ? `\u2728 ${combatant.name} rolled a NAT 20 on their death save — regains 1 HP!`
+      : result.isCritFail
+        ? `\u2620\uFE0F ${combatant.name} rolled a NAT 1 on their death save — counts as 2 failures.`
+        : result.isSuccess
+          ? `\u2713 ${combatant.name} succeeded a death save (d20=${result.roll}).`
+          : `\u2717 ${combatant.name} failed a death save (d20=${result.roll}).`;
+    const msgId = uuidv4();
+    const createdAt = new Date().toISOString();
+    pool.query(
+      `INSERT INTO chat_messages (id, session_id, user_id, display_name, type, content, character_name, save_result, created_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+      [msgId, ctx.room.sessionId, 'system', 'System', 'system', chatContent, null,
+       JSON.stringify(deathSaveBreakdown), createdAt],
+    ).catch((e) => console.warn('[death-save] persist failed:', e));
+    io.to(ctx.room.sessionId).emit('chat:new-message', {
+      id: msgId,
+      sessionId: ctx.room.sessionId,
+      userId: 'system',
+      displayName: 'System',
+      type: 'system',
+      content: chatContent,
+      characterName: null,
+      whisperTo: null,
+      rollData: null,
+      saveResult: deathSaveBreakdown,
+      createdAt,
+    });
+
     // Only notify Discord on the dramatic outcomes \u2014 a successful
     // save every round would spam the channel. Nat-20 stabilises,
     // nat-1 is 2 failures, 3 failures = dead.
-    const dead = combatant.deathSaves.failures >= 3;
     if (result.isCritSuccess || result.isCritFail || dead) {
       const title = dead
         ? `\uD83D\uDC80 ${combatant.name} has died`

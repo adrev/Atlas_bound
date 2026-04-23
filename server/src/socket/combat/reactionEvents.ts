@@ -64,9 +64,28 @@ export function registerCombatReactions(io: Server, socket: Socket): void {
 
     // Broadcast every result line as a single system chat message
     // so the combat log shows the attack on one contiguous card.
+    // The breakdown (when present) ships the structured
+    // AttackBreakdown so chat renders the OA as a full per-source
+    // modifier card — matching what a regular weapon attack gets.
     if (result.messages.length > 0) {
+      const msgId = uuidv4();
+      const createdAt = new Date().toISOString();
+      const attackResult = result.breakdown ?? null;
+      // Persist with attack_result so rehydrated history shows the
+      // card on refresh instead of falling back to plain text.
+      const attackResultJson = attackResult ? JSON.stringify(attackResult) : null;
+      void ctx; // silences "ctx not used in the fallthrough" when we
+      // persist inline; we already resolved it earlier in this handler.
+      void import('../../db/connection.js').then(({ default: dbPool }) => {
+        dbPool.query(
+          `INSERT INTO chat_messages (id, session_id, user_id, display_name, type, content, character_name, attack_result, created_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+          [msgId, ctx.room.sessionId, 'system', 'System', 'system',
+           result.messages.join('\n'), null, attackResultJson, createdAt],
+        ).catch((e) => console.warn('[OA] persist failed:', e));
+      });
       io.to(ctx.room.sessionId).emit('chat:new-message', {
-        id: uuidv4(),
+        id: msgId,
         sessionId: ctx.room.sessionId,
         userId: 'system',
         displayName: 'System',
@@ -75,7 +94,8 @@ export function registerCombatReactions(io: Server, socket: Socket): void {
         characterName: null,
         whisperTo: null,
         rollData: null,
-        createdAt: new Date().toISOString(),
+        attackResult,
+        createdAt,
       });
     }
 

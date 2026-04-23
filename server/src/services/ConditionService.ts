@@ -172,6 +172,13 @@ export interface DamageSideEffectsResult {
   affectedTokens: string[];
   messages: string[];
   droppedConcentration?: { spellName: string };
+  /**
+   * Structured save breakdown for the concentration CON save — shipped
+   * to chat so the SaveResultCard renders the d20, mods, War Caster
+   * advantage source, DC, and drop/maintain outcome. Absent when the
+   * target wasn't concentrating or couldn't be identified.
+   */
+  concentrationSave?: import('@dnd-vtt/shared').SaveBreakdown;
 }
 
 export async function processDamageSideEffects(
@@ -239,6 +246,39 @@ export async function processDamageSideEffects(
           result.messages.push(`   \u2934 ${total} condition${total !== 1 ? 's' : ''} cleared from ${cleared.length} target${cleared.length !== 1 ? 's' : ''}`);
         }
       }
+
+      // Build structured SaveBreakdown for the chat card. The save
+      // modifier list decomposes CON mod, proficiency (if prof.), and
+      // War Caster advantage source so the DM can verify the math.
+      const saveModifiers: import('@dnd-vtt/shared').AttackBreakdownModifier[] = [];
+      if (conMod !== 0) {
+        saveModifiers.push({ label: 'CON modifier', value: conMod, source: 'ability' });
+      }
+      if (isProficient) {
+        saveModifiers.push({ label: 'Proficient in CON save', value: profBonus, source: 'proficiency' });
+      }
+      result.concentrationSave = {
+        roller: {
+          name: tokenName,
+          tokenId,
+          characterId: token.characterId,
+        },
+        context: `Concentration on ${concentratingOn}`,
+        ability: 'con',
+        d20: roll,
+        d20Rolls: hasWarCaster ? [r1, r2] : undefined,
+        advantage: hasWarCaster ? 'advantage' : 'normal',
+        modifiers: saveModifiers,
+        total,
+        dc,
+        passed: success,
+        concentration: {
+          spellName: concentratingOn,
+          damageAmount,
+          dropped: !success,
+          warCaster: hasWarCaster || undefined,
+        },
+      };
     }
   }
 

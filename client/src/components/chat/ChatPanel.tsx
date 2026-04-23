@@ -6,6 +6,8 @@ import { ChatInput } from './ChatInput';
 import { DiceRollCard } from './DiceRollCard';
 import { AttackResultCard } from './AttackResultCard';
 import { SpellCastCard } from './SpellCastCard';
+import { SaveResultCard } from './SaveResultCard';
+import { ActionResultCard } from './ActionResultCard';
 import type { ChatMessage } from '@dnd-vtt/shared';
 import { theme } from '../../styles/theme';
 
@@ -113,6 +115,12 @@ function MessageBubble({ message }: { message: ChatMessage }) {
         // rows with every modifier and damage source itemised. Used for
         // Fireball, Cure Wounds, Eldritch Blast, Hypnotic Pattern, etc.
         <SpellCastCard result={message.spellResult} />
+      ) : message.type === 'system' && message.saveResult ? (
+        // Single-d20 save breakdown — concentration, death saves, !save.
+        <SaveResultCard result={message.saveResult} />
+      ) : message.type === 'system' && message.actionResult ? (
+        // Non-dice action card — legendary/lair/magic-item/downtime.
+        <ActionResultCard result={message.actionResult} />
       ) : message.type === 'system' ? (
         // System messages support multi-line content with explicit \n
         <div style={{ whiteSpace: 'pre-wrap', lineHeight: 1.5 }}>{message.content}</div>

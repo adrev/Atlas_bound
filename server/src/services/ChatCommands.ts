@@ -1,5 +1,7 @@
 import type { Server } from 'socket.io';
-import type { ChatMessage } from '@dnd-vtt/shared';
+import type {
+  ChatMessage, AttackBreakdown, SpellCastBreakdown, SaveBreakdown, ActionBreakdown,
+} from '@dnd-vtt/shared';
 import { v4 as uuidv4 } from 'uuid';
 import pool from '../db/connection.js';
 import type { PlayerContext } from '../utils/roomState.js';
@@ -96,8 +98,27 @@ export function whisperToCaller(io: Server, ctx: PlayerContext, content: string)
   io.to(ctx.player.socketId).emit('chat:new-message', message);
 }
 
-/** Broadcast a system message to the whole session room. */
-export function broadcastSystem(io: Server, ctx: PlayerContext, content: string): void {
+/**
+ * Broadcast a system message to the whole session room. Optional
+ * `structured` bag attaches one or more breakdowns (attack / spell /
+ * save / action) so chat renders the rich card alongside the plain
+ * text fallback. The plain-text `content` is always stored + shown
+ * as scrollback even for clients that haven't loaded the card
+ * components.
+ */
+export interface ChatStructuredPayloads {
+  attackResult?: AttackBreakdown;
+  spellResult?: SpellCastBreakdown;
+  saveResult?: SaveBreakdown;
+  actionResult?: ActionBreakdown;
+}
+
+export function broadcastSystem(
+  io: Server,
+  ctx: PlayerContext,
+  content: string,
+  structured?: ChatStructuredPayloads,
+): void {
   const message: ChatMessage = {
     id: uuidv4(),
     sessionId: ctx.room.sessionId,
@@ -108,15 +129,26 @@ export function broadcastSystem(io: Server, ctx: PlayerContext, content: string)
     characterName: null,
     whisperTo: null,
     rollData: null,
+    attackResult: structured?.attackResult ?? null,
+    spellResult: structured?.spellResult ?? null,
+    saveResult: structured?.saveResult ?? null,
+    actionResult: structured?.actionResult ?? null,
     createdAt: new Date().toISOString(),
   };
-  // Persist so history shows the command result on refresh.
+  // Persist so history shows the command result on refresh, including
+  // the structured breakdowns so cards rehydrate correctly.
+  const attackResultJson = structured?.attackResult ? JSON.stringify(structured.attackResult) : null;
+  const spellResultJson = structured?.spellResult ? JSON.stringify(structured.spellResult) : null;
+  const saveResultJson = structured?.saveResult ? JSON.stringify(structured.saveResult) : null;
+  const actionResultJson = structured?.actionResult ? JSON.stringify(structured.actionResult) : null;
   pool.query(
-    `INSERT INTO chat_messages (id, session_id, user_id, display_name, type, content, character_name, created_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+    `INSERT INTO chat_messages (id, session_id, user_id, display_name, type, content, character_name, attack_result, spell_result, save_result, action_result, created_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
     [
       message.id, message.sessionId, message.userId, message.displayName,
-      message.type, message.content, message.characterName, message.createdAt,
+      message.type, message.content, message.characterName,
+      attackResultJson, spellResultJson, saveResultJson, actionResultJson,
+      message.createdAt,
     ],
   ).catch((e) => console.warn('[chat-commands] persist broadcast failed:', e));
   io.to(ctx.room.sessionId).emit('chat:new-message', message);

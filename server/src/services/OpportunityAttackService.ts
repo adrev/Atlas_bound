@@ -175,6 +175,14 @@ export interface OAExecutionResult {
   messages: string[];
   hpChange?: { tokenId: string; hp: number; tempHp: number };
   characterHpUpdated?: { characterId: string; hp: number };
+  /**
+   * Structured attack breakdown for the chat card. Populated on
+   * successful OA resolution (hit or miss) so the chat card shows
+   * per-source modifier lines + damage breakdown, matching what a
+   * regular weapon attack gets. Absent on early-reject failures
+   * (no reaction, no melee attack, etc.).
+   */
+  breakdown?: import('@dnd-vtt/shared').AttackBreakdown;
 }
 
 export async function executeOpportunityAttack(
@@ -242,9 +250,17 @@ export async function executeOpportunityAttack(
 
   const result: OAExecutionResult = { success: true, messages };
 
+  // Hoist the hp-delta so the breakdown can reference both
+  // before/after values regardless of whether a character row exists.
+  const moverCombatantBefore = room.combatState?.combatants.find((c) => c.tokenId === moverTokenId);
+  const hpBefore = moverCombatantBefore?.hp ?? (mover.characterId ? -1 : 0);
+
+  let hpAfter = hpBefore;
+  let damage = 0;
+
   if (hit) {
     const rolledDamage = rollDamageString(attack.damageDice, isCrit);
-    const damage = Math.max(0, rolledDamage);
+    damage = Math.max(0, rolledDamage);
     let newHp: number | null = null;
     const combatant = room.combatState?.combatants.find((c) => c.tokenId === moverTokenId);
     if (combatant) { combatant.hp = Math.max(0, combatant.hp - damage); newHp = combatant.hp; }
@@ -260,6 +276,7 @@ export async function executeOpportunityAttack(
     const dmgTypeWord = attack.damageType ? ` ${attack.damageType}` : '';
     messages.push(`   ${damage}${dmgTypeWord} damage${isCrit ? ' [CRIT]' : ''}`);
     if (newHp !== null) {
+      hpAfter = newHp;
       messages.push(`   ${mover.name} HP \u2192 ${newHp}`);
       result.hpChange = { tokenId: moverTokenId, hp: newHp, tempHp: combatant?.tempHp ?? 0 };
       if (newHp <= 0) messages.push(`   \uD83D\uDC80 ${mover.name} is DOWN`);
@@ -290,6 +307,61 @@ export async function executeOpportunityAttack(
       } catch { /* ignore */ }
     }
   }
+
+  // Build the structured AttackBreakdown so the chat card can render
+  // per-source modifier rows. OA carries the weapon's attack bonus as
+  // a single flat mod (we don't have ability/prof decomposed here
+  // without re-fetching the character sheet, which adds a DB hop
+  // to every OA). The notes array captures the advantage / disadv
+  // source chain (target prone → adv, attacker blinded → disadv).
+  const bdModifiers: import('@dnd-vtt/shared').AttackBreakdownModifier[] = [];
+  if (attack.attackBonus !== 0) {
+    bdModifiers.push({
+      label: 'OA attack bonus',
+      value: attack.attackBonus,
+      source: 'other',
+    });
+  }
+  const bdNotes: string[] = [];
+  if (moverConds.includes('prone')) bdNotes.push('Target prone (OA gets advantage)');
+  if (attackerConds.includes('poisoned')) bdNotes.push('Attacker poisoned (disadvantage)');
+  if (attackerConds.includes('frightened')) bdNotes.push('Attacker frightened (disadvantage)');
+  if (attackerConds.includes('blinded')) bdNotes.push('Attacker blinded (disadvantage)');
+  if (attackerConds.includes('restrained')) bdNotes.push('Attacker restrained (disadvantage)');
+  if (attackerConds.includes('prone')) bdNotes.push('Attacker prone (disadvantage)');
+
+  result.breakdown = {
+    attacker: { name: attacker.name, tokenId: attacker.id },
+    target: {
+      name: mover.name,
+      tokenId: mover.id,
+      ac: moverAC,
+    },
+    weapon: {
+      name: `${attack.name} (OA)`,
+      damageType: attack.damageType || 'damage',
+    },
+    attackRoll: {
+      d20: kept,
+      d20Rolls: adv !== 'normal' ? [r1, r2] : undefined,
+      advantage: adv,
+      modifiers: bdModifiers,
+      total,
+      isCrit,
+      isFumble,
+    },
+    hitResult: isCrit ? 'crit' : hit ? 'hit' : isFumble ? 'fumble' : 'miss',
+    damage: hit ? {
+      dice: attack.damageDice,
+      diceRolls: [],
+      mainRoll: damage,
+      bonuses: [],
+      finalDamage: damage,
+      targetHpBefore: hpBefore >= 0 ? hpBefore : 0,
+      targetHpAfter: hpAfter,
+    } : undefined,
+    notes: bdNotes.slice(0, 16),
+  };
 
   return result;
 }

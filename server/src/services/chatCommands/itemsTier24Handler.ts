@@ -341,6 +341,27 @@ async function handleMagicItem(c: ChatCommandContext): Promise<boolean> {
   broadcastSystem(
     c.io, c.ctx,
     `✨ **${item.name}** (${item.rarity}${item.attunement ? ', attuned' : ''}) — ${wearerLabel}: ${item.effect}`,
+    {
+      actionResult: {
+        actor: {
+          name: wearer?.name ?? c.ctx.player.displayName,
+          tokenId: wearer?.id,
+        },
+        action: {
+          name: item.name,
+          category: 'magic-item',
+          icon: '\uD83D\uDD2E',
+          cost: item.attunement ? `${item.rarity}, attuned` : item.rarity,
+        },
+        effect: item.effect,
+        targets: wearer && item.condition ? [{
+          name: wearer.name,
+          tokenId: wearer.id,
+          conditionsApplied: [item.condition],
+        }] : undefined,
+        notes: [],
+      },
+    },
   );
   return true;
 }

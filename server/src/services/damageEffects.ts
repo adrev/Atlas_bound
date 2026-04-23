@@ -3,6 +3,7 @@ import { v4 as uuidv4 } from 'uuid';
 import type { RoomState } from '../utils/roomState.js';
 import * as ConditionService from './ConditionService.js';
 import { tokenConditionChanges } from '../utils/conditionSources.js';
+import pool from '../db/connection.js';
 
 /**
  * R2 — central "damage was applied" broadcaster. Runs the side-effect
@@ -52,9 +53,51 @@ export async function applyDamageSideEffects(
     }
   }
 
-  if (result.messages.length > 0) {
+  // Concentration save — emit as a standalone SaveResultCard so the
+  // CON save math (War Caster adv source, prof/mod decomposition,
+  // drop/maintain outcome) renders transparently. The other
+  // side-effect messages (Sleep ending, Hideous Laughter retry) stay
+  // as plain chat lines since they're simpler.
+  if (result.concentrationSave) {
+    const msgId = uuidv4();
+    const createdAt = new Date().toISOString();
+    const concSave = result.concentrationSave;
+    const content = concSave.passed
+      ? `\uD83C\uDFAF ${concSave.roller.name} maintained concentration on ${concSave.concentration?.spellName ?? 'spell'} (CON save ${concSave.total} vs DC ${concSave.dc})`
+      : `\u26A1 ${concSave.roller.name} lost concentration on ${concSave.concentration?.spellName ?? 'spell'} (CON save ${concSave.total} vs DC ${concSave.dc})`;
+    pool.query(
+      `INSERT INTO chat_messages (id, session_id, user_id, display_name, type, content, character_name, save_result, created_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+      [msgId, room.sessionId, 'system', 'System', 'system', content, null,
+       JSON.stringify(concSave), createdAt],
+    ).catch((e) => console.warn('[damageEffects] persist concentration save failed:', e));
+    io.to(room.sessionId).emit('chat:new-message', {
+      id: msgId,
+      sessionId: room.sessionId,
+      userId: 'system',
+      displayName: 'System',
+      type: 'system',
+      content,
+      characterName: null,
+      whisperTo: null,
+      rollData: null,
+      saveResult: concSave,
+      createdAt,
+    });
+  }
+
+  // Remaining side-effect messages (Sleep wake, Hideous Laughter save
+  // retry). Skip the concentration line since we already rendered it
+  // as a structured card above. The original plain-text stays as a
+  // fallback for the pre-card clients.
+  const remainingMessages = result.concentrationSave
+    ? result.messages.filter((m) =>
+        !m.includes('concentration on') &&
+        !m.startsWith('   \u2934'))
+    : result.messages;
+  if (remainingMessages.length > 0) {
     const now = new Date().toISOString();
-    for (const msg of result.messages) {
+    for (const msg of remainingMessages) {
       io.to(room.sessionId).emit('chat:new-message', {
         id: uuidv4(),
         sessionId: room.sessionId,

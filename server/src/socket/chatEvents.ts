@@ -71,7 +71,7 @@ export function registerChatEvents(io: Server, socket: Socket): void {
 
     if (!checkRateLimit(socket.id, 'chat:message', 5, 5000)) return;
 
-    const { type, content, characterName, attackResult, spellResult } = parsed.data;
+    const { type, content, characterName, attackResult, spellResult, saveResult, actionResult } = parsed.data;
 
     // Slash-command dispatcher (R1 / R8 / future). Commands starting
     // with `!` are routed here before we persist or broadcast the raw
@@ -92,18 +92,22 @@ export function registerChatEvents(io: Server, socket: Socket): void {
       characterName: characterName ?? null, whisperTo: null, rollData: null,
       attackResult: attackResult ?? null,
       spellResult: spellResult ?? null,
+      saveResult: saveResult ?? null,
+      actionResult: actionResult ?? null,
       createdAt: now,
     };
 
-    // Persist attack_result / spell_result as JSON text. Null /
-    // undefined → NULL column, so plain system / ic / ooc messages
-    // don't carry dead payload in scrollback.
+    // Persist each *_result blob as JSON text. Null / undefined → NULL
+    // column, so plain system / ic / ooc messages don't carry dead
+    // payload in scrollback.
     const attackResultJson = attackResult ? JSON.stringify(attackResult) : null;
     const spellResultJson = spellResult ? JSON.stringify(spellResult) : null;
+    const saveResultJson = saveResult ? JSON.stringify(saveResult) : null;
+    const actionResultJson = actionResult ? JSON.stringify(actionResult) : null;
     await pool.query(`
-      INSERT INTO chat_messages (id, session_id, user_id, display_name, type, content, character_name, attack_result, spell_result, created_at)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-    `, [messageId, ctx.room.sessionId, ctx.player.userId, ctx.player.displayName, type, content, characterName ?? null, attackResultJson, spellResultJson, now]);
+      INSERT INTO chat_messages (id, session_id, user_id, display_name, type, content, character_name, attack_result, spell_result, save_result, action_result, created_at)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+    `, [messageId, ctx.room.sessionId, ctx.player.userId, ctx.player.displayName, type, content, characterName ?? null, attackResultJson, spellResultJson, saveResultJson, actionResultJson, now]);
 
     io.to(ctx.room.sessionId).emit('chat:new-message', message);
   }));
