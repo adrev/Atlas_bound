@@ -18,9 +18,12 @@ export function InitiativeTracker() {
   const settings = useSessionStore((s) => s.settings);
   const turnTimerEnabled = !!settings.turnTimerEnabled;
   const turnTimerSeconds = settings.turnTimerSeconds ?? 60;
-  // Default to "visible" when the setting has never been set.
-  const showCreatureStats = settings.showCreatureStatsToPlayers !== false;
-  const showPlayerStats = settings.showPlayersToPlayers !== false;
+  // Default to HIDDEN when the setting has never been set — DMs
+  // opt in to transparency from the Session Privacy panel. Previously
+  // defaulted to visible which leaked creature AC + other players'
+  // stats to the table out of the box.
+  const showCreatureStats = settings.showCreatureStatsToPlayers === true;
+  const showPlayerStats = settings.showPlayersToPlayers === true;
 
   if (!active || combatants.length === 0) return null;
 

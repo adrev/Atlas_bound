@@ -155,8 +155,14 @@ export const DEFAULT_SESSION_SETTINGS: SessionSettings = {
   enableFogOfWar: true,
   enableDynamicLighting: false,
   allowPlayerRest: true,
-  showCreatureStatsToPlayers: true,
-  showPlayersToPlayers: true,
+  // Privacy defaults flipped (Apr 2026) after DMs reported players
+  // could read creature ACs and each other's sheets out of the box —
+  // the original defaults leaked too much by making transparency
+  // opt-out instead of opt-in. Players now see their own sheet +
+  // token; everything else requires the DM to explicitly enable it
+  // from the Session Privacy panel.
+  showCreatureStatsToPlayers: false,
+  showPlayersToPlayers: false,
   // PHB is implicitly always on; listing it here as the default lets
   // existing settings UI treat the set uniformly.
   ruleSources: ['phb'],

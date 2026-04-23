@@ -2506,6 +2506,22 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
   const canAct = isDM || isOwner;
   const isNPC = !token.ownerUserId || (character?.userId === 'npc');
 
+  // Privacy gate — does the current user get to see mechanical detail
+  // (AC, attacks, inventory, saves, etc.) on this token? DMs always do;
+  // the player always does on their own token; for other tokens it's
+  // the DM's explicit opt-in via Session Privacy toggles. Defaults are
+  // false / false so new sessions don't leak creature AC or cross-player
+  // stats out of the box.
+  const showCreatureStats =
+    useSessionStore.getState().settings.showCreatureStatsToPlayers === true;
+  const showPlayerStats =
+    useSessionStore.getState().settings.showPlayersToPlayers === true;
+  const canSeeStats =
+    isDM ||
+    isOwner ||
+    (isNPC && showCreatureStats) ||
+    (!isNPC && showPlayerStats);
+
   // The Combat Actions section only shows when the viewed token is
   // actually the active combatant — so non-current players can't use
   // it to burn actions out-of-turn. `currentTurnIdx` is in the
@@ -2726,8 +2742,10 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
           </div>
         </div>
 
-        {/* Stats row — shows EFFECTIVE values after condition modifiers */}
-        {(() => {
+        {/* Stats row — shows EFFECTIVE values after condition modifiers.
+            Hidden from players unless they own the token or the DM has
+            explicitly enabled cross-visibility for this session. */}
+        {canSeeStats && (() => {
           const dexModForAC = abilityModifier(mergedScores.dex || 10);
           const acEff = effectiveAC(ac, conditions, dexModForAC);
           const spdEff = effectiveSpeed(speed, conditions);

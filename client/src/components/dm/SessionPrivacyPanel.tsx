@@ -15,8 +15,11 @@ export function SessionPrivacyPanel() {
   const updatePrivacy = useSessionStore((s) => s.updatePrivacy);
   const settings = useSessionStore((s) => s.settings);
   const allowPlayerRest = settings.allowPlayerRest ?? true;
-  const showCreatureStatsToPlayers = settings.showCreatureStatsToPlayers ?? true;
-  const showPlayersToPlayers = settings.showPlayersToPlayers ?? true;
+  // Defaults now false (privacy-first) — see DEFAULT_SESSION_SETTINGS
+  // in shared/types/session.ts. The toggles stay on this same row so
+  // the DM can flip either one on when transparency is wanted.
+  const showCreatureStatsToPlayers = settings.showCreatureStatsToPlayers === true;
+  const showPlayersToPlayers = settings.showPlayersToPlayers === true;
   const dmSeesPlayerFog = settings.dmSeesPlayerFog ?? false;
   const [password, setPassword] = useState('');
   const [saving, setSaving] = useState(false);

@@ -224,8 +224,10 @@ export function AppShell() {
       const isOwn = currentMyChar?.id === charId;
       const target = isOwn ? currentMyChar : currentAllChars[charId];
       const targetIsNPC = target && 'userId' in target && target.userId === 'npc';
-      const showPlayersToPlayers = session.settings.showPlayersToPlayers ?? true;
-      const showCreatureStats = session.settings.showCreatureStatsToPlayers ?? true;
+      // Default to HIDDEN (privacy-first) — DMs opt in from the
+      // Session Privacy panel when they want transparency.
+      const showPlayersToPlayers = session.settings.showPlayersToPlayers === true;
+      const showCreatureStats = session.settings.showCreatureStatsToPlayers === true;
       if (!session.isDM && !isOwn) {
         if (targetIsNPC && !showCreatureStats) return;
         if (!targetIsNPC && !showPlayersToPlayers) return;
