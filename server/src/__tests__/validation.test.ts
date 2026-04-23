@@ -406,6 +406,44 @@ describe('chatMessageSchema', () => {
       });
       expect(result.success).toBe(true);
     });
+
+    it('accepts weapon-type resistance metadata (pre/post/note)', () => {
+      // Regression: the base weapon row carries a separate
+      // before/after/note triple for weapon-type resistance so the
+      // card can show "24 → 12 (resists slashing)" without conflating
+      // per-rider resistance. These fields are optional; omitting them
+      // stays valid, and including them up to 120 chars on the note
+      // round-trips.
+      const resistedWeaponType = {
+        ...validBreakdown,
+        damage: {
+          ...validBreakdown.damage,
+          weaponTotalPre: 24,
+          weaponTotalPost: 12,
+          weaponResistanceNote: 'resists slashing',
+        },
+      };
+      const r = chatMessageSchema.safeParse({
+        type: 'system', content: 'x', attackResult: resistedWeaponType,
+      });
+      expect(r.success).toBe(true);
+    });
+
+    it('rejects weapon-type resistance note over 120 chars', () => {
+      const bad = {
+        ...validBreakdown,
+        damage: {
+          ...validBreakdown.damage,
+          weaponTotalPre: 24,
+          weaponTotalPost: 12,
+          weaponResistanceNote: 'x'.repeat(121),
+        },
+      };
+      const r = chatMessageSchema.safeParse({
+        type: 'system', content: 'x', attackResult: bad,
+      });
+      expect(r.success).toBe(false);
+    });
   });
 
   // -------------------------------------------------------------------
