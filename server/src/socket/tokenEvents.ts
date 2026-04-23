@@ -393,6 +393,13 @@ export function registerTokenEvents(io: Server, socket: Socket): void {
       token = rowToToken(row);
     }
 
+    // Snapshot pre-update visibility so we can tell if this edit is
+    // promoting a hidden token into view for non-DM players. We re-emit
+    // as `map:token-added` in that case because the client filtered it
+    // out on `map:loaded` (invisible tokens are never sent to players),
+    // so a plain diff broadcast would have nothing to apply.
+    const wasVisible = token.visible !== false;
+
     const isDM = ctx.player.role === 'dm';
     const isOwner = token.ownerUserId === ctx.player.userId;
     // Faction is a DM-only field — non-DM clients cannot change sides.
@@ -445,9 +452,39 @@ export function registerTokenEvents(io: Server, socket: Socket): void {
       await pool.query(`UPDATE tokens SET ${setClauses.join(', ')} WHERE id = $${paramIdx}`, params);
     }
 
+    // If this update flipped a hidden token to visible, non-DM players
+    // need the FULL token payload (their client never received it on
+    // `map:loaded` because of the hidden filter there). DMs always had
+    // it, so they still get the diff. Per-recipient so the mixed
+    // audience (DM + players in one room) pays the full-token cost only
+    // for the players who actually need it.
+    const promotedToVisible =
+      changes.visible === true && !wasVisible;
+    const latestToken = ctx.room.tokens.get(tokenId) ?? token;
+
+    // Build a fast socketId→role index so the per-recipient branch
+    // below doesn't scan all players for every socket.
+    const socketRole = new Map<string, 'dm' | 'player'>();
+    for (const p of ctx.room.players.values()) socketRole.set(p.socketId, p.role);
+    // userSockets indexes multi-tab sessions: one userId → several
+    // sockets. Fold those in too so a player's extra tab is also
+    // treated as 'player'.
+    for (const [uid, sids] of ctx.room.userSockets.entries()) {
+      const role = ctx.room.players.get(uid)?.role;
+      if (!role) continue;
+      for (const sid of sids) socketRole.set(sid, role);
+    }
+
     if (tokenMapId) {
       const recipients = socketsOnMap(ctx.room, tokenMapId);
-      for (const sid of recipients) io.to(sid).emit('map:token-updated', { tokenId, changes, mapId: tokenMapId });
+      for (const sid of recipients) {
+        const role = socketRole.get(sid) ?? 'player';
+        if (promotedToVisible && role !== 'dm') {
+          io.to(sid).emit('map:token-added', latestToken);
+        } else {
+          io.to(sid).emit('map:token-updated', { tokenId, changes, mapId: tokenMapId });
+        }
+      }
     } else {
       io.to(ctx.room.sessionId).emit('map:token-updated', { tokenId, changes });
     }

@@ -255,8 +255,21 @@ export function registerSessionEvents(io: Server, socket: Socket): void {
           room.actionEconomies.set(cur.tokenId, economy);
         }
 
+        // Players get the combatant list filtered to visible tokens,
+        // so a late rejoin / reconnect mid-combat doesn't leak hidden
+        // enemies that haven't been revealed yet. DMs see everything.
+        // `currentTurnIndex` is left intact because it's also filtered
+        // on the client (the out-of-view index just renders nothing).
+        const combatantsForRecipient = isDM
+          ? combatState.combatants
+          : combatState.combatants.filter((c) => {
+              const tok = room.tokens.get(c.tokenId);
+              return tok ? tok.visible !== false : false;
+            });
+
         socket.emit('combat:state-sync', {
-          combatants: combatState.combatants, roundNumber: combatState.roundNumber,
+          combatants: combatantsForRecipient,
+          roundNumber: combatState.roundNumber,
           currentTurnIndex: combatState.currentTurnIndex,
           actionEconomy: economy ?? {
             action: false, bonusAction: false, movementRemaining: 30, movementMax: 30, reaction: false,

@@ -112,6 +112,7 @@ function toNumber(v: unknown): number {
 export function FogLayer({ mapWidth, mapHeight }: FogLayerProps) {
   const isDM = useSessionStore((s) => s.isDM);
   const enableFog = useSessionStore((s) => s.settings.enableFogOfWar);
+  const enableLighting = useSessionStore((s) => s.settings.enableDynamicLighting);
   const dmSeesPlayerFog = useSessionStore((s) => !!s.settings.dmSeesPlayerFog);
   const tokens = useMapStore((s) => s.tokens);
   const userId = useSessionStore((s) => s.userId);
@@ -174,6 +175,15 @@ export function FogLayer({ mapWidth, mapHeight }: FogLayerProps) {
       </Group>
     );
   }
+
+  // Dynamic lighting layer draws its own 85% darkness overlay + light
+  // cutouts, so if it's on FogLayer has to stand down or the two
+  // overlays stack into a pitch-black map. When dynamic lighting is
+  // active it is authoritative — it handles ambient tier, light
+  // sources, and per-player vision polygons. Exploration fog is a
+  // distinct model and currently orthogonal; users who need both will
+  // need a future "fog polygon persists across lit frames" feature.
+  if (enableLighting) return null;
 
   // Fog renders only when either:
   //   - the session has enableFogOfWar on (standard exploration fog), OR
