@@ -77,6 +77,25 @@ export async function assertCharacterOwnerOrDM(
   );
   if (npcDmRows.length > 0) return;
 
+  // Fallback #3: Brand-new NPC rows with `user_id = 'npc'` that don't
+  // have a token yet. The LootEditor drop flow creates a loot-bag
+  // character BEFORE spawning its token, then immediately calls
+  // `/characters/:id/loot` to add the item — at that moment there's
+  // no token linking the character to any session, so fallback #2
+  // can't find a DM record. Allow any DM (of any session the caller
+  // is a member of) to mutate NPC characters; NPCs are a shared
+  // resource without cross-session impact, and the caller being a
+  // DM somewhere proves they have legitimate game-running
+  // authority. Human-owned PCs still require the stricter checks
+  // above — this only widens access for `user_id = 'npc'` rows.
+  if (rows[0].user_id === 'npc') {
+    const { rows: anyDmRows } = await pool.query(
+      `SELECT 1 FROM session_players WHERE user_id = $1 AND role = 'dm' LIMIT 1`,
+      [userId],
+    );
+    if (anyDmRows.length > 0) return;
+  }
+
   const err = new Error('Not authorized') as Error & { status: number };
   err.status = 403;
   throw err;
