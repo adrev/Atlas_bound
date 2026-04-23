@@ -2768,8 +2768,11 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
           );
         })()}
 
-        {/* HP bar + controls */}
-        {maxHp > 0 && (
+        {/* HP bar + controls — hidden when the viewer can't see stats
+            (non-DM viewing a creature while showCreatureStats is off,
+            or a PC while showPlayersToPlayers is off). Matches the
+            AC row gate so HP reveals the same information as AC. */}
+        {canSeeStats && maxHp > 0 && (
           <HPControls
             hp={hp} maxHp={maxHp} hpPct={hpPct}
             canEdit={canAct}
@@ -2837,8 +2840,8 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
           />
         )}
 
-        {/* Ability scores */}
-        {Object.keys(abilityScores).length > 0 && (
+        {/* Ability scores — same privacy gate as HP/AC. */}
+        {canSeeStats && Object.keys(abilityScores).length > 0 && (
           <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 6, gap: 2 }}>
             {(['str', 'dex', 'con', 'int', 'wis', 'cha'] as const).map(ab => {
               const score = abilityScores[ab] || 10;
@@ -3060,7 +3063,7 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
         )}
 
         {/* Compendium Actions (for creatures) */}
-        {compActions.length > 0 && (
+        {canSeeStats && compActions.length > 0 && (
           <Section title="Actions">
             {compActions.map((action: any, i: number) => (
               <div key={i} style={{ marginBottom: 4, padding: '3px 0', borderBottom: i < compActions.length - 1 ? `1px solid ${C.borderDim}` : 'none' }}>
@@ -3092,7 +3095,7 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
         )}
 
         {/* Loot Weapons — matches Actions layout */}
-        {lootWeapons.length > 0 && (
+        {canSeeStats && lootWeapons.length > 0 && (
           <Section title="Equipped Loot">
             {lootWeapons.map((w, i) => {
               const props = w.properties || [];
@@ -3177,7 +3180,7 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
             compendiumSlug). Inventory weapons always represent a real
             attack the character can roll, so we surface them
             regardless of what compendium data is also present. */}
-        {weapons.length > 0 && (
+        {canSeeStats && weapons.length > 0 && (
           <Section title="Attacks">
             {weapons.map((w: any, i: number) => {
               const props: string[] = w.properties || [];
@@ -3280,21 +3283,23 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
           </Section>
         )}
 
-        {/* Traits (from compendium) */}
-        <TokenTraits traits={compTraits} />
+        {/* Traits (from compendium) — privacy-gated. */}
+        {canSeeStats && <TokenTraits traits={compTraits} />}
 
-        {/* Creature Spells (from compendium trait) */}
-        <TokenCreatureSpells
-          spells={creatureSpells}
-          spellDC={creatureSpellDC}
-          spellAtk={creatureSpellAtk}
-          canAct={canAct}
-          casterTokenId={selectedTokenId}
-          casterName={token.name}
-        />
+        {/* Creature Spells (from compendium trait) — privacy-gated. */}
+        {canSeeStats && (
+          <TokenCreatureSpells
+            spells={creatureSpells}
+            spellDC={creatureSpellDC}
+            spellAtk={creatureSpellAtk}
+            canAct={canAct}
+            casterTokenId={selectedTokenId}
+            casterName={token.name}
+          />
+        )}
 
         {/* Cantrips */}
-        {spells.filter((s: any) => s.level === 0).length > 0 && (
+        {canSeeStats && spells.filter((s: any) => s.level === 0).length > 0 && (
           <Section title={`Cantrips (${spells.filter((s: any) => s.level === 0).length})`}>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 3 }}>
               {spells.filter((s: any) => s.level === 0).map((spell: any, i: number) => {
@@ -3322,7 +3327,7 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
         )}
 
         {/* Leveled Spells */}
-        {spells.filter((s: any) => s.level > 0).length > 0 && (
+        {canSeeStats && spells.filter((s: any) => s.level > 0).length > 0 && (
           <Section title={`Spells (${spells.filter((s: any) => s.level > 0).length})`}>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 3 }}>
               {spells.filter((s: any) => s.level > 0).slice(0, 12).map((spell: any, i: number) => {
