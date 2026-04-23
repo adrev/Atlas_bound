@@ -151,6 +151,7 @@ const GROUPS: Array<{ title: string; entries: Entry[] }> = [
       { name: 'thp', usage: '!thp <amount> [target]', desc: 'Set temp HP — 0 clears, higher replaces, lower keeps existing (RAW).' },
       { name: 'potion', usage: '!potion <target> [dice]', desc: 'Drink a healing potion (default 2d4+2).' },
       { name: 'stabilize', usage: '!stabilize <target>', desc: 'Medicine DC 10 — stabilize a 0-HP creature.' },
+      { name: 'setattr', usage: '!setattr <target> <attr> <value>', dmOnly: true, desc: 'Edit a character sheet column directly (name, level, class, race, etc.).' },
     ],
   },
   {

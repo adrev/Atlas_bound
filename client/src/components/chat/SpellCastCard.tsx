@@ -80,16 +80,24 @@ export function SpellCastCard({ result }: { result: SpellCastBreakdown }) {
         {result.spell.halfOnSave && <span style={{ marginLeft: 8 }}>(save halves)</span>}
       </div>
 
-      {/* Caster-side notes */}
+      {/* Caster-side notes — vertical list so long arrays stay readable. */}
       {result.notes.length > 0 && (
         <div style={{
           marginBottom: 6, padding: '4px 8px',
           background: 'rgba(255,255,255,0.02)',
           borderRadius: theme.radius.sm,
           border: `1px solid ${theme.border.default}`,
-          fontSize: 10, color: theme.text.secondary, fontStyle: 'italic',
         }}>
-          {result.notes.join(' · ')}
+          <ul style={{ margin: 0, padding: 0, listStyle: 'none' }}>
+            {result.notes.map((n, i) => (
+              <li key={i} style={{
+                fontSize: 10, color: theme.text.secondary,
+                fontStyle: 'italic', padding: '1px 0',
+              }}>
+                \u2022 {n}
+              </li>
+            ))}
+          </ul>
         </div>
       )}
 
@@ -323,37 +331,54 @@ function DamageBlock({ damage }: { damage: NonNullable<SpellTargetOutcome['damag
           })}
         </ul>
       )}
-      {/* Final total + HP delta */}
-      <div style={{
-        display: 'flex', alignItems: 'baseline', gap: 6,
-        marginTop: 4, paddingTop: 4,
-        borderTop: `1px dashed ${theme.border.default}`,
-        fontSize: 10,
-      }}>
-        <span style={{ color: theme.text.muted }}>
-          {damage.halfDamage ? 'Half' : 'Final'}
-        </span>
-        <span style={{ fontSize: 14, fontWeight: 700, color: '#e67e22', fontFamily: theme.font.display }}>
-          {damage.finalDamage}
-        </span>
-        <span style={{ flex: 1 }} />
-        <span style={{ color: theme.text.muted, fontFamily: 'monospace' }}>
-          HP {damage.targetHpBefore} \u2192 <span style={{
-            color: damage.targetHpAfter === 0 ? '#e74c3c' : theme.text.primary,
-            fontWeight: 700,
-          }}>{damage.targetHpAfter}</span>
-        </span>
-      </div>
-      {damage.targetHpAfter === 0 && (
-        <div style={{ marginTop: 2, fontSize: 10, fontWeight: 700, color: '#e74c3c' }}>
-          \uD83D\uDC80 DOWN
-        </div>
-      )}
+      {/* Final total + HP delta. Some emitters (Smite, Wand of Magic
+          Missiles, auto-damage riders) don't know the target's HP and
+          pass 0/0 as a sentinel — in that case we skip the HP ticker
+          and the DOWN badge instead of rendering the misleading
+          "HP 0 \u2192 0 \u2014 DOWN" combo. */}
+      {(() => {
+        const hpKnown = !(damage.targetHpBefore === 0 && damage.targetHpAfter === 0);
+        const droppedToZero = hpKnown && damage.targetHpAfter === 0;
+        return (
+          <>
+            <div style={{
+              display: 'flex', alignItems: 'baseline', gap: 6,
+              marginTop: 4, paddingTop: 4,
+              borderTop: `1px dashed ${theme.border.default}`,
+              fontSize: 10,
+            }}>
+              <span style={{ color: theme.text.muted }}>
+                {damage.halfDamage ? 'Half' : 'Final'}
+              </span>
+              <span style={{ fontSize: 14, fontWeight: 700, color: '#e67e22', fontFamily: theme.font.display }}>
+                {damage.finalDamage}
+              </span>
+              <span style={{ flex: 1 }} />
+              {hpKnown && (
+                <span style={{ color: theme.text.muted, fontFamily: 'monospace' }}>
+                  HP {damage.targetHpBefore} \u2192 <span style={{
+                    color: droppedToZero ? '#e74c3c' : theme.text.primary,
+                    fontWeight: 700,
+                  }}>{damage.targetHpAfter}</span>
+                </span>
+              )}
+            </div>
+            {droppedToZero && (
+              <div style={{ marginTop: 2, fontSize: 10, fontWeight: 700, color: '#e74c3c' }}>
+                \uD83D\uDC80 DOWN
+              </div>
+            )}
+          </>
+        );
+      })()}
     </div>
   );
 }
 
 function HealingBlock({ healing }: { healing: NonNullable<SpellTargetOutcome['healing']> }) {
+  // Same "unknown HP" sentinel as DamageBlock — skip the HP ticker
+  // when both numbers are zero (emitters for non-character targets).
+  const hpKnown = !(healing.targetHpBefore === 0 && healing.targetHpAfter === 0);
   return (
     <div style={{
       marginTop: 4, padding: '4px 6px',
@@ -374,9 +399,11 @@ function HealingBlock({ healing }: { healing: NonNullable<SpellTargetOutcome['he
         +{healing.mainRoll} HP
       </span>
       <span style={{ flex: 1 }} />
-      <span style={{ color: theme.text.muted, fontFamily: 'monospace' }}>
-        HP {healing.targetHpBefore} \u2192 <strong style={{ color: theme.text.primary }}>{healing.targetHpAfter}</strong>
-      </span>
+      {hpKnown && (
+        <span style={{ color: theme.text.muted, fontFamily: 'monospace' }}>
+          HP {healing.targetHpBefore} \u2192 <strong style={{ color: theme.text.primary }}>{healing.targetHpAfter}</strong>
+        </span>
+      )}
     </div>
   );
 }

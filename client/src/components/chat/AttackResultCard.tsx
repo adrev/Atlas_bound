@@ -135,34 +135,47 @@ export function AttackResultCard({ result }: { result: AttackBreakdown }) {
             <DamageBonusList bonuses={result.damage.bonuses} />
           )}
 
-          {/* Final damage + HP delta */}
-          <div style={{
-            display: 'flex', alignItems: 'baseline', gap: 8,
-            marginTop: 6, paddingTop: 6, borderTop: `1px dashed ${theme.border.default}`,
-          }}>
-            <span style={{ fontSize: 11, color: theme.text.muted, textTransform: 'uppercase', letterSpacing: '0.08em' }}>
-              Final
-            </span>
-            <span style={{
-              fontSize: 22, fontWeight: 700, color: '#e67e22',
-              fontFamily: theme.font.display, lineHeight: 1,
-            }}>
-              {result.damage.finalDamage}
-            </span>
-            <span style={{ fontSize: 10, color: theme.text.muted }}>damage</span>
-            <span style={{ flex: 1 }} />
-            <span style={{ fontSize: 11, color: theme.text.muted, fontFamily: 'monospace' }}>
-              HP {result.damage.targetHpBefore} \u2192 <span style={{
-                color: result.damage.targetHpAfter === 0 ? '#e74c3c' : theme.text.primary,
-                fontWeight: 700,
-              }}>{result.damage.targetHpAfter}</span>
-            </span>
-          </div>
-          {result.damage.targetHpAfter === 0 && (
-            <div style={{ marginTop: 4, fontSize: 11, fontWeight: 700, color: '#e74c3c', letterSpacing: '0.04em' }}>
-              \uD83D\uDC80 DOWN
-            </div>
-          )}
+          {/* Final damage + HP delta. Same 0/0 "unknown HP" sentinel
+              as the spell card so rider-style AttackBreakdowns that
+              don't know the target's HP don't flash a bogus DOWN. */}
+          {(() => {
+            const dmg = result.damage!;
+            const hpKnown = !(dmg.targetHpBefore === 0 && dmg.targetHpAfter === 0);
+            const droppedToZero = hpKnown && dmg.targetHpAfter === 0;
+            return (
+              <>
+                <div style={{
+                  display: 'flex', alignItems: 'baseline', gap: 8,
+                  marginTop: 6, paddingTop: 6, borderTop: `1px dashed ${theme.border.default}`,
+                }}>
+                  <span style={{ fontSize: 11, color: theme.text.muted, textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+                    Final
+                  </span>
+                  <span style={{
+                    fontSize: 22, fontWeight: 700, color: '#e67e22',
+                    fontFamily: theme.font.display, lineHeight: 1,
+                  }}>
+                    {dmg.finalDamage}
+                  </span>
+                  <span style={{ fontSize: 10, color: theme.text.muted }}>damage</span>
+                  <span style={{ flex: 1 }} />
+                  {hpKnown && (
+                    <span style={{ fontSize: 11, color: theme.text.muted, fontFamily: 'monospace' }}>
+                      HP {dmg.targetHpBefore} \u2192 <span style={{
+                        color: droppedToZero ? '#e74c3c' : theme.text.primary,
+                        fontWeight: 700,
+                      }}>{dmg.targetHpAfter}</span>
+                    </span>
+                  )}
+                </div>
+                {droppedToZero && (
+                  <div style={{ marginTop: 4, fontSize: 11, fontWeight: 700, color: '#e74c3c', letterSpacing: '0.04em' }}>
+                    \uD83D\uDC80 DOWN
+                  </div>
+                )}
+              </>
+            );
+          })()}
         </Section>
       )}
 
