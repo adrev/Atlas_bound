@@ -23,7 +23,8 @@ export type {
 } from './types/drawing.js';
 export type {
   Combatant, CombatState, ActionEconomy, ActionType,
-  InitiativeRollRequest, InitiativeRollResult, SpellCastEvent,
+  InitiativeRollRequest, InitiativeRollResult, InitiativeBreakdown,
+  SpellCastEvent,
 } from './types/combat.js';
 export type {
   ChatMessageType, DiceRollData, ChatMessage, RollTemplate,

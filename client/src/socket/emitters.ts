@@ -241,6 +241,20 @@ export function emitLockInitiative() {
   getSocket().emit('combat:lock-initiative', {});
 }
 
+/**
+ * DM clicks "Cancel Combat" from the initiative review modal. Aborts
+ * combat before any turns advance — no XP summary, no Discord ping,
+ * no recap modal. Server clears combatState and broadcasts
+ * `combat:review-canceled`; every client resets its review UI.
+ *
+ * Distinct from `emitEndCombat()`, which is the post-battle "end
+ * combat, show recap, award XP" flow. Same teardown server-side,
+ * different notification semantics.
+ */
+export function emitCancelReview() {
+  getSocket().emit('combat:cancel-review', {});
+}
+
 export function emitRollInitiative(tokenId: string, bonus: number) {
   getSocket().emit('combat:roll-initiative', { tokenId, bonus });
 }

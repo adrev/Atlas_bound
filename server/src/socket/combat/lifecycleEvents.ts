@@ -166,6 +166,29 @@ export function registerCombatLifecycle(io: Server, socket: Socket): void {
     io.to(ctx.room.sessionId).emit('combat:review-complete', {});
   }));
 
+  // DM clicks "Cancel Combat" from the initiative review modal —
+  // they want to abort before any turns actually start, WITHOUT
+  // the end-of-combat ritual (XP summary, Discord notification,
+  // damage recap). Runs the same combat teardown the end-combat
+  // path does so combatState is cleared and sessions.combat_active
+  // flips back to 0, but emits a bespoke `combat:review-canceled`
+  // event so the client can wipe review UI without popping the
+  // recap modal.
+  socket.on('combat:cancel-review', safeHandler(socket, async () => {
+    const ctx = getPlayerBySocketId(socket.id);
+    if (!ctx || ctx.player.role !== 'dm') return;
+    try {
+      await CombatService.endCombat(ctx.room.sessionId);
+      ctx.room.turnHooks.clear();
+      ctx.room.roundHooks = [];
+      io.to(ctx.room.sessionId).emit('combat:review-canceled', {});
+    } catch (err) {
+      socket.emit('session:error', {
+        message: err instanceof Error ? err.message : 'Failed to cancel initiative review',
+      });
+    }
+  }));
+
   socket.on('combat:end', safeHandler(socket, async () => {
     const ctx = getPlayerBySocketId(socket.id);
     if (!ctx || ctx.player.role !== 'dm') return;

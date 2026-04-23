@@ -1,4 +1,4 @@
-import type { Combatant, CombatState, ActionEconomy, ActionType, Condition } from '@dnd-vtt/shared';
+import type { Combatant, CombatState, ActionEconomy, ActionType, Condition, InitiativeBreakdown } from '@dnd-vtt/shared';
 import { speedMultiplierFor, traitsForRace } from '@dnd-vtt/shared';
 import { getRoom, type RoomState } from '../utils/roomState.js';
 import pool from '../db/connection.js';
@@ -127,6 +127,14 @@ export async function startCombatAsync(sessionId: string, tokenIds: string[]): P
     // piggybacks on the Alert-detection path below and tells the DM
     // table *why* this combatant's bonus is higher than their DEX mod.
     let hasAlertFlag = false;
+    // Per-source modifier list for the initiative review breakdown.
+    // Populated from DEX mod, feat detection, and subclass detection
+    // so the modal can show each contribution on its own line.
+    const initModifiers: InitiativeBreakdown['modifiers'] = [];
+    // Feral Instinct (Barbarian L7+) grants advantage on initiative
+    // rolls. Surfaced as `initAdvantage = 'advantage'` so the roll
+    // step rolls 2d20 and keeps the higher die.
+    let initAdvantage: 'normal' | 'advantage' | 'disadvantage' = 'normal';
 
     if (token.characterId) {
       const { rows } = await pool.query('SELECT * FROM characters WHERE id = $1', [token.characterId]);
@@ -387,47 +395,105 @@ export async function startCombatAsync(sessionId: string, tokenIds: string[]): P
           maxHp = Math.floor(maxHp / 2);
           if (hp > maxHp) hp = maxHp;
         }
-        // Prefer the character's precomputed initiative bonus — it's
-        // what the character sheet shows and it already includes Alert
-        // (+5), Jack of All Trades (half prof), and any other feat
-        // modifiers applied during the import pipeline. Fall back to
-        // DEX mod when the column is unset (missing / 0 / NaN), which
-        // matches the old behaviour for unimported characters.
+        // Compute per-source initiative modifiers so the review modal
+        // can show DEX / Alert / Jack of All Trades / Remarkable
+        // Athlete / Rakish Audacity / Dread Ambusher / Feral Instinct
+        // each on its own line. Summing them gives `initBonus`; if
+        // the sheet's `charRow.initiative` disagrees we surface the
+        // delta as a "Sheet bonus" line so nothing silently vanishes.
         const storedInit = Number(charRow.initiative);
         let baseFromDex = 0;
+        let rawAbilitiesCached: Record<string, number> = {};
         try {
           const rawAbilities = charRow.ability_scores;
-          const abilities = typeof rawAbilities === 'string' ? JSON.parse(rawAbilities) : (rawAbilities ?? {});
-          const dex = Number(abilities?.dex ?? abilities?.dexterity ?? 10);
+          rawAbilitiesCached = (typeof rawAbilities === 'string' ? JSON.parse(rawAbilities) : (rawAbilities ?? {})) as Record<string, number>;
+          const dex = Number(rawAbilitiesCached?.dex ?? rawAbilitiesCached?.dexterity ?? 10);
           baseFromDex = Number.isFinite(dex) ? Math.floor((dex - 10) / 2) : 0;
         } catch { baseFromDex = 0; }
-        if (Number.isFinite(storedInit) && storedInit !== 0) {
-          initBonus = storedInit;
-        } else {
-          initBonus = baseFromDex;
-        }
-        // Alert feat: +5 initiative. Check the character's features
-        // blob directly — the DDB pipeline stamps `initiative` to
-        // include Alert when importing, but homebrew / manually-created
-        // characters only get the raw DEX mod. Scanning the features
-        // here makes the bonus reliable regardless of provenance, and
-        // protects against the DDB pipeline changing shape.
+        // 1. DEX modifier — always the base line, even when 0.
+        initModifiers.push({ label: 'DEX', value: baseFromDex, source: 'ability' });
+
+        const classLower = String(charRow.class || '').toLowerCase();
+        const level = Number(charRow.level) || 1;
+        const profBonus = Number(charRow.proficiency_bonus) || (level >= 17 ? 6 : level >= 13 ? 5 : level >= 9 ? 4 : level >= 5 ? 3 : 2);
         try {
           const rawFeatures = charRow.features;
           const features = typeof rawFeatures === 'string' ? JSON.parse(rawFeatures) : (rawFeatures ?? []);
           const featureList: Array<{ name?: string }> = Array.isArray(features) ? features : [];
-          const hasAlert = featureList.some((f) => typeof f?.name === 'string' && /^\s*alert\s*$/i.test(f.name));
-          const hasTough = featureList.some((f) => typeof f?.name === 'string' && /^\s*tough\s*$/i.test(f.name));
+          const hasFeature = (pattern: RegExp) =>
+            featureList.some((f) => typeof f?.name === 'string' && pattern.test(f.name));
+          const hasAlert = hasFeature(/^\s*alert\s*$/i);
+          const hasTough = hasFeature(/^\s*tough\s*$/i);
+
+          // 2. Alert feat → +5 initiative.
           if (hasAlert) {
             hasAlertFlag = true;
-            // If storedInit already included Alert, we'd double-count.
-            // Detect by comparing against the raw DEX mod — stored
-            // >= DEX+5 means Alert is already baked in. Heuristic but
-            // resilient.
-            if (initBonus < baseFromDex + 5) {
-              initBonus = baseFromDex + 5;
+            initModifiers.push({ label: 'Alert (feat)', value: 5, source: 'feat' });
+          }
+
+          // 3. Jack of All Trades (Bard L2+) → +floor(prof / 2) on
+          //    non-proficient ability checks; Sage Advice rules this
+          //    applies to initiative since initiative IS a DEX check.
+          if (classLower.includes('bard') && level >= 2) {
+            const jat = Math.floor(profBonus / 2);
+            if (jat > 0) {
+              initModifiers.push({
+                label: `Jack of All Trades (+${jat})`,
+                value: jat, source: 'class',
+              });
             }
           }
+
+          // 4. Remarkable Athlete (Champion Fighter L7+) → +ceil(prof / 2)
+          //    on ability checks NOT proficient in. Applies to initiative
+          //    for the same reason as Jack of All Trades. Requires the
+          //    Champion subclass (not vanilla Fighter).
+          if (classLower.includes('fighter') && level >= 7 && (classLower.includes('champion') || hasFeature(/remarkable\s+athlete/i))) {
+            const ra = Math.ceil(profBonus / 2);
+            if (ra > 0) {
+              initModifiers.push({
+                label: `Remarkable Athlete (+${ra})`,
+                value: ra, source: 'subclass',
+              });
+            }
+          }
+
+          // 5. Rakish Audacity (Swashbuckler Rogue L3+) → +CHA mod to
+          //    initiative rolls.
+          if (classLower.includes('rogue') && level >= 3 && (classLower.includes('swashbuckler') || hasFeature(/rakish\s+audacity/i))) {
+            const cha = Number(rawAbilitiesCached?.cha ?? rawAbilitiesCached?.charisma ?? 10);
+            const chaMod = Number.isFinite(cha) ? Math.floor((cha - 10) / 2) : 0;
+            if (chaMod !== 0) {
+              initModifiers.push({
+                label: 'Rakish Audacity (CHA)',
+                value: chaMod, source: 'subclass',
+              });
+            }
+          }
+
+          // 6. Dread Ambusher (Gloom Stalker Ranger L3+) → +WIS mod to
+          //    initiative, but ONLY round 1. Since startCombatAsync
+          //    is always round 1, we surface it here; the bonus gets
+          //    baked into the stored Combatant.initiative at roll time
+          //    and the DM can hand-edit in subsequent rounds.
+          if (classLower.includes('ranger') && level >= 3 && (classLower.includes('gloom') || hasFeature(/dread\s+ambusher/i))) {
+            const wis = Number(rawAbilitiesCached?.wis ?? rawAbilitiesCached?.wisdom ?? 10);
+            const wisMod = Number.isFinite(wis) ? Math.floor((wis - 10) / 2) : 0;
+            if (wisMod !== 0) {
+              initModifiers.push({
+                label: 'Dread Ambusher (WIS)',
+                value: wisMod, source: 'subclass',
+              });
+            }
+          }
+
+          // 7. Feral Instinct (Barbarian L7+) → advantage on initiative
+          //    rolls. No flat bonus; the advantage is applied when we
+          //    actually roll the d20 below.
+          if (classLower.includes('barbarian') && level >= 7 && hasFeature(/feral\s+instinct/i)) {
+            initAdvantage = 'advantage';
+          }
+
           // Tough feat: +2 maxHP per character level. DDB imports
           // already bake this into `max_hit_points`, so we only add
           // the bonus when the character was created manually (i.e.
@@ -460,7 +526,37 @@ export async function startCombatAsync(sessionId: string, tokenIds: string[]): P
         } catch { /* features blob unparseable — skip */ }
         const charUserId = charRow.user_id as string | null;
         isNPC = !token.ownerUserId || charUserId === 'npc';
+
+        // Sum the detected per-source modifiers. If the sheet's own
+        // `charRow.initiative` column disagrees with our sum (because
+        // the DM set a custom bonus, or the DDB import baked in a
+        // feature we can't detect yet, or Bardic Inspiration has been
+        // granted), surface the delta as a "Sheet bonus" line so the
+        // total matches what the sheet says and the DM sees exactly
+        // what's unaccounted for.
+        const computedFromSources = initModifiers.reduce((s, m) => s + m.value, 0);
+        if (Number.isFinite(storedInit) && storedInit !== 0 && storedInit !== computedFromSources) {
+          const delta = storedInit - computedFromSources;
+          if (delta !== 0) {
+            initModifiers.push({
+              label: 'Sheet bonus',
+              value: delta,
+              source: 'other',
+            });
+          }
+          initBonus = storedInit;
+        } else {
+          initBonus = computedFromSources;
+        }
       }
+    }
+
+    // NPC / unlinked tokens without a character row fall through here
+    // with an empty modifier list. Add a single DEX=0 line so the
+    // review modal isn't blank for monsters — most NPC monsters roll
+    // init off their DEX mod anyway.
+    if (initModifiers.length === 0) {
+      initModifiers.push({ label: 'DEX (monster)', value: initBonus, source: 'ability' });
     }
 
     combatants.push({
@@ -472,22 +568,60 @@ export async function startCombatAsync(sessionId: string, tokenIds: string[]): P
       portraitUrl: portrait ?? token.imageUrl,
       exhaustionLevel,
       hasAlert: hasAlertFlag,
+      // Seeded with the known per-source modifiers; the d20 + total
+      // are filled in by the roll loop below so NPC groups can share
+      // their rolled d20 across duplicates with the same name.
+      initiativeBreakdown: {
+        d20: 0,
+        advantage: initAdvantage,
+        modifiers: [...initModifiers],
+        total: 0,
+      },
     });
   }
 
-  const npcGroupInitiatives = new Map<string, number>();
+  // Roll d20 (or 2d20 with advantage) for each combatant. NPCs with
+  // the same name share one group roll — keeps duplicate mobs from
+  // taking forever in initiative order. The rolled d20 + keep-choice
+  // get stamped into each combatant's initiativeBreakdown so the
+  // modal can show "d20=17" next to the per-source modifier list.
+  //
+  // `rollForAdvantage` rolls 2d20 and keeps the higher for advantage,
+  // 2d20 keep lower for disadvantage, or just 1d20 for normal.
+  const rollForAdvantage = (adv: 'normal' | 'advantage' | 'disadvantage'): { kept: number; rolls: number[] } => {
+    const a = Math.floor(Math.random() * 20) + 1;
+    if (adv === 'normal') return { kept: a, rolls: [a] };
+    const b = Math.floor(Math.random() * 20) + 1;
+    return {
+      kept: adv === 'advantage' ? Math.max(a, b) : Math.min(a, b),
+      rolls: [a, b],
+    };
+  };
+  const npcGroupRolls = new Map<string, { kept: number; rolls: number[] }>();
   for (const combatant of combatants) {
     if (!Number.isFinite(combatant.initiativeBonus)) combatant.initiativeBonus = 0;
+    const adv = combatant.initiativeBreakdown?.advantage ?? 'normal';
+    let dieData: { kept: number; rolls: number[] };
     if (combatant.isNPC) {
-      if (!npcGroupInitiatives.has(combatant.name)) {
-        npcGroupInitiatives.set(combatant.name, Math.floor(Math.random() * 20) + 1 + combatant.initiativeBonus);
+      if (!npcGroupRolls.has(combatant.name)) {
+        npcGroupRolls.set(combatant.name, rollForAdvantage(adv));
       }
-      combatant.initiative = npcGroupInitiatives.get(combatant.name)!;
+      dieData = npcGroupRolls.get(combatant.name)!;
     } else {
-      combatant.initiative = Math.floor(Math.random() * 20) + 1 + combatant.initiativeBonus;
+      dieData = rollForAdvantage(adv);
     }
-    if (!Number.isFinite(combatant.initiative) || combatant.initiative === 0) {
-      combatant.initiative = Math.floor(Math.random() * 20) + 1 + combatant.initiativeBonus;
+    combatant.initiative = dieData.kept + combatant.initiativeBonus;
+    if (!Number.isFinite(combatant.initiative)) {
+      combatant.initiative = dieData.kept;
+    }
+    // Fill in the d20 face + total on the breakdown so the review
+    // modal can show "d20=17 + DEX (3) + Alert (5) = 25".
+    if (combatant.initiativeBreakdown) {
+      combatant.initiativeBreakdown.d20 = dieData.kept;
+      combatant.initiativeBreakdown.total = combatant.initiative;
+      if (dieData.rolls.length > 1) {
+        combatant.initiativeBreakdown.d20Rolls = dieData.rolls;
+      }
     }
   }
 
@@ -630,6 +764,28 @@ export function setInitiative(sessionId: string, tokenId: string, total: number)
   const combatant = room.combatState.combatants.find(c => c.tokenId === tokenId);
   if (!combatant) return null;
   combatant.initiative = total;
+  // Keep the breakdown's total in sync so the review modal renders
+  // the DM's hand-edit as "d20 + modifiers = <new total>" with a
+  // visible "Manual adjust" delta. Without this the modal would
+  // show the old computed total even after the DM typed a new one.
+  if (combatant.initiativeBreakdown) {
+    const modTotal = combatant.initiativeBreakdown.modifiers.reduce((s, m) => s + m.value, 0);
+    const expected = combatant.initiativeBreakdown.d20 + modTotal;
+    if (total !== expected) {
+      // Drop any prior manual-adjust line so repeated edits don't stack.
+      combatant.initiativeBreakdown.modifiers = combatant.initiativeBreakdown.modifiers
+        .filter((m) => m.label !== 'Manual adjust');
+      combatant.initiativeBreakdown.modifiers.push({
+        label: 'Manual adjust',
+        value: total - expected,
+        source: 'other',
+      });
+    } else {
+      combatant.initiativeBreakdown.modifiers = combatant.initiativeBreakdown.modifiers
+        .filter((m) => m.label !== 'Manual adjust');
+    }
+    combatant.initiativeBreakdown.total = total;
+  }
   persistCombatState(room.combatState);
   return combatant;
 }

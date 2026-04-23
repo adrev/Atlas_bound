@@ -139,6 +139,12 @@ export const useCombatStore = create<CombatState & CombatActions>((set) => ({
   endCombat: () =>
     set((state) => ({
       active: false,
+      // Defensive: if the DM ends combat while still in the initiative
+      // review phase (Cancel Combat button), reviewPhase would otherwise
+      // stay true and the InitiativeReviewModal would hang around with
+      // a zero-combatants table that the DM can't close. Resetting here
+      // guarantees the modal tears down no matter how combat ends.
+      reviewPhase: false,
       roundNumber: 0,
       currentTurnIndex: 0,
       combatants: [],
@@ -155,6 +161,8 @@ export const useCombatStore = create<CombatState & CombatActions>((set) => ({
               : 0,
           }
         : null,
+      // Don't pop the recap modal when the DM bailed out of review —
+      // an empty damage log plus a zero-round "recap" is noise.
       showRecap: state.damageLog.length > 0,
       damageLog: [],
       combatStartTime: null,

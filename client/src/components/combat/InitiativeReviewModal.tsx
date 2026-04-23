@@ -3,7 +3,7 @@ import { Swords, X } from 'lucide-react';
 import type { Combatant } from '@dnd-vtt/shared';
 import { useCombatStore } from '../../stores/useCombatStore';
 import { useSessionStore } from '../../stores/useSessionStore';
-import { emitSetInitiative, emitLockInitiative, emitEndCombat, emitSetSurprise } from '../../socket/emitters';
+import { emitSetInitiative, emitLockInitiative, emitCancelReview, emitSetSurprise } from '../../socket/emitters';
 import { theme } from '../../styles/theme';
 
 /**
@@ -96,7 +96,14 @@ function ReviewCard({ combatants }: { combatants: Combatant[] }) {
             <span style={{ ...styles.col, ...styles.colSurprise }} title="Skip first turn (ambush)">😱</span>
           </div>
           {combatants.map((c, i) => {
-            const rawRoll = c.initiative - c.initiativeBonus;
+            // Prefer the structured breakdown when the server sent
+            // one (combat-start emits it now). Fall back to deriving
+            // from initiative - initiativeBonus for older combat
+            // state that pre-dates the breakdown field.
+            const breakdown = c.initiativeBreakdown;
+            const d20 = breakdown?.d20 ?? (c.initiative - c.initiativeBonus);
+            const advantage = breakdown?.advantage ?? 'normal';
+            const d20Rolls = breakdown?.d20Rolls;
             const bonusStr = c.initiativeBonus >= 0
               ? `+${c.initiativeBonus}` : String(c.initiativeBonus);
             return (
@@ -119,11 +126,23 @@ function ReviewCard({ combatants }: { combatants: Combatant[] }) {
                   {!c.isNPC && <span style={styles.pcTag}>PC</span>}
                 </span>
                 <span style={{ ...styles.col, ...styles.colRoll }}>
-                  <span style={styles.d20Badge}>{rawRoll}</span>
+                  <span
+                    style={styles.d20Badge}
+                    title={advantage !== 'normal' && d20Rolls
+                      ? `${advantage} — rolled [${d20Rolls.join(', ')}], kept ${d20}`
+                      : `d20 = ${d20}`}
+                  >
+                    {d20}
+                  </span>
+                  {advantage !== 'normal' && (
+                    <span style={styles.advChip} title={`${advantage} on initiative`}>
+                      {advantage === 'advantage' ? 'ADV' : 'DIS'}
+                    </span>
+                  )}
                 </span>
                 <span style={{ ...styles.col, ...styles.colBonus }}>
                   <span style={styles.bonusText}>{bonusStr}</span>
-                  {c.hasAlert && (
+                  {c.hasAlert && !breakdown && (
                     <span style={styles.alertChip} title="Alert feat: +5 initiative">
                       ALERT
                     </span>
@@ -161,6 +180,28 @@ function ReviewCard({ combatants }: { combatants: Combatant[] }) {
                     style={styles.surpriseBox}
                   />
                 </span>
+                {/* Per-source modifier breakdown — one pill per source
+                    (DEX, Alert, Jack of All Trades, Remarkable Athlete,
+                    Rakish Audacity, Dread Ambusher, Sheet bonus, …).
+                    Rendered as a second row under the main row so the
+                    DM sees exactly what built the bonus and can decide
+                    whether to hand-edit the total. Collapses when the
+                    combatant has no breakdown (pre-feature combats). */}
+                {breakdown && breakdown.modifiers.length > 0 && (
+                  <div style={styles.breakdownRow}>
+                    {breakdown.modifiers.map((m, idx) => (
+                      <span key={idx} style={styles.modPill}>
+                        <span style={styles.modLabel}>{m.label}</span>
+                        <span style={{
+                          ...styles.modValue,
+                          color: m.value >= 0 ? theme.state.success : theme.state.danger,
+                        }}>
+                          {m.value >= 0 ? '+' : ''}{m.value}
+                        </span>
+                      </span>
+                    ))}
+                  </div>
+                )}
               </div>
             );
           })}
@@ -169,9 +210,12 @@ function ReviewCard({ combatants }: { combatants: Combatant[] }) {
         <div style={styles.footer}>
           <button
             onClick={() => {
-              // Bail out of combat entirely — the DM may want to redo
-              // token setup, tweak HP, etc. before re-rolling.
-              emitEndCombat();
+              // Bail out of the review cleanly — the server tears
+              // down combat state the same way end-combat would, but
+              // WITHOUT the post-battle ritual (no XP summary, no
+              // Discord notification, no recap modal). Lets the DM
+              // redo token setup / HP before re-rolling initiative.
+              emitCancelReview();
             }}
             style={styles.cancelBtn}
           >
@@ -279,9 +323,53 @@ const styles: Record<string, React.CSSProperties> = {
   tableRow: {
     display: 'flex',
     alignItems: 'center',
+    // Wrap so the per-source modifier row drops below the main row
+    // without clipping on narrow screens.
+    flexWrap: 'wrap' as const,
+    rowGap: 6,
     padding: '8px 10px',
     background: theme.bg.elevated,
     color: theme.text.primary,
+  },
+  breakdownRow: {
+    // Full-width second row; pushes below the columnar main row by
+    // taking 100% of the flex line. Renders the per-source modifier
+    // pills so the DM can scan what built the bonus.
+    width: '100%',
+    display: 'flex',
+    flexWrap: 'wrap' as const,
+    gap: 4,
+    paddingLeft: 36, // align under the combatant name
+    marginTop: 2,
+  },
+  modPill: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: 4,
+    padding: '1px 6px',
+    borderRadius: 10,
+    background: theme.bg.deep,
+    border: `1px solid ${theme.border.default}`,
+    fontSize: 9,
+    fontFamily: 'monospace',
+  },
+  modLabel: {
+    color: theme.text.muted,
+    letterSpacing: '0.04em',
+  },
+  modValue: {
+    fontWeight: 700,
+  },
+  advChip: {
+    fontSize: 8,
+    fontWeight: 700,
+    letterSpacing: '0.08em',
+    color: theme.gold.primary,
+    background: 'rgba(232,196,85,0.14)',
+    border: `1px solid ${theme.gold.border}`,
+    padding: '1px 4px',
+    borderRadius: 3,
+    marginLeft: 4,
   },
   col: {
     display: 'flex',

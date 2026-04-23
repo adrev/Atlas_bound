@@ -332,6 +332,16 @@ export function registerListeners(socket: Socket): () => void {
     useSessionStore.getState().setGameMode('free-roam');
   });
 
+  // DM canceled out of the initiative review modal before any turns
+  // ran. Server already tore down combat state; we just need to wipe
+  // the review UI on every client without popping the post-battle
+  // recap modal (no damage taken → no recap anyway, but the defensive
+  // endCombat reset keeps reviewPhase from getting stuck).
+  socket.on('combat:review-canceled', () => {
+    useCombatStore.getState().endCombat();
+    useSessionStore.getState().setGameMode('free-roam');
+  });
+
   socket.on('combat:initiative-prompt', ({ tokenId, bonus }) => {
     useCombatStore.getState().addInitiativePrompt(tokenId, bonus);
   });
@@ -618,6 +628,7 @@ export function registerListeners(socket: Socket): () => void {
     socket.off('map:pinged');
     socket.off('combat:started');
     socket.off('combat:review-complete');
+    socket.off('combat:review-canceled');
     socket.off('combat:state-sync');
     socket.off('combat:ended');
     socket.off('combat:initiative-prompt');

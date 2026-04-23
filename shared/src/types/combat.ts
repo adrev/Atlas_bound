@@ -34,6 +34,45 @@ export interface Combatant {
    * combatants with Alert (feat grants immunity to surprise).
    */
   surprised?: boolean;
+  /**
+   * Per-source breakdown of the initiative roll. Populated by
+   * CombatService.startCombatAsync so the initiative review modal can
+   * show the DM *why* a combatant's total is what it is — DEX mod,
+   * Alert feat, Jack of All Trades, Remarkable Athlete, Rakish
+   * Audacity, Dread Ambusher, Feral Instinct, etc.
+   *
+   * Shape mirrors AttackBreakdown's `attackRoll` so the rendering can
+   * reuse the same per-source pill list; the card vocabulary stays
+   * consistent with the rest of the transparency pipeline.
+   *
+   * Optional because older combat state (pre-schema) won't have it,
+   * and mid-combat `addCombatantAsync` paths may or may not populate
+   * depending on whether the add used the breakdown builder.
+   */
+  initiativeBreakdown?: InitiativeBreakdown;
+}
+
+export interface InitiativeBreakdown {
+  /** Kept d20 value. With advantage/disadvantage this is the max/min
+   *  of the two rolls. */
+  d20: number;
+  /** Both d20 faces when the roll was made with advantage or
+   *  disadvantage (e.g. Feral Instinct Barbarian L7). */
+  d20Rolls?: number[];
+  advantage: 'normal' | 'advantage' | 'disadvantage';
+  /** Per-source modifier lines. Each modifier pairs a human label
+   *  ("DEX", "Alert", "Rakish Audacity", "Remarkable Athlete") with
+   *  the signed integer contribution. Labels render in the modal
+   *  so the DM sees exactly what built the bonus. */
+  modifiers: Array<{
+    label: string;
+    value: number;
+    /** Optional tag for grouping / coloring in the UI. */
+    source?: 'ability' | 'feat' | 'class' | 'subclass' | 'spell' | 'other';
+  }>;
+  /** Final d20 + sum(modifiers). Matches Combatant.initiative when
+   *  the DM hasn't hand-edited the total yet. */
+  total: number;
 }
 
 export interface CombatState {
