@@ -267,12 +267,12 @@ function SettingsPanel({
       {settings.enableFogOfWar && (
         <FieldGroup
           label="Vision Distance"
-          helperText={`${visionCells} cells / ${visionCells * 5} ft around each hero`}
+          helperText={`${visionCells} cell${visionCells === 1 ? '' : 's'} / ${visionCells * 5} ft around each hero`}
         >
           <input
             type="range"
-            min={2}
-            max={30}
+            min={1}
+            max={60}
             step={1}
             value={visionCells}
             onChange={(e) => emitUpdateSettings({ fogVisionCells: Number(e.target.value) })}

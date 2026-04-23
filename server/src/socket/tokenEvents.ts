@@ -323,21 +323,41 @@ export function registerTokenEvents(io: Server, socket: Socket): void {
     const parsed = tokenRemoveSchema.safeParse(data);
     if (!parsed.success) return;
     const ctx = getPlayerBySocketId(socket.id);
-    if (!ctx || ctx.player.role !== 'dm') return;
+    if (!ctx) return;
     const { tokenId } = parsed.data;
 
+    // Authorization: DMs can remove anything; players can only remove
+    // tokens they own (e.g. a Light spell marker they cast). Previously
+    // only DMs were allowed, which meant a player who cast Light had
+    // to ask the DM to click away their own utility token. The
+    // ownerUserId check scopes the escape hatch narrowly — PC tokens
+    // are still DM-only to remove, because PC ownerUserId is typically
+    // the player, and the UI doesn't expose delete to them anyway.
     let tokenMapId: string | null = null;
+    let tokenOwnerUserId: string | null = null;
     const inMem = ctx.room.tokens.get(tokenId);
-    if (inMem) { tokenMapId = inMem.mapId; ctx.room.tokens.delete(tokenId); }
-    else {
+    if (inMem) {
+      tokenMapId = inMem.mapId;
+      tokenOwnerUserId = inMem.ownerUserId ?? null;
+    } else {
       const { rows } = await pool.query(
-        'SELECT t.map_id FROM tokens t JOIN maps m ON t.map_id = m.id WHERE t.id = $1 AND m.session_id = $2',
+        'SELECT t.map_id, t.owner_user_id FROM tokens t JOIN maps m ON t.map_id = m.id WHERE t.id = $1 AND m.session_id = $2',
         [tokenId, ctx.room.sessionId],
       );
-      if (rows[0]) tokenMapId = rows[0].map_id;
-      else return;
+      if (rows[0]) {
+        tokenMapId = rows[0].map_id as string;
+        tokenOwnerUserId = (rows[0].owner_user_id as string | null) ?? null;
+      } else {
+        return;
+      }
     }
 
+    if (ctx.player.role !== 'dm' && tokenOwnerUserId !== ctx.player.userId) {
+      // Player trying to remove a token they don't own — silently drop.
+      return;
+    }
+
+    if (inMem) ctx.room.tokens.delete(tokenId);
     await pool.query('DELETE FROM tokens WHERE id = $1', [tokenId]);
 
     // Broadcast removal to the whole room, not just sockets currently on

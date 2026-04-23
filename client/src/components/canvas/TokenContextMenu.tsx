@@ -308,6 +308,27 @@ export function TokenContextMenu() {
               close();
             }} />
 
+            {/* Player-owned utility tokens (Light spell markers, Dancing
+                Lights, player-summoned aids) — the caster can dismiss
+                their own marker without waiting for the DM. Matches the
+                server-side token-remove check which lets owners delete
+                their own tokens. Gated by ownership + name pattern so
+                players can't accidentally nuke their PC token via the
+                same path. */}
+            {!isDM &&
+              token.ownerUserId === userId &&
+              /^(Light|Dancing Lights) \(/.test(token.name) && (
+                <>
+                  <Divider />
+                  <Item
+                    icon="✦"
+                    label={`Dismiss ${token.name.split(' (')[0]}`}
+                    onClick={() => { emitTokenRemove(contextTokenId); close(); }}
+                    danger
+                  />
+                </>
+              )}
+
             {isDM && (
               <>
                 <Divider />
@@ -439,7 +460,7 @@ function Item({ icon, label, onClick, hasArrow, danger }: { icon: string; label:
     >
       <span style={{ fontSize: 13, width: 18, textAlign: 'center' }} aria-hidden>{icon}</span>
       <span style={{ flex: 1 }}>{label}</span>
-      {hasArrow && <span style={{ fontSize: 10, color: C.textMuted }} aria-hidden>\u203A</span>}
+      {hasArrow && <span style={{ fontSize: 10, color: C.textMuted }} aria-hidden>›</span>}
     </button>
   );
 }

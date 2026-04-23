@@ -4123,6 +4123,13 @@ async function castLightSpell(
     // Ownership goes to the caster so they can dismiss it even as a
     // non-DM.
     const { emitTokenAdd } = await import('../../socket/emitters');
+    // PHB Light cantrip: "bright light in a 20-foot radius and dim
+    // light for an additional 20 feet." 5 ft per grid cell, so:
+    //   lightRadius    = 4 cells = 20 ft bright
+    //   lightDimRadius = 8 cells = 40 ft from center (20 bright + 20 dim)
+    // lightDimRadius is absolute-from-center (matches how the Ring in
+    // LightingLayer is drawn: innerRadius=bright, outerRadius=dim),
+    // NOT additive — the 8 cells already encodes the 20 + 20.
     emitTokenAdd({
       mapId: currentMap!.id,
       characterId: null,
@@ -4137,15 +4144,15 @@ async function castLightSpell(
       layer: 'token',
       visible: true,
       hasLight: true,
-      lightRadius: gridSize * 4,    // 20 ft bright
-      lightDimRadius: gridSize * 8, // 40 ft total
+      lightRadius: gridSize * 4,     // 20 ft bright (absolute)
+      lightDimRadius: gridSize * 8,  // 40 ft total (absolute) = 20 bright + 20 dim
       lightColor: '#8cb4ff',
       conditions: [],
       ownerUserId: (casterToken as any).ownerUserId ?? null,
     });
 
     emitSystemMessage(
-      `✦ ${casterName} casts ${spell.name} — a floating mote of magical light blooms at the chosen spot, illuminating 20 ft around it.`,
+      `✦ ${casterName} casts ${spell.name} — a mote of magical light blooms at the chosen spot (20 ft bright + 20 ft dim, PHB p.255).`,
     );
 
     // Burn the Action slot if we're in combat

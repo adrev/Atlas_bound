@@ -84,7 +84,7 @@ export function InviteLanding() {
       <div style={styles.overlay}>
         <div style={styles.card}>
           <p style={{ ...theme.type.h2, color: theme.gold.primary, margin: 0 }}>
-            Joining session\u2026
+            Joining session…
           </p>
         </div>
       </div>

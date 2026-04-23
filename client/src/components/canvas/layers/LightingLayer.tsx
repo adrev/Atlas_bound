@@ -10,13 +10,17 @@ interface LightingLayerProps {
   mapHeight: number;
 }
 
-/** Warm torch-like colors for mundane light sources */
-const TORCH_GRADIENT_INNER = 'rgba(255, 200, 100, 0.6)';
-const TORCH_GRADIENT_OUTER = 'rgba(255, 160, 50, 0.15)';
+/** Warm torch-like colors for mundane light sources. Hot near the
+ *  source, gentle warm glow at the dim edge. */
+const TORCH_GRADIENT_INNER = 'rgba(255, 230, 170, 0.55)';
+const TORCH_GRADIENT_OUTER = 'rgba(255, 190, 120, 0.08)';
 
-/** Cool blue-tinged colors for magical light sources */
-const MAGIC_GRADIENT_INNER = 'rgba(140, 180, 255, 0.5)';
-const MAGIC_GRADIENT_OUTER = 'rgba(80, 120, 220, 0.12)';
+/** Magical lights. Prior mix was too aggressively blue and read as a
+ *  tinted circle rather than "illumination". Lean into a near-white
+ *  core with a faint lavender halo — the color still reads as arcane
+ *  but the lit area actually looks lit, not blue-filtered. */
+const MAGIC_GRADIENT_INNER = 'rgba(245, 240, 255, 0.55)';
+const MAGIC_GRADIENT_OUTER = 'rgba(180, 190, 230, 0.08)';
 
 /** Default darkness overlay alpha */
 const DARKNESS_ALPHA = 0.85;
@@ -155,6 +159,11 @@ export function LightingLayer({ mapWidth, mapHeight }: LightingLayerProps) {
  * Cuts the bright and dim light visibility polygons from the darkness overlay.
  */
 function LightCutout({ light }: { light: ComputedLight }) {
+  // Erase strengths tuned so bright reads as ~95% clear and dim reads
+  // as a distinct mid-tier (~55% clear). The prior 0.9 / 0.4 pair left
+  // bright not quite white-out and dim indistinguishable from
+  // unlit-but-previously-seen territory. With 0.98 / 0.55 there's a
+  // clear three-tier ladder: bright ≫ dim ≫ unlit.
   return (
     <>
       {/* Dim light area: partial cut (semi-transparent erase) */}
@@ -168,7 +177,7 @@ function LightCutout({ light }: { light: ComputedLight }) {
             }
             ctx.closePath();
             ctx.globalCompositeOperation = 'destination-out';
-            ctx.fillStyle = 'rgba(255, 255, 255, 0.4)';
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.55)';
             ctx.fill();
             ctx.globalCompositeOperation = 'source-over';
           }}
@@ -176,7 +185,7 @@ function LightCutout({ light }: { light: ComputedLight }) {
         />
       )}
 
-      {/* Bright light area: full cut */}
+      {/* Bright light area: near-full cut */}
       {light.brightPoly.length >= 6 && (
         <Shape
           sceneFunc={(ctx) => {
@@ -187,7 +196,7 @@ function LightCutout({ light }: { light: ComputedLight }) {
             }
             ctx.closePath();
             ctx.globalCompositeOperation = 'destination-out';
-            ctx.fillStyle = 'rgba(255, 255, 255, 0.9)';
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.98)';
             ctx.fill();
             ctx.globalCompositeOperation = 'source-over';
           }}
@@ -234,29 +243,72 @@ function LightTint({ light }: { light: ComputedLight }) {
   const outerColor = light.isMagic ? MAGIC_GRADIENT_OUTER : TORCH_GRADIENT_OUTER;
 
   return (
-    <Shape
-      sceneFunc={(ctx) => {
-        const cx = light.token.x;
-        const cy = light.token.y;
-        const radius = light.token.lightRadius;
+    <>
+      {/* Dim halo tint — gives the dim ring a warm wash instead of
+       *  leaving it as plain grey partially-erased darkness. Renders
+       *  FIRST so the bright tint sits on top and stays dominant
+       *  inside its own polygon. */}
+      {light.dimPoly.length >= 6 && (
+        <Shape
+          sceneFunc={(ctx) => {
+            const cx = light.token.x;
+            const cy = light.token.y;
+            const radius = light.token.lightDimRadius;
+            if (radius <= 0) return;
 
-        // Draw the bright polygon with a radial gradient tint
-        ctx.beginPath();
-        ctx.moveTo(light.brightPoly[0], light.brightPoly[1]);
-        for (let i = 2; i < light.brightPoly.length; i += 2) {
-          ctx.lineTo(light.brightPoly[i], light.brightPoly[i + 1]);
-        }
-        ctx.closePath();
+            ctx.beginPath();
+            ctx.moveTo(light.dimPoly[0], light.dimPoly[1]);
+            for (let i = 2; i < light.dimPoly.length; i += 2) {
+              ctx.lineTo(light.dimPoly[i], light.dimPoly[i + 1]);
+            }
+            ctx.closePath();
 
-        const gradient = ctx.createRadialGradient(cx, cy, 0, cx, cy, radius);
-        gradient.addColorStop(0, innerColor);
-        gradient.addColorStop(1, outerColor);
+            // Dim-only glow: starts transparent at the bright radius,
+            // adds a faint warm/cool wash as it approaches the dim edge,
+            // then fades out entirely. Using a radial gradient that's
+            // clipped to the dim polygon gets us the softness without
+            // bleeding past walls.
+            const innerRatio = Math.min(
+              0.99,
+              Math.max(0, light.token.lightRadius / radius),
+            );
+            const gradient = ctx.createRadialGradient(cx, cy, 0, cx, cy, radius);
+            gradient.addColorStop(0, 'rgba(0,0,0,0)');
+            gradient.addColorStop(innerRatio, 'rgba(0,0,0,0)');
+            gradient.addColorStop(Math.min(1, innerRatio + 0.15), outerColor);
+            gradient.addColorStop(1, 'rgba(0,0,0,0)');
 
-        ctx.fillStyle = gradient;
-        ctx.fill();
-      }}
-      listening={false}
-    />
+            ctx.fillStyle = gradient;
+            ctx.fill();
+          }}
+          listening={false}
+        />
+      )}
+
+      {/* Bright tint — radial gradient inside the bright polygon. */}
+      <Shape
+        sceneFunc={(ctx) => {
+          const cx = light.token.x;
+          const cy = light.token.y;
+          const radius = light.token.lightRadius;
+
+          ctx.beginPath();
+          ctx.moveTo(light.brightPoly[0], light.brightPoly[1]);
+          for (let i = 2; i < light.brightPoly.length; i += 2) {
+            ctx.lineTo(light.brightPoly[i], light.brightPoly[i + 1]);
+          }
+          ctx.closePath();
+
+          const gradient = ctx.createRadialGradient(cx, cy, 0, cx, cy, radius);
+          gradient.addColorStop(0, innerColor);
+          gradient.addColorStop(1, outerColor);
+
+          ctx.fillStyle = gradient;
+          ctx.fill();
+        }}
+        listening={false}
+      />
+    </>
   );
 }
 
@@ -265,6 +317,16 @@ function LightTint({ light }: { light: ComputedLight }) {
  */
 function LightIndicator({ light }: { light: ComputedLight }) {
   const { token } = light;
+  // Indicator rings were previously opaque-enough to read as part of
+  // the lighting itself (a visible blue circle) rather than a DM
+  // overlay. Dropped stroke alpha + widened the dash so the rings
+  // read as faint scaffolding, not as the light's silhouette.
+  const ringStroke = light.isMagic
+    ? 'rgba(210, 220, 255, 0.18)'
+    : 'rgba(255, 220, 160, 0.22)';
+  const dimRingStroke = light.isMagic
+    ? 'rgba(210, 220, 255, 0.08)'
+    : 'rgba(255, 220, 160, 0.10)';
 
   return (
     <>
@@ -273,27 +335,28 @@ function LightIndicator({ light }: { light: ComputedLight }) {
         x={token.x}
         y={token.y}
         radius={token.lightRadius}
-        stroke={light.isMagic ? 'rgba(100, 150, 255, 0.3)' : 'rgba(255, 200, 80, 0.3)'}
+        stroke={ringStroke}
         strokeWidth={1}
-        dash={[6, 4]}
+        dash={[3, 6]}
         listening={false}
       />
-      {/* Dim radius indicator */}
+      {/* Dim ring fill — keep it subtle so it doesn't compete with the
+       *  radial-gradient tint above. */}
       <Ring
         x={token.x}
         y={token.y}
         innerRadius={token.lightRadius}
         outerRadius={token.lightDimRadius}
-        fill={light.isMagic ? 'rgba(100, 150, 255, 0.05)' : 'rgba(255, 200, 80, 0.05)'}
+        fill={light.isMagic ? 'rgba(210, 220, 255, 0.03)' : 'rgba(255, 220, 160, 0.03)'}
         listening={false}
       />
       <Circle
         x={token.x}
         y={token.y}
         radius={token.lightDimRadius}
-        stroke={light.isMagic ? 'rgba(100, 150, 255, 0.15)' : 'rgba(255, 200, 80, 0.15)'}
+        stroke={dimRingStroke}
         strokeWidth={1}
-        dash={[4, 6]}
+        dash={[3, 8]}
         listening={false}
       />
     </>

@@ -186,7 +186,7 @@ export const RACES: RaceEntry[] = [
     subraces: ['Protector (+1 WIS — flight burst + radiant dmg)', 'Scourge (+1 CON — aura deals radiant dmg to enemies)', 'Fallen (+1 STR — necrotic radiance, frightens enemies)'],
     snippet: '60 ft darkvision. Healing Hands (1/long rest). Light cantrip. Celestial Revelation at L3.',
     description: '**Darkvision 60 ft.** **Celestial Resistance**: resistance to necrotic + radiant damage. **Healing Hands**: heal level × 1 HP, 1/long rest. **Light cantrip**. **Celestial Revelation at L3**: bonus action transform for 1 min, radiant damage aura + subrace extras (Protector flies, Scourge pulses radiant dmg, Fallen dims as necrotic fear). Touched by the Upper Planes.',
-    source: 'volos',
+    source: 'vgm',
   },
   {
     slug: 'firbolg',
@@ -197,7 +197,7 @@ export const RACES: RaceEntry[] = [
     subraces: [],
     snippet: 'Firbolg Magic (Detect Magic / Disguise Self). Hidden Step (bonus action invisibility).',
     description: '**Firbolg Magic**: Detect Magic + Disguise Self, each 1/short rest (WIS). **Hidden Step**: bonus action turn invisible until start of next turn (1/short rest). **Powerful Build**: +size for carrying. **Speech of Beast and Leaf**: limited communication with beasts + plants. Giant-kin druids of the deep forest.',
-    source: 'volos',
+    source: 'vgm',
   },
   {
     slug: 'kenku',
@@ -208,7 +208,7 @@ export const RACES: RaceEntry[] = [
     subraces: [],
     snippet: 'Mimicry (perfect sound mimicry). Two skill proficiencies.',
     description: '**Expert Forgery**: duplicate existing handwriting + craftsmanship. **Kenku Training**: proficiency in two of Acrobatics, Deception, Stealth, Sleight of Hand. **Mimicry**: perfectly mimic sounds you\'ve heard. Flightless raven-folk cursed to speak only in borrowed phrases.',
-    source: 'volos',
+    source: 'vgm',
   },
   {
     slug: 'lizardfolk',
@@ -219,7 +219,7 @@ export const RACES: RaceEntry[] = [
     subraces: [],
     snippet: 'Natural armor 13+DEX. Bite 1d6 piercing. Swim 30 ft. Hungry Jaws.',
     description: '**Bite**: 1d6 piercing unarmed + gain temp HP = prof bonus after landing. **Cunning Artisan**: craft shields/weapons/armor from corpses. **Hold Breath 15 min**. **Natural Armor**: 13 + DEX (no shield). **Hungry Jaws**: bonus-action bite + temp HP, 1/short rest. **Swim 30 ft.** Cold-blooded swamp predators.',
-    source: 'volos',
+    source: 'vgm',
   },
   {
     slug: 'tabaxi',
@@ -230,7 +230,7 @@ export const RACES: RaceEntry[] = [
     subraces: [],
     snippet: 'Feline Agility (double speed once/turn). Climb 20 ft. Cat claws.',
     description: '**Darkvision 60 ft.** **Feline Agility**: double speed until you stand still — refresh by not moving on a turn. **Cat\'s Claws**: 20 ft climbing speed + unarmed strike 1d4 slashing. **Cat\'s Talent**: proficiency in Perception + Stealth. Jaguar-folk wanderers of distant shores.',
-    source: 'volos',
+    source: 'vgm',
   },
   {
     slug: 'triton',
@@ -241,7 +241,7 @@ export const RACES: RaceEntry[] = [
     subraces: [],
     snippet: 'Swim 30 ft. Amphibious. Cold resistance. Fog Cloud / Gust of Wind / Wall of Water.',
     description: '**Amphibious** (breathe air + water). **Control Air and Water**: Fog Cloud at L1, Gust of Wind at L3, Wall of Water at L5 — each 1/long rest. **Emissary of the Sea**: limited speech with water-breathing beasts. **Guardians of the Depths**: cold resistance. **Swim 30 ft.** Protectors of the deep oceans.',
-    source: 'volos',
+    source: 'vgm',
   },
   {
     slug: 'yuan-ti-pureblood',
@@ -252,7 +252,7 @@ export const RACES: RaceEntry[] = [
     subraces: [],
     snippet: '60 ft darkvision. Magic Resistance (adv on all magic saves). Poison immunity.',
     description: '**Darkvision 60 ft.** **Innate Spellcasting**: Poison Spray cantrip, Animal Friendship (vs snakes only) at will, Suggestion 1/long rest at L3 (CHA). **Magic Resistance**: advantage on saving throws vs. spells and magical effects. **Poison Immunity**. Strongest racial in PHB-era 5e by consensus.',
-    source: 'volos',
+    source: 'vgm',
   },
   {
     slug: 'bugbear',
@@ -263,7 +263,7 @@ export const RACES: RaceEntry[] = [
     subraces: [],
     snippet: '60 ft darkvision. Long-Limbed (+5 ft reach first atk). Surprise Attack (+2d6).',
     description: '**Darkvision 60 ft.** **Long-Limbed**: reach +5 ft on attacks made as part of Attack action on your turn. **Powerful Build**: +size for carrying. **Sneaky**: proficiency in Stealth. **Surprise Attack**: deal +2d6 damage to creatures that haven\'t acted yet in combat. Goblinoid brutes with surprising subtlety.',
-    source: 'volos',
+    source: 'vgm',
   },
   {
     slug: 'goblin',
@@ -274,7 +274,7 @@ export const RACES: RaceEntry[] = [
     subraces: [],
     snippet: '60 ft darkvision. Fury of the Small (+level dmg). Nimble Escape (Disengage/Hide BA).',
     description: '**Darkvision 60 ft.** **Fury of the Small**: +level damage when hitting a larger creature (1/short rest). **Nimble Escape**: take the Disengage OR Hide action as a bonus action. Volatile, cunning, and survivors above all.',
-    source: 'volos',
+    source: 'vgm',
   },
   {
     slug: 'hobgoblin',
@@ -285,7 +285,7 @@ export const RACES: RaceEntry[] = [
     subraces: [],
     snippet: '60 ft darkvision. Martial Training (2 weapons + light armor). Saving Face (+ adjacent allies to roll).',
     description: '**Darkvision 60 ft.** **Martial Training**: proficiency in 2 martial weapons + light armor. **Saving Face**: reaction — add +1 per ally within 30 ft (max +5) to a failed attack/check/save, 1/short rest. Disciplined goblinoid legionaries.',
-    source: 'volos',
+    source: 'vgm',
   },
   {
     slug: 'kobold',
@@ -296,7 +296,7 @@ export const RACES: RaceEntry[] = [
     subraces: [],
     snippet: '60 ft darkvision. Pack Tactics. Sunlight Sensitivity. Grovel, Cower, Beg reaction.',
     description: '**Darkvision 60 ft.** **Pack Tactics**: advantage on attacks when an ally is within 5 ft of the target. **Sunlight Sensitivity**: disadvantage on attack rolls + Perception checks in direct sunlight. **Grovel, Cower, and Beg**: action — all enemies within 10 ft have advantage vs. allies for 1 round (1/short rest). Draconic trap-artisans.',
-    source: 'volos',
+    source: 'vgm',
   },
   {
     slug: 'orc',
@@ -307,7 +307,7 @@ export const RACES: RaceEntry[] = [
     subraces: [],
     snippet: '60 ft darkvision. Aggressive (bonus-action Dash toward enemy). Powerful Build.',
     description: '**Darkvision 60 ft.** **Aggressive**: bonus action to move up to your speed toward an enemy you can see. **Powerful Build**: +size for carrying. **Primal Intuition** (MPMM): proficiency in 2 of Animal Handling, Intimidation, Nature, Perception, Stealth, Survival. Children of Gruumsh rebuilt in MPMM away from racial stat penalties.',
-    source: 'volos',
+    source: 'vgm',
   },
   // ── Mordenkainen's Tome of Foes / MPMM ────────────────────────
   {

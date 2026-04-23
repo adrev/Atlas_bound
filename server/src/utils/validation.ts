@@ -28,6 +28,28 @@ export const sessionUpdateSettingsSchema = z.object({
   gridOpacity: z.number().min(0).max(1).optional(),
   gridType: z.enum(['square', 'hex']).optional(),
   enableFogOfWar: z.boolean().optional(),
+  /**
+   * Hero-centric vision bubble radius in grid cells (5 ft each). Must
+   * be listed here explicitly or the Zod `.safeParse` strips it before
+   * the server writes the new settings — historically the DM's Vision
+   * Distance slider appeared to do nothing because the server silently
+   * dropped the field. 1 cell (5 ft — tight pitch-black scene) up to
+   * 60 cells (300 ft — wide outdoor) covers everything from cramped
+   * dungeon to clear moonlit prairie. Default 8 cells = 40 ft (PHB
+   * dim-light cap).
+   */
+  fogVisionCells: z.number().int().min(1).max(60).optional(),
+  /**
+   * When on, a DM can see the fog overlay that players see (lightened).
+   * Scoped to the DM's client only — not a player-visible toggle.
+   */
+  dmSeesPlayerFog: z.boolean().optional(),
+  /**
+   * Per-map ambient light tier. 'bright' (default, no fog from ambient),
+   * 'dim' (partial visibility), 'dark' (full fog unless lit). Stored on
+   * the session so every map inherits until the DM scopes it down.
+   */
+  ambientLight: z.enum(['bright', 'dim', 'dark']).optional(),
   enableDynamicLighting: z.boolean().optional(),
   showTokenLabels: z.boolean().optional(),
   turnTimerEnabled: z.boolean().optional(),
