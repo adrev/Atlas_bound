@@ -491,20 +491,41 @@ export function registerSessionEvents(io: Server, socket: Socket): void {
       io.to(ctx.room.sessionId).emit('session:handout-received', payload);
     }
 
-    // Auto-save handout as a note. Targeted handouts (sent to specific
-    // players) must NOT be is_shared=true — otherwise a supposedly
-    // private DM→rogue handout shows up in the shared notes tab for
-    // the entire party. Only broadcast handouts (no targetUserIds)
-    // are truly shared. The image_url (if any) rides along on the
-    // row so the Notes tab can render the attached image when the
-    // player browses past handouts.
+    // Auto-save handout as a note. Two cases:
+    //   1. Broadcast (no targetUserIds) — one is_shared=true note
+    //      created by the DM. Everyone sees it in the shared tab.
+    //   2. Targeted (sent to specific players) — we now create ONE
+    //      PRIVATE note per recipient with created_by = recipient's
+    //      userId, so each player finds the handout in their own
+    //      Notes tab. Previously only the DM got a note row (with
+    //      is_shared=false), which left the recipients empty-handed
+    //      once they dismissed the handout modal.
     const isShared = !targetUserIds || targetUserIds.length === 0;
-    const noteId = uuidv4();
-    await pool.query(
-      `INSERT INTO session_notes (id, session_id, title, content, category, is_shared, created_by, image_url)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-      [noteId, ctx.room.sessionId, title, content || '', 'general', isShared, ctx.player.userId, imageUrl ?? null]
-    );
+    if (isShared) {
+      await pool.query(
+        `INSERT INTO session_notes (id, session_id, title, content, category, is_shared, created_by, image_url)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+        [uuidv4(), ctx.room.sessionId, title, content || '', 'general', 1, ctx.player.userId, imageUrl ?? null]
+      );
+    } else {
+      // Always keep a DM-side copy (private) so the DM can reread
+      // what they sent + to whom. `is_shared=0` keeps it out of the
+      // party-visible tab.
+      await pool.query(
+        `INSERT INTO session_notes (id, session_id, title, content, category, is_shared, created_by, image_url)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+        [uuidv4(), ctx.room.sessionId, `[Sent] ${title}`, content || '', 'general', 0, ctx.player.userId, imageUrl ?? null]
+      );
+      // Per-recipient private copy so each targeted player lands on
+      // their own note when they open Notes.
+      for (const uid of targetUserIds ?? []) {
+        await pool.query(
+          `INSERT INTO session_notes (id, session_id, title, content, category, is_shared, created_by, image_url)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+          [uuidv4(), ctx.room.sessionId, title, content || '', 'general', 0, uid, imageUrl ?? null]
+        );
+      }
+    }
   }));
 
   socket.on('disconnect', () => { handleDisconnect(io, socket); });
