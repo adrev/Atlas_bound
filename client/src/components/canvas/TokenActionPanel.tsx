@@ -5,7 +5,7 @@ import { useSessionStore } from '../../stores/useSessionStore';
 import { useCombatStore } from '../../stores/useCombatStore';
 import { emitRoll, emitCharacterUpdate, emitTokenUpdate, emitSystemMessage, emitTokenAdd, emitUseAction, emitDash, emitSpellCastAttempt, emitAttackHitAttempt, emitMobileAttacked } from '../../socket/emitters';
 import { theme } from '../../styles/theme';
-import type { ActionType } from '@dnd-vtt/shared';
+import type { ActionType, AttackBreakdown, AttackBreakdownModifier, AttackBreakdownDamageSource } from '@dnd-vtt/shared';
 
 /**
  * Map a spell's castingTime string or a weapon's use context to the
@@ -339,10 +339,10 @@ function applyResistedDamage(
  * below returns just the number for call sites that don't care.
  * Used to apply real rolled damage to HP instead of averages.
  */
-function rollDamageDiceDetailed(notation: string): { total: number; breakdown: string } {
-  if (!notation) return { total: 0, breakdown: '' };
+function rollDamageDiceDetailed(notation: string): { total: number; breakdown: string; rolls: number[]; mod: number } {
+  if (!notation) return { total: 0, breakdown: '', rolls: [], mod: 0 };
   const match = notation.match(/(\d+)d(\d+)(?:\s*([+-])\s*(\d+))?/);
-  if (!match) return { total: 0, breakdown: '' };
+  if (!match) return { total: 0, breakdown: '', rolls: [], mod: 0 };
   const numDice = parseInt(match[1]) || 0;
   const dieSize = parseInt(match[2]) || 0;
   const sign = match[3] === '-' ? -1 : 1;
@@ -360,7 +360,7 @@ function rollDamageDiceDetailed(notation: string): { total: number; breakdown: s
   const breakdown = mod !== 0
     ? `${numDice}d${dieSize} (${rollsStr})${mod > 0 ? '+' : ''}${mod} = ${total}`
     : `${numDice}d${dieSize} (${rollsStr}) = ${total}`;
-  return { total, breakdown };
+  return { total, breakdown, rolls, mod };
 }
 
 function rollDamageDice(notation: string): number {
@@ -1539,6 +1539,12 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
         const wParts: string[] = [];
         wParts.push(`${wHitIcon} Attack ${wAtkResult.breakdown} vs AC ${wTargetAC}${wAcNote} → ${wIsCrit ? 'CRIT' : wIsHit ? 'HIT' : 'MISS'}${wModNote}${wShieldNote}`);
 
+        // Hoisted damage breakdown — populated inside the if(wIsHit)
+        // block below, referenced by the AttackBreakdown builder just
+        // before emitSystemMessage to ship the structured per-source
+        // breakdown to the chat card alongside the plain-text summary.
+        let wDamageBreakdown: AttackBreakdown['damage'] | undefined;
+
         if (wIsHit && effectiveCharId) {
           const wFinalDice = wIsCrit ? dmgDice.replace(/(\d+)d/g, (_: string, n: string) => `${parseInt(n) * 2}d`) : dmgDice;
           // Great Weapon Fighting: re-roll 1s and 2s on the weapon's
@@ -1546,7 +1552,12 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
           // worse). Implemented via a custom roller that reshapes the
           // notation when the style is active. Fall through to the
           // standard roller otherwise.
+          // wBaseDiceRolls + wBaseMod capture the raw faces and ability-
+          // modifier portion of the base weapon damage so we can ship
+          // them to the chat breakdown card as a transparent line.
           let wRolledDmg: number;
+          let wBaseDiceRolls: number[] = [];
+          let wBaseMod = 0;
           if (wGwfReroll) {
             const match = String(wFinalDice).match(/(\d+)d(\d+)(?:\s*([+-])\s*(\d+))?/);
             if (match) {
@@ -1555,18 +1566,33 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
               const sign = match[3] === '-' ? -1 : 1;
               const modN = match[4] ? parseInt(match[4]) * sign : 0;
               let subTotal = 0;
+              const rolls: number[] = [];
               for (let i = 0; i < numDice; i++) {
                 let r = Math.floor(Math.random() * dieSize) + 1;
                 if (r <= 2) r = Math.floor(Math.random() * dieSize) + 1;
+                rolls.push(r);
                 subTotal += r;
               }
               wRolledDmg = Math.max(0, subTotal + modN);
+              wBaseDiceRolls = rolls;
+              wBaseMod = modN;
             } else {
-              wRolledDmg = rollDamageDice(wFinalDice);
+              const d = rollDamageDiceDetailed(wFinalDice);
+              wRolledDmg = d.total;
+              wBaseDiceRolls = d.rolls;
+              wBaseMod = d.mod;
             }
           } else {
-            wRolledDmg = rollDamageDice(wFinalDice);
+            const d = rollDamageDiceDetailed(wFinalDice);
+            wRolledDmg = d.total;
+            wBaseDiceRolls = d.rolls;
+            wBaseMod = d.mod;
           }
+          // Capture the BASE weapon damage (dice + ability mod) BEFORE
+          // riders (Rage, Sneak, Power Attack, etc.) add in. The
+          // breakdown card renders the base + each rider on its own
+          // line so players can verify each contribution.
+          const wBaseDmgAmount = wRolledDmg;
 
           // Cache the caster record once — both Rage and Sneak Attack
           // need it. Also pre-compute finesse / ranged flags since
@@ -1802,13 +1828,171 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
           const wDmgChange = wResisted.amount !== wRolledDmg ? `${wRolledDmg}→${wResisted.amount}` : `${wResisted.amount}`;
           wParts.push(`${wDmgChange} ${weaponDmgWord}dmg${wMagicWeaponTag}${wRageTag}${wSneakTag}${wPowerTag}${wDuelingTag}${wTwfTag}${wGwfTag}${wHexTag}${wMarkTag}${wHexbladeTag}${wResistTag} (HP ${wFreshHp}→${wNewHp})${wIsCrit ? ' [CRIT]' : ''}`);
           if (wNewHp === 0) wParts.push('💀 DOWN');
+
+          // Structured damage breakdown for the chat card. Each rider
+          // lands on its own row so the DM / players can trace every
+          // +N back to its source (Rage, Sneak, Hex, Shield of Faith,
+          // fighting styles, etc.). Hex / Mark / Hexblade carry their
+          // own resistance because they resolve as independent damage
+          // instances; the weapon-type sources share one resistance
+          // treatment captured in the base weapon row's `resisted`
+          // field when the target had weapon-type resistance.
+          const wBonuses: AttackBreakdownDamageSource[] = [];
+          if (wRageBonus > 0) {
+            wBonuses.push({
+              label: `Rage`, amount: wRageBonus,
+              damageType: weaponDmgType || 'damage',
+            });
+          }
+          if (wSneakRolled > 0) {
+            wBonuses.push({
+              label: `Sneak Attack ${wSneakDice}d6`,
+              amount: wSneakRolled,
+              damageType: weaponDmgType || 'damage',
+            });
+          }
+          if (wPowerAttackActive) {
+            wBonuses.push({
+              label: 'Power Attack (feat)',
+              amount: 10,
+              damageType: weaponDmgType || 'damage',
+            });
+          }
+          if (wDuelingBonus > 0) {
+            wBonuses.push({
+              label: 'Dueling Fighting Style',
+              amount: wDuelingBonus,
+              damageType: weaponDmgType || 'damage',
+            });
+          }
+          if (wTwfOffHandMod > 0) {
+            wBonuses.push({
+              label: 'Two-Weapon Fighting',
+              amount: wTwfOffHandMod,
+              damageType: weaponDmgType || 'damage',
+            });
+          }
+          if (wHexBonus > 0) {
+            wBonuses.push({
+              label: 'Hex (1d6)',
+              amount: wHexBonus,
+              damageType: 'necrotic',
+              resisted: wResistedHex.amount !== wHexBonus ? wResistedHex.amount : undefined,
+              resistanceNote: wResistedHex.source || undefined,
+            });
+          }
+          if (wMarkBonus > 0) {
+            wBonuses.push({
+              label: "Hunter's Mark (1d6)",
+              amount: wMarkBonus,
+              damageType: weaponDmgType || 'damage',
+              resisted: wResistedMark.amount !== wMarkBonus ? wResistedMark.amount : undefined,
+              resistanceNote: wResistedMark.source || undefined,
+            });
+          }
+          if (wHexbladeBonus > 0) {
+            wBonuses.push({
+              label: "Hexblade's Curse (prof)",
+              amount: wHexbladeBonus,
+              damageType: weaponDmgType || 'damage',
+              resisted: wResistedHexblade.amount !== wHexbladeBonus ? wResistedHexblade.amount : undefined,
+              resistanceNote: wResistedHexblade.source || undefined,
+            });
+          }
+
+          // Base weapon damage row: raw dice + ability mod. If the
+          // target had weapon-type resistance, the shared weapon-type
+          // sum (base + Rage + Sneak + Power + Dueling + TWF) was
+          // halved once — we surface that resistance here on the base
+          // row so the card can annotate it without repeating per-rider.
+          wDamageBreakdown = {
+            dice: wFinalDice,
+            diceRolls: wBaseDiceRolls,
+            mainRoll: wBaseDmgAmount,
+            bonuses: wBonuses,
+            finalDamage: wTotalResisted,
+            targetHpBefore: wFreshHp,
+            targetHpAfter: wNewHp,
+          };
+
           setTimeout(() => {
             updateTargetHp(effectiveCharId, wNewHp);
             if (wTotalResisted > 0) emitDamageSideEffects(targetToken.id, wTotalResisted);
           }, 300);
         }
 
-        emitSystemMessage(`${wHeader}\n   • ${wParts.join(' • ')}`);
+        // Structured attack breakdown for the chat-card renderer. The
+        // per-source attack modifier list pulls Power Attack, Archery,
+        // and the Bless bonus die out of the flat `wAttackBonusFinal`
+        // so each one shows on its own row.
+        const wAttackModifiers: AttackBreakdownModifier[] = [];
+        if (atkBonus !== 0) {
+          wAttackModifiers.push({
+            label: 'Weapon +ability +prof',
+            value: atkBonus,
+            source: 'other',
+          });
+        }
+        if (wPowerAttackActive) {
+          wAttackModifiers.push({
+            label: 'Power Attack (feat)',
+            value: -5,
+            source: 'feat',
+          });
+        }
+        if (wArcheryBonus > 0) {
+          wAttackModifiers.push({
+            label: 'Archery Fighting Style',
+            value: wArcheryBonus,
+            source: 'fighting-style',
+          });
+        }
+        if (wAtkResult.bonusDiceValue !== 0) {
+          wAttackModifiers.push({
+            label: `Bless ${wCombined.attackBonusDice}`.trim(),
+            value: wAtkResult.bonusDiceValue,
+            source: 'condition',
+          });
+        }
+
+        const wShieldSpell: AttackBreakdown['shieldSpell'] =
+          wShieldNote.includes('MISS') ? 'miss' :
+          wShieldNote.includes('still') ? 'still-hit' : undefined;
+
+        const wBreakdown: AttackBreakdown = {
+          attacker: {
+            name: currentTargeting.casterName,
+            tokenId: wCasterToken?.id,
+          },
+          target: {
+            name: targetToken.name,
+            tokenId: targetToken.id,
+            ac: wTargetAC,
+            baseAc: wAcResult.base,
+            acNotes: wAcResult.notes.length > 0 ? wAcResult.notes : undefined,
+          },
+          weapon: {
+            name: atk.name,
+            damageType: weaponDmgType || 'damage',
+          },
+          attackRoll: {
+            d20: wAtkResult.d20Roll,
+            d20Rolls: wAtkResult.d20Rolls.length > 1 ? wAtkResult.d20Rolls : undefined,
+            advantage: wAtkResult.advantage,
+            modifiers: wAttackModifiers,
+            total: wAtkResult.total,
+            isCrit: !!wIsCrit,
+            isFumble: wAtkResult.isFumble,
+          },
+          hitResult: wIsCrit ? 'crit' :
+            wIsHit ? 'hit' :
+            wAtkResult.isFumble ? 'fumble' : 'miss',
+          damage: wDamageBreakdown,
+          notes: wCombined.notes.slice(0, 16),
+          shieldSpell: wShieldSpell,
+        };
+
+        emitSystemMessage(`${wHeader}\n   • ${wParts.join(' • ')}`, wBreakdown);
 
         // Mobile feat: if the caster just made a MELEE attack and has
         // the Mobile feat, mark the target so the server suppresses

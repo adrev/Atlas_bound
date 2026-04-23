@@ -71,7 +71,7 @@ export function registerChatEvents(io: Server, socket: Socket): void {
 
     if (!checkRateLimit(socket.id, 'chat:message', 5, 5000)) return;
 
-    const { type, content, characterName } = parsed.data;
+    const { type, content, characterName, attackResult } = parsed.data;
 
     // Slash-command dispatcher (R1 / R8 / future). Commands starting
     // with `!` are routed here before we persist or broadcast the raw
@@ -89,13 +89,19 @@ export function registerChatEvents(io: Server, socket: Socket): void {
     const message: ChatMessage = {
       id: messageId, sessionId: ctx.room.sessionId, userId: ctx.player.userId,
       displayName: ctx.player.displayName, type, content,
-      characterName: characterName ?? null, whisperTo: null, rollData: null, createdAt: now,
+      characterName: characterName ?? null, whisperTo: null, rollData: null,
+      attackResult: attackResult ?? null,
+      createdAt: now,
     };
 
+    // Persist attack_result as JSON text. Null / undefined → NULL
+    // column, so plain system / ic / ooc messages don't carry dead
+    // payload in scrollback.
+    const attackResultJson = attackResult ? JSON.stringify(attackResult) : null;
     await pool.query(`
-      INSERT INTO chat_messages (id, session_id, user_id, display_name, type, content, character_name, created_at)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-    `, [messageId, ctx.room.sessionId, ctx.player.userId, ctx.player.displayName, type, content, characterName ?? null, now]);
+      INSERT INTO chat_messages (id, session_id, user_id, display_name, type, content, character_name, attack_result, created_at)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+    `, [messageId, ctx.room.sessionId, ctx.player.userId, ctx.player.displayName, type, content, characterName ?? null, attackResultJson, now]);
 
     io.to(ctx.room.sessionId).emit('chat:new-message', message);
   }));

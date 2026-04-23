@@ -4,6 +4,7 @@ import { useSessionStore } from '../../stores/useSessionStore';
 import { getSocket } from '../../socket/client';
 import { ChatInput } from './ChatInput';
 import { DiceRollCard } from './DiceRollCard';
+import { AttackResultCard } from './AttackResultCard';
 import type { ChatMessage } from '@dnd-vtt/shared';
 import { theme } from '../../styles/theme';
 
@@ -99,6 +100,13 @@ function MessageBubble({ message }: { message: ChatMessage }) {
           displayName={message.characterName ?? message.displayName}
           isHidden={isHidden}
         />
+      ) : message.type === 'system' && message.attackResult ? (
+        // Structured attack breakdown — renders every modifier source,
+        // per-source damage, resistances, and HP delta as a card so the
+        // DM can verify the math. Falls through to the plain-text
+        // renderer below when attackResult is absent (older messages,
+        // non-attack system events like spell results, !xp, etc.).
+        <AttackResultCard result={message.attackResult} />
       ) : message.type === 'system' ? (
         // System messages support multi-line content with explicit \n
         <div style={{ whiteSpace: 'pre-wrap', lineHeight: 1.5 }}>{message.content}</div>

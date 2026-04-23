@@ -247,6 +247,166 @@ describe('chatMessageSchema', () => {
     });
     expect(result.success).toBe(false);
   });
+
+  // -------------------------------------------------------------------
+  // attackResult — structured per-source breakdown shipped alongside
+  // the attack resolver's system message. Server validates + persists.
+  // -------------------------------------------------------------------
+  describe('attackResult attachment', () => {
+    const validBreakdown = {
+      attacker: { name: 'Liraya Voss', tokenId: 't-liraya' },
+      target: { name: 'Goblin', tokenId: 't-goblin', ac: 13, baseAc: 13, acNotes: [] },
+      weapon: { name: 'Longsword', damageType: 'slashing' },
+      attackRoll: {
+        d20: 14,
+        advantage: 'normal' as const,
+        modifiers: [
+          { label: 'Weapon +ability +prof', value: 5, source: 'other' as const },
+          { label: 'Bless +1d4', value: 3, source: 'condition' as const },
+        ],
+        total: 22,
+        isCrit: false,
+        isFumble: false,
+      },
+      hitResult: 'hit' as const,
+      damage: {
+        dice: '1d8+3',
+        diceRolls: [5],
+        mainRoll: 8,
+        bonuses: [
+          { label: 'Rage', amount: 2, damageType: 'slashing' },
+        ],
+        finalDamage: 10,
+        targetHpBefore: 12,
+        targetHpAfter: 2,
+      },
+      notes: ['Bless active', 'Target prone (melee adv)'],
+    };
+
+    it('accepts a valid attack breakdown payload', () => {
+      const result = chatMessageSchema.safeParse({
+        type: 'system',
+        content: 'Liraya hits Goblin for 10',
+        attackResult: validBreakdown,
+      });
+      expect(result.success).toBe(true);
+    });
+
+    it('accepts a miss payload with no damage section', () => {
+      const miss = {
+        ...validBreakdown,
+        hitResult: 'miss' as const,
+        damage: undefined,
+      };
+      const result = chatMessageSchema.safeParse({
+        type: 'system',
+        content: 'Liraya misses Goblin',
+        attackResult: miss,
+      });
+      expect(result.success).toBe(true);
+    });
+
+    it('accepts a crit payload with d20Rolls for advantage', () => {
+      const crit = {
+        ...validBreakdown,
+        hitResult: 'crit' as const,
+        attackRoll: {
+          ...validBreakdown.attackRoll,
+          d20: 20,
+          d20Rolls: [3, 20],
+          advantage: 'advantage' as const,
+          isCrit: true,
+          total: 28,
+        },
+      };
+      const result = chatMessageSchema.safeParse({
+        type: 'system', content: 'crit!', attackResult: crit,
+      });
+      expect(result.success).toBe(true);
+    });
+
+    it('rejects a breakdown with an out-of-range d20 roll', () => {
+      const bad = {
+        ...validBreakdown,
+        attackRoll: { ...validBreakdown.attackRoll, d20: 99 },
+      };
+      const result = chatMessageSchema.safeParse({
+        type: 'system', content: 'x', attackResult: bad,
+      });
+      expect(result.success).toBe(false);
+    });
+
+    it('rejects a breakdown missing attacker.name', () => {
+      const { attacker: _a, ...rest } = validBreakdown;
+      const bad = { ...rest, attacker: { tokenId: 't1' } };
+      const result = chatMessageSchema.safeParse({
+        type: 'system', content: 'x', attackResult: bad,
+      });
+      expect(result.success).toBe(false);
+    });
+
+    it('rejects a breakdown with an unknown hitResult', () => {
+      const bad = { ...validBreakdown, hitResult: 'glancing' };
+      const result = chatMessageSchema.safeParse({
+        type: 'system', content: 'x', attackResult: bad,
+      });
+      expect(result.success).toBe(false);
+    });
+
+    it('rejects more than 16 attack modifiers', () => {
+      const bad = {
+        ...validBreakdown,
+        attackRoll: {
+          ...validBreakdown.attackRoll,
+          modifiers: Array.from({ length: 17 }, (_, i) => ({
+            label: `mod-${i}`, value: 1,
+          })),
+        },
+      };
+      const result = chatMessageSchema.safeParse({
+        type: 'system', content: 'x', attackResult: bad,
+      });
+      expect(result.success).toBe(false);
+    });
+
+    it('accepts shieldSpell annotations', () => {
+      const withShield = {
+        ...validBreakdown,
+        shieldSpell: 'miss' as const,
+      };
+      const result = chatMessageSchema.safeParse({
+        type: 'system', content: 'x', attackResult: withShield,
+      });
+      expect(result.success).toBe(true);
+    });
+
+    it('accepts damage source with resisted field + note', () => {
+      const resistedHex = {
+        ...validBreakdown,
+        damage: {
+          ...validBreakdown.damage,
+          bonuses: [{
+            label: 'Hex (1d6)',
+            amount: 5,
+            damageType: 'necrotic',
+            resisted: 2,
+            resistanceNote: 'resist necrotic',
+          }],
+        },
+      };
+      const result = chatMessageSchema.safeParse({
+        type: 'system', content: 'x', attackResult: resistedHex,
+      });
+      expect(result.success).toBe(true);
+    });
+
+    it('plain message with no attackResult still parses', () => {
+      const result = chatMessageSchema.safeParse({
+        type: 'system', content: 'plain system message',
+      });
+      expect(result.success).toBe(true);
+    });
+  });
 });
 
 describe('chatRollSchema', () => {

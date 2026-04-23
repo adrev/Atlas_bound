@@ -253,6 +253,16 @@ export async function initDatabase(): Promise<void> {
       created_at TEXT NOT NULL DEFAULT (NOW()::text)
     );
 
+    -- attack_result is a JSON blob shaped like AttackBreakdown (see
+    -- shared/src/types/chat.ts). The attack resolver on the client
+    -- builds it — every ability modifier, feat, fighting style, target
+    -- condition, and damage rider lands as a structured row so the
+    -- chat card can show per-source math instead of a crammed
+    -- bracketed-tag line. Added 2026-04-23 for the damage-calculator
+    -- transparency feature. Kept as TEXT because only the renderer
+    -- reads it — no server-side queries need individual fields.
+    ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS attack_result TEXT;
+
     CREATE INDEX IF NOT EXISTS idx_chat_messages_session
       ON chat_messages(session_id, created_at);
 

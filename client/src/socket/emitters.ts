@@ -532,9 +532,23 @@ export function startPhysicalRoll(notation: string, reason?: string, hidden?: bo
  * Emit a system message to the session chat. Used for spell results,
  * cast announcements, and any other rich consolidated game-event message.
  * Multi-line content is supported.
+ *
+ * When `attackResult` is supplied, the chat card renders a structured
+ * breakdown of every modifier source that went into the attack + damage
+ * math (ability mod, prof, fighting style, target conditions, damage
+ * riders + resisted amounts, etc.) so the DM can verify the calculation
+ * without parsing bracketed tags in the plain text. The `content`
+ * string is still used as the fallback display / scrollback summary.
  */
-export function emitSystemMessage(content: string) {
-  getSocket().emit('chat:message', { type: 'system', content });
+export function emitSystemMessage(
+  content: string,
+  attackResult?: import('@dnd-vtt/shared').AttackBreakdown,
+) {
+  if (attackResult) {
+    getSocket().emit('chat:message', { type: 'system', content, attackResult });
+  } else {
+    getSocket().emit('chat:message', { type: 'system', content });
+  }
 }
 
 // --- Drawings (DM / player map annotations) ---

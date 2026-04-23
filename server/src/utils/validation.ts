@@ -435,10 +435,76 @@ export const sessionViewingSchema = z.object({
 });
 
 // --- Chat event schemas ---
+
+/**
+ * Structured attack breakdown attached to a system chat message so the
+ * chat card can render every modifier source that went into the roll.
+ * Generous field caps because we want to faithfully round-trip a
+ * weapon attack with 6+ damage riders (Rage + Sneak + Hex + Mark +
+ * Hexblade + Smite). Server does not interpret these fields beyond
+ * persisting + echoing.
+ */
+const attackBreakdownModifierSchema = z.object({
+  label: z.string().min(1).max(60),
+  value: z.number().int().min(-100).max(100),
+  source: z.enum(['ability', 'proficiency', 'feat', 'fighting-style', 'condition', 'magic', 'other']).optional(),
+});
+
+const attackBreakdownDamageSourceSchema = z.object({
+  label: z.string().min(1).max(80),
+  amount: z.number().int().min(0).max(9999),
+  damageType: z.string().min(1).max(40),
+  resisted: z.number().int().min(0).max(9999).optional(),
+  resistanceNote: z.string().max(120).optional(),
+});
+
+export const attackBreakdownSchema = z.object({
+  attacker: z.object({
+    name: z.string().min(1).max(100),
+    tokenId: z.string().max(100).optional(),
+  }),
+  target: z.object({
+    name: z.string().min(1).max(100),
+    tokenId: z.string().max(100).optional(),
+    ac: z.number().int().min(0).max(99),
+    baseAc: z.number().int().min(0).max(99).optional(),
+    acNotes: z.array(z.string().max(80)).max(12).optional(),
+  }),
+  weapon: z.object({
+    name: z.string().min(1).max(100),
+    damageType: z.string().min(1).max(40),
+  }),
+  attackRoll: z.object({
+    d20: z.number().int().min(0).max(40),
+    d20Rolls: z.array(z.number().int().min(0).max(40)).max(4).optional(),
+    advantage: z.enum(['normal', 'advantage', 'disadvantage']),
+    modifiers: z.array(attackBreakdownModifierSchema).max(16),
+    total: z.number().int().min(-20).max(99),
+    isCrit: z.boolean(),
+    isFumble: z.boolean(),
+  }),
+  hitResult: z.enum(['hit', 'miss', 'crit', 'fumble']),
+  damage: z.object({
+    dice: z.string().min(1).max(40),
+    diceRolls: z.array(z.number().int().min(0).max(200)).max(40),
+    mainRoll: z.number().int().min(0).max(9999),
+    bonuses: z.array(attackBreakdownDamageSourceSchema).max(12),
+    finalDamage: z.number().int().min(0).max(9999),
+    targetHpBefore: z.number().int().min(-9999).max(9999),
+    targetHpAfter: z.number().int().min(-9999).max(9999),
+  }).optional(),
+  notes: z.array(z.string().max(120)).max(16),
+  shieldSpell: z.enum(['miss', 'still-hit']).optional(),
+});
+
 export const chatMessageSchema = z.object({
   type: z.enum(['ic', 'ooc', 'system']),
   content: z.string().min(1).max(2000),
   characterName: z.string().max(100).optional(),
+  /** Optional structured attack breakdown — accompanies a system-type
+   *  message emitted by the attack resolver; persisted in
+   *  chat_messages.attack_result and echoed back on history load. */
+  attackResult: attackBreakdownSchema.optional(),
 });
 
 export const chatWhisperSchema = z.object({

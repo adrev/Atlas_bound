@@ -5,7 +5,7 @@ import type {
   Token, WallSegment, FogPolygon, Condition, MapPing, MapSummary, MapZone,
 } from './map.js';
 import type { Combatant, ActionType, InitiativeRollResult, SpellCastEvent, ActionEconomy } from './combat.js';
-import type { ChatMessage, DiceRollData } from './chat.js';
+import type { ChatMessage, DiceRollData, AttackBreakdown } from './chat.js';
 import type { Drawing, DrawingStreamPayload } from './drawing.js';
 
 /** Payload for socket events that carry no data. Typed as an empty
@@ -250,7 +250,14 @@ export interface ServerCharacterEvents {
 
 // --- Chat Events ---
 export interface ClientChatEvents {
-  'chat:message': { type: 'ic' | 'ooc' | 'system'; content: string; characterName?: string };
+  'chat:message': {
+    type: 'ic' | 'ooc' | 'system';
+    content: string;
+    characterName?: string;
+    /** Optional structured attack breakdown accompanying a system-type
+     *  message; rendered as a per-source modifier breakdown card. */
+    attackResult?: AttackBreakdown;
+  };
   'chat:whisper': { targetUserId: string; content: string };
   /**
    * Request a chat dice roll. If `reported` is provided the server

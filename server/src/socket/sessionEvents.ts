@@ -308,6 +308,9 @@ export function registerSessionEvents(io: Server, socket: Socket): void {
         id: m.id, sessionId: m.session_id, userId: m.user_id, displayName: m.display_name,
         type: m.type, content: m.content, characterName: m.character_name,
         whisperTo: m.whisper_to, rollData: safeParseJSON<unknown | null>(m.roll_data, null, 'chat_messages.roll_data'),
+        // Rehydrate the structured attack breakdown so refreshing
+        // mid-combat doesn't fall back to the plain-text summary.
+        attackResult: safeParseJSON<unknown | null>(m.attack_result, null, 'chat_messages.attack_result'),
         hidden: (m.hidden as number) === 1, createdAt: m.created_at,
       })));
   }));
