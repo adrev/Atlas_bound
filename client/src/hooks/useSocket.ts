@@ -69,15 +69,18 @@ export function useSocket(roomCode: string | undefined) {
     document.addEventListener('visibilitychange', onVisibility);
     window.addEventListener('online', onOnline);
 
-    // Periodic proactive re-join (every 90 s) as final safety net. If
+    // Periodic proactive re-join (every 30 s) as final safety net. If
     // the primary socket lost its room membership for any reason we
     // can't detect, the next rejoin tick will re-add it. `emitJoin`
     // is a no-op on the UX side (server resolves the user server-
-    // authoritatively); costs one tiny socket message per 1.5 min.
+    // authoritatively); costs one tiny socket message per 30 s.
+    // Previously 90 s, tightened after repeat sync-loss reports where
+    // players missed entire combat turns before the next tick healed
+    // the room membership.
     const keepAliveId = window.setInterval(() => {
       if (!socket.connected) socket.connect();
       rejoin();
-    }, 90_000);
+    }, 30_000);
 
     return () => {
       if (cleanupRef.current) {
