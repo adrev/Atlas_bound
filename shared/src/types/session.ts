@@ -102,12 +102,25 @@ export interface SessionSettings {
    * Codes are short: 'phb', 'dmg', 'mm', 'xge' (Xanathar's Guide to
    * Everything), 'tce' (Tasha's Cauldron of Everything), 'vgm' (Volo's
    * Guide to Monsters), 'mmm' (Monsters of the Multiverse), 'ua'
-   * (Unearthed Arcana playtest content).
+   * (Unearthed Arcana playtest content), and setting-specific books
+   * ('eepc', 'mtof', 'eberron', 'theros', 'mpmm', 'strixhaven',
+   * 'fizban', 'witchlight') that introduced exotic races / feats.
    */
   ruleSources?: RuleSource[];
 }
 
-export type RuleSource = 'phb' | 'dmg' | 'mm' | 'xge' | 'tce' | 'vgm' | 'mmm' | 'ua';
+export type RuleSource =
+  | 'phb' | 'dmg' | 'mm'
+  | 'xge' | 'tce' | 'vgm' | 'mmm' | 'ua'
+  // Setting / supplement sources for races + feats surfaced in the wiki.
+  | 'eepc'        // Elemental Evil Player's Companion
+  | 'mtof'        // Mordenkainen's Tome of Foes
+  | 'eberron'     // Eberron: Rising from the Last War
+  | 'theros'      // Mythic Odysseys of Theros
+  | 'mpmm'        // Monsters of the Multiverse (race/feat reprints)
+  | 'strixhaven'  // Strixhaven: Curriculum of Chaos
+  | 'fizban'      // Fizban's Treasury of Dragons
+  | 'witchlight'; // The Wild Beyond the Witchlight
 
 export interface RuleSourceInfo {
   code: RuleSource;
@@ -125,6 +138,14 @@ export const RULE_SOURCES: RuleSourceInfo[] = [
   { code: 'vgm', name: "Volo's Guide to Monsters", description: 'Extra playable races.' },
   { code: 'mmm', name: 'Monsters of the Multiverse', description: 'Rewritten race traits.' },
   { code: 'ua',  name: 'Unearthed Arcana',        description: 'Playtest content. Unstable by design.' },
+  { code: 'eepc', name: "Elemental Evil Companion", description: 'Aarakocra, Genasi, Goliath, and elemental-themed content.' },
+  { code: 'mtof', name: "Mordenkainen's Tome of Foes", description: 'Githyanki / Githzerai / Eladrin races + lore.' },
+  { code: 'eberron', name: 'Eberron: Rising from the Last War', description: 'Changeling, Kalashtar, Shifter, Warforged.' },
+  { code: 'theros', name: 'Mythic Odysseys of Theros', description: 'Centaur, Leonin, Minotaur, Satyr.' },
+  { code: 'mpmm',   name: 'Multiverse of Monsters', description: 'Fairy + reprinted race traits.' },
+  { code: 'strixhaven', name: 'Strixhaven: Curriculum of Chaos', description: 'Owlin race + college backgrounds.' },
+  { code: 'fizban',    name: "Fizban's Treasury of Dragons", description: 'Chromatic / Metallic / Gem Dragonborn subraces.' },
+  { code: 'witchlight', name: 'The Wild Beyond the Witchlight', description: 'Harengon race + Feylost / Witchlight Hand backgrounds.' },
 ];
 
 export const DEFAULT_SESSION_SETTINGS: SessionSettings = {
