@@ -2528,7 +2528,16 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
     : [];
   const spellSlots = character ? parse<Record<string, { max: number; used: number }>>(character.spellSlots, {}) : {};
   const inventory = character ? parse<any[]>(character.inventory, []) : [];
-  const weapons = inventory.filter((i: any) => i.type === 'weapon' && i.equipped);
+  // Prefer explicitly-equipped weapons — but if nothing's marked
+  // equipped (common failure mode for some DDB imports + legacy data
+  // rows that never got an equipped flag), fall back to every weapon
+  // in inventory so the character still sees their dagger and longbow.
+  // Without this fallback a player whose `equipped` flags got lost
+  // silently loses all attack options and can't roll anything in
+  // combat.
+  const equippedWeapons = inventory.filter((i: any) => i.type === 'weapon' && i.equipped);
+  const allWeapons = inventory.filter((i: any) => i.type === 'weapon');
+  const weapons = equippedWeapons.length > 0 ? equippedWeapons : allWeapons;
   const conditions = token.conditions || [];
   const portraitUrl = token.imageUrl || character?.portraitUrl || null;
 
@@ -3141,8 +3150,16 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
           </Section>
         )}
 
-        {/* Weapons (for player characters without compendium data) */}
-        {compActions.length === 0 && weapons.length > 0 && (
+        {/* Weapons — shown whenever the character has equipped gear.
+            Historically gated by `compActions.length === 0` on the
+            assumption that compendium actions were authoritative, but
+            that dropped every PC's dagger / longbow / Extra Attack
+            weapon from the panel the moment they picked up a
+            monster-entry token (or a legacy character row set its
+            compendiumSlug). Inventory weapons always represent a real
+            attack the character can roll, so we surface them
+            regardless of what compendium data is also present. */}
+        {weapons.length > 0 && (
           <Section title="Attacks">
             {weapons.map((w: any, i: number) => {
               const props: string[] = w.properties || [];
