@@ -78,10 +78,14 @@ export function registerCharacterEvents(io: Server, socket: Socket): void {
     const isDM = playerIsDM(ctx);
 
     if (charUserId === 'npc') {
-      // NPCs are DM-only. Still require the NPC to be present IN THIS
-      // session — otherwise a DM in room A could mutate NPCs owned by
-      // room B just by guessing UUIDs.
-      if (!isDM) return;
+      // NPCs are DM-writable for anything. Players can ONLY write HP
+      // fields (hitPoints / tempHp) on NPCs that live on a map in THIS
+      // session — so a player who resolves an attack client-side can
+      // persist the damage to the shared NPC record (prior behaviour:
+      // the server rejected silently, so the creature bounced back to
+      // full HP on any reload). Any other NPC field change from a non-
+      // DM is still dropped. The NPC-in-session check stops a cross-
+      // session guess-UUID attack.
       const { rows: sessionTokenRows } = await pool.query(
         `SELECT 1 FROM tokens t
            JOIN maps m ON m.id = t.map_id
@@ -90,6 +94,13 @@ export function registerCharacterEvents(io: Server, socket: Socket): void {
         [characterId, ctx.room.sessionId],
       );
       if (sessionTokenRows.length === 0) return;
+
+      if (!isDM) {
+        const allowedNpcFields = new Set(['hitPoints', 'tempHp', 'tempHitPoints']);
+        const requestedFields = Object.keys(changes);
+        const hasDisallowed = requestedFields.some((f) => !allowedNpcFields.has(f));
+        if (hasDisallowed) return;
+      }
     } else {
       // PCs: either owner-writes-their-own, OR a DM of THIS session
       // writing a PC that's actually linked to this session (via
