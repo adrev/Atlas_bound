@@ -131,6 +131,113 @@ export interface AttackBreakdown {
   shieldSpell?: 'miss' | 'still-hit';
 }
 
+/**
+ * Per-target outcome inside a spell cast. One SpellCastBreakdown can
+ * carry many of these (Fireball hits 6 creatures, Eldritch Blast fires
+ * 3 beams, Hypnotic Pattern affects everyone in a cube). Each entry's
+ * `kind` discriminator drives which sub-fields are populated.
+ */
+export interface SpellTargetOutcome {
+  name: string;
+  tokenId?: string;
+  kind: 'attack' | 'save' | 'heal' | 'damage-flat' | 'buff' | 'utility';
+
+  /** Populated when kind === 'attack' (spell attack vs AC). */
+  attack?: {
+    d20: number;
+    d20Rolls?: number[];
+    advantage: 'normal' | 'advantage' | 'disadvantage';
+    /** Attack bonus sources (spell attack bonus, Bless die, etc.). */
+    modifiers: AttackBreakdownModifier[];
+    total: number;
+    targetAc: number;
+    baseAc?: number;
+    acNotes?: string[];
+    hitResult: 'hit' | 'miss' | 'crit' | 'fumble';
+  };
+
+  /** Populated when kind === 'save' (target rolls a save). */
+  save?: {
+    d20: number;
+    d20Rolls?: number[];
+    advantage: 'normal' | 'advantage' | 'disadvantage';
+    ability: 'str' | 'dex' | 'con' | 'int' | 'wis' | 'cha';
+    /** Save bonus sources (save mod, Magic Resistance, race traits, etc.). */
+    modifiers: AttackBreakdownModifier[];
+    total: number;
+    dc: number;
+    saved: boolean;
+    autoFailed?: boolean;
+    autoSucceeded?: boolean;
+  };
+
+  /** Damage applied (any kind — on hit, on failed save, on save-for-half). */
+  damage?: {
+    dice: string;
+    diceRolls: number[];
+    mainRoll: number;
+    bonuses: AttackBreakdownDamageSource[];
+    /** True when half damage applied (save-for-half passed). */
+    halfDamage?: boolean;
+    finalDamage: number;
+    targetHpBefore: number;
+    targetHpAfter: number;
+  };
+
+  /** Healing applied. */
+  healing?: {
+    dice: string;
+    diceRolls: number[];
+    mainRoll: number;
+    targetHpBefore: number;
+    targetHpAfter: number;
+  };
+
+  /** Buffs / debuffs / conditions applied to this target. */
+  conditionsApplied?: string[];
+
+  /** Per-target situational notes (Magic Resistance, paralyzed auto-fail, etc.). */
+  notes?: string[];
+}
+
+/**
+ * Structured breakdown for a spell cast. Built by the spell resolver
+ * on the client and attached to the resulting chat message so the
+ * SpellCastCard can show every caster-side modifier, per-target roll,
+ * damage source, and resistance — the same transparency contract as
+ * AttackBreakdown but extended to multi-target spells (Fireball,
+ * Eldritch Blast, Hypnotic Pattern).
+ */
+export interface SpellCastBreakdown {
+  caster: { name: string; tokenId?: string };
+  spell: {
+    name: string;
+    /** 0 = cantrip. */
+    level: number;
+    /**
+     * 'attack' — spell attack roll (Fire Bolt, Eldritch Blast)
+     * 'save' — targets save (Fireball, Hold Person, Hypnotic Pattern)
+     * 'auto-damage' — no save, no attack (Magic Missile)
+     * 'heal' — restores HP
+     * 'utility' — buff / transform / narrative
+     */
+    kind: 'attack' | 'save' | 'auto-damage' | 'heal' | 'utility';
+    /** Damage type when relevant (fire, necrotic, slashing, force, ...). */
+    damageType?: string;
+    /** Set for save-based spells. */
+    saveAbility?: 'str' | 'dex' | 'con' | 'int' | 'wis' | 'cha';
+    /** Spell save DC shown on every save-target row. */
+    saveDc?: number;
+    /** True when a passed save halves damage. Fireball, Cone of Cold, etc. */
+    halfOnSave?: boolean;
+    /** Spell attack bonus for 'attack' kind — the total used on the d20. */
+    spellAttackBonus?: number;
+  };
+  /** Caster-side notes shared across all targets (concentration dropped, cast at higher level, etc.). */
+  notes: string[];
+  targets: SpellTargetOutcome[];
+}
+
 export interface ChatMessage {
   id: string;
   sessionId: string;
@@ -142,13 +249,19 @@ export interface ChatMessage {
   whisperTo: string | null;
   rollData: DiceRollData | null;
   /**
-   * Optional structured attack breakdown. Populated by the attack
-   * resolver; rendered as a card with per-source modifier lines so the
-   * DM can verify the math without parsing bracketed tags. Mutually
-   * exclusive with `rollData` in practice — an attack is one card, not
-   * a generic dice roll.
+   * Optional structured attack breakdown. Populated by the weapon /
+   * creature-action resolver; rendered as a card with per-source
+   * modifier lines so the DM can verify the math without parsing
+   * bracketed tags.
    */
   attackResult?: AttackBreakdown | null;
+  /**
+   * Optional structured spell cast breakdown. Populated by the spell
+   * resolver; rendered as a card with per-target outcome rows
+   * (attack/save/heal/damage) so save DCs, advantage sources, and
+   * damage riders all show transparently.
+   */
+  spellResult?: SpellCastBreakdown | null;
   hidden?: boolean;
   createdAt: string;
 }

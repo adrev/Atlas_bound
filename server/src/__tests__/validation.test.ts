@@ -407,6 +407,220 @@ describe('chatMessageSchema', () => {
       expect(result.success).toBe(true);
     });
   });
+
+  // -------------------------------------------------------------------
+  // spellResult — structured spell-cast breakdown for multi-target
+  // spells (Fireball, Eldritch Blast, Cure Wounds, Hypnotic Pattern).
+  // -------------------------------------------------------------------
+  describe('spellResult attachment', () => {
+    const validSingleAttack = {
+      caster: { name: 'Vex', tokenId: 't-vex' },
+      spell: {
+        name: 'Fire Bolt',
+        level: 0,
+        kind: 'attack' as const,
+        damageType: 'fire',
+        spellAttackBonus: 5,
+      },
+      notes: [],
+      targets: [
+        {
+          name: 'Goblin',
+          tokenId: 't-goblin',
+          kind: 'attack' as const,
+          attack: {
+            d20: 18,
+            advantage: 'normal' as const,
+            modifiers: [
+              { label: 'Spell attack bonus', value: 5, source: 'other' as const },
+            ],
+            total: 23,
+            targetAc: 13,
+            hitResult: 'hit' as const,
+          },
+          damage: {
+            dice: '1d10',
+            diceRolls: [7],
+            mainRoll: 7,
+            bonuses: [],
+            finalDamage: 7,
+            targetHpBefore: 12,
+            targetHpAfter: 5,
+          },
+        },
+      ],
+    };
+
+    it('accepts a single-target spell attack (Fire Bolt)', () => {
+      const r = chatMessageSchema.safeParse({
+        type: 'system', content: 'Vex → Goblin: 7 fire', spellResult: validSingleAttack,
+      });
+      expect(r.success).toBe(true);
+    });
+
+    it('accepts an AoE save spell with per-target rows (Fireball)', () => {
+      const fireball = {
+        caster: { name: 'Vex', tokenId: 't-vex' },
+        spell: {
+          name: 'Fireball',
+          level: 3,
+          kind: 'save' as const,
+          damageType: 'fire',
+          saveAbility: 'dex' as const,
+          saveDc: 15,
+          halfOnSave: true,
+        },
+        notes: ['20-ft sphere · 4 in area'],
+        targets: [
+          {
+            name: 'Orc', tokenId: 't-orc', kind: 'save' as const,
+            save: {
+              d20: 5, advantage: 'normal' as const, ability: 'dex' as const,
+              modifiers: [{ label: 'DEX save mod', value: 1, source: 'ability' as const }],
+              total: 6, dc: 15, saved: false,
+            },
+            damage: {
+              dice: '8d6', diceRolls: [6, 5, 4, 3, 5, 2, 6, 1],
+              mainRoll: 32, bonuses: [],
+              finalDamage: 32, targetHpBefore: 40, targetHpAfter: 8,
+            },
+          },
+          {
+            name: 'Halfling', tokenId: 't-half', kind: 'save' as const,
+            save: {
+              d20: 18, advantage: 'advantage' as const, d20Rolls: [7, 18],
+              ability: 'dex' as const,
+              modifiers: [
+                { label: 'DEX save mod', value: 3, source: 'ability' as const },
+              ],
+              total: 21, dc: 15, saved: true,
+            },
+            damage: {
+              dice: '8d6', diceRolls: [6, 5, 4, 3, 5, 2, 6, 1],
+              mainRoll: 16, bonuses: [], halfDamage: true,
+              finalDamage: 16, targetHpBefore: 28, targetHpAfter: 12,
+            },
+          },
+        ],
+      };
+      const r = chatMessageSchema.safeParse({
+        type: 'system', content: 'Fireball!', spellResult: fireball,
+      });
+      expect(r.success).toBe(true);
+    });
+
+    it('accepts a heal outcome (Cure Wounds)', () => {
+      const cure = {
+        caster: { name: 'Priest' },
+        spell: { name: 'Cure Wounds', level: 1, kind: 'heal' as const },
+        notes: [],
+        targets: [
+          {
+            name: 'Ally', kind: 'heal' as const,
+            healing: {
+              dice: '1d8+3', diceRolls: [5],
+              mainRoll: 8, targetHpBefore: 4, targetHpAfter: 12,
+            },
+          },
+        ],
+      };
+      const r = chatMessageSchema.safeParse({
+        type: 'system', content: 'cured', spellResult: cure,
+      });
+      expect(r.success).toBe(true);
+    });
+
+    it('accepts a buff outcome (Bless)', () => {
+      const bless = {
+        caster: { name: 'Priest' },
+        spell: { name: 'Bless', level: 1, kind: 'utility' as const },
+        notes: [],
+        targets: [
+          {
+            name: 'Fighter', kind: 'buff' as const,
+            conditionsApplied: ['blessed'],
+          },
+        ],
+      };
+      const r = chatMessageSchema.safeParse({
+        type: 'system', content: 'Bless', spellResult: bless,
+      });
+      expect(r.success).toBe(true);
+    });
+
+    it('accepts up to 20 target rows (large AoE)', () => {
+      const big = {
+        ...validSingleAttack,
+        targets: Array.from({ length: 20 }, (_, i) => ({
+          name: `t${i}`, kind: 'damage-flat' as const,
+          damage: {
+            dice: '1d6', diceRolls: [3], mainRoll: 3, bonuses: [],
+            finalDamage: 3, targetHpBefore: 10, targetHpAfter: 7,
+          },
+        })),
+      };
+      const r = chatMessageSchema.safeParse({
+        type: 'system', content: 'big', spellResult: big,
+      });
+      expect(r.success).toBe(true);
+    });
+
+    it('rejects more than 20 target rows', () => {
+      const tooBig = {
+        ...validSingleAttack,
+        targets: Array.from({ length: 21 }, () => ({
+          name: 'x', kind: 'damage-flat' as const,
+        })),
+      };
+      const r = chatMessageSchema.safeParse({
+        type: 'system', content: 'x', spellResult: tooBig,
+      });
+      expect(r.success).toBe(false);
+    });
+
+    it('rejects an unknown spell kind', () => {
+      const bad = {
+        ...validSingleAttack,
+        spell: { ...validSingleAttack.spell, kind: 'blast' },
+      };
+      const r = chatMessageSchema.safeParse({
+        type: 'system', content: 'x', spellResult: bad,
+      });
+      expect(r.success).toBe(false);
+    });
+
+    it('rejects an out-of-range spell level', () => {
+      const bad = {
+        ...validSingleAttack,
+        spell: { ...validSingleAttack.spell, level: 10 },
+      };
+      const r = chatMessageSchema.safeParse({
+        type: 'system', content: 'x', spellResult: bad,
+      });
+      expect(r.success).toBe(false);
+    });
+
+    it('accepts auto-failed save payload', () => {
+      const paralyzed = {
+        ...validSingleAttack,
+        spell: { ...validSingleAttack.spell, kind: 'save' as const, saveAbility: 'str' as const, saveDc: 14 },
+        targets: [
+          {
+            name: 'Paralyzed mark', kind: 'save' as const,
+            save: {
+              d20: 1, advantage: 'normal' as const, ability: 'str' as const,
+              modifiers: [],
+              total: -999, dc: 14, saved: false, autoFailed: true,
+            },
+          },
+        ],
+      };
+      const r = chatMessageSchema.safeParse({
+        type: 'system', content: 'x', spellResult: paralyzed,
+      });
+      expect(r.success).toBe(true);
+    });
+  });
 });
 
 describe('chatRollSchema', () => {

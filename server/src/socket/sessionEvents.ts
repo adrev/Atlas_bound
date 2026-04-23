@@ -308,9 +308,11 @@ export function registerSessionEvents(io: Server, socket: Socket): void {
         id: m.id, sessionId: m.session_id, userId: m.user_id, displayName: m.display_name,
         type: m.type, content: m.content, characterName: m.character_name,
         whisperTo: m.whisper_to, rollData: safeParseJSON<unknown | null>(m.roll_data, null, 'chat_messages.roll_data'),
-        // Rehydrate the structured attack breakdown so refreshing
-        // mid-combat doesn't fall back to the plain-text summary.
+        // Rehydrate the structured attack + spell breakdowns so
+        // refreshing mid-combat doesn't fall back to the plain-text
+        // summary for prior cards.
         attackResult: safeParseJSON<unknown | null>(m.attack_result, null, 'chat_messages.attack_result'),
+        spellResult: safeParseJSON<unknown | null>(m.spell_result, null, 'chat_messages.spell_result'),
         hidden: (m.hidden as number) === 1, createdAt: m.created_at,
       })));
   }));

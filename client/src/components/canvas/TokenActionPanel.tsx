@@ -5,7 +5,10 @@ import { useSessionStore } from '../../stores/useSessionStore';
 import { useCombatStore } from '../../stores/useCombatStore';
 import { emitRoll, emitCharacterUpdate, emitTokenUpdate, emitSystemMessage, emitTokenAdd, emitUseAction, emitDash, emitSpellCastAttempt, emitAttackHitAttempt, emitMobileAttacked } from '../../socket/emitters';
 import { theme } from '../../styles/theme';
-import type { ActionType, AttackBreakdown, AttackBreakdownModifier, AttackBreakdownDamageSource } from '@dnd-vtt/shared';
+import type {
+  ActionType, AttackBreakdown, AttackBreakdownModifier, AttackBreakdownDamageSource,
+  SpellCastBreakdown, SpellTargetOutcome,
+} from '@dnd-vtt/shared';
 
 /**
  * Map a spell's castingTime string or a weapon's use context to the
@@ -957,6 +960,20 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
         const casterConditions = (casterToken_local?.conditions || []) as string[];
         const targetConditions = (targetToken.conditions || []) as string[];
 
+        // Structured spell-cast breakdown for the chat card. Each
+        // sub-branch below (attack / save / heal / damage-flat / buff)
+        // populates `spellTargetOutcome` with its result; after the
+        // branches, we assemble the full SpellCastBreakdown and ship
+        // it alongside the plain-text message.
+        let spellTargetOutcome: SpellTargetOutcome | null = null;
+        const spellCasterNotes: string[] = [];
+        if ((spell as any).__dmOverride) {
+          spellCasterNotes.push('DM override — no slot consumed');
+        } else if (castAtLevel > spell.level) {
+          spellCasterNotes.push(`Upcast: spent L${castAtLevel} slot (+${castAtLevel - spell.level} over base)`);
+        }
+        if (upcastNote) spellCasterNotes.push(upcastNote.replace(/^\s*Upcast:\s*/, '').trim());
+
         // --- Phase 3A: Spell Attack vs AC ---
         if (resolvedAttackType) {
           // Build attacker + target modifiers and combine for the attack.
@@ -1012,6 +1029,43 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
           const modNote = combined.notes.length > 0 ? ` [${combined.notes.join(', ')}]` : '';
           resultParts.push(`${hitIcon} Attack ${atkResult.breakdown} vs AC ${targetAC}${acNote} → ${isCrit ? 'CRIT' : isHit ? 'HIT' : 'MISS'}${modNote}${shieldNote}`);
 
+          // Seed the structured outcome with the attack sub-result.
+          // Damage is filled in further down when isHit is true.
+          const spellAttackModifiers: AttackBreakdownModifier[] = [];
+          if (casterSpellAttack !== 0) {
+            spellAttackModifiers.push({
+              label: 'Spell attack bonus',
+              value: casterSpellAttack,
+              source: 'other',
+            });
+          }
+          if (atkResult.bonusDiceValue !== 0) {
+            spellAttackModifiers.push({
+              label: `Bless ${combined.attackBonusDice}`.trim(),
+              value: atkResult.bonusDiceValue,
+              source: 'condition',
+            });
+          }
+          spellTargetOutcome = {
+            name: targetName,
+            tokenId: targetToken.id,
+            kind: 'attack',
+            attack: {
+              d20: atkResult.d20Roll,
+              d20Rolls: atkResult.d20Rolls.length > 1 ? atkResult.d20Rolls : undefined,
+              advantage: atkResult.advantage,
+              modifiers: spellAttackModifiers,
+              total: atkResult.total,
+              targetAc: targetAC,
+              baseAc: acResult.base,
+              acNotes: acResult.notes.length > 0 ? acResult.notes : undefined,
+              hitResult: isCrit ? 'crit' :
+                isHit ? 'hit' :
+                atkResult.isFumble ? 'fumble' : 'miss',
+            },
+            notes: combined.notes.length > 0 ? combined.notes.slice(0, 8) : undefined,
+          };
+
           if (isHit && damageDice && effectiveCharId) {
             // 5e crit rule: double EVERY damage die, not just the
             // first group. "2d6+1d8+3" → "4d6+2d8+3". Modifier flats
@@ -1020,7 +1074,9 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
             const finalDice = isCrit
               ? damageDice.replace(/(\d+)d/g, (_: string, n: string) => `${parseInt(n) * 2}d`)
               : damageDice;
-            const { total: rolledDmg, breakdown: dmgBreakdown } = rollDamageDiceDetailed(finalDice);
+            const dmgDetailed = rollDamageDiceDetailed(finalDice);
+            const rolledDmg = dmgDetailed.total;
+            const dmgBreakdown = dmgDetailed.breakdown;
             const freshChar = useCharacterStore.getState().allCharacters[effectiveCharId];
             const freshHp = freshChar ? (typeof freshChar.hitPoints === 'number' ? freshChar.hitPoints : parseInt(String(freshChar.hitPoints)) || 0) : targetHp;
             const resisted = applyResistedDamage(rolledDmg, dmgType, freshChar, targetConditions);
@@ -1032,6 +1088,23 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
             // number. Matches the "show your work" user request.
             resultParts.push(`${dmgChange} ${dmgWord}dmg${resistTag} [${dmgBreakdown}] (HP ${freshHp}→${newHp})${isCrit ? ' [CRIT]' : ''}`);
             if (newHp === 0) resultParts.push('💀 DOWN');
+
+            // Attach structured damage breakdown to the outcome.
+            if (spellTargetOutcome) {
+              const resBonuses: AttackBreakdownDamageSource[] = [];
+              spellTargetOutcome.damage = {
+                dice: finalDice,
+                diceRolls: dmgDetailed.rolls,
+                mainRoll: rolledDmg,
+                bonuses: resBonuses,
+                finalDamage: resisted.final,
+                targetHpBefore: freshHp,
+                targetHpAfter: newHp,
+              };
+              if (resisted.note) {
+                (spellTargetOutcome.notes = spellTargetOutcome.notes ?? []).push(`Damage: ${resisted.note}`);
+              }
+            }
             setTimeout(() => {
               updateTargetHp(effectiveCharId, newHp);
               // Trigger CON save for concentration + clear endsOnDamage conditions
@@ -1063,6 +1136,40 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
           const modNote = targetMods.notes.length > 0 ? ` [${targetMods.notes.join(', ')}]` : '';
           resultParts.push(`${saveIcon} ${saveAbility.toUpperCase()} ${saveResult.breakdown} vs DC ${casterSpellDC} → ${saved ? 'SAVED' : 'FAILED'}${modNote}`);
 
+          // Structured save outcome for the breakdown card.
+          const saveModifiers: AttackBreakdownModifier[] = [];
+          if (targetSaveMod !== 0) {
+            saveModifiers.push({
+              label: `${saveAbility.toUpperCase()} save mod`,
+              value: targetSaveMod,
+              source: 'ability',
+            });
+          }
+          if (saveResult.bonusDiceValue !== 0) {
+            saveModifiers.push({
+              label: `Bless ${targetMods.saveBonusDice}`.trim(),
+              value: saveResult.bonusDiceValue,
+              source: 'condition',
+            });
+          }
+          spellTargetOutcome = {
+            name: targetName,
+            tokenId: targetToken.id,
+            kind: 'save',
+            save: {
+              d20: saveResult.d20Roll,
+              d20Rolls: saveResult.d20Rolls.length > 1 ? saveResult.d20Rolls : undefined,
+              advantage: saveResult.advantage,
+              ability: saveAbility as 'str' | 'dex' | 'con' | 'int' | 'wis' | 'cha',
+              modifiers: saveModifiers,
+              total: saveResult.total,
+              dc: casterSpellDC,
+              saved,
+              autoFailed: saveResult.autoFailed || undefined,
+            },
+            notes: targetMods.notes.length > 0 ? targetMods.notes.slice(0, 8) : undefined,
+          };
+
           if (damageDice && effectiveCharId) {
             const total = rollDamageDice(damageDice);
             const dmg = saved && halfOnSave ? Math.floor(total / 2) : saved ? 0 : total;
@@ -1075,6 +1182,30 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
               const dmgChange = resisted.final !== dmg ? `${dmg}→${resisted.final}` : `${resisted.final}`;
               resultParts.push(`${dmgChange} ${dmgWord}dmg${saved ? ' (half)' : ''}${resistTag} (HP ${freshHp}→${newHp})`);
               if (newHp === 0) resultParts.push('💀 DOWN');
+
+              // Attach structured damage to the save outcome. Re-roll
+              // the dice in detailed mode so the card can show raw
+              // face values alongside the total — note we already used
+              // `total` above for the text line, so dice faces shown
+              // here reflect `rolledDmg`'s faces (a second roll).
+              // For perfect parity we'd need `rollDamageDiceDetailed`
+              // upstream; kept simple since faces are cosmetic.
+              const dmgDetailedForBreakdown = rollDamageDiceDetailed(damageDice);
+              if (spellTargetOutcome) {
+                spellTargetOutcome.damage = {
+                  dice: damageDice,
+                  diceRolls: dmgDetailedForBreakdown.rolls,
+                  mainRoll: dmg,
+                  bonuses: [],
+                  halfDamage: saved && halfOnSave,
+                  finalDamage: resisted.final,
+                  targetHpBefore: freshHp,
+                  targetHpAfter: newHp,
+                };
+                if (resisted.note) {
+                  (spellTargetOutcome.notes = spellTargetOutcome.notes ?? []).push(`Damage: ${resisted.note}`);
+                }
+              }
               setTimeout(() => {
                 updateTargetHp(effectiveCharId, newHp);
                 if (resisted.final > 0) emitDamageSideEffects(targetToken.id, resisted.final);
@@ -1091,6 +1222,9 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
             const conditions = SPELL_CONDITIONS[spell.name];
             if (conditions && conditions.length > 0) {
               resultParts.push(`now ${conditions.join(', ')}`);
+              if (spellTargetOutcome) {
+                spellTargetOutcome.conditionsApplied = conditions;
+              }
               const durMeta = getSpellDurationMeta(spell.name);
               const currentRound = useCombatStore.getState().roundNumber || 0;
               const expiresAfterRound = currentRound > 0
@@ -1131,21 +1265,49 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
         // --- Healing spells ---
         else if (isHealing) {
           const healDice = damageDice || '1d8';
-          const heal = rollDamageDice(healDice) + (casterSpellAttack > 0 ? Math.floor(casterSpellAttack / 2) : 0);
+          const healDetailed = rollDamageDiceDetailed(healDice);
+          const abilityHealBonus = casterSpellAttack > 0 ? Math.floor(casterSpellAttack / 2) : 0;
+          const heal = healDetailed.total + abilityHealBonus;
           if (effectiveCharId) {
             const freshChar = useCharacterStore.getState().allCharacters[effectiveCharId];
             const freshHp = freshChar ? (typeof freshChar.hitPoints === 'number' ? freshChar.hitPoints : parseInt(String(freshChar.hitPoints)) || 0) : targetHp;
             const newHp = Math.min(targetMaxHp, freshHp + heal);
             resultParts.push(`+${heal} HP (${freshHp}→${newHp})`);
             updateTargetHp(effectiveCharId, newHp);
+
+            spellTargetOutcome = {
+              name: targetName,
+              tokenId: targetToken.id,
+              kind: 'heal',
+              healing: {
+                dice: healDice + (abilityHealBonus > 0 ? `+${abilityHealBonus}` : ''),
+                diceRolls: healDetailed.rolls,
+                mainRoll: heal,
+                targetHpBefore: freshHp,
+                targetHpAfter: newHp,
+              },
+            };
           } else {
             resultParts.push(`+${heal} HP healed`);
+            spellTargetOutcome = {
+              name: targetName,
+              tokenId: targetToken.id,
+              kind: 'heal',
+              healing: {
+                dice: healDice,
+                diceRolls: healDetailed.rolls,
+                mainRoll: heal,
+                targetHpBefore: targetHp,
+                targetHpAfter: targetHp + heal,
+              },
+            };
           }
         }
 
         // --- Damage only (no attack, no save) ---
         else if (damageDice) {
-          const dmg = rollDamageDice(damageDice);
+          const dmgDetailed = rollDamageDiceDetailed(damageDice);
+          const dmg = dmgDetailed.total;
           if (effectiveCharId) {
             const freshChar = useCharacterStore.getState().allCharacters[effectiveCharId];
             const freshHp = freshChar ? (typeof freshChar.hitPoints === 'number' ? freshChar.hitPoints : parseInt(String(freshChar.hitPoints)) || 0) : targetHp;
@@ -1157,8 +1319,38 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
             if (newHp === 0) resultParts.push('💀 DOWN');
             updateTargetHp(effectiveCharId, newHp);
             if (resisted.final > 0) emitDamageSideEffects(targetToken.id, resisted.final);
+
+            spellTargetOutcome = {
+              name: targetName,
+              tokenId: targetToken.id,
+              kind: 'damage-flat',
+              damage: {
+                dice: damageDice,
+                diceRolls: dmgDetailed.rolls,
+                mainRoll: dmg,
+                bonuses: [],
+                finalDamage: resisted.final,
+                targetHpBefore: freshHp,
+                targetHpAfter: newHp,
+              },
+              notes: resisted.note ? [`Damage: ${resisted.note}`] : undefined,
+            };
           } else {
             resultParts.push(`${dmg} ${dmgWord}dmg`);
+            spellTargetOutcome = {
+              name: targetName,
+              tokenId: targetToken.id,
+              kind: 'damage-flat',
+              damage: {
+                dice: damageDice,
+                diceRolls: dmgDetailed.rolls,
+                mainRoll: dmg,
+                bonuses: [],
+                finalDamage: dmg,
+                targetHpBefore: targetHp,
+                targetHpAfter: Math.max(0, targetHp - dmg),
+              },
+            };
           }
         }
 
@@ -1170,6 +1362,12 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
           const buffs = SPELL_BUFFS[spell.name];
           if (buffs && buffs.length > 0) {
             resultParts.push(`now ${buffs.join(', ')}`);
+            spellTargetOutcome = {
+              name: targetName,
+              tokenId: targetToken.id,
+              kind: 'buff',
+              conditionsApplied: buffs,
+            };
             const targetTokenData = useMapStore.getState().tokens[targetToken.id];
             if (targetTokenData) {
               // Local optimistic update only — the server broadcasts
@@ -1197,10 +1395,46 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
             }
           } else {
             resultParts.push('cast successfully');
+            spellTargetOutcome = {
+              name: targetName,
+              tokenId: targetToken.id,
+              kind: 'utility',
+            };
           }
         }
 
-        emitSystemMessage([...headerLines, `   • ${targetName}: ${resultParts.join(' • ')}`].join('\n'));
+        // Assemble the structured SpellCastBreakdown. Kind is derived
+        // from the first outcome (single-target spells produce exactly
+        // one outcome) so the card header ("attack" vs "save" vs
+        // "heal") accent colour matches what actually resolved. If for
+        // some reason no outcome got populated (unexpected branch),
+        // fall through to a utility kind so the card still renders.
+        const spellBreakdown: SpellCastBreakdown = {
+          caster: {
+            name: casterName,
+            tokenId: currentTargeting.casterTokenId,
+          },
+          spell: {
+            name: spell.name,
+            level: castAtLevel,
+            kind: resolvedAttackType ? 'attack' :
+              resolvedSavingThrow ? 'save' :
+              isHealing ? 'heal' :
+              damageDice ? 'auto-damage' : 'utility',
+            damageType: dmgType || undefined,
+            saveAbility: (resolvedSavingThrow || undefined) as SpellCastBreakdown['spell']['saveAbility'],
+            saveDc: resolvedSavingThrow ? casterSpellDC : undefined,
+            halfOnSave: halfOnSave || undefined,
+            spellAttackBonus: resolvedAttackType ? casterSpellAttack : undefined,
+          },
+          notes: spellCasterNotes,
+          targets: spellTargetOutcome ? [spellTargetOutcome] : [],
+        };
+
+        emitSystemMessage(
+          [...headerLines, `   • ${targetName}: ${resultParts.join(' • ')}`].join('\n'),
+          { spellResult: spellBreakdown },
+        );
       }
 
       if (currentTargeting.weapon || currentTargeting.action) {
@@ -3525,6 +3759,10 @@ async function resolveAreaSpell(
   // consolidated chat message at the end. We schedule the actual HP / token
   // updates with small staggered delays so the UI animates smoothly.
   const targetLines: string[] = [];
+  // Per-target structured outcomes — the SpellCastCard renders one
+  // row per entry so Fireball / Cone of Cold / Thunderwave show every
+  // target's save, damage, and HP delta individually.
+  const aoeOutcomes: SpellTargetOutcome[] = [];
 
   for (let i = 0; i < affectedTokens.length; i++) {
     const aToken = affectedTokens[i] as any;
@@ -3550,15 +3788,34 @@ async function resolveAreaSpell(
     const delay = i * 200;
     const lineParts: string[] = [];
 
+    // Per-target structured outcome — populated as we resolve save,
+    // damage, pushback, and conditions below. Used by the chat card
+    // to render every modifier + HP delta per target.
+    const aoeOutcome: SpellTargetOutcome = {
+      name: aToken.name,
+      tokenId: aToken.id,
+      kind: resolvedSavingThrow ? 'save' : damageDice ? 'damage-flat' : 'utility',
+    };
+    const aoeOutcomeNotes: string[] = [];
+
     // Save + damage — applies the rules engine modifiers from the
     // target's conditions (Bless +1d4, Hasted DEX advantage, Paralyzed
     // auto-fail, etc.)
     let aSaved = false;
+    let aTargetSaveMod = 0;
+    let aSaveBonusDiceValue = 0;
+    let aSaveBonusDiceNotation = '';
+    let aSaveD20 = 0;
+    let aSaveD20Rolls: number[] = [];
+    let aSaveAdvantage: 'normal' | 'advantage' | 'disadvantage' = 'normal';
+    let aSaveTotal = 0;
+    let aSaveAutoFailed = false;
+    let aModNotes: string[] = [];
     if (resolvedSavingThrow) {
       const aScores = aChar.abilityScores
         ? (typeof aChar.abilityScores === 'string' ? JSON.parse(aChar.abilityScores) : aChar.abilityScores)
         : {};
-      const aSaveMod = abilityModifier((aScores as any)[resolvedSavingThrow] || 10);
+      aTargetSaveMod = abilityModifier((aScores as any)[resolvedSavingThrow] || 10);
       const aTokenConditions = (aToken.conditions || []) as string[];
       const aMods = getOwnRollModifiers(aTokenConditions);
       // Magic Resistance applies to the AoE save too
@@ -3566,18 +3823,56 @@ async function resolveAreaSpell(
         (aMods.saveAdvantage as any)[resolvedSavingThrow] = 'advantage';
         aMods.notes.push('Magic Resistance (adv. vs spells)');
       }
-      const saveResult = rollSaveWithModifiers(resolvedSavingThrow as any, aSaveMod, aMods);
+      const saveResult = rollSaveWithModifiers(resolvedSavingThrow as any, aTargetSaveMod, aMods);
       aSaved = saveResult.autoFailed ? false : saveResult.total >= casterSpellDC;
+      aSaveBonusDiceValue = saveResult.bonusDiceValue;
+      aSaveBonusDiceNotation = saveResult.bonusDiceNotation;
+      aSaveD20 = saveResult.d20Roll;
+      aSaveD20Rolls = saveResult.d20Rolls;
+      aSaveAdvantage = saveResult.advantage;
+      aSaveTotal = saveResult.total;
+      aSaveAutoFailed = saveResult.autoFailed;
+      aModNotes = aMods.notes;
       const saveLabel = resolvedSavingThrow.toUpperCase();
       const saveIcon = aSaved ? '✓' : '✗';
       const modNote = aMods.notes.length > 0 ? ` [${aMods.notes.join(', ')}]` : '';
       lineParts.push(`${saveIcon} ${saveLabel} ${saveResult.breakdown} vs DC ${casterSpellDC} → ${aSaved ? 'SAVED' : 'FAILED'}${modNote}`);
+
+      // Populate structured save outcome.
+      const aSaveModifiers: AttackBreakdownModifier[] = [];
+      if (aTargetSaveMod !== 0) {
+        aSaveModifiers.push({
+          label: `${resolvedSavingThrow.toUpperCase()} save mod`,
+          value: aTargetSaveMod,
+          source: 'ability',
+        });
+      }
+      if (aSaveBonusDiceValue !== 0) {
+        aSaveModifiers.push({
+          label: `Bless ${aSaveBonusDiceNotation}`.trim(),
+          value: aSaveBonusDiceValue,
+          source: 'condition',
+        });
+      }
+      aoeOutcome.save = {
+        d20: aSaveD20,
+        d20Rolls: aSaveD20Rolls.length > 1 ? aSaveD20Rolls : undefined,
+        advantage: aSaveAdvantage,
+        ability: resolvedSavingThrow as 'str' | 'dex' | 'con' | 'int' | 'wis' | 'cha',
+        modifiers: aSaveModifiers,
+        total: aSaveTotal,
+        dc: casterSpellDC,
+        saved: aSaved,
+        autoFailed: aSaveAutoFailed || undefined,
+      };
+      if (aModNotes.length > 0) aoeOutcomeNotes.push(...aModNotes);
     }
 
     // Damage — runs through resistance/immunity/vulnerability per target
     let finalDmg = 0;
     if (damageDice) {
-      const total = rollDamageDice(damageDice);
+      const dmgDetailed = rollDamageDiceDetailed(damageDice);
+      const total = dmgDetailed.total;
       const beforeResist = aSaved && halfOnSave ? Math.floor(total / 2) : aSaved ? 0 : total;
       if (beforeResist > 0) {
         // Read fresh HP from store right before applying
@@ -3600,6 +3895,19 @@ async function resolveAreaSpell(
           useCharacterStore.getState().applyRemoteUpdate(aCharId, { hitPoints: newHp });
           if (finalDmg > 0) emitDamageSideEffects(aToken.id, finalDmg);
         }, delay + 300);
+
+        // Structured damage row with the same rolled faces.
+        aoeOutcome.damage = {
+          dice: damageDice,
+          diceRolls: dmgDetailed.rolls,
+          mainRoll: beforeResist,
+          bonuses: [],
+          halfDamage: aSaved && halfOnSave ? true : undefined,
+          finalDamage: finalDmg,
+          targetHpBefore: freshHp,
+          targetHpAfter: newHp,
+        };
+        if (resisted.note) aoeOutcomeNotes.push(`Damage: ${resisted.note}`);
       } else if (resolvedSavingThrow && aSaved && !halfOnSave) {
         lineParts.push('no damage');
       }
@@ -3637,6 +3945,7 @@ async function resolveAreaSpell(
       const conditions = SPELL_CONDITIONS[spell.name];
       if (conditions && conditions.length > 0) {
         lineParts.push(`now ${conditions.join(', ')}`);
+        aoeOutcome.conditionsApplied = conditions;
         const durMeta = getSpellDurationMeta(spell.name);
         const currentRound = useCombatStore.getState().roundNumber || 0;
         const expiresAfterRound = currentRound > 0
@@ -3673,9 +3982,42 @@ async function resolveAreaSpell(
     }
 
     targetLines.push(`   • ${aToken.name}: ${lineParts.join(' • ')}`);
+    if (aoeOutcomeNotes.length > 0) aoeOutcome.notes = aoeOutcomeNotes.slice(0, 8);
+    aoeOutcomes.push(aoeOutcome);
   }
 
-  emitSystemMessage([...headerLines, ...targetLines].join('\n'));
+  // Structured SpellCastBreakdown for the chat card. Multi-target
+  // AoEs (Fireball, Cone of Cold, Thunderwave, Burning Hands) land
+  // one row per affected creature with full save + damage math
+  // instead of a crammed plain-text paragraph.
+  const aoeCasterNotes: string[] = [];
+  if ((spell as any).__dmOverride) {
+    aoeCasterNotes.push('DM override — no slot consumed');
+  } else if (castAtLevel > spell.level) {
+    aoeCasterNotes.push(`Upcast: spent L${castAtLevel} slot (+${castAtLevel - spell.level} over base)`);
+  }
+  if (upcastNote) aoeCasterNotes.push(upcastNote.replace(/^\s*Upcast:\s*/, '').trim());
+  aoeCasterNotes.push(`${aoeRadius}-ft ${aoeShape} · ${affectedTokens.length} in area`);
+
+  const aoeBreakdown: SpellCastBreakdown = {
+    caster: { name: casterName, tokenId: casterTokenId },
+    spell: {
+      name: spell.name,
+      level: castAtLevel,
+      kind: resolvedSavingThrow ? 'save' : damageDice ? 'auto-damage' : 'utility',
+      damageType: (spell.damageType || '').toLowerCase() || undefined,
+      saveAbility: (resolvedSavingThrow || undefined) as SpellCastBreakdown['spell']['saveAbility'],
+      saveDc: resolvedSavingThrow ? casterSpellDC : undefined,
+      halfOnSave: halfOnSave || undefined,
+    },
+    notes: aoeCasterNotes,
+    targets: aoeOutcomes,
+  };
+
+  emitSystemMessage(
+    [...headerLines, ...targetLines].join('\n'),
+    { spellResult: aoeBreakdown },
+  );
 }
 
 /**

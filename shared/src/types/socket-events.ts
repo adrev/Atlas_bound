@@ -5,7 +5,7 @@ import type {
   Token, WallSegment, FogPolygon, Condition, MapPing, MapSummary, MapZone,
 } from './map.js';
 import type { Combatant, ActionType, InitiativeRollResult, SpellCastEvent, ActionEconomy } from './combat.js';
-import type { ChatMessage, DiceRollData, AttackBreakdown } from './chat.js';
+import type { ChatMessage, DiceRollData, AttackBreakdown, SpellCastBreakdown } from './chat.js';
 import type { Drawing, DrawingStreamPayload } from './drawing.js';
 
 /** Payload for socket events that carry no data. Typed as an empty
@@ -257,6 +257,9 @@ export interface ClientChatEvents {
     /** Optional structured attack breakdown accompanying a system-type
      *  message; rendered as a per-source modifier breakdown card. */
     attackResult?: AttackBreakdown;
+    /** Optional structured spell-cast breakdown with per-target
+     *  outcomes (attack/save/heal/damage/buff). */
+    spellResult?: SpellCastBreakdown;
   };
   'chat:whisper': { targetUserId: string; content: string };
   /**

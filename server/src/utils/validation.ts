@@ -497,14 +497,93 @@ export const attackBreakdownSchema = z.object({
   shieldSpell: z.enum(['miss', 'still-hit']).optional(),
 });
 
+/**
+ * Per-target outcome inside a spell cast. Discriminated by `kind` so
+ * Zod can validate only the relevant sub-fields for each outcome.
+ */
+const spellTargetOutcomeSchema = z.object({
+  name: z.string().min(1).max(100),
+  tokenId: z.string().max(100).optional(),
+  kind: z.enum(['attack', 'save', 'heal', 'damage-flat', 'buff', 'utility']),
+  attack: z.object({
+    d20: z.number().int().min(0).max(40),
+    d20Rolls: z.array(z.number().int().min(0).max(40)).max(4).optional(),
+    advantage: z.enum(['normal', 'advantage', 'disadvantage']),
+    modifiers: z.array(attackBreakdownModifierSchema).max(16),
+    total: z.number().int().min(-20).max(99),
+    targetAc: z.number().int().min(0).max(99),
+    baseAc: z.number().int().min(0).max(99).optional(),
+    acNotes: z.array(z.string().max(80)).max(12).optional(),
+    hitResult: z.enum(['hit', 'miss', 'crit', 'fumble']),
+  }).optional(),
+  save: z.object({
+    d20: z.number().int().min(0).max(40),
+    d20Rolls: z.array(z.number().int().min(0).max(40)).max(4).optional(),
+    advantage: z.enum(['normal', 'advantage', 'disadvantage']),
+    ability: z.enum(['str', 'dex', 'con', 'int', 'wis', 'cha']),
+    modifiers: z.array(attackBreakdownModifierSchema).max(16),
+    /** Widened min to -999 so the rollSaveWithModifiers auto-fail
+     *  sentinel (Paralyzed/Stunned/Unconscious) round-trips. */
+    total: z.number().int().min(-1000).max(99),
+    dc: z.number().int().min(0).max(99),
+    saved: z.boolean(),
+    autoFailed: z.boolean().optional(),
+    autoSucceeded: z.boolean().optional(),
+  }).optional(),
+  damage: z.object({
+    dice: z.string().min(1).max(40),
+    diceRolls: z.array(z.number().int().min(0).max(200)).max(40),
+    mainRoll: z.number().int().min(0).max(9999),
+    bonuses: z.array(attackBreakdownDamageSourceSchema).max(12),
+    halfDamage: z.boolean().optional(),
+    finalDamage: z.number().int().min(0).max(9999),
+    targetHpBefore: z.number().int().min(-9999).max(9999),
+    targetHpAfter: z.number().int().min(-9999).max(9999),
+  }).optional(),
+  healing: z.object({
+    dice: z.string().min(1).max(40),
+    diceRolls: z.array(z.number().int().min(0).max(200)).max(40),
+    mainRoll: z.number().int().min(0).max(9999),
+    targetHpBefore: z.number().int().min(-9999).max(9999),
+    targetHpAfter: z.number().int().min(-9999).max(9999),
+  }).optional(),
+  conditionsApplied: z.array(z.string().max(40)).max(16).optional(),
+  notes: z.array(z.string().max(120)).max(8).optional(),
+});
+
+export const spellCastBreakdownSchema = z.object({
+  caster: z.object({
+    name: z.string().min(1).max(100),
+    tokenId: z.string().max(100).optional(),
+  }),
+  spell: z.object({
+    name: z.string().min(1).max(100),
+    level: z.number().int().min(0).max(9),
+    kind: z.enum(['attack', 'save', 'auto-damage', 'heal', 'utility']),
+    damageType: z.string().max(40).optional(),
+    saveAbility: z.enum(['str', 'dex', 'con', 'int', 'wis', 'cha']).optional(),
+    saveDc: z.number().int().min(0).max(99).optional(),
+    halfOnSave: z.boolean().optional(),
+    spellAttackBonus: z.number().int().min(-20).max(40).optional(),
+  }),
+  notes: z.array(z.string().max(120)).max(16),
+  /** Up to 20 targets — covers AoE spells (Fireball = typical 6,
+   *  Meteor Swarm = 4 spheres of 20 ft radius each, Circle of Death
+   *  = 60 ft sphere). Past 20 the UI squeezes unreadably anyway. */
+  targets: z.array(spellTargetOutcomeSchema).max(20),
+});
+
 export const chatMessageSchema = z.object({
   type: z.enum(['ic', 'ooc', 'system']),
   content: z.string().min(1).max(2000),
   characterName: z.string().max(100).optional(),
   /** Optional structured attack breakdown — accompanies a system-type
-   *  message emitted by the attack resolver; persisted in
-   *  chat_messages.attack_result and echoed back on history load. */
+   *  message emitted by the weapon / creature-action resolver. */
   attackResult: attackBreakdownSchema.optional(),
+  /** Optional structured spell-cast breakdown — accompanies a
+   *  system-type message emitted by the spell resolver. Carries
+   *  per-target outcomes for attack/save/heal/damage/buff kinds. */
+  spellResult: spellCastBreakdownSchema.optional(),
 });
 
 export const chatWhisperSchema = z.object({

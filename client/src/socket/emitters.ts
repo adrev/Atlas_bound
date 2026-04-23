@@ -542,13 +542,27 @@ export function startPhysicalRoll(notation: string, reason?: string, hidden?: bo
  */
 export function emitSystemMessage(
   content: string,
-  attackResult?: import('@dnd-vtt/shared').AttackBreakdown,
+  structured?: {
+    attackResult?: import('@dnd-vtt/shared').AttackBreakdown;
+    spellResult?: import('@dnd-vtt/shared').SpellCastBreakdown;
+  } | import('@dnd-vtt/shared').AttackBreakdown,
 ) {
-  if (attackResult) {
-    getSocket().emit('chat:message', { type: 'system', content, attackResult });
-  } else {
-    getSocket().emit('chat:message', { type: 'system', content });
+  // Backwards-compat: the weapon resolver still passes a bare
+  // AttackBreakdown as the second arg. Detect that shape by the
+  // presence of `attackRoll`, otherwise treat as the structured bag.
+  const payload: {
+    type: 'system';
+    content: string;
+    attackResult?: import('@dnd-vtt/shared').AttackBreakdown;
+    spellResult?: import('@dnd-vtt/shared').SpellCastBreakdown;
+  } = { type: 'system', content };
+  if (structured && 'attackRoll' in structured) {
+    payload.attackResult = structured as import('@dnd-vtt/shared').AttackBreakdown;
+  } else if (structured) {
+    if (structured.attackResult) payload.attackResult = structured.attackResult;
+    if (structured.spellResult) payload.spellResult = structured.spellResult;
   }
+  getSocket().emit('chat:message', payload);
 }
 
 // --- Drawings (DM / player map annotations) ---

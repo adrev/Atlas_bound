@@ -263,6 +263,14 @@ export async function initDatabase(): Promise<void> {
     -- reads it — no server-side queries need individual fields.
     ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS attack_result TEXT;
 
+    -- spell_result is the spell-cast equivalent of attack_result.
+    -- JSON blob shaped like SpellCastBreakdown with one row per
+    -- target (attack/save/heal/damage/buff), so the SpellCastCard
+    -- can render every modifier + save + damage source for spells
+    -- like Fireball / Eldritch Blast / Hypnotic Pattern / Cure
+    -- Wounds. Added 2026-04-23 alongside the attack breakdown.
+    ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS spell_result TEXT;
+
     CREATE INDEX IF NOT EXISTS idx_chat_messages_session
       ON chat_messages(session_id, created_at);
 

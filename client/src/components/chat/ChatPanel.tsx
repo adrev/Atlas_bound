@@ -5,6 +5,7 @@ import { getSocket } from '../../socket/client';
 import { ChatInput } from './ChatInput';
 import { DiceRollCard } from './DiceRollCard';
 import { AttackResultCard } from './AttackResultCard';
+import { SpellCastCard } from './SpellCastCard';
 import type { ChatMessage } from '@dnd-vtt/shared';
 import { theme } from '../../styles/theme';
 
@@ -105,8 +106,13 @@ function MessageBubble({ message }: { message: ChatMessage }) {
         // per-source damage, resistances, and HP delta as a card so the
         // DM can verify the math. Falls through to the plain-text
         // renderer below when attackResult is absent (older messages,
-        // non-attack system events like spell results, !xp, etc.).
+        // non-attack system events like !xp, etc.).
         <AttackResultCard result={message.attackResult} />
+      ) : message.type === 'system' && message.spellResult ? (
+        // Structured spell-cast breakdown — per-target attack/save/heal
+        // rows with every modifier and damage source itemised. Used for
+        // Fireball, Cure Wounds, Eldritch Blast, Hypnotic Pattern, etc.
+        <SpellCastCard result={message.spellResult} />
       ) : message.type === 'system' ? (
         // System messages support multi-line content with explicit \n
         <div style={{ whiteSpace: 'pre-wrap', lineHeight: 1.5 }}>{message.content}</div>
