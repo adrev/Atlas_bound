@@ -36,7 +36,10 @@ STYLE_SUFFIX = (
     "cinematic, 4k, highly detailed"
 )
 
-NEGATIVE = "text, watermark, signature, logo, ugly, deformed, blurry, lowres, extra limbs"
+NEGATIVE_SUFFIX = (
+    " (avoid text, watermarks, signatures, logos, extra limbs, "
+    "deformed anatomy, blurriness, lowres)"
+)
 
 
 def build_pipe() -> Flux2Pipeline:
@@ -56,12 +59,16 @@ def build_pipe() -> Flux2Pipeline:
 
 
 def generate(pipe: Flux2Pipeline, prompt: str, out: Path, seed: int = 42) -> None:
-    """Generate a single 512x512 image and save to `out`."""
+    """Generate a single 512x512 image and save to `out`.
+
+    FLUX.2 has no `negative_prompt` kwarg, so we inline the exclusions
+    as a trailing parenthetical on the positive prompt — empirically
+    comparable guidance with none of the TypeError.
+    """
     out.parent.mkdir(parents=True, exist_ok=True)
     generator = torch.Generator("cuda").manual_seed(seed)
     image = pipe(
-        prompt=prompt + STYLE_SUFFIX,
-        negative_prompt=NEGATIVE,
+        prompt=prompt + STYLE_SUFFIX + NEGATIVE_SUFFIX,
         height=512,
         width=512,
         num_inference_steps=28,
@@ -117,7 +124,7 @@ def main() -> int:
 
     manifest = json.loads(prompts_path.read_text())
     allowed_categories = set(args.categories) if args.categories else {
-        "backgrounds", "feats", "conditions", "rules",
+        "backgrounds", "feats", "conditions", "rules", "races",
     }
     allowed_slugs = set(args.only) if args.only else None
 
