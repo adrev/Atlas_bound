@@ -52,13 +52,22 @@ export const useCharacterStore = create<CharacterState & CharacterActions>(
 
     applyRemoteUpdate: (characterId, changes) =>
       set((state) => {
-        const existing = state.allCharacters[characterId];
+        // Base record preference:
+        //   1. allCharacters[id] — the canonical shared record
+        //   2. myCharacter if it matches — used to be silently dropped
+        //      when the player's own char wasn't yet mirrored into
+        //      allCharacters (the usual cause of "HP updates in the
+        //      character sheet but not on the map token" — the map
+        //      token's HP bar reads from allCharacters).
+        const fromAll = state.allCharacters[characterId];
+        const fromMine =
+          state.myCharacter?.id === characterId ? state.myCharacter : null;
+        const existing = fromAll ?? fromMine;
         if (!existing) return {};
         const updated = { ...existing, ...changes } as Character;
         const result: Partial<CharacterState> = {
           allCharacters: { ...state.allCharacters, [characterId]: updated },
         };
-        // If the updated character is our own, also update myCharacter
         if (state.myCharacter?.id === characterId) {
           result.myCharacter = updated;
         }
