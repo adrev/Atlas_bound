@@ -3,7 +3,7 @@ import { useMapStore } from '../../stores/useMapStore';
 import { useSessionStore } from '../../stores/useSessionStore';
 import { emitTokenAdd } from '../../socket/emitters';
 import { theme } from '../../styles/theme';
-import type { CompendiumMonster } from '@dnd-vtt/shared';
+import type { CompendiumMonster, Condition } from '@dnd-vtt/shared';
 import { getCreatureImageUrl, getCreatureImageSvgUrl, getCreatureIconUrl } from '../../utils/compendiumIcons';
 import { splitCommaList, accentForSense, accentForLanguage, SENSE_LANG_CHIP_BASE } from '../../utils/senseLanguageChips';
 
@@ -299,6 +299,32 @@ export function CreatureLibrary() {
       const tokenX = dropPos?.x ?? currentMap.width / 2;
       const tokenY = dropPos?.y ?? currentMap.height / 2;
 
+      // Detect "innately invisible" creatures (Invisible Stalker,
+      // Will-o'-Wisp on its invisible mode, etc.). The matcher looks for
+      // an Invisibility-named trait OR a trait description that
+      // explicitly says the creature is invisible at all times.
+      // Players have a per-token visible filter, but a creature that's
+      // only visible because we never flipped the `invisible` condition
+      // wouldn't hit that filter — so the token would render fully for
+      // a player even though the monster is supposed to be unseen. The
+      // fix is to start those tokens with the `invisible` condition
+      // pre-applied; the DM can still clear it when the party tries to
+      // spot the creature.
+      const specials = monster.specialAbilities ?? [];
+      const hasInvisibilityTrait = specials.some((sa) => {
+        const name = (sa?.name ?? '').toLowerCase();
+        const desc = (sa?.desc ?? '').toLowerCase();
+        if (name.includes('invisibility') || name === 'incorporeal movement' && desc.includes('invisible')) return true;
+        // Heuristic: trait body says the creature is invisible at-will
+        // or at all times, rather than as an activated ability.
+        return (
+          desc.includes('is invisible') ||
+          desc.includes('remains invisible') ||
+          /invisible\s+(while|when|at all times|until)/.test(desc)
+        );
+      });
+      const initialConditions: Condition[] = hasInvisibilityTrait ? ['invisible'] : [];
+
       try {
         // Create character record from compendium data
         const resp = await fetch('/api/characters', {
@@ -346,7 +372,7 @@ export function CreatureLibrary() {
           lightRadius: 140,
           lightDimRadius: 280,
           lightColor: '#ffcc66',
-          conditions: [],
+          conditions: initialConditions,
           ownerUserId: null,
           faction: 'hostile',
         });
@@ -367,7 +393,7 @@ export function CreatureLibrary() {
           lightRadius: 140,
           lightDimRadius: 280,
           lightColor: '#ffcc66',
-          conditions: [],
+          conditions: initialConditions,
           ownerUserId: null,
           faction: 'hostile',
         });
