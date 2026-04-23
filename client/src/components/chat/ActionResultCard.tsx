@@ -51,7 +51,7 @@ export function ActionResultCard({ result }: { result: ActionBreakdown }) {
         <span style={{ fontSize: 14, fontWeight: 700, color: theme.text.primary }}>
           {icon} {result.actor.name}
         </span>
-        <span style={{ fontSize: 11, color: theme.text.muted }}>\u2192</span>
+        <span style={{ fontSize: 11, color: theme.text.muted }}>→</span>
         <span style={{
           fontSize: 12, fontWeight: 700, color: accent,
           fontFamily: theme.font.display, letterSpacing: '0.04em',
@@ -91,7 +91,7 @@ export function ActionResultCard({ result }: { result: ActionBreakdown }) {
         <ul style={{ margin: '6px 0 0', padding: 0, listStyle: 'none' }}>
           {result.notes.map((n, i) => (
             <li key={i} style={{ fontSize: 10, color: theme.text.muted, padding: '1px 0' }}>
-              \u2022 {n}
+              • {n}
             </li>
           ))}
         </ul>
@@ -123,7 +123,7 @@ function TargetRow({
       </span>
       {target.effect && (
         <span style={{ fontSize: 10, color: theme.text.secondary, fontStyle: 'italic' }}>
-          \u2014 {target.effect}
+          — {target.effect}
         </span>
       )}
       <span style={{ flex: 1 }} />
@@ -135,7 +135,7 @@ function TargetRow({
           <span style={{ color: theme.text.muted }}>{target.damage.damageType}</span>
           {target.damage.hpAfter != null && (
             <span style={{ color: theme.text.muted, marginLeft: 4 }}>
-              (HP {target.damage.hpBefore ?? '?'}\u2192
+              (HP {target.damage.hpBefore ?? '?'}→
               <strong style={{ color: target.damage.hpAfter === 0 ? '#e74c3c' : theme.text.primary }}>
                 {target.damage.hpAfter}
               </strong>)
@@ -150,7 +150,7 @@ function TargetRow({
           </span>
           {target.healing.hpAfter != null && (
             <span style={{ color: theme.text.muted, marginLeft: 4 }}>
-              ({target.healing.hpBefore ?? '?'}\u2192<strong style={{ color: theme.text.primary }}>{target.healing.hpAfter}</strong>)
+              ({target.healing.hpBefore ?? '?'}→<strong style={{ color: theme.text.primary }}>{target.healing.hpAfter}</strong>)
             </span>
           )}
         </span>

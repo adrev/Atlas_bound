@@ -61,7 +61,7 @@ export function SpellCastCard({ result }: { result: SpellCastBreakdown }) {
       {/* Header: caster casts SPELL */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4, flexWrap: 'wrap' }}>
         <span style={{ fontSize: 14, fontWeight: 700, color: theme.text.primary }}>
-          \uD83D\uDD2E {result.caster.name}
+          🔮 {result.caster.name}
         </span>
         <span style={{ fontSize: 11, color: theme.text.muted }}>casts</span>
         <span style={{
@@ -94,7 +94,7 @@ export function SpellCastCard({ result }: { result: SpellCastBreakdown }) {
                 fontSize: 10, color: theme.text.secondary,
                 fontStyle: 'italic', padding: '1px 0',
               }}>
-                \u2022 {n}
+                • {n}
               </li>
             ))}
           </ul>
@@ -232,7 +232,7 @@ function TargetRow({ target, accent }: { target: SpellTargetOutcome; accent: str
         <ul style={{ margin: '3px 0 0', padding: 0, listStyle: 'none' }}>
           {target.notes.map((n, i) => (
             <li key={i} style={{ fontSize: 10, color: theme.text.muted, padding: '1px 0' }}>
-              \u2022 {n}
+              • {n}
             </li>
           ))}
         </ul>
@@ -260,7 +260,7 @@ function ModifierList({
             display: 'flex', alignItems: 'center', gap: 6,
             padding: '1px 0', fontSize: 10,
           }}>
-            <span style={{ fontSize: 8, color: sourceColor(m.source, accent) }}>\u25CF</span>
+            <span style={{ fontSize: 8, color: sourceColor(m.source, accent) }}>●</span>
             <span style={{ flex: 1, color: theme.text.secondary }}>{m.label}</span>
             <span style={{
               fontFamily: 'monospace', fontWeight: 700,
@@ -293,7 +293,7 @@ function DamageBlock({ damage }: { damage: NonNullable<SpellTargetOutcome['damag
             [{damage.diceRolls.join(',')}]
           </span>
         )}
-        <span style={{ color: theme.text.muted }}>\u2192</span>
+        <span style={{ color: theme.text.muted }}>→</span>
         <span style={{ color: theme.text.primary, fontWeight: 700 }}>
           {damage.mainRoll}
         </span>
@@ -308,7 +308,7 @@ function DamageBlock({ damage }: { damage: NonNullable<SpellTargetOutcome['damag
                 display: 'flex', alignItems: 'center', gap: 4,
                 fontSize: 10, padding: '1px 0',
               }}>
-                <span style={{ color: '#e67e22', fontSize: 8 }}>\u25CF</span>
+                <span style={{ color: '#e67e22', fontSize: 8 }}>●</span>
                 <span style={{ flex: 1, color: theme.text.secondary }}>{b.label}</span>
                 {resisted ? (
                   <span style={{ fontFamily: 'monospace' }}>
@@ -356,7 +356,7 @@ function DamageBlock({ damage }: { damage: NonNullable<SpellTargetOutcome['damag
               <span style={{ flex: 1 }} />
               {hpKnown && (
                 <span style={{ color: theme.text.muted, fontFamily: 'monospace' }}>
-                  HP {damage.targetHpBefore} \u2192 <span style={{
+                  HP {damage.targetHpBefore} → <span style={{
                     color: droppedToZero ? '#e74c3c' : theme.text.primary,
                     fontWeight: 700,
                   }}>{damage.targetHpAfter}</span>
@@ -365,7 +365,7 @@ function DamageBlock({ damage }: { damage: NonNullable<SpellTargetOutcome['damag
             </div>
             {droppedToZero && (
               <div style={{ marginTop: 2, fontSize: 10, fontWeight: 700, color: '#e74c3c' }}>
-                \uD83D\uDC80 DOWN
+                💀 DOWN
               </div>
             )}
           </>
@@ -401,7 +401,7 @@ function HealingBlock({ healing }: { healing: NonNullable<SpellTargetOutcome['he
       <span style={{ flex: 1 }} />
       {hpKnown && (
         <span style={{ color: theme.text.muted, fontFamily: 'monospace' }}>
-          HP {healing.targetHpBefore} \u2192 <strong style={{ color: theme.text.primary }}>{healing.targetHpAfter}</strong>
+          HP {healing.targetHpBefore} → <strong style={{ color: theme.text.primary }}>{healing.targetHpAfter}</strong>
         </span>
       )}
     </div>

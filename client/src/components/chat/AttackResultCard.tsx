@@ -54,13 +54,13 @@ export function AttackResultCard({ result }: { result: AttackBreakdown }) {
       {/* Header: attacker → target | weapon */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6, flexWrap: 'wrap' }}>
         <span style={{ fontSize: 14, fontWeight: 700, color: theme.text.primary }}>
-          \u2694 {result.attacker.name}
+          ⚔ {result.attacker.name}
         </span>
-        <span style={{ fontSize: 11, color: theme.text.muted }}>\u2192</span>
+        <span style={{ fontSize: 11, color: theme.text.muted }}>→</span>
         <span style={{ fontSize: 13, fontWeight: 600, color: theme.text.primary }}>
           {result.target.name}
         </span>
-        <span style={{ fontSize: 10, color: theme.text.muted, marginLeft: 4 }}>\u2022</span>
+        <span style={{ fontSize: 10, color: theme.text.muted, marginLeft: 4 }}>•</span>
         <span style={{ fontSize: 11, color: theme.gold.dim, fontStyle: 'italic' }}>
           {result.weapon.name}
         </span>
@@ -73,7 +73,7 @@ export function AttackResultCard({ result }: { result: AttackBreakdown }) {
           <D20Face value={result.attackRoll.d20} isNat20={result.attackRoll.isCrit} isNat1={result.attackRoll.isFumble} />
           {result.attackRoll.d20Rolls && result.attackRoll.d20Rolls.length > 1 && (
             <span style={{ fontSize: 11, color: theme.text.muted, fontFamily: 'monospace' }}>
-              ({result.attackRoll.advantage === 'advantage' ? 'adv' : 'disadv'}: {result.attackRoll.d20Rolls.join(', ')} \u2192 kept {result.attackRoll.d20})
+              ({result.attackRoll.advantage === 'advantage' ? 'adv' : 'disadv'}: {result.attackRoll.d20Rolls.join(', ')} → kept {result.attackRoll.d20})
             </span>
           )}
         </div>
@@ -198,7 +198,7 @@ export function AttackResultCard({ result }: { result: AttackBreakdown }) {
                   <span style={{ flex: 1 }} />
                   {hpKnown && (
                     <span style={{ fontSize: 11, color: theme.text.muted, fontFamily: 'monospace' }}>
-                      HP {dmg.targetHpBefore} \u2192 <span style={{
+                      HP {dmg.targetHpBefore} → <span style={{
                         color: droppedToZero ? '#e74c3c' : theme.text.primary,
                         fontWeight: 700,
                       }}>{dmg.targetHpAfter}</span>
@@ -207,7 +207,7 @@ export function AttackResultCard({ result }: { result: AttackBreakdown }) {
                 </div>
                 {droppedToZero && (
                   <div style={{ marginTop: 4, fontSize: 11, fontWeight: 700, color: '#e74c3c', letterSpacing: '0.04em' }}>
-                    \uD83D\uDC80 DOWN
+                    💀 DOWN
                   </div>
                 )}
               </>
@@ -233,7 +233,7 @@ export function AttackResultCard({ result }: { result: AttackBreakdown }) {
           <ul style={{ margin: 0, padding: 0, listStyle: 'none' }}>
             {result.notes.map((n, i) => (
               <li key={i} style={{ fontSize: 11, color: theme.text.secondary, padding: '1px 0' }}>
-                \u2022 {n}
+                • {n}
               </li>
             ))}
           </ul>
@@ -246,7 +246,7 @@ export function AttackResultCard({ result }: { result: AttackBreakdown }) {
           marginTop: 4, fontSize: 11, fontStyle: 'italic',
           color: result.shieldSpell === 'miss' ? '#27ae60' : '#e67e22',
         }}>
-          \uD83D\uDEE1 Target cast Shield (+5 AC) \u2014 {
+          🛡 Target cast Shield (+5 AC) — {
             result.shieldSpell === 'miss' ? 'attack now MISSES' : 'still hits'
           }
         </div>
@@ -275,7 +275,7 @@ function ModifierList({ modifiers }: { modifiers: AttackBreakdown['attackRoll'][
   if (modifiers.length === 0) {
     return (
       <div style={{ fontSize: 11, color: theme.text.muted, fontStyle: 'italic' }}>
-        (no modifiers \u2014 straight d20)
+        (no modifiers — straight d20)
       </div>
     );
   }
@@ -289,7 +289,7 @@ function ModifierList({ modifiers }: { modifiers: AttackBreakdown['attackRoll'][
             display: 'flex', alignItems: 'center', gap: 6,
             padding: '2px 0', fontSize: 11,
           }}>
-            <span style={{ fontSize: 10, color: sourceColor(m.source) }}>\u25CF</span>
+            <span style={{ fontSize: 10, color: sourceColor(m.source) }}>●</span>
             <span style={{ flex: 1, color: theme.text.secondary }}>{m.label}</span>
             <span style={{
               fontFamily: 'monospace', fontWeight: 700,
@@ -314,12 +314,12 @@ function DamageBonusList({ bonuses }: { bonuses: AttackBreakdown['damage'] exten
             display: 'flex', alignItems: 'center', gap: 6,
             padding: '2px 0', fontSize: 11,
           }}>
-            <span style={{ fontSize: 10, color: '#e67e22' }}>\u25CF</span>
+            <span style={{ fontSize: 10, color: '#e67e22' }}>●</span>
             <span style={{ flex: 1, color: theme.text.secondary }}>{b.label}</span>
             {resisted ? (
               <span style={{ fontFamily: 'monospace' }}>
                 <span style={{ color: theme.text.muted, textDecoration: 'line-through' }}>{b.amount}</span>
-                {' '}\u2192{' '}
+                {' → '}
                 <span style={{ fontWeight: 700, color: '#e67e22' }}>{b.resisted}</span>
                 <span style={{ fontSize: 9, color: theme.text.muted, marginLeft: 4 }}>
                   {b.damageType}

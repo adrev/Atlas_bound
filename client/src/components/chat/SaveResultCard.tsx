@@ -78,7 +78,7 @@ export function SaveResultCard({ result }: { result: SaveBreakdown }) {
         <span style={{ fontSize: 14, fontWeight: 700, color: theme.text.primary }}>
           {icon} {result.roller.name}
         </span>
-        <span style={{ fontSize: 11, color: theme.text.muted }}>\u2014</span>
+        <span style={{ fontSize: 11, color: theme.text.muted }}>—</span>
         <span style={{ fontSize: 11, color: theme.gold.dim, fontStyle: 'italic' }}>
           {result.context}
         </span>
@@ -95,7 +95,7 @@ export function SaveResultCard({ result }: { result: SaveBreakdown }) {
         />
         {result.d20Rolls && result.d20Rolls.length > 1 && (
           <span style={{ fontSize: 10, color: theme.text.muted, fontFamily: 'monospace' }}>
-            ({result.advantage === 'advantage' ? 'adv' : 'disadv'}: {result.d20Rolls.join(', ')} \u2192 kept {result.d20})
+            ({result.advantage === 'advantage' ? 'adv' : 'disadv'}: {result.d20Rolls.join(', ')} → kept {result.d20})
           </span>
         )}
       </div>
@@ -110,7 +110,7 @@ export function SaveResultCard({ result }: { result: SaveBreakdown }) {
                 display: 'flex', alignItems: 'center', gap: 6,
                 padding: '2px 0', fontSize: 11,
               }}>
-                <span style={{ fontSize: 9, color: accent }}>\u25CF</span>
+                <span style={{ fontSize: 9, color: accent }}>●</span>
                 <span style={{ flex: 1, color: theme.text.secondary }}>{m.label}</span>
                 <span style={{
                   fontFamily: 'monospace', fontWeight: 700,
@@ -185,8 +185,8 @@ export function SaveResultCard({ result }: { result: SaveBreakdown }) {
           fontSize: 11, color: theme.text.secondary,
         }}>
           {result.concentration.dropped
-            ? <span>\u26A1 Concentration on <strong>{result.concentration.spellName}</strong> dropped ({result.concentration.damageAmount} damage taken).</span>
-            : <span>\uD83C\uDFAF Concentration on <strong>{result.concentration.spellName}</strong> maintained ({result.concentration.damageAmount} damage taken).</span>}
+            ? <span>⚡ Concentration on <strong>{result.concentration.spellName}</strong> dropped ({result.concentration.damageAmount} damage taken).</span>
+            : <span>🎯 Concentration on <strong>{result.concentration.spellName}</strong> maintained ({result.concentration.damageAmount} damage taken).</span>}
           {result.concentration.warCaster && (
             <span style={{ marginLeft: 6, color: theme.gold.dim, fontStyle: 'italic' }}>
               (War Caster adv.)
@@ -200,7 +200,7 @@ export function SaveResultCard({ result }: { result: SaveBreakdown }) {
         <ul style={{ margin: '4px 0 0', padding: 0, listStyle: 'none' }}>
           {result.notes.map((n, i) => (
             <li key={i} style={{ fontSize: 10, color: theme.text.muted, padding: '1px 0' }}>
-              \u2022 {n}
+              • {n}
             </li>
           ))}
         </ul>
