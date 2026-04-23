@@ -456,6 +456,11 @@ export const PSEUDO_CONDITION_EFFECTS: Record<string, ConditionEffect> = {
     color: '#9b59b6',
     notes: ['Holds a Bardic Inspiration die (spend to add to attack / save / check)'],
   },
+  'alacrity-buffed': {
+    name: 'alacrity-buffed',
+    color: '#f39c12',
+    notes: ['Gift of Alacrity — +1d8 on initiative rolls (8 hr concentration)'],
+  },
   protected: {
     name: 'protected',
     color: '#34495e',

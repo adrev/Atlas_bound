@@ -567,6 +567,88 @@ async function handleDeathWard(c: ChatCommandContext): Promise<boolean> {
   return true;
 }
 
+// ────── Gift of Alacrity (Graviturgy Wizard L2) ────
+/**
+ * Gift of Alacrity — Graviturgy Wizard EGtW L2 spell. Concentration,
+ * 8 hours. Target's initiative rolls gain **+1d8**. Applies as a
+ * pseudo-condition `alacrity-buffed` on the target so the combat-
+ * start initiative pass can detect it, roll the d8, and add the
+ * bonus as its own breakdown line.
+ *
+ *   !alacrity <target>          apply the bonus (consumes concentration)
+ *   !alacrity clear <target>    lift the buff (e.g. caster dropped concentration)
+ */
+async function handleAlacrity(c: ChatCommandContext): Promise<boolean> {
+  const parts = c.rest.split(/\s+/).filter(Boolean);
+  const isClear = parts[0]?.toLowerCase() === 'clear' || parts[0]?.toLowerCase() === 'end';
+  const targetName = isClear ? parts.slice(1).join(' ') : parts.join(' ');
+  if (!targetName) {
+    whisperToCaller(
+      c.io, c.ctx,
+      '!alacrity: usage `!alacrity <target>` | `!alacrity clear <target>`',
+    );
+    return true;
+  }
+  const target = resolveTargetByName(c.ctx, targetName);
+  if (!target) {
+    whisperToCaller(c.io, c.ctx, `!alacrity: no token named "${targetName}".`);
+    return true;
+  }
+  const loaded = await loadCaster(c, 'alacrity');
+  if (!loaded) return true;
+
+  if (isClear) {
+    ConditionService.removeCondition(c.ctx.room.sessionId, target.id, 'alacrity-buffed');
+    c.io.to(c.ctx.room.sessionId).emit('map:token-updated', {
+      tokenId: target.id,
+      changes: tokenConditionChanges(c.ctx.room, target.id),
+    });
+    broadcastSystem(
+      c.io, c.ctx,
+      `⏳ **Gift of Alacrity** ends on ${target.name}.`,
+    );
+    return true;
+  }
+
+  const currentRound = c.ctx.room.combatState?.roundNumber ?? 0;
+  ConditionService.applyConditionWithMeta(c.ctx.room.sessionId, target.id, {
+    name: 'alacrity-buffed',
+    // `source` matches the spellName passed by `concentration:dropped`
+    // so the caster dropping concentration auto-clears this buff from
+    // every affected target via ConditionService.clearConcentration-
+    // Conditions. Must be just the spell name, not "Caster (spell)".
+    source: 'Gift of Alacrity',
+    casterTokenId: loaded.caller.id,
+    appliedRound: currentRound,
+    // 8-hour duration ≈ 4800 rounds; effectively persists until
+    // combat ends or the caster loses concentration.
+    expiresAfterRound: currentRound > 0 ? currentRound + 4800 : undefined,
+  });
+  c.io.to(c.ctx.room.sessionId).emit('map:token-updated', {
+    tokenId: target.id,
+    changes: tokenConditionChanges(c.ctx.room, target.id),
+  });
+  const alacrityBreakdown: SpellCastBreakdown = {
+    caster: { name: loaded.callerName, tokenId: loaded.caller.id },
+    spell: { name: 'Gift of Alacrity', level: 2, kind: 'utility' },
+    notes: [
+      'Graviturgy Wizard L2 (EGtW)',
+      'Concentration, 8 hours',
+      'Target adds +1d8 to initiative rolls while active',
+    ],
+    targets: [{
+      name: target.name, tokenId: target.id, kind: 'buff',
+      conditionsApplied: ['alacrity-buffed'],
+    }],
+  };
+  broadcastSystem(
+    c.io, c.ctx,
+    `⏳ **Gift of Alacrity** (L2, conc 8 hrs) — ${loaded.callerName} empowers ${target.name}: **+1d8** to initiative rolls.`,
+    { spellResult: alacrityBreakdown },
+  );
+  return true;
+}
+
 registerChatCommand('aid', handleAid);
 registerChatCommand('revivify', handleRevivify);
 registerChatCommand(['invisibility', 'invis'], handleInvisibility);
@@ -579,3 +661,4 @@ registerChatCommand(['greaterrestoration', 'gr'], handleGreaterRestoration);
 registerChatCommand('blur', handleBlur);
 registerChatCommand('stoneskin', handleStoneskin);
 registerChatCommand(['deathward', 'dw'], handleDeathWard);
+registerChatCommand(['alacrity', 'giftofalacrity'], handleAlacrity);

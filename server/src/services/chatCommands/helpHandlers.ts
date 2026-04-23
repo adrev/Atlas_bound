@@ -206,6 +206,7 @@ const GROUPS: Array<{ title: string; entries: Entry[] }> = [
       { name: 'blur', usage: '!blur', desc: 'Self-buff: attacks against have disadvantage, 1 min conc.' },
       { name: 'stoneskin', usage: '!stoneskin <target>', desc: 'Resist non-magical BPS, 1 hr conc.' },
       { name: 'deathward', usage: '!deathward <target>', desc: 'First drop to 0 HP becomes 1 HP. 8 hrs.' },
+      { name: 'alacrity', usage: '!alacrity <target> | clear <target>', desc: 'Gift of Alacrity (Graviturgy Wizard L2) — target adds +1d8 to initiative rolls while concentration holds.' },
     ],
   },
   {

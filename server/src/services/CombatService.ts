@@ -551,12 +551,55 @@ export async function startCombatAsync(sessionId: string, tokenIds: string[]): P
       }
     }
 
-    // NPC / unlinked tokens without a character row fall through here
+    // NPC / unlinked tokens without a character row hit this path
     // with an empty modifier list. Add a single DEX=0 line so the
-    // review modal isn't blank for monsters — most NPC monsters roll
-    // init off their DEX mod anyway.
+    // review modal isn't blank for monsters — most NPCs roll init off
+    // their DEX mod, but we don't have that stat on the token. Gets
+    // inserted BEFORE the runtime-buff checks below so the breakdown
+    // reads "DEX (monster) → Alacrity → BI" in a sensible order.
     if (initModifiers.length === 0) {
       initModifiers.push({ label: 'DEX (monster)', value: initBonus, source: 'ability' });
+    }
+
+    // 8. Gift of Alacrity (Graviturgy Wizard L2 spell) — +1d8 to
+    //    initiative rolls while the caster concentrates. Applies to
+    //    any token carrying the `alacrity-buffed` pseudo-condition,
+    //    PC or NPC (the spell doesn't discriminate). Rolls immediately
+    //    so the d8 shows up as its own breakdown line.
+    if ((token.conditions as string[]).includes('alacrity-buffed')) {
+      const alacrityRoll = Math.floor(Math.random() * 8) + 1;
+      initModifiers.push({
+        label: `Gift of Alacrity (1d8=${alacrityRoll})`,
+        value: alacrityRoll,
+        source: 'spell',
+      });
+      initBonus += alacrityRoll;
+    }
+
+    // 9. Bardic Inspiration — recipient holds a BI die (d6/d8/d10/d12)
+    //    that RAW lets them add the rolled value to "one attack roll,
+    //    ability check, or saving throw" within 10 min. Initiative is
+    //    a DEX check, so the die qualifies. We auto-spend it on the
+    //    initiative roll since the player usually wants the bump at
+    //    the start of combat anyway; players who want to save it for
+    //    later should `!unbardic <target> waste` before combat starts.
+    //    Condition metadata source is "d6" / "d8" / "d10" / "d12".
+    if ((token.conditions as string[]).includes('bardic-inspired')) {
+      const meta = room.conditionMeta.get(tokenId)?.get('bardic-inspired');
+      const dieMatch = (meta?.source ?? 'd6').match(/d(\d+)/i);
+      const dieSize = dieMatch ? parseInt(dieMatch[1], 10) : 6;
+      const biRoll = Math.floor(Math.random() * dieSize) + 1;
+      initModifiers.push({
+        label: `Bardic Inspiration (d${dieSize}=${biRoll})`,
+        value: biRoll,
+        source: 'spell',
+      });
+      initBonus += biRoll;
+      // Consume the die — RAW: one use, then it's gone until the
+      // recipient short-rests. Strip the condition and surface the
+      // badge refresh so every client re-renders.
+      const { removeCondition } = await import('./ConditionService.js');
+      removeCondition(sessionId, tokenId, 'bardic-inspired');
     }
 
     combatants.push({
