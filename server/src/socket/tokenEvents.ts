@@ -6,6 +6,7 @@ import pool from '../db/connection.js';
 import {
   getPlayerBySocketId, resolveViewingMapId, socketsOnMap, checkRateLimit,
 } from '../utils/roomState.js';
+import { broadcastEvent } from '../utils/eventBroadcast.js';
 import * as OpportunityAttackService from '../services/OpportunityAttackService.js';
 import {
   tokenMoveSchema, tokenAddSchema, tokenRemoveSchema, tokenUpdateSchema,
@@ -96,10 +97,14 @@ export function registerTokenEvents(io: Server, socket: Socket): void {
 
     await pool.query('UPDATE tokens SET x = $1, y = $2 WHERE id = $3', [x, y, tokenId]);
 
-    const recipients = socketsOnMap(ctx.room, token.mapId);
-    for (const sid of recipients) {
-      io.to(sid).emit('map:token-moved', { tokenId, x, y, mapId: token.mapId });
-    }
+    // Log to the event cursor so a client that missed this frame can
+    // replay it on reconnect. Token id tagged for per-recipient
+    // hidden-token filtering on replay.
+    broadcastEvent(
+      io, ctx.room, 'map:token-moved',
+      { tokenId, x, y, mapId: token.mapId },
+      { tokenId },
+    );
 
     if (ctx.room.combatState?.active) {
       const opportunities = OpportunityAttackService.detectOpportunityAttacks(ctx.room.sessionId, tokenId, oldX, oldY, x, y);
@@ -315,8 +320,11 @@ export function registerTokenEvents(io: Server, socket: Socket): void {
       JSON.stringify(token.conditions), token.ownerUserId, token.faction,
     ]);
 
-    const recipients = socketsOnMap(ctx.room, targetMapId);
-    for (const sid of recipients) io.to(sid).emit('map:token-added', token);
+    broadcastEvent(
+      io, ctx.room, 'map:token-added',
+      token as unknown as Record<string, unknown>,
+      { tokenId },
+    );
   }));
 
   socket.on('map:token-remove', safeHandler(socket, async (data) => {
@@ -366,10 +374,11 @@ export function registerTokenEvents(io: Server, socket: Socket): void {
     // token references stop rendering a dead creature as alive.
     // The `mapId` in the payload lets map-scoped UI decide whether to
     // animate the removal or silently drop it.
-    io.to(ctx.room.sessionId).emit('map:token-removed', {
-      tokenId,
-      ...(tokenMapId ? { mapId: tokenMapId } : {}),
-    });
+    broadcastEvent(
+      io, ctx.room, 'map:token-removed',
+      { tokenId, ...(tokenMapId ? { mapId: tokenMapId } : {}) },
+      { tokenId },
+    );
   }));
 
   socket.on('map:token-update', safeHandler(socket, async (data) => {

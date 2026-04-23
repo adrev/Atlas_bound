@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react';
 import { getSocket, disconnectSocket } from '../socket/client';
 import { registerListeners } from '../socket/listeners';
 import { emitJoinSession } from '../socket/emitters';
+import { pullEventCursor, recordEventId, resetEventCursor } from '../socket/eventCursor';
 
 /**
  * Socket.io connection lifecycle bound to the active session.
@@ -29,6 +30,20 @@ export function useSocket(roomCode: string | undefined) {
 
     const socket = getSocket();
     cleanupRef.current = registerListeners(socket);
+
+    // Event-cursor tracking — capture `_eventId` on every incoming
+    // socket event so we know where we are in the server's event log.
+    // socket.onAny fires for ANY event, including future ones we add
+    // handlers for, so we don't have to keep this list in sync.
+    const onAnyEvent = (_kind: string, payload?: unknown) => {
+      const id = (payload as { _eventId?: number } | undefined)?._eventId;
+      if (typeof id === 'number') recordEventId(id);
+    };
+    socket.onAny(onAnyEvent);
+
+    // Reset the cursor when we first connect to this session — a new
+    // room starts at 0 regardless of what we saw in the last session.
+    resetEventCursor();
 
     socket.connect();
 
@@ -61,6 +76,10 @@ export function useSocket(roomCode: string | undefined) {
       // tolerates duplicates — it just refreshes the RoomPlayer
       // record with the (current) socketId.
       rejoin();
+      // Pull any events we missed while the socket was dead / paused.
+      // Handlers for each event kind are idempotent so re-applying
+      // an event that also arrived live is safe.
+      void pullEventCursor(socket);
     };
     const onVisibility = () => {
       if (document.visibilityState === 'visible') forceResync();
@@ -80,6 +99,13 @@ export function useSocket(roomCode: string | undefined) {
     const keepAliveId = window.setInterval(() => {
       if (!socket.connected) socket.connect();
       rejoin();
+      // Event-cursor delta fetch. Even if the socket has been happily
+      // connected the whole time, we still poll — catches the edge
+      // case where socket.io thought it delivered a frame but the
+      // client actually missed it (e.g. OS tab throttling during a
+      // high-burst turn-change). Bounded cost: one HTTP GET per 30 s
+      // returning an empty array when we're caught up.
+      void pullEventCursor(socket);
     }, 30_000);
 
     return () => {
@@ -89,9 +115,11 @@ export function useSocket(roomCode: string | undefined) {
       }
       socket.off('connect', rejoin);
       socket.io.off('reconnect', rejoin);
+      socket.offAny(onAnyEvent);
       document.removeEventListener('visibilitychange', onVisibility);
       window.removeEventListener('online', onOnline);
       window.clearInterval(keepAliveId);
+      resetEventCursor();
       disconnectSocket();
     };
   }, [roomCode]);

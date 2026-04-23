@@ -2,6 +2,7 @@ import type { Server, Socket } from 'socket.io';
 import { z } from 'zod';
 import pool from '../db/connection.js';
 import { getPlayerBySocketId, playerIsDM } from '../utils/roomState.js';
+import { broadcastEvent } from '../utils/eventBroadcast.js';
 import { dbRowToCharacter } from '../utils/characterMapper.js';
 import { safeHandler } from '../utils/socketHelpers.js';
 
@@ -151,7 +152,19 @@ export function registerCharacterEvents(io: Server, socket: Socket): void {
       await pool.query(`UPDATE characters SET ${setClauses.join(', ')} WHERE id = $${paramIdx}`, params);
     }
 
-    socket.to(ctx.room.sessionId).emit('character:updated', { characterId, changes });
+    // Broadcast via event cursor so missed frames (dead socket,
+    // Cloud Run instance churn) can be replayed on reconnect. The
+    // sender is excluded via socket.to(...) emulation: we still fire
+    // the broadcast room-wide, but the sender already applied the
+    // change optimistically and applyRemoteUpdate is idempotent, so
+    // the echo is harmless. Token id is not tagged because character
+    // updates don't have a single authoritative token (a creature can
+    // share a character record across multiple map instances); the
+    // visibility filter for character data is looser anyway.
+    broadcastEvent(
+      io, ctx.room, 'character:updated',
+      { characterId, changes },
+    );
   }));
 
   socket.on('character:sync-request', safeHandler(socket, async (data) => {

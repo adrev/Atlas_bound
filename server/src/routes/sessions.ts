@@ -908,4 +908,66 @@ router.post('/:id/transfer-ownership', async (req: Request, res: Response) => {
   res.status(204).send();
 });
 
+// ─── Event cursor replay ─────────────────────────────────────────
+//
+// GET /api/sessions/:id/events?since=<id>
+//
+// Returns every event with `id > since` from the room's in-memory
+// event log, filtered for what this user is allowed to see. Clients
+// call this on reconnect + on every periodic keep-alive tick so the
+// "I missed a websocket frame" window can't persist — if their cursor
+// trails the room's, they replay the delta through the same socket
+// listeners and catch up.
+//
+// Events older than the in-memory window (~500 entries, roughly 15
+// min of play) return a 410 with `{ fullResync: true }` — the client
+// reacts by re-firing session:join to pull the current snapshot.
+router.get('/:id/events', async (req: Request, res: Response) => {
+  const userId = getAuthUserId(req);
+  const sessionId = String(req.params.id);
+  const since = Number.parseInt(String(req.query.since ?? '0'), 10);
+  if (!Number.isFinite(since) || since < 0) {
+    res.status(400).json({ error: 'invalid since' });
+    return;
+  }
+
+  await assertSessionMember(sessionId, userId);
+  const room = getRoom(sessionId);
+  if (!room) {
+    res.json({ events: [], latestEventId: 0 });
+    return;
+  }
+
+  // If the caller's cursor is older than the oldest entry we still
+  // have, we can't guarantee a complete replay. Signal a full resync
+  // so the client re-emits session:join and rebuilds its state from
+  // the authoritative map:loaded + combat:state-sync hydration.
+  const oldest = room.eventLog.length > 0 ? room.eventLog[0].id : 0;
+  if (since > 0 && since < oldest - 1) {
+    res.status(410).json({
+      fullResync: true,
+      latestEventId: room.nextEventId,
+      message: 'event cursor fell out of the replay buffer — trigger a full rejoin',
+    });
+    return;
+  }
+
+  // Filter per-recipient. DM sees everything; players drop events
+  // that reference a currently-hidden token so replay doesn't leak
+  // visibility the DM has since hidden.
+  const player = room.players.get(userId);
+  const isDM = player?.role === 'dm';
+  const delta = [];
+  for (const e of room.eventLog) {
+    if (e.id <= since) continue;
+    if (!isDM && e.tokenId) {
+      const tok = room.tokens.get(e.tokenId);
+      if (tok && tok.visible === false) continue;
+    }
+    delta.push(e);
+  }
+
+  res.json({ events: delta, latestEventId: room.nextEventId });
+});
+
 export default router;

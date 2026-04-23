@@ -7,6 +7,7 @@ import {
 import * as CombatService from '../../services/CombatService.js';
 import * as DiceService from '../../services/DiceService.js';
 import * as ConditionService from '../../services/ConditionService.js';
+import { broadcastEvent } from '../../utils/eventBroadcast.js';
 import {
   combatRollInitiativeSchema, combatSetInitiativeSchema,
 } from '../../utils/validation.js';
@@ -134,9 +135,12 @@ export function registerCombatInitiative(io: Server, socket: Socket): void {
       // turn inside a round.
       const preAdvanceRound = state.roundNumber;
 
-      // \u2500\u2500 Phase 2: advance the turn order
+      // ── Phase 2: advance the turn order. Route through the event
+      // cursor — this is the event players missed most often when
+      // their socket was zombied ("DM ended the turn but I never saw
+      // it advance on my end"). Replay on reconnect brings us back.
       const result = CombatService.nextTurn(ctx.room.sessionId);
-      io.to(ctx.room.sessionId).emit('combat:turn-advanced', {
+      broadcastEvent(io, ctx.room, 'combat:turn-advanced', {
         currentTurnIndex: result.currentTurnIndex,
         roundNumber: result.roundNumber,
         actionEconomy: result.actionEconomy,

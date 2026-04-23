@@ -36,11 +36,42 @@ export interface ConditionMetadata {
   endsOnDamage?: boolean;
 }
 
+/**
+ * One entry in the per-room event log. The log is a circular buffer
+ * (bounded to MAX_EVENT_LOG) that records every live broadcast so a
+ * disconnected client can POST /events?since=<id> on reconnect and
+ * replay anything it missed. `payload` is the exact socket.io event
+ * body (same wire shape), `kind` is the socket event name, and `id`
+ * is a monotonic per-room counter that clients track as their
+ * "last seen" cursor.
+ */
+export interface RoomEvent {
+  id: number;
+  kind: string;
+  payload: unknown;
+  ts: number;
+  /** Optional token/character id the event references, used for
+   *  per-recipient filtering on replay (e.g. hidden tokens shouldn't
+   *  leak to players even if they missed the original event). */
+  tokenId?: string | null;
+}
+
+/** Circular buffer size — ~15 minutes of active play at ~30 events/min. */
+export const MAX_EVENT_LOG = 500;
+
 export interface RoomState {
   sessionId: string;
   roomCode: string;
   dmUserId: string;
   players: Map<string, RoomPlayer>;
+  /**
+   * Monotonic event counter for this room's event log. Every
+   * meaningful broadcast bumps it; clients track their last seen
+   * value and can ask for the delta after a socket hiccup.
+   */
+  nextEventId: number;
+  /** Last MAX_EVENT_LOG events, oldest first. */
+  eventLog: RoomEvent[];
   /**
    * All active sockets for each userId — populated by addPlayerToRoom
    * and drained by removeSocketFromRoom. A user with two browser tabs
@@ -241,6 +272,8 @@ export function createRoom(
     roomCode,
     dmUserId,
     players: new Map(),
+    nextEventId: 0,
+    eventLog: [],
     userSockets: new Map(),
     mapGridSizes: new Map(),
     gameMode: 'free-roam',

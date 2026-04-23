@@ -1,6 +1,7 @@
 import { v4 as uuidv4 } from 'uuid';
 import type { Server, Socket } from 'socket.io';
 import { getPlayerBySocketId } from '../../utils/roomState.js';
+import { broadcastEvent } from '../../utils/eventBroadcast.js';
 import * as CombatService from '../../services/CombatService.js';
 import * as DiscordService from '../../services/DiscordService.js';
 import {
@@ -211,7 +212,11 @@ export function registerCombatLifecycle(io: Server, socket: Socket): void {
       // when combat ends so a new combat starts with a clean slate.
       ctx.room.turnHooks.clear();
       ctx.room.roundHooks = [];
-      io.to(ctx.room.sessionId).emit('combat:ended', {});
+      // Route through the event cursor so a player whose socket dropped
+      // mid-combat still catches the end-of-combat transition on the
+      // next resync tick (this was the "players didn't notice combat
+      // ended" desync symptom).
+      broadcastEvent(io, ctx.room, 'combat:ended', {});
       void DiscordService.notifySession(ctx.room.sessionId, {
         title: '\uD83C\uDFF3\uFE0F Combat Ended',
         color: 0x27ae60,
