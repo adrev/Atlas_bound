@@ -6,7 +6,11 @@ import {
 } from '../ChatCommands.js';
 import * as ConditionService from '../ConditionService.js';
 import pool from '../../db/connection.js';
-import type { Token } from '@dnd-vtt/shared';
+import type {
+  Token,
+  SpellCastBreakdown,
+  ActionBreakdown,
+} from '@dnd-vtt/shared';
 import type { PlayerContext } from '../../utils/roomState.js';
 import { tokenConditionChanges } from '../../utils/conditionSources.js';
 
@@ -188,11 +192,13 @@ async function handleHealingLight(c: ChatCommandContext): Promise<boolean> {
   // Apply heal — prefer in-combat combatant lookup so NPC monsters
   // and PCs both work. Fall back to direct characters row when out
   // of combat.
+  let hpBefore = 0;
   let newHp = 0;
   let maxHp = 0;
   const combat = c.ctx.room.combatState;
   const combatant = combat?.combatants.find((x) => x.tokenId === target.id);
   if (combatant) {
+    hpBefore = combatant.hp;
     combatant.hp = Math.min(combatant.maxHp, combatant.hp + total);
     newHp = combatant.hp;
     maxHp = combatant.maxHp;
@@ -212,9 +218,9 @@ async function handleHealingLight(c: ChatCommandContext): Promise<boolean> {
       [target.characterId],
     );
     const trow = trows[0] as Record<string, unknown> | undefined;
-    const curHp = Number(trow?.hit_points) || 0;
+    hpBefore = Number(trow?.hit_points) || 0;
     maxHp = Number(trow?.max_hit_points) || 0;
-    newHp = Math.min(maxHp, curHp + total);
+    newHp = Math.min(maxHp, hpBefore + total);
     await pool.query(
       'UPDATE characters SET hit_points = $1 WHERE id = $2',
       [newHp, target.characterId],
@@ -232,9 +238,38 @@ async function handleHealingLight(c: ChatCommandContext): Promise<boolean> {
     type: 'heal',
   });
 
+  // Structured breakdown — this is a heal feature (Celestial Warlock).
+  // Shows dice rolled, target HP before/after, and pool status in notes.
+  const hlBreakdown: SpellCastBreakdown = {
+    caster: { name: callerName, tokenId: caller.id },
+    spell: {
+      name: `Healing Light (${n}d6)`,
+      level: 0,
+      kind: 'heal',
+    },
+    notes: [
+      `Celestial Warlock class feature (bonus action)`,
+      `Pool: ${pool_.remaining}/${pool_.max} d6 remaining`,
+      `Max dice per spend: ${warlockLvl} (warlock level)`,
+    ],
+    targets: [{
+      name: target.name,
+      tokenId: target.id,
+      kind: 'heal',
+      healing: {
+        dice: `${n}d6`,
+        diceRolls: rolls,
+        mainRoll: total,
+        targetHpBefore: hpBefore,
+        targetHpAfter: newHp,
+      },
+    }],
+  };
+
   broadcastSystem(
     c.io, c.ctx,
     `✨ **Healing Light** — ${callerName} restores ${target.name} for ${n}d6 = [${rolls.join(',')}] = **${total} HP**${maxHp ? ` (${newHp}/${maxHp})` : ''}. Pool ${pool_.remaining}/${pool_.max}.`,
+    { spellResult: hlBreakdown },
   );
   return true;
 }
@@ -496,6 +531,8 @@ async function handleSpiritShield(c: ChatCommandContext): Promise<boolean> {
   const callerName = (row?.name as string) || caller.name;
 
   // Refund HP if target already took the damage and has a PC sheet.
+  let targetHpBefore: number | undefined;
+  let targetHpAfter: number | undefined;
   if (target.characterId && actualReduction > 0) {
     const { rows: trows } = await pool.query(
       'SELECT hit_points, max_hit_points FROM characters WHERE id = $1',
@@ -504,7 +541,9 @@ async function handleSpiritShield(c: ChatCommandContext): Promise<boolean> {
     const trow = trows[0] as Record<string, unknown> | undefined;
     const curHp = Number(trow?.hit_points) || 0;
     const maxHp = Number(trow?.max_hit_points) || 0;
+    targetHpBefore = curHp;
     const newHp = Math.min(maxHp, curHp + actualReduction);
+    targetHpAfter = newHp;
     if (newHp !== curHp) {
       await pool.query(
         'UPDATE characters SET hit_points = $1 WHERE id = $2',
@@ -524,9 +563,39 @@ async function handleSpiritShield(c: ChatCommandContext): Promise<boolean> {
     }
   }
 
+  // Structured breakdown — reactive damage-reduction class feature.
+  // Shows dice rolled, actual reduction clamped against incoming damage,
+  // and the hit-point refund (if any).
+  const ssBreakdown: ActionBreakdown = {
+    actor: { name: callerName, tokenId: caller.id },
+    action: {
+      name: 'Spirit Shield',
+      category: 'class-feature',
+      icon: '🛡',
+      cost: 'Reaction (while Raging)',
+    },
+    effect: `${diceCount}d6 = [${rolls.join(',')}] = ${reduction} damage reduction (clamped to ${actualReduction} vs ${dmg} incoming). ${target.name} takes ${newDmg} instead.`,
+    targets: [{
+      name: target.name,
+      tokenId: target.id,
+      effect: `Damage ${dmg} → ${newDmg} (reduced by ${actualReduction})`,
+      ...(targetHpBefore !== undefined && targetHpAfter !== undefined
+        ? { healing: { amount: actualReduction, hpBefore: targetHpBefore, hpAfter: targetHpAfter } }
+        : {}),
+    }],
+    notes: [
+      `Ancestral Guardian Barbarian L${lvl}`,
+      `Reduction dice: ${diceCount}d6 (2 at L6, 3 at L10, 4 at L14)`,
+      ...(actualReduction < reduction
+        ? [`Over-reduction: rolled ${reduction} but only ${dmg} incoming`]
+        : []),
+    ],
+  };
+
   broadcastSystem(
     c.io, c.ctx,
     `🛡 **Spirit Shield** — ${callerName}'s ancestors intercept! ${diceCount}d6 = [${rolls.join(',')}] = **${reduction}** damage reduction vs ${target.name} (${dmg} → ${newDmg}).`,
+    { actionResult: ssBreakdown },
   );
   return true;
 }
@@ -775,9 +844,39 @@ async function handleMoonDruid(c: ChatCommandContext): Promise<boolean> {
       change: total,
       type: 'heal',
     });
+
+    // Structured breakdown — Combat Wild Shape heal spends a spell slot
+    // for 1d8 per slot level, self-targeted.
+    const cwsBreakdown: SpellCastBreakdown = {
+      caster: { name: callerName, tokenId: caller.id },
+      spell: {
+        name: `Combat Wild Shape Heal (L${slotLvl} slot)`,
+        level: slotLvl,
+        kind: 'heal',
+      },
+      notes: [
+        `Circle of the Moon Druid class feature`,
+        `Bonus action — spent L${slotLvl} spell slot`,
+        `Heal dice: ${slotLvl}d8 (1d8 per slot level)`,
+      ],
+      targets: [{
+        name: callerName,
+        tokenId: caller.id,
+        kind: 'heal',
+        healing: {
+          dice: `${slotLvl}d8`,
+          diceRolls: rolls,
+          mainRoll: total,
+          targetHpBefore: curHp,
+          targetHpAfter: newHp,
+        },
+      }],
+    };
+
     broadcastSystem(
       c.io, c.ctx,
       `🌙 **Combat Wild Shape (Heal)** — ${callerName} burns a L${slotLvl} slot, rolls ${slotLvl}d8 = [${rolls.join(',')}] = **${total} HP** → ${newHp}/${maxHp}.`,
+      { spellResult: cwsBreakdown },
     );
     return true;
   }

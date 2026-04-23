@@ -6,7 +6,7 @@ import {
 } from '../ChatCommands.js';
 import * as ConditionService from '../ConditionService.js';
 import pool from '../../db/connection.js';
-import type { Token } from '@dnd-vtt/shared';
+import type { Token, ActionBreakdown } from '@dnd-vtt/shared';
 import type { PlayerContext } from '../../utils/roomState.js';
 import { tokenConditionChanges } from '../../utils/conditionSources.js';
 
@@ -51,9 +51,25 @@ async function handleSongOfRest(c: ChatCommandContext): Promise<boolean> {
   const die = lvl >= 17 ? 12 : lvl >= 13 ? 10 : lvl >= 9 ? 8 : 6;
   const roll = Math.floor(Math.random() * die) + 1;
   const charName = (row?.name as string) || caller.name;
+  const sorBreakdown: ActionBreakdown = {
+    actor: { name: charName, tokenId: caller.id },
+    action: {
+      name: `Song of Rest (+${roll} per HD)`,
+      category: 'class-feature',
+      icon: '🎵',
+      cost: '1-minute short-rest performance',
+    },
+    effect: `Each ally who spends a Hit Die during this short rest gains **+${roll} (d${die})** HP.`,
+    notes: [
+      `Bard L${lvl}`,
+      `Die: d${die} (L2=d6, L9=d8, L13=d10, L17=d12)`,
+      `Rolled value: ${roll}`,
+    ],
+  };
   broadcastSystem(
     c.io, c.ctx,
     `🎵 ${charName} plays Song of Rest during the short rest — each ally who spends a Hit Die gains +${roll} (d${die}) HP.`,
+    { actionResult: sorBreakdown },
   );
   return true;
 }
@@ -129,9 +145,25 @@ async function handleSurge(c: ChatCommandContext): Promise<boolean> {
   const entry = WILD_MAGIC_TABLE.find((e) => roll >= e.range[0] && roll <= e.range[1]);
   const desc = entry?.desc ?? '(roll off table)';
   const charName = (row?.name as string) || caller.name;
+  const surgeBreakdown: ActionBreakdown = {
+    actor: { name: charName, tokenId: caller.id },
+    action: {
+      name: `Wild Magic Surge (d100 = ${roll})`,
+      category: 'class-feature',
+      icon: '🌪',
+      cost: 'Triggered after L1+ sorcerer spell cast',
+    },
+    effect: desc,
+    notes: [
+      `Wild Magic Sorcerer L1`,
+      `d100 roll: ${roll}`,
+      `Table entry: ${entry?.range[0]}-${entry?.range[1]}`,
+    ],
+  };
   broadcastSystem(
     c.io, c.ctx,
     `🌪 **Wild Magic Surge** — ${charName} rolls d100 = **${roll}**:\n   ${desc}`,
+    { actionResult: surgeBreakdown },
   );
   return true;
 }

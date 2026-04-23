@@ -6,7 +6,7 @@ import {
 } from '../ChatCommands.js';
 import * as ConditionService from '../ConditionService.js';
 import pool from '../../db/connection.js';
-import type { Token } from '@dnd-vtt/shared';
+import type { Token, ActionBreakdown } from '@dnd-vtt/shared';
 import type { PlayerContext } from '../../utils/roomState.js';
 import { tokenConditionChanges } from '../../utils/conditionSources.js';
 
@@ -264,10 +264,15 @@ async function handleBreath(c: ChatCommandContext): Promise<boolean> {
   const callerName = caller?.name || c.ctx.player.displayName;
 
   const lines: string[] = [];
+  const breathTargets: NonNullable<ActionBreakdown['targets']> = [];
   lines.push(`🐲 ${callerName} uses Breath Weapon: ${diceRaw} (${dmgRolls.join('+')} = ${fullDmg}) vs ${ability.toUpperCase()} DC ${dc}`);
   for (const name of parts.slice(1)) {
     const target = resolveTargetByName(c.ctx, name);
-    if (!target) { lines.push(`  • ${name}: not found`); continue; }
+    if (!target) {
+      lines.push(`  • ${name}: not found`);
+      breathTargets.push({ name, effect: 'Token not found' });
+      continue;
+    }
     // Lightweight save roll (no condition adv etc. — the DM can
     // re-roll through !save if they want the full pipeline).
     let saveMod = 0;
@@ -294,8 +299,33 @@ async function handleBreath(c: ChatCommandContext): Promise<boolean> {
     const dmg = saved ? halfDmg : fullDmg;
     const sign = saveMod >= 0 ? '+' : '';
     lines.push(`  • ${tName}: d20=${d20}${sign}${saveMod}=${total} → ${saved ? 'SAVED (half)' : 'FAILED'} — ${dmg} dmg`);
+    breathTargets.push({
+      name: tName,
+      tokenId: target.id,
+      effect: saved
+        ? `SAVED (half): ${ability.toUpperCase()} d20=${d20}${sign}${saveMod}=${total} vs DC ${dc} — ${dmg} damage`
+        : `FAILED: ${ability.toUpperCase()} d20=${d20}${sign}${saveMod}=${total} vs DC ${dc} — ${dmg} damage`,
+      damage: { amount: dmg, damageType: 'breath' },
+    });
   }
-  broadcastSystem(c.io, c.ctx, lines.join('\n'));
+  const breathBreakdown: ActionBreakdown = {
+    actor: { name: callerName, tokenId: caller?.id },
+    action: {
+      name: `Breath Weapon (${diceRaw}, ${ability.toUpperCase()} DC ${dc})`,
+      category: 'racial',
+      icon: '🐲',
+      cost: 'Action (1/short rest)',
+    },
+    effect: `${diceRaw} = ${fullDmg} damage, ${ability.toUpperCase()} save DC ${dc} halves.`,
+    targets: breathTargets,
+    notes: [
+      `Dragonborn racial`,
+      `Damage: ${diceRaw} = [${dmgRolls.join(', ')}] = ${fullDmg} (half = ${halfDmg})`,
+      `Save: ${ability.toUpperCase()} DC ${dc}`,
+      `Shape: 15-ft cone or 5×30-ft line (by ancestry)`,
+    ],
+  };
+  broadcastSystem(c.io, c.ctx, lines.join('\n'), { actionResult: breathBreakdown });
   return true;
 }
 
@@ -334,15 +364,42 @@ async function handleEldritch(c: ChatCommandContext): Promise<boolean> {
   const callerName = caller?.name || c.ctx.player.displayName;
   const lines: string[] = [];
   lines.push(`✨ ${callerName} fires ${bolts} Eldritch Blast beam${bolts === 1 ? '' : 's'}${targetLabel ? ` at ${targetLabel}` : ''}:`);
+  const beamRolls: number[] = [];
+  const beamTotals: number[] = [];
   let total = 0;
   for (let i = 0; i < bolts; i++) {
     const roll = Math.floor(Math.random() * 10) + 1;
     const beam = roll + (cha !== 0 ? cha : 0);
     total += beam;
+    beamRolls.push(roll);
+    beamTotals.push(beam);
     lines.push(`  • beam ${i + 1}: d10=${roll}${cha >= 0 ? '+' : ''}${cha}=${beam} force`);
   }
   lines.push(`  Total: ${total} force${cha !== 0 ? ' (incl. Agonizing Blast)' : ''}. DM: roll to hit for each beam separately.`);
-  broadcastSystem(c.io, c.ctx, lines.join('\n'));
+  const ebBreakdown: ActionBreakdown = {
+    actor: { name: callerName, tokenId: caller?.id },
+    action: {
+      name: `Eldritch Blast (${bolts} beam${bolts === 1 ? '' : 's'}, ${total} force)`,
+      category: 'class-feature',
+      icon: '✨',
+      cost: 'Action (cantrip)',
+    },
+    effect: `${bolts}× 1d10${cha !== 0 ? ` +${cha} (Agonizing Blast)` : ''} force. Total potential damage: **${total}**.`,
+    ...(targetLabel ? {
+      targets: [{
+        name: targetLabel,
+        effect: `${bolts} beams × d10${cha !== 0 ? `+${cha}` : ''} — total ${total} force`,
+      }],
+    } : {}),
+    notes: [
+      `Warlock cantrip`,
+      `Bolts: ${bolts} (1 @ L1, 2 @ L5, 3 @ L11, 4 @ L17)`,
+      `Per-beam: d10 roll + CHA mod (${cha}) = beam damage`,
+      `Rolls: [${beamRolls.join(', ')}] → beams: [${beamTotals.join(', ')}] = ${total}`,
+      ...(cha !== 0 ? ['Agonizing Blast invocation active'] : []),
+    ],
+  };
+  broadcastSystem(c.io, c.ctx, lines.join('\n'), { actionResult: ebBreakdown });
   return true;
 }
 
@@ -447,7 +504,23 @@ async function handleSuperiority(c: ChatCommandContext): Promise<boolean> {
     }
     sup.remaining -= 1;
     const roll = Math.floor(Math.random() * sup.die) + 1;
-    broadcastSystem(c.io, c.ctx, `⚔ ${bm.name} spends a sup die — d${sup.die} = **${roll}**. (${sup.remaining}/${sup.max} left)`);
+    const supBreakdown: ActionBreakdown = {
+      actor: { name: bm.name, tokenId: bm.caller.id },
+      action: {
+        name: `Superiority Die (+${roll})`,
+        category: 'class-feature',
+        icon: '⚔',
+        cost: '1 superiority die',
+      },
+      effect: `Roll d${sup.die} = **${roll}** (apply to a maneuver or other superiority ability).`,
+      notes: [
+        `Battle Master Fighter L${bm.level}`,
+        `Die size: d${sup.die} (L3=d8, L10=d10, L18=d12)`,
+        `Rolled value: ${roll}`,
+        `Dice remaining: ${sup.remaining}/${sup.max}`,
+      ],
+    };
+    broadcastSystem(c.io, c.ctx, `⚔ ${bm.name} spends a sup die — d${sup.die} = **${roll}**. (${sup.remaining}/${sup.max} left)`, { actionResult: supBreakdown });
     return true;
   }
   whisperToCaller(c.io, c.ctx, `!superiority: unknown subcommand "${sub}".`);
@@ -485,7 +558,9 @@ async function handleManeuver(c: ChatCommandContext): Promise<boolean> {
 
   // For save-based maneuvers (trip / pushing / disarming / menacing),
   // auto-roll the target's save if target + DC supplied.
+  const maneuverTargets: NonNullable<ActionBreakdown['targets']> = [];
   const saveMeta = MANEUVER_SAVES[name];
+  let appliedCondition: string | null = null;
   if (saveMeta && parts.length >= 3) {
     const dc = parseInt(parts[parts.length - 1], 10);
     const targetName = parts.slice(1, -1).join(' ');
@@ -526,10 +601,37 @@ async function handleManeuver(c: ChatCommandContext): Promise<boolean> {
           changes: tokenConditionChanges(c.ctx.room, target.id),
         });
         lines.push(`     → ${target.name} is ${saveMeta.on.toUpperCase()}.`);
+        appliedCondition = saveMeta.on;
       }
+      maneuverTargets.push({
+        name: target.name,
+        tokenId: target.id,
+        effect: saved
+          ? `SAVED: ${saveMeta.ability.toUpperCase()} d20=${d20}${sign}${saveMod}=${total} vs DC ${dc}`
+          : `FAILED: ${saveMeta.ability.toUpperCase()} d20=${d20}${sign}${saveMod}=${total} vs DC ${dc}${appliedCondition ? ` — ${appliedCondition}` : ''}`,
+        ...(appliedCondition ? { conditionsApplied: [appliedCondition] } : {}),
+      });
     }
   }
-  broadcastSystem(c.io, c.ctx, lines.join('\n'));
+  const maneuverBreakdown: ActionBreakdown = {
+    actor: { name: bm.name, tokenId: bm.caller.id },
+    action: {
+      name: `${name.charAt(0).toUpperCase() + name.slice(1)} (+${roll})`,
+      category: 'class-feature',
+      icon: '⚔',
+      cost: '1 superiority die',
+    },
+    effect: `${desc}. Sup die d${sup.die} = ${roll}.`,
+    ...(maneuverTargets.length > 0 ? { targets: maneuverTargets } : {}),
+    notes: [
+      `Battle Master Fighter L${bm.level}`,
+      `Die: d${sup.die}`,
+      `Rolled: ${roll}`,
+      `Dice remaining: ${sup.remaining}/${sup.max}`,
+      ...(saveMeta ? [`Save: ${saveMeta.ability.toUpperCase()}`] : []),
+    ],
+  };
+  broadcastSystem(c.io, c.ctx, lines.join('\n'), { actionResult: maneuverBreakdown });
   return true;
 }
 

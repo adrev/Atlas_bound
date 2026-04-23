@@ -6,7 +6,7 @@ import {
 } from '../ChatCommands.js';
 import * as ConditionService from '../ConditionService.js';
 import pool from '../../db/connection.js';
-import type { Token } from '@dnd-vtt/shared';
+import type { Token, ActionBreakdown } from '@dnd-vtt/shared';
 import type { PlayerContext } from '../../utils/roomState.js';
 import { tokenConditionChanges } from '../../utils/conditionSources.js';
 
@@ -118,9 +118,30 @@ async function handleFightingSpirit(c: ChatCommandContext): Promise<boolean> {
     changes: { tempHitPoints: newThp },
   });
   const callerName = (row?.name as string) || caller.name;
+  const fsBreakdown: ActionBreakdown = {
+    actor: { name: callerName, tokenId: caller.id },
+    action: {
+      name: `Fighting Spirit (+${thp} temp HP)`,
+      category: 'class-feature',
+      icon: '⚔',
+      cost: 'Bonus action',
+    },
+    effect: `Advantage on all attack rolls until end of turn; ${thp} temp HP → ${newThp} total.`,
+    targets: [{
+      name: callerName,
+      tokenId: caller.id,
+      effect: `Temp HP ${curThp} → ${newThp}; advantage on attacks`,
+    }],
+    notes: [
+      `Samurai Fighter L${lvl}`,
+      `Temp HP formula: 5 @ L3, 10 @ L10, 15 @ L15`,
+      `Uses per long rest: proficiency bonus`,
+    ],
+  };
   broadcastSystem(
     c.io, c.ctx,
     `⚔ **Fighting Spirit** — ${callerName} gains **advantage on attacks until end of turn** + **${thp} temp HP** (now ${newThp}).`,
+    { actionResult: fsBreakdown },
   );
   return true;
 }
@@ -372,9 +393,31 @@ async function handleWardingManeuver(c: ChatCommandContext): Promise<boolean> {
   }
   const roll = Math.floor(Math.random() * 8) + 1;
   const callerName = (row?.name as string) || caller.name;
+  const conMod = Math.max(1, abilityMod(typeof row?.ability_scores === 'string' ? JSON.parse(row.ability_scores as string) : (row?.ability_scores as Record<string, number> ?? {}), 'con'));
+  const wmBreakdown: ActionBreakdown = {
+    actor: { name: callerName, tokenId: caller.id },
+    action: {
+      name: `Warding Maneuver (+${roll} AC)`,
+      category: 'class-feature',
+      icon: '🛡',
+      cost: 'Reaction',
+    },
+    effect: `${ally.name} gets **+1d8 = ${roll}** to AC and DEX save vs the triggering attack.`,
+    targets: [{
+      name: ally.name,
+      tokenId: ally.id,
+      effect: `+${roll} AC + DEX save vs triggering attack`,
+    }],
+    notes: [
+      `Cavalier Fighter L${lvl}`,
+      `AC bonus roll: 1d8 = ${roll}`,
+      `Uses per long rest: ${conMod} (CON mod)`,
+    ],
+  };
   broadcastSystem(
     c.io, c.ctx,
-    `🛡 **Warding Maneuver** — ${callerName} protects ${ally.name}: **+1d8 = ${roll}** to AC + DEX save vs the triggering attack (reaction). Usable ${Math.max(1, abilityMod(typeof row?.ability_scores === 'string' ? JSON.parse(row.ability_scores as string) : (row?.ability_scores as Record<string, number> ?? {}), 'con'))}/long rest.`,
+    `🛡 **Warding Maneuver** — ${callerName} protects ${ally.name}: **+1d8 = ${roll}** to AC + DEX save vs the triggering attack (reaction). Usable ${conMod}/long rest.`,
+    { actionResult: wmBreakdown },
   );
   return true;
 }
@@ -424,9 +467,25 @@ async function handleWildBarb(c: ChatCommandContext): Promise<boolean> {
   const d8 = Math.floor(Math.random() * 8) + 1;
   const effect = WILD_BARB_TABLE[d8];
   const callerName = (row?.name as string) || caller.name;
+  const wbBreakdown: ActionBreakdown = {
+    actor: { name: callerName, tokenId: caller.id },
+    action: {
+      name: `Wild Magic Surge (d8 = ${d8})`,
+      category: 'class-feature',
+      icon: '🌀',
+      cost: 'Triggered on Rage start',
+    },
+    effect,
+    notes: [
+      `Wild Magic Barbarian L3`,
+      `Table roll: d8 = ${d8}`,
+      `Duration: until rage ends`,
+    ],
+  };
   broadcastSystem(
     c.io, c.ctx,
     `🌀 **Wild Magic Surge** — ${callerName} rolls d8 = **${d8}**: ${effect}`,
+    { actionResult: wbBreakdown },
   );
   return true;
 }
@@ -482,9 +541,27 @@ async function handleDivineFury(c: ChatCommandContext): Promise<boolean> {
   const total = roll + half;
   const type = useNecrotic ? 'necrotic' : 'radiant';
   const callerName = (row?.name as string) || caller.name;
+  const dfBreakdown: ActionBreakdown = {
+    actor: { name: callerName, tokenId: caller.id },
+    action: {
+      name: `Divine Fury (+${total} ${type})`,
+      category: 'class-feature',
+      icon: '⚡',
+      cost: '1/turn (first melee hit)',
+    },
+    effect: `+1d6 (${roll}) + half level (${half}) = **${total}** ${type} damage.`,
+    notes: [
+      `Zealot Barbarian L${lvl}`,
+      `1d6 roll: ${roll}`,
+      `Half barbarian level: ${half}`,
+      `Damage type: ${type} (caller's choice — radiant or necrotic)`,
+      `Gate: once per turn, first melee weapon hit while raging`,
+    ],
+  };
   broadcastSystem(
     c.io, c.ctx,
     `⚡ **Divine Fury** — ${callerName} channels divine wrath: **+1d6+${half} = ${total} ${type}** damage (once/turn, first melee hit).`,
+    { actionResult: dfBreakdown },
   );
   return true;
 }
@@ -556,9 +633,27 @@ async function handleOpenHand(c: ChatCommandContext): Promise<boolean> {
       tokenId: target.id,
       changes: tokenConditionChanges(c.ctx.room, target.id),
     });
+    const noReactBreakdown: ActionBreakdown = {
+      actor: { name: caller.name, tokenId: caller.id },
+      action: {
+        name: 'Open Hand Technique — No Reactions',
+        category: 'class-feature',
+        icon: '👊',
+        cost: 'Rider on Flurry of Blows hit',
+      },
+      effect: `${target.name} cannot take reactions until end of ${caller.name}'s next turn (no save).`,
+      targets: [{
+        name: target.name,
+        tokenId: target.id,
+        effect: 'No reactions until end of next turn',
+        conditionsApplied: ['no-reactions'],
+      }],
+      notes: [`Open Hand Monk L3`, `Automatic — no save required`],
+    };
     broadcastSystem(
       c.io, c.ctx,
       `👊 **Open Hand Technique** — ${caller.name} strips ${target.name} of reactions until end of next turn (no save).`,
+      { actionResult: noReactBreakdown },
     );
     return true;
   }
@@ -604,9 +699,33 @@ async function handleOpenHand(c: ChatCommandContext): Promise<boolean> {
       changes: tokenConditionChanges(c.ctx.room, target.id),
     });
   }
+  const ohtBreakdown: ActionBreakdown = {
+    actor: { name: caller.name, tokenId: caller.id },
+    action: {
+      name: `Open Hand Technique (${label})`,
+      category: 'class-feature',
+      icon: '👊',
+      cost: 'Rider on Flurry of Blows hit',
+    },
+    effect: `${tName} ${saveAbility.toUpperCase()} save d20=${d20}${modSign}${saveMod}=${total} vs DC ${dc} → ${saved ? 'SAVED' : effect === 'push' ? 'pushed 15 ft' : 'knocked PRONE'}.`,
+    targets: [{
+      name: tName,
+      tokenId: target.id,
+      effect: saved
+        ? `SAVED (${total} ≥ ${dc})`
+        : `FAILED (${total} < ${dc}) — ${effect === 'push' ? 'pushed 15 ft' : 'prone'}`,
+      ...(!saved && condName ? { conditionsApplied: [condName] } : {}),
+    }],
+    notes: [
+      `Open Hand Monk L3`,
+      `Save: ${saveAbility.toUpperCase()} DC ${dc}`,
+      `d20: ${d20}; Save mod: ${modSign}${saveMod}; Total: ${total}`,
+    ],
+  };
   broadcastSystem(
     c.io, c.ctx,
     `👊 **Open Hand Technique** (${label}) — ${tName}: d20=${d20}${modSign}${saveMod}=${total} vs ${dc} → ${saved ? 'SAVED' : effect === 'push' ? 'pushed 15 ft' : 'KNOCKED PRONE'}`,
+    { actionResult: ohtBreakdown },
   );
   return true;
 }
@@ -686,9 +805,32 @@ async function handleGrave(c: ChatCommandContext): Promise<boolean> {
       });
     }
   }
+  const graveBreakdown: ActionBreakdown = {
+    actor: { name: callerName, tokenId: caller.id },
+    action: {
+      name: 'Strength of the Grave',
+      category: 'class-feature',
+      icon: '💀',
+      cost: 'Triggered on reduction to 0 HP',
+    },
+    effect: `CHA save d20=${d20}${sign}${chaSave}=${total} vs DC ${dc} (5 + ${dmg} damage) → ${saved ? 'SURVIVES at 1 HP' : 'FAILS, drops normally'}.`,
+    targets: [{
+      name: callerName,
+      tokenId: caller.id,
+      effect: saved ? 'Clings to unlife at 1 HP' : 'Drops normally',
+      ...(saved ? { healing: { amount: 1, hpAfter: 1 } } : {}),
+    }],
+    notes: [
+      `Shadow Sorcerer L1`,
+      `DC formula: 5 + damage taken = 5 + ${dmg} = ${dc}`,
+      `Save: CHA d20=${d20} ${sign}${chaSave} = ${total}`,
+      `Usable 1/short rest (XGtE)`,
+    ],
+  };
   broadcastSystem(
     c.io, c.ctx,
     `💀 **Strength of the Grave** — ${callerName} clings to unlife! CHA save d20=${d20}${sign}${chaSave}=${total} vs DC ${dc} → ${saved ? '**SURVIVES at 1 HP**' : 'FAILS, drops normally'}.`,
+    { actionResult: graveBreakdown },
   );
   return true;
 }
@@ -823,11 +965,13 @@ async function handleMantle(c: ChatCommandContext): Promise<boolean> {
   // Apply temp HP to each target.
   const callerName = (row?.name as string) || caller.name;
   const lines: string[] = [];
+  const mantleTargets: NonNullable<ActionBreakdown['targets']> = [];
   lines.push(`🎭 **Mantle of Inspiration** — ${callerName} grants ${thpValue} temp HP + free reaction-move to:`);
   for (const targetName of parts) {
     const target = resolveTargetByName(c.ctx, targetName);
     if (!target) {
       lines.push(`  • ${targetName}: not found`);
+      mantleTargets.push({ name: targetName, effect: 'Token not found' });
       continue;
     }
     if (target.characterId) {
@@ -846,12 +990,39 @@ async function handleMantle(c: ChatCommandContext): Promise<boolean> {
         changes: { tempHitPoints: newThp },
       });
       lines.push(`  • ${target.name}: +${thpValue} temp HP (now ${newThp})`);
+      mantleTargets.push({
+        name: target.name,
+        tokenId: target.id,
+        effect: `+${thpValue} temp HP → ${newThp}; free reaction-move`,
+      });
     } else {
       lines.push(`  • ${target.name}: +${thpValue} temp HP (NPC — apply manually)`);
+      mantleTargets.push({
+        name: target.name,
+        tokenId: target.id,
+        effect: `+${thpValue} temp HP (NPC — apply manually)`,
+      });
     }
   }
   lines.push(`   Spent 1 Bardic Inspiration die.`);
-  broadcastSystem(c.io, c.ctx, lines.join('\n'));
+  const mantleBreakdown: ActionBreakdown = {
+    actor: { name: callerName, tokenId: caller.id },
+    action: {
+      name: `Mantle of Inspiration (${thpValue} temp HP)`,
+      category: 'class-feature',
+      icon: '🎭',
+      cost: 'Bonus action + 1 Bardic Inspiration',
+    },
+    effect: `${thpValue} temp HP + free reaction-move (no OA) to up to ${chaMod} targets.`,
+    targets: mantleTargets,
+    notes: [
+      `Glamour Bard L${lvl}`,
+      `Temp HP table: L3=5, L5=8, L10=11, L15=14`,
+      `Max targets: CHA mod (${chaMod})`,
+      `Cost: 1 Bardic Inspiration die`,
+    ],
+  };
+  broadcastSystem(c.io, c.ctx, lines.join('\n'), { actionResult: mantleBreakdown });
   return true;
 }
 
@@ -896,12 +1067,15 @@ async function handleEnthrall(c: ChatCommandContext): Promise<boolean> {
   }
   const callerName = (row?.name as string) || caller.name;
   const lines: string[] = [];
+  const enthrallTargets: NonNullable<ActionBreakdown['targets']> = [];
+  let anyCharmed = false;
   lines.push(`🎭 **Enthralling Performance** — ${callerName} captivates (WIS DC ${dc}):`);
   const currentRound = c.ctx.room.combatState?.roundNumber ?? 0;
   for (const targetName of targets) {
     const target = resolveTargetByName(c.ctx, targetName);
     if (!target) {
       lines.push(`  • ${targetName}: not found`);
+      enthrallTargets.push({ name: targetName, effect: 'Token not found' });
       continue;
     }
     let saveMod = 0;
@@ -930,7 +1104,16 @@ async function handleEnthrall(c: ChatCommandContext): Promise<boolean> {
     const saved = total >= dc;
     const sign = saveMod >= 0 ? '+' : '';
     lines.push(`  • ${tName}: d20=${d20}${sign}${saveMod}=${total} → ${saved ? 'SAVED' : 'CHARMED for 1 hour'}`);
+    enthrallTargets.push({
+      name: tName,
+      tokenId: target.id,
+      effect: saved
+        ? `SAVED: WIS d20=${d20}${sign}${saveMod}=${total} vs DC ${dc}`
+        : `FAILED: WIS d20=${d20}${sign}${saveMod}=${total} vs DC ${dc} — charmed 1 hour`,
+      ...(saved ? {} : { conditionsApplied: ['charmed'] }),
+    });
     if (!saved) {
+      anyCharmed = true;
       ConditionService.applyConditionWithMeta(c.ctx.room.sessionId, target.id, {
         name: 'charmed',
         source: `${callerName} (Enthralling Performance)`,
@@ -944,7 +1127,24 @@ async function handleEnthrall(c: ChatCommandContext): Promise<boolean> {
       });
     }
   }
-  broadcastSystem(c.io, c.ctx, lines.join('\n'));
+  const enthrallBreakdown: ActionBreakdown = {
+    actor: { name: callerName, tokenId: caller.id },
+    action: {
+      name: 'Enthralling Performance',
+      category: 'class-feature',
+      icon: '🎭',
+      cost: '1-minute performance',
+    },
+    effect: `WIS save DC ${dc} or be charmed for 1 hour. ${anyCharmed ? 'Some targets charmed.' : 'All saved.'}`,
+    targets: enthrallTargets,
+    notes: [
+      `Glamour Bard L3`,
+      `Max targets: CHA mod (${chaMod})`,
+      `Save: WIS DC ${dc}`,
+      `Duration on fail: 1 hour (charmed)`,
+    ],
+  };
+  broadcastSystem(c.io, c.ctx, lines.join('\n'), { actionResult: enthrallBreakdown });
   return true;
 }
 

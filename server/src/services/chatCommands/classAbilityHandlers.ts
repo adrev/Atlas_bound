@@ -5,7 +5,7 @@ import {
   type ChatCommandContext,
 } from '../ChatCommands.js';
 import pool from '../../db/connection.js';
-import type { Token } from '@dnd-vtt/shared';
+import type { Token, ActionBreakdown, SpellCastBreakdown } from '@dnd-vtt/shared';
 import type { PlayerContext } from '../../utils/roomState.js';
 import * as CombatService from '../CombatService.js';
 import { tokenConditionChanges } from '../../utils/conditionSources.js';
@@ -81,9 +81,35 @@ async function handleSecondWind(c: ChatCommandContext): Promise<boolean> {
     change: newHp - hp,
     type: 'heal',
   });
+  const swBreakdown: SpellCastBreakdown = {
+    caster: { name: caller.name, tokenId: caller.id },
+    spell: {
+      name: `Second Wind (1d10+${level} = ${heal})`,
+      level: 0,
+      kind: 'heal',
+    },
+    notes: [
+      `Fighter class feature L${level}`,
+      `Bonus action, 1/short rest`,
+      `Heal formula: 1d10 (${roll}) + fighter level (${level}) = ${heal}`,
+    ],
+    targets: [{
+      name: caller.name,
+      tokenId: caller.id,
+      kind: 'heal',
+      healing: {
+        dice: `1d10+${level}`,
+        diceRolls: [roll],
+        mainRoll: heal,
+        targetHpBefore: hp,
+        targetHpAfter: newHp,
+      },
+    }],
+  };
   broadcastSystem(
     c.io, c.ctx,
     `💨 ${caller.name} uses Second Wind — heals d10(${roll})+${level} = **${heal}** HP → ${newHp}/${maxHp}. Bonus action. 1/short rest.`,
+    { spellResult: swBreakdown },
   );
   return true;
 }
@@ -245,9 +271,31 @@ async function handleLayOnHands(c: ChatCommandContext): Promise<boolean> {
     change: newHp - curHp,
     type: 'heal',
   });
+  const lohBreakdown: ActionBreakdown = {
+    actor: { name: caller.name, tokenId: caller.id },
+    action: {
+      name: `Lay on Hands (+${amount} HP)`,
+      category: 'class-feature',
+      icon: '🙌',
+      cost: 'Action',
+    },
+    effect: `${target.name} heals **${amount} HP** from the Lay on Hands pool.`,
+    targets: [{
+      name: target.name,
+      tokenId: target.id,
+      effect: `HP ${curHp} → ${newHp} (+${amount})`,
+      healing: { amount, hpBefore: curHp, hpAfter: newHp },
+    }],
+    notes: [
+      `Paladin L${level}`,
+      `Pool: 5 × level = ${poolMax}/day`,
+      `Spent: ${amount} from pool`,
+    ],
+  };
   broadcastSystem(
     c.io, c.ctx,
     `🙌 ${caller.name} lays on hands — ${target.name} heals **${amount}** HP → ${newHp}/${maxHp}. (Pool ≤ ${poolMax}/day, reset on long rest.)`,
+    { actionResult: lohBreakdown },
   );
   return true;
 }
@@ -358,11 +406,35 @@ async function handlePolearmButt(c: ChatCommandContext): Promise<boolean> {
   const dmg = Math.max(0, d4 + abilityMod);
   const atkSign = atkBonus >= 0 ? '+' : '';
   const dmgSign = abilityMod >= 0 ? '+' : '';
+  const pamBreakdown: ActionBreakdown = {
+    actor: { name: caller.name, tokenId: caller.id },
+    action: {
+      name: `Polearm Master — Butt-End (${dmg} bludgeoning)`,
+      category: 'class-feature',
+      icon: '🪙',
+      cost: 'Bonus action',
+    },
+    effect: `Attack: d20=${d20}${atkSign}${atkBonus}=${atkTotal}${d20 === 20 ? ' 💥 CRIT' : d20 === 1 ? ' 💀 fumble' : ''}. Damage: d4 (${d4})${dmgSign}${abilityMod} = **${dmg} bludgeoning**.`,
+    targets: [{
+      name: targetName,
+      effect: `Attack ${atkTotal} / Damage ${dmg} bludgeoning`,
+      damage: { amount: dmg, damageType: 'bludgeoning' },
+    }],
+    notes: [
+      `Polearm Master feat`,
+      `Weapon: ${weaponName}`,
+      `Attack: d20=${d20} + ability mod (${abilityMod}) + prof (${profBonus}) = ${atkTotal}`,
+      `Damage: 1d4 (${d4}) + ability mod (${abilityMod}) = ${dmg}`,
+      `Type: bludgeoning`,
+      ...(d20 === 20 ? ['Natural 20 — crit'] : d20 === 1 ? ['Natural 1 — fumble'] : []),
+    ],
+  };
   broadcastSystem(
     c.io, c.ctx,
     `🪙 ${caller.name} butt-ends with ${weaponName} (PAM bonus):\n` +
     `   to hit: d20=${d20}${atkSign}${atkBonus}=${atkTotal}${d20 === 20 ? ' 💥CRIT' : d20 === 1 ? ' 💀fumble' : ''}\n` +
     `   dmg: d4(${d4})${dmgSign}${abilityMod}=${dmg} bludgeoning`,
+    { actionResult: pamBreakdown },
   );
   return true;
 }
@@ -420,8 +492,12 @@ async function handleUncanny(c: ChatCommandContext): Promise<boolean> {
   // Heal back half the damage. Route through CombatService in combat
   // so the tracker + auto-conditions stay in sync.
   const healback = Math.floor(dmg / 2);
+  let hpBefore: number | undefined;
+  let hpAfter: number | undefined;
   if (c.ctx.room.combatState?.active) {
     const r = await CombatService.applyHeal(c.ctx.room.sessionId, caller.id, healback);
+    hpAfter = r.hp;
+    hpBefore = r.hp - healback;
     c.io.to(c.ctx.room.sessionId).emit('combat:hp-changed', {
       tokenId: caller.id, hp: r.hp, tempHp: r.tempHp, change: healback, type: 'heal',
     });
@@ -432,9 +508,34 @@ async function handleUncanny(c: ChatCommandContext): Promise<boolean> {
       });
     }
   }
+  const udBreakdown: ActionBreakdown = {
+    actor: { name: caller.name, tokenId: caller.id },
+    action: {
+      name: `Uncanny Dodge (-${healback} damage)`,
+      category: 'class-feature',
+      icon: '🗡',
+      cost: 'Reaction',
+    },
+    effect: `Halves incoming damage: ${dmg} → ${dmg - healback} (heal back ${healback}).`,
+    targets: [{
+      name: caller.name,
+      tokenId: caller.id,
+      effect: `Damage ${dmg} → ${dmg - healback} (reduced by ${healback})`,
+      ...(hpBefore !== undefined && hpAfter !== undefined
+        ? { healing: { amount: healback, hpBefore, hpAfter } }
+        : {}),
+    }],
+    notes: [
+      `Rogue L${level}`,
+      `Incoming damage: ${dmg}`,
+      `Reduction: floor(${dmg} / 2) = ${healback}`,
+      `Net damage taken: ${dmg - healback}`,
+    ],
+  };
   broadcastSystem(
     c.io, c.ctx,
     `🗡 ${caller.name} uses Uncanny Dodge (reaction) — halves the incoming damage: ${dmg} → ${dmg - healback} (heal back ${healback}).`,
+    { actionResult: udBreakdown },
   );
   return true;
 }
@@ -484,8 +585,12 @@ async function handleEvasion(c: ChatCommandContext): Promise<boolean> {
   // fail = half-damage means take half, but the DM may have applied
   //         full. Refund half.
   const refund = outcome === 'pass' ? dmg : Math.floor(dmg / 2);
+  let hpBefore: number | undefined;
+  let hpAfter: number | undefined;
   if (c.ctx.room.combatState?.active) {
     const r = await CombatService.applyHeal(c.ctx.room.sessionId, caller.id, refund);
+    hpAfter = r.hp;
+    hpBefore = r.hp - refund;
     c.io.to(c.ctx.room.sessionId).emit('combat:hp-changed', {
       tokenId: caller.id, hp: r.hp, tempHp: r.tempHp, change: refund, type: 'heal',
     });
@@ -496,9 +601,36 @@ async function handleEvasion(c: ChatCommandContext): Promise<boolean> {
       });
     }
   }
+  const evBreakdown: ActionBreakdown = {
+    actor: { name: caller.name, tokenId: caller.id },
+    action: {
+      name: `Evasion (${outcome.toUpperCase()}) — refund ${refund} HP`,
+      category: 'class-feature',
+      icon: '💨',
+      cost: 'Passive (DEX save effect)',
+    },
+    effect: outcome === 'pass'
+      ? `Saved: takes 0 damage. Refund full ${refund} HP.`
+      : `Failed: takes half. Refund other half (${refund} HP).`,
+    targets: [{
+      name: caller.name,
+      tokenId: caller.id,
+      effect: `Refund ${refund} HP`,
+      ...(hpBefore !== undefined && hpAfter !== undefined
+        ? { healing: { amount: refund, hpBefore, hpAfter } }
+        : {}),
+    }],
+    notes: [
+      `Rogue/Monk L${level}`,
+      `Outcome: ${outcome}`,
+      `Damage applied: ${dmg}`,
+      `Refund: ${outcome === 'pass' ? 'full' : 'half'} = ${refund}`,
+    ],
+  };
   broadcastSystem(
     c.io, c.ctx,
     `💨 ${caller.name} uses Evasion (${outcome}) — ${outcome === 'pass' ? 'takes 0 damage (refund full)' : 'takes half (refund other half)'}: +${refund} HP.`,
+    { actionResult: evBreakdown },
   );
   return true;
 }

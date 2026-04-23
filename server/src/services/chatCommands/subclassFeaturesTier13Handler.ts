@@ -6,7 +6,7 @@ import {
 } from '../ChatCommands.js';
 import * as ConditionService from '../ConditionService.js';
 import pool from '../../db/connection.js';
-import type { Token } from '@dnd-vtt/shared';
+import type { Token, ActionBreakdown } from '@dnd-vtt/shared';
 import type { PlayerContext } from '../../utils/roomState.js';
 import { tokenConditionChanges } from '../../utils/conditionSources.js';
 
@@ -293,7 +293,7 @@ async function handleTwilightSanct(c: ChatCommandContext): Promise<boolean> {
   }
   const loaded = await loadCaster(c, 'twilightsanct');
   if (!loaded) return true;
-  const { classLower, callerName, row } = loaded;
+  const { caller, classLower, callerName, row } = loaded;
   if (!classLower.includes('cleric')) {
     whisperToCaller(c.io, c.ctx, `!twilightsanct: ${callerName} isn't a Cleric.`);
     return true;
@@ -330,10 +330,11 @@ async function handleTwilightSanct(c: ChatCommandContext): Promise<boolean> {
 
   // THP path.
   let newThp = 0;
+  let curThpBefore = 0;
   if (target.characterId) {
     const { rows } = await pool.query('SELECT temp_hit_points FROM characters WHERE id = $1', [target.characterId]);
-    const curThp = Number((rows[0] as Record<string, unknown>)?.temp_hit_points) || 0;
-    newThp = Math.max(curThp, thpValue);
+    curThpBefore = Number((rows[0] as Record<string, unknown>)?.temp_hit_points) || 0;
+    newThp = Math.max(curThpBefore, thpValue);
     await pool.query(
       'UPDATE characters SET temp_hit_points = $1 WHERE id = $2',
       [newThp, target.characterId],
@@ -343,9 +344,30 @@ async function handleTwilightSanct(c: ChatCommandContext): Promise<boolean> {
       changes: { tempHitPoints: newThp },
     });
   }
+  const tsBreakdown: ActionBreakdown = {
+    actor: { name: callerName, tokenId: caller.id },
+    action: {
+      name: `Twilight Sanctuary (+${thpValue} temp HP)`,
+      category: 'class-feature',
+      icon: '🌙',
+      cost: 'Channel Divinity',
+    },
+    effect: `${target.name} gains **1d6+${lvl} = ${thpValue} temp HP**${newThp ? ` (now ${newThp})` : ''}.`,
+    targets: [{
+      name: target.name,
+      tokenId: target.id,
+      effect: `Temp HP ${curThpBefore} → ${newThp} (+${thpValue})`,
+    }],
+    notes: [
+      `Twilight Cleric L2`,
+      `Formula: 1d6 (${d6}) + cleric level (${lvl}) = ${thpValue}`,
+      `Temp HP rule: keep higher value`,
+    ],
+  };
   broadcastSystem(
     c.io, c.ctx,
     `🌙 **Twilight Sanctuary** — ${callerName} grants ${target.name} **1d6+${lvl} = ${thpValue} temp HP**${newThp ? ` (now ${newThp})` : ''}.`,
+    { actionResult: tsBreakdown },
   );
   return true;
 }
@@ -428,9 +450,34 @@ async function handleNaturesWrath(c: ChatCommandContext): Promise<boolean> {
       changes: tokenConditionChanges(c.ctx.room, target.id),
     });
   }
+  const nwBreakdown: ActionBreakdown = {
+    actor: { name: callerName, tokenId: caller.id },
+    action: {
+      name: `Nature's Wrath (${bestAbility} DC ${spellSaveDc})`,
+      category: 'class-feature',
+      icon: '🌿',
+      cost: 'Channel Divinity',
+    },
+    effect: `${displayName} ${bestAbility} save d20=${d20}${sign}${bestMod}=${tot} vs DC ${spellSaveDc} → ${saved ? 'SAVED' : 'RESTRAINED by spectral vines'}.`,
+    targets: [{
+      name: displayName,
+      tokenId: target.id,
+      effect: saved
+        ? `SAVED (${tot} ≥ ${spellSaveDc})`
+        : `FAILED (${tot} < ${spellSaveDc}) — restrained (save at end of turn)`,
+      ...(!saved ? { conditionsApplied: ['restrained'] } : {}),
+    }],
+    notes: [
+      `Ancients Paladin (CD)`,
+      `Target picks best: STR mod ${strMod}, DEX mod ${dexMod} → ${bestAbility} (${bestMod})`,
+      `Save roll: d20=${d20} ${sign}${bestMod} = ${tot}`,
+      `Duration: until save at end of turn`,
+    ],
+  };
   broadcastSystem(
     c.io, c.ctx,
     `🌿 **Nature's Wrath** (CD, ${bestAbility} DC ${spellSaveDc}) — ${callerName} → ${displayName}: d20=${d20}${sign}${bestMod}=${tot} → ${saved ? 'SAVED' : 'RESTRAINED by spectral vines (save at end of turn)'}`,
+    { actionResult: nwBreakdown },
   );
   return true;
 }
@@ -454,17 +501,24 @@ async function handleConqueringPresence(c: ChatCommandContext): Promise<boolean>
     return true;
   }
   const lines: string[] = [];
+  const cpTargets: NonNullable<ActionBreakdown['targets']> = [];
+  let anyFailed = false;
   lines.push(`👑 **Conquering Presence** (CD, WIS DC ${spellSaveDc}) — ${callerName} terrifies all in 30 ft:`);
   const currentRound = c.ctx.room.combatState?.roundNumber ?? 0;
   for (const name of parts) {
     const target = resolveTargetByName(c.ctx, name);
-    if (!target) { lines.push(`  • ${name}: not found`); continue; }
+    if (!target) {
+      lines.push(`  • ${name}: not found`);
+      cpTargets.push({ name, effect: 'Token not found' });
+      continue;
+    }
     const { mod, displayName } = await loadTargetSaveMod(target, 'wis');
     const d20 = Math.floor(Math.random() * 20) + 1;
     const tot = d20 + mod;
     const saved = tot >= spellSaveDc;
     const sign = mod >= 0 ? '+' : '';
     if (!saved) {
+      anyFailed = true;
       ConditionService.applyConditionWithMeta(c.ctx.room.sessionId, target.id, {
         name: 'frightened',
         source: `${callerName} (Conquering Presence)`,
@@ -479,8 +533,33 @@ async function handleConqueringPresence(c: ChatCommandContext): Promise<boolean>
       });
     }
     lines.push(`  • ${displayName}: WIS d20=${d20}${sign}${mod}=${tot} → ${saved ? 'SAVED' : 'FRIGHTENED (save at end of turn, 1 min)'}`);
+    cpTargets.push({
+      name: displayName,
+      tokenId: target.id,
+      effect: saved
+        ? `SAVED: WIS d20=${d20}${sign}${mod}=${tot} vs DC ${spellSaveDc}`
+        : `FAILED: WIS d20=${d20}${sign}${mod}=${tot} vs DC ${spellSaveDc} — frightened`,
+      ...(saved ? {} : { conditionsApplied: ['frightened'] }),
+    });
   }
-  broadcastSystem(c.io, c.ctx, lines.join('\n'));
+  const cpBreakdown: ActionBreakdown = {
+    actor: { name: callerName, tokenId: caller.id },
+    action: {
+      name: `Conquering Presence (WIS DC ${spellSaveDc})`,
+      category: 'class-feature',
+      icon: '👑',
+      cost: 'Channel Divinity',
+    },
+    effect: `WIS save DC ${spellSaveDc} or be frightened for 1 min (save at end of turn). ${anyFailed ? 'Some frightened.' : 'All saved.'}`,
+    targets: cpTargets,
+    notes: [
+      `Conquest Paladin (CD)`,
+      `Range: 30 ft`,
+      `Save: WIS DC ${spellSaveDc}`,
+      `Effect on fail: frightened 1 min (retry at end of each turn)`,
+    ],
+  };
+  broadcastSystem(c.io, c.ctx, lines.join('\n'), { actionResult: cpBreakdown });
   return true;
 }
 
@@ -503,17 +582,24 @@ async function handleChampionChallenge(c: ChatCommandContext): Promise<boolean> 
     return true;
   }
   const lines: string[] = [];
+  const ccTargets: NonNullable<ActionBreakdown['targets']> = [];
+  let anyFailed = false;
   lines.push(`👑 **Champion Challenge** (CD, WIS DC ${spellSaveDc}) — ${callerName} compels all in 30 ft to stay near:`);
   const currentRound = c.ctx.room.combatState?.roundNumber ?? 0;
   for (const name of parts) {
     const target = resolveTargetByName(c.ctx, name);
-    if (!target) { lines.push(`  • ${name}: not found`); continue; }
+    if (!target) {
+      lines.push(`  • ${name}: not found`);
+      ccTargets.push({ name, effect: 'Token not found' });
+      continue;
+    }
     const { mod, displayName } = await loadTargetSaveMod(target, 'wis');
     const d20 = Math.floor(Math.random() * 20) + 1;
     const tot = d20 + mod;
     const saved = tot >= spellSaveDc;
     const sign = mod >= 0 ? '+' : '';
     if (!saved) {
+      anyFailed = true;
       ConditionService.applyConditionWithMeta(c.ctx.room.sessionId, target.id, {
         name: 'challenged',
         source: `${callerName} (Champion Challenge)`,
@@ -528,8 +614,33 @@ async function handleChampionChallenge(c: ChatCommandContext): Promise<boolean> 
       });
     }
     lines.push(`  • ${displayName}: WIS d20=${d20}${sign}${mod}=${tot} → ${saved ? 'SAVED' : "CHALLENGED (can't willingly move > 30 ft from caster)"}`);
+    ccTargets.push({
+      name: displayName,
+      tokenId: target.id,
+      effect: saved
+        ? `SAVED: WIS d20=${d20}${sign}${mod}=${tot} vs DC ${spellSaveDc}`
+        : `FAILED: WIS d20=${d20}${sign}${mod}=${tot} vs DC ${spellSaveDc} — challenged`,
+      ...(saved ? {} : { conditionsApplied: ['challenged'] }),
+    });
   }
-  broadcastSystem(c.io, c.ctx, lines.join('\n'));
+  const ccBreakdown: ActionBreakdown = {
+    actor: { name: callerName, tokenId: caller.id },
+    action: {
+      name: `Champion Challenge (WIS DC ${spellSaveDc})`,
+      category: 'class-feature',
+      icon: '👑',
+      cost: 'Channel Divinity',
+    },
+    effect: `WIS save DC ${spellSaveDc} or be unable to willingly move > 30 ft from caster (save at end of turn). ${anyFailed ? 'Some challenged.' : 'All saved.'}`,
+    targets: ccTargets,
+    notes: [
+      `Crown Paladin (CD)`,
+      `Range: 30 ft`,
+      `Save: WIS DC ${spellSaveDc}`,
+      `Effect on fail: challenged (can't willingly move > 30 ft)`,
+    ],
+  };
+  broadcastSystem(c.io, c.ctx, lines.join('\n'), { actionResult: ccBreakdown });
   return true;
 }
 
@@ -552,17 +663,24 @@ async function handleDreadfulAspect(c: ChatCommandContext): Promise<boolean> {
     return true;
   }
   const lines: string[] = [];
+  const daTargets: NonNullable<ActionBreakdown['targets']> = [];
+  let anyFailed = false;
   lines.push(`💀 **Dreadful Aspect** (CD, WIS DC ${spellSaveDc}) — ${callerName} unleashes dark presence (30 ft):`);
   const currentRound = c.ctx.room.combatState?.roundNumber ?? 0;
   for (const name of parts) {
     const target = resolveTargetByName(c.ctx, name);
-    if (!target) { lines.push(`  • ${name}: not found`); continue; }
+    if (!target) {
+      lines.push(`  • ${name}: not found`);
+      daTargets.push({ name, effect: 'Token not found' });
+      continue;
+    }
     const { mod, displayName } = await loadTargetSaveMod(target, 'wis');
     const d20 = Math.floor(Math.random() * 20) + 1;
     const tot = d20 + mod;
     const saved = tot >= spellSaveDc;
     const sign = mod >= 0 ? '+' : '';
     if (!saved) {
+      anyFailed = true;
       ConditionService.applyConditionWithMeta(c.ctx.room.sessionId, target.id, {
         name: 'frightened',
         source: `${callerName} (Dreadful Aspect)`,
@@ -576,8 +694,33 @@ async function handleDreadfulAspect(c: ChatCommandContext): Promise<boolean> {
       });
     }
     lines.push(`  • ${displayName}: WIS d20=${d20}${sign}${mod}=${tot} → ${saved ? 'SAVED' : 'FRIGHTENED (1 min, no save mid-duration while in line of sight)'}`);
+    daTargets.push({
+      name: displayName,
+      tokenId: target.id,
+      effect: saved
+        ? `SAVED: WIS d20=${d20}${sign}${mod}=${tot} vs DC ${spellSaveDc}`
+        : `FAILED: WIS d20=${d20}${sign}${mod}=${tot} vs DC ${spellSaveDc} — frightened`,
+      ...(saved ? {} : { conditionsApplied: ['frightened'] }),
+    });
   }
-  broadcastSystem(c.io, c.ctx, lines.join('\n'));
+  const daBreakdown: ActionBreakdown = {
+    actor: { name: callerName, tokenId: caller.id },
+    action: {
+      name: `Dreadful Aspect (WIS DC ${spellSaveDc})`,
+      category: 'class-feature',
+      icon: '💀',
+      cost: 'Channel Divinity',
+    },
+    effect: `WIS save DC ${spellSaveDc} or be frightened 1 min. ${anyFailed ? 'Some frightened.' : 'All saved.'}`,
+    targets: daTargets,
+    notes: [
+      `Oathbreaker Paladin (CD)`,
+      `Range: 30 ft`,
+      `Save: WIS DC ${spellSaveDc}`,
+      `Effect on fail: frightened 1 min (no mid-duration save while in line of sight)`,
+    ],
+  };
+  broadcastSystem(c.io, c.ctx, lines.join('\n'), { actionResult: daBreakdown });
   return true;
 }
 
@@ -630,9 +773,34 @@ async function handleRebukeViolent(c: ChatCommandContext): Promise<boolean> {
   const saved = tot >= spellSaveDc;
   const radiant = saved ? Math.floor(dmgDealt / 2) : dmgDealt;
   const sign = mod >= 0 ? '+' : '';
+  const rebukeBreakdown: ActionBreakdown = {
+    actor: { name: callerName, tokenId: caller.id },
+    action: {
+      name: `Rebuke the Violent (WIS DC ${spellSaveDc})`,
+      category: 'class-feature',
+      icon: '✨',
+      cost: 'Reaction + Channel Divinity',
+    },
+    effect: `${displayName} WIS save d20=${d20}${sign}${mod}=${tot} vs DC ${spellSaveDc} → ${saved ? 'SAVED (half damage)' : 'FAILED'}. Takes **${radiant}** radiant damage.`,
+    targets: [{
+      name: displayName,
+      tokenId: attacker.id,
+      effect: saved
+        ? `SAVED (half): ${radiant} radiant damage`
+        : `FAILED: ${radiant} radiant damage`,
+      damage: { amount: radiant, damageType: 'radiant' },
+    }],
+    notes: [
+      `Redemption Paladin (CD reaction)`,
+      `Damage dealt by attacker: ${dmgDealt}`,
+      `WIS save roll: d20=${d20} ${sign}${mod} = ${tot} vs DC ${spellSaveDc}`,
+      `Radiant damage: ${saved ? `half (${radiant})` : `full (${radiant})`}`,
+    ],
+  };
   broadcastSystem(
     c.io, c.ctx,
     `✨ **Rebuke the Violent** (CD reaction, WIS DC ${spellSaveDc}) — ${callerName} punishes ${displayName}: d20=${d20}${sign}${mod}=${tot} → ${saved ? 'SAVED (half)' : 'FAILED'}, takes **${radiant} radiant** damage.`,
+    { actionResult: rebukeBreakdown },
   );
   return true;
 }

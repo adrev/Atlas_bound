@@ -6,7 +6,7 @@ import {
 } from '../ChatCommands.js';
 import * as ConditionService from '../ConditionService.js';
 import pool from '../../db/connection.js';
-import type { Token } from '@dnd-vtt/shared';
+import type { Token, ActionBreakdown } from '@dnd-vtt/shared';
 import type { PlayerContext } from '../../utils/roomState.js';
 import { tokenConditionChanges } from '../../utils/conditionSources.js';
 
@@ -119,7 +119,7 @@ async function handleArcaneShot(c: ChatCommandContext): Promise<boolean> {
   }
   const loaded = await loadFighter(c, 'arcaneshot');
   if (!loaded) return true;
-  const { classLower, callerName, row, level } = loaded;
+  const { caller, classLower, callerName, row, level } = loaded;
   if (!hasFeature(row, /arcane\s+shot/i) && !classLower.includes('arcane archer')) {
     whisperToCaller(c.io, c.ctx, `!arcaneshot: ${callerName} isn't an Arcane Archer.`);
     return true;
@@ -131,9 +131,32 @@ async function handleArcaneShot(c: ChatCommandContext): Promise<boolean> {
   const dc = 8 + prof + abilityMod(scores as Record<string, number>, 'int');
   // Dice upgrade at L18: 2d6 → 4d6 for base options.
   const extraDamage = level >= 18 ? '+2 dice (L18)' : '';
+  const asBreakdown: ActionBreakdown = {
+    actor: { name: callerName, tokenId: caller.id },
+    action: {
+      name: `Arcane Shot: ${opt.charAt(0).toUpperCase() + opt.slice(1)}`,
+      category: 'class-feature',
+      icon: '🏹',
+      cost: '1 use (2/short rest)',
+    },
+    effect: `${cfg.dice} ${cfg.type} damage${cfg.save !== 'none' ? `, ${cfg.save.toUpperCase()} save DC ${dc}` : ''}. ${cfg.extra}`,
+    targets: [{
+      name: target.name,
+      tokenId: target.id,
+      effect: `${cfg.dice} ${cfg.type}${cfg.save !== 'none' ? ` + ${cfg.save.toUpperCase()} DC ${dc}` : ''}`,
+    }],
+    notes: [
+      `Arcane Archer Fighter L${level}`,
+      `Option: ${opt}`,
+      `Damage: ${cfg.dice} ${cfg.type}${extraDamage ? ` ${extraDamage}` : ''}`,
+      `Save: ${cfg.save === 'none' ? 'none' : `${cfg.save.toUpperCase()} DC ${dc} (8 + PB ${prof} + INT mod)`}`,
+      `Rider: ${cfg.extra}`,
+    ],
+  };
   broadcastSystem(
     c.io, c.ctx,
     `🏹 **Arcane Shot: ${opt.charAt(0).toUpperCase() + opt.slice(1)}** — ${callerName} → ${target.name}: ${cfg.dice} ${cfg.type}${extraDamage ? ` ${extraDamage}` : ''}${cfg.save !== 'none' ? ` (${cfg.save.toUpperCase()} DC ${dc})` : ''}. ${cfg.extra}`,
+    { actionResult: asBreakdown },
   );
   return true;
 }
@@ -151,17 +174,22 @@ async function handleRallyingCry(c: ChatCommandContext): Promise<boolean> {
   }
   const loaded = await loadFighter(c, 'rally');
   if (!loaded) return true;
-  const { callerName, row, level, classLower } = loaded;
+  const { caller, callerName, row, level, classLower } = loaded;
   if (!hasFeature(row, /rallying\s+cry/i) && !classLower.includes('banneret') && !classLower.includes('purple dragon')) {
     whisperToCaller(c.io, c.ctx, `!rally: ${callerName} isn't a Banneret / Purple Dragon Knight.`);
     return true;
   }
   const thpValue = level;
   const lines: string[] = [];
+  const rallyTargets: NonNullable<ActionBreakdown['targets']> = [];
   lines.push(`🎺 **Rallying Cry** — ${callerName} heals via Second Wind (Second Wind self-heal rolled separately); up to 3 allies within 60 ft gain **${thpValue} temp HP** each:`);
   for (const name of parts) {
     const target = resolveTargetByName(c.ctx, name);
-    if (!target) { lines.push(`  • ${name}: not found`); continue; }
+    if (!target) {
+      lines.push(`  • ${name}: not found`);
+      rallyTargets.push({ name, effect: 'Token not found' });
+      continue;
+    }
     if (target.characterId) {
       const { rows: trows } = await pool.query('SELECT temp_hit_points FROM characters WHERE id = $1', [target.characterId]);
       const curThp = Number((trows[0] as Record<string, unknown>)?.temp_hit_points) || 0;
@@ -172,11 +200,38 @@ async function handleRallyingCry(c: ChatCommandContext): Promise<boolean> {
         changes: { tempHitPoints: newThp },
       });
       lines.push(`  • ${target.name}: ${thpValue} temp HP (now ${newThp}).`);
+      rallyTargets.push({
+        name: target.name,
+        tokenId: target.id,
+        effect: `+${thpValue} temp HP → ${newThp}`,
+      });
     } else {
       lines.push(`  • ${target.name}: ${thpValue} temp HP (NPC — manual).`);
+      rallyTargets.push({
+        name: target.name,
+        tokenId: target.id,
+        effect: `+${thpValue} temp HP (NPC — manual)`,
+      });
     }
   }
-  broadcastSystem(c.io, c.ctx, lines.join('\n'));
+  const rallyBreakdown: ActionBreakdown = {
+    actor: { name: callerName, tokenId: caller.id },
+    action: {
+      name: `Rallying Cry (+${thpValue} temp HP)`,
+      category: 'class-feature',
+      icon: '🎺',
+      cost: 'Second Wind',
+    },
+    effect: `Up to 3 allies within 60 ft gain **${thpValue} temp HP** (Banneret/Purple Dragon Knight).`,
+    targets: rallyTargets,
+    notes: [
+      `Banneret/Purple Dragon Knight Fighter L${level}`,
+      `Temp HP per target: fighter level = ${level}`,
+      `Cost: tied to Second Wind use`,
+      `Range: 60 ft`,
+    ],
+  };
+  broadcastSystem(c.io, c.ctx, lines.join('\n'), { actionResult: rallyBreakdown });
   return true;
 }
 
@@ -266,9 +321,32 @@ async function handlePsiStrike(c: ChatCommandContext): Promise<boolean> {
   const dieSize = psiDieSize(level);
   const roll = Math.floor(Math.random() * dieSize) + 1;
   const total = roll + intMod;
+  const psBreakdown: ActionBreakdown = {
+    actor: { name: callerName, tokenId: caller.id },
+    action: {
+      name: `Psionic Strike (1d${dieSize}+${intMod} = ${total} force)`,
+      category: 'class-feature',
+      icon: '🧠',
+      cost: '1 psionic die',
+    },
+    effect: `Rider on a ranged/melee weapon hit within 30 ft: +1d${dieSize} (${roll}) + INT (${intMod}) = **${total} force** damage.`,
+    targets: [{
+      name: target.name,
+      tokenId: target.id,
+      effect: `+${total} force damage`,
+      damage: { amount: total, damageType: 'force' },
+    }],
+    notes: [
+      `Psi Warrior Fighter L${level}`,
+      `Die size: d${dieSize} (L3=d6, L5=d8, L11=d10, L17=d12)`,
+      `Formula: 1d${dieSize} (${roll}) + INT mod (${intMod}) = ${total}`,
+      `Pool remaining: ${pool_.remaining}/${pool_.max}`,
+    ],
+  };
   broadcastSystem(
     c.io, c.ctx,
     `🧠 **Psionic Strike** — ${callerName} on ${target.name}: 1d${dieSize}+${intMod} = ${roll}+${intMod} = **${total} force** damage. Dice ${pool_.remaining}/${pool_.max}.`,
+    { actionResult: psBreakdown },
   );
   return true;
 }
@@ -327,6 +405,8 @@ async function handlePsiField(c: ChatCommandContext): Promise<boolean> {
   const actualReduction = Math.min(reduction, dmg);
   const newDmg = Math.max(0, dmg - reduction);
   // Refund HP if needed.
+  let hpBefore: number | undefined;
+  let hpAfter: number | undefined;
   if (actualReduction > 0 && target.characterId) {
     const { rows: trows } = await pool.query(
       'SELECT hit_points, max_hit_points FROM characters WHERE id = $1',
@@ -335,16 +415,44 @@ async function handlePsiField(c: ChatCommandContext): Promise<boolean> {
     const trow = trows[0] as Record<string, unknown> | undefined;
     const cur = Number(trow?.hit_points) || 0;
     const maxHp = Number(trow?.max_hit_points) || 0;
+    hpBefore = cur;
     const newHp = Math.min(maxHp, cur + actualReduction);
+    hpAfter = newHp;
     await pool.query('UPDATE characters SET hit_points = $1 WHERE id = $2', [newHp, target.characterId]).catch(() => {});
     c.io.to(c.ctx.room.sessionId).emit('character:updated', {
       characterId: target.characterId,
       changes: { hitPoints: newHp },
     });
   }
+  const pfBreakdown: ActionBreakdown = {
+    actor: { name: callerName, tokenId: caller.id },
+    action: {
+      name: `Protective Field (-${actualReduction} damage)`,
+      category: 'class-feature',
+      icon: '🧠',
+      cost: 'Reaction + 1 psionic die',
+    },
+    effect: `1d${dieSize} (${roll}) + INT (${intMod}) = **${reduction}** damage reduction (clamped to ${actualReduction} vs ${dmg} incoming). ${target.name} takes ${newDmg} instead.`,
+    targets: [{
+      name: target.name,
+      tokenId: target.id,
+      effect: `Damage ${dmg} → ${newDmg} (reduced by ${actualReduction})`,
+      ...(hpBefore !== undefined && hpAfter !== undefined
+        ? { healing: { amount: actualReduction, hpBefore, hpAfter } }
+        : {}),
+    }],
+    notes: [
+      `Psi Warrior Fighter L${level}`,
+      `Die size: d${dieSize}`,
+      `Reduction formula: 1d${dieSize} (${roll}) + INT mod (${intMod}) = ${reduction}`,
+      `Range: 30 ft (reaction)`,
+      `Pool remaining: ${pool_.remaining}/${pool_.max}`,
+    ],
+  };
   broadcastSystem(
     c.io, c.ctx,
     `🧠 **Protective Field** — ${callerName} shields ${target.name}: 1d${dieSize}+${intMod} = **${reduction}** damage reduction (${dmg} → ${newDmg}). Dice ${pool_.remaining}/${pool_.max}.`,
+    { actionResult: pfBreakdown },
   );
   return true;
 }

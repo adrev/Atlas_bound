@@ -6,7 +6,7 @@ import {
 } from '../ChatCommands.js';
 import * as ConditionService from '../ConditionService.js';
 import pool from '../../db/connection.js';
-import type { Token } from '@dnd-vtt/shared';
+import type { Token, ActionBreakdown } from '@dnd-vtt/shared';
 import type { PlayerContext } from '../../utils/roomState.js';
 import { tokenConditionChanges } from '../../utils/conditionSources.js';
 
@@ -83,7 +83,26 @@ async function handlePortent(c: ChatCommandContext): Promise<boolean> {
     const dice: number[] = [];
     for (let i = 0; i < slots; i++) dice.push(Math.floor(Math.random() * 20) + 1);
     portentDice.set(caller.characterId, dice);
-    broadcastSystem(c.io, c.ctx, `🔮 ${charName} awakens with Portent — dice: **${dice.join(', ')}**.`);
+    const portentBreakdown: ActionBreakdown = {
+      actor: { name: charName, tokenId: caller.id },
+      action: {
+        name: 'Portent (Dawn Refresh)',
+        category: 'class-feature',
+        icon: '🔮',
+        cost: 'Long rest / dawn',
+      },
+      effect: `Reserved d20 dice: [${dice.join(', ')}]. Each can replace any attack/check/save made by a visible creature.`,
+      notes: [
+        `Divination Wizard L${lvl}`,
+        `Dice pool: ${slots} (2 at L2, 3 at L14)`,
+        `Rolled values: ${dice.join(', ')}`,
+      ],
+    };
+    broadcastSystem(
+      c.io, c.ctx,
+      `🔮 ${charName} awakens with Portent — dice: **${dice.join(', ')}**.`,
+      { actionResult: portentBreakdown },
+    );
     return true;
   }
   if (sub === 'list' || sub === 'status') {
@@ -107,9 +126,25 @@ async function handlePortent(c: ChatCommandContext): Promise<boolean> {
     }
     stored.splice(idx, 1);
     portentDice.set(caller.characterId, stored);
+    const spendBreakdown: ActionBreakdown = {
+      actor: { name: charName, tokenId: caller.id },
+      action: {
+        name: `Portent — Replace d20 with ${wanted}`,
+        category: 'class-feature',
+        icon: '🔮',
+        cost: 'No action (reaction-like)',
+      },
+      effect: `Target's d20 (attack/check/save) is replaced with a **${wanted}**.`,
+      notes: [
+        `Divination Wizard L${lvl}`,
+        `Spent die: ${wanted}`,
+        `Dice remaining: ${stored.length > 0 ? stored.join(', ') : '(none)'}`,
+      ],
+    };
     broadcastSystem(
       c.io, c.ctx,
       `🔮 ${charName} spends a Portent die — the target's attack/check/save is replaced with a **${wanted}**. (${stored.length} left)`,
+      { actionResult: spendBreakdown },
     );
     return true;
   }
@@ -163,9 +198,25 @@ async function handleColossus(c: ChatCommandContext): Promise<boolean> {
   colossusUsed.add(turnKey);
   const roll = Math.floor(Math.random() * 8) + 1;
   const charName = (row?.name as string) || caller.name;
+  const colossusBreakdown: ActionBreakdown = {
+    actor: { name: charName, tokenId: caller.id },
+    action: {
+      name: `Colossus Slayer (+1d8 = ${roll})`,
+      category: 'class-feature',
+      icon: '🏹',
+      cost: '1/turn',
+    },
+    effect: `+${roll} bonus damage to a weapon-attack hit (target must already be below max HP).`,
+    notes: [
+      `Hunter Ranger L3`,
+      `Damage rider: 1d8 = ${roll}`,
+      `Gate: once per turn, target wounded`,
+    ],
+  };
   broadcastSystem(
     c.io, c.ctx,
     `🏹 **Colossus Slayer** — ${charName} deals +1d8 = **${roll}** damage (target must already be below max HP).`,
+    { actionResult: colossusBreakdown },
   );
   return true;
 }
@@ -238,9 +289,32 @@ async function handleAssassinate(c: ChatCommandContext): Promise<boolean> {
   const sign = bonus >= 0 ? '+' : '';
   const isCrit = kept === 20 || surprised;
   const charName = (row?.name as string) || caller.name;
+  const assassinateBreakdown: ActionBreakdown = {
+    actor: { name: charName, tokenId: caller.id },
+    action: {
+      name: 'Assassinate',
+      category: 'class-feature',
+      icon: '🗡',
+      cost: 'Normal attack (advantage vs no-turn targets)',
+    },
+    effect: `Attack roll ${kept}${sign}${bonus} = **${total}** vs ${target.name}${isCrit ? ' 💥 **CRIT** (surprised auto-crit)' : ''}.`,
+    targets: [{
+      name: target.name,
+      tokenId: target.id,
+      effect: `d20 (adv) = [${r1}, ${r2}] → kept ${kept}${sign}${bonus} = ${total}${isCrit ? ' (crit)' : ''}`,
+    }],
+    notes: [
+      `Rogue Assassin L3`,
+      `d20 rolls with advantage: ${r1}, ${r2}`,
+      `Kept: ${kept}; Attack bonus: ${sign}${bonus}; Final: ${total}`,
+      ...(surprised ? ['Target is surprised — any hit = auto-crit'] : []),
+      ...(kept === 20 && !surprised ? ['Natural 20'] : []),
+    ],
+  };
   broadcastSystem(
     c.io, c.ctx,
     `🗡 **${charName} Assassinates ${target.name}** — adv attack: [${r1},${r2}]${sign}${bonus} = **${total}**.${isCrit ? ' 💥 CRIT (surprised target = auto-crit on hit).' : ''}`,
+    { actionResult: assassinateBreakdown },
   );
   return true;
 }
@@ -437,9 +511,34 @@ async function handleWrath(c: ChatCommandContext): Promise<boolean> {
   const r2 = Math.floor(Math.random() * 8) + 1;
   const dmg = saved ? 0 : r1 + r2;
   const modSign = saveMod >= 0 ? '+' : '';
+  const wrathBreakdown: ActionBreakdown = {
+    actor: { name: caller.name, tokenId: caller.id },
+    action: {
+      name: 'Wrath of the Storm',
+      category: 'class-feature',
+      icon: '⚡',
+      cost: 'Reaction',
+    },
+    effect: `${tName} DEX save d20=${d20}${modSign}${saveMod}=${total} vs DC ${dc} → ${saved ? 'SAVED (no damage)' : `FAILED → 2d8 = [${r1},${r2}] = **${dmg}** ${dmgType} damage`}.`,
+    targets: [{
+      name: tName,
+      tokenId: target.id,
+      effect: saved
+        ? `SAVED (${total} ≥ ${dc}) — no damage`
+        : `FAILED (${total} < ${dc}) — ${dmg} ${dmgType} damage`,
+      ...(!saved ? { damage: { amount: dmg, damageType: dmgType } } : {}),
+    }],
+    notes: [
+      `Tempest Cleric L1 (reaction)`,
+      `DEX save: d20=${d20} ${modSign}${saveMod} = ${total} vs DC ${dc}`,
+      ...(!saved ? [`Damage rolls: 2d8 = [${r1}, ${r2}] = ${dmg}`] : []),
+      `Damage type: ${dmgType}`,
+    ],
+  };
   broadcastSystem(
     c.io, c.ctx,
     `⚡ **Wrath of the Storm** — ${caller.name} blasts ${tName} (reaction, 2d8 ${dmgType}):\n   ${tName} DEX save: d20=${d20}${modSign}${saveMod}=${total} vs ${dc} → ${saved ? 'SAVED (no dmg)' : `FAILED — ${r1}+${r2} = ${dmg} ${dmgType} dmg`}`,
+    { actionResult: wrathBreakdown },
   );
   return true;
 }
@@ -809,9 +908,30 @@ async function handleDarkBlessing(c: ChatCommandContext): Promise<boolean> {
     changes: { tempHitPoints: newThp },
   });
   const charName = (row?.name as string) || caller.name;
+  const dobBreakdown: ActionBreakdown = {
+    actor: { name: charName, tokenId: caller.id },
+    action: {
+      name: `Dark One's Blessing (+${thp} temp HP)`,
+      category: 'class-feature',
+      icon: '🔥',
+      cost: 'Triggered (on kill)',
+    },
+    effect: `Gains **${thp} temp HP** → ${newThp} total temp HP.${currentThp > 0 && currentThp >= thp ? ' (existing temp HP was higher — kept)' : ''}`,
+    targets: [{
+      name: charName,
+      tokenId: caller.id,
+      effect: `Temp HP ${currentThp} → ${newThp}`,
+    }],
+    notes: [
+      `Fiend Warlock L1`,
+      `Formula: CHA (${chaMod}) + Warlock level (${lvl}) = ${thp} (min 1)`,
+      `Temp HP rule: keep higher value`,
+    ],
+  };
   broadcastSystem(
     c.io, c.ctx,
     `🔥 **Dark One's Blessing** — ${charName} kills a hostile, gains **${thp} temp HP** (now ${newThp}).`,
+    { actionResult: dobBreakdown },
   );
   return true;
 }
@@ -862,9 +982,15 @@ async function handleFeyPresence(c: ChatCommandContext): Promise<boolean> {
   const condName = effect === 'charm' ? 'charmed' : 'frightened';
   const lines: string[] = [];
   lines.push(`🌿 **Fey Presence** — ${callerName} unleashes ${effect}ing magic (WIS DC ${dc}):`);
+  const feyTargets: NonNullable<ActionBreakdown['targets']> = [];
+  let anyFailed = false;
   for (const targetName of targets) {
     const target = resolveTargetByName(c.ctx, targetName);
-    if (!target) { lines.push(`  • ${targetName}: not found`); continue; }
+    if (!target) {
+      lines.push(`  • ${targetName}: not found`);
+      feyTargets.push({ name: targetName, effect: 'Token not found' });
+      continue;
+    }
     // Roll WIS save.
     let saveMod = 0;
     let tName = target.name;
@@ -888,7 +1014,16 @@ async function handleFeyPresence(c: ChatCommandContext): Promise<boolean> {
     const saved = total >= dc;
     const sign = saveMod >= 0 ? '+' : '';
     lines.push(`  • ${tName}: d20=${d20}${sign}${saveMod}=${total} vs ${dc} → ${saved ? 'SAVED' : `${condName.toUpperCase()} until end of ${callerName}'s next turn`}`);
+    feyTargets.push({
+      name: tName,
+      tokenId: target.id,
+      effect: saved
+        ? `SAVED: d20=${d20}${sign}${saveMod}=${total} vs DC ${dc}`
+        : `FAILED: d20=${d20}${sign}${saveMod}=${total} vs DC ${dc} — ${condName}`,
+      ...(saved ? {} : { conditionsApplied: [condName] }),
+    });
     if (!saved) {
+      anyFailed = true;
       const currentRound = c.ctx.room.combatState?.roundNumber ?? 0;
       ConditionService.applyConditionWithMeta(c.ctx.room.sessionId, target.id, {
         name: condName,
@@ -903,7 +1038,24 @@ async function handleFeyPresence(c: ChatCommandContext): Promise<boolean> {
       });
     }
   }
-  broadcastSystem(c.io, c.ctx, lines.join('\n'));
+  const feyBreakdown: ActionBreakdown = {
+    actor: { name: callerName, tokenId: caller.id },
+    action: {
+      name: `Fey Presence (${effect})`,
+      category: 'class-feature',
+      icon: '🌿',
+      cost: 'Action',
+    },
+    effect: `WIS save DC ${dc} or be ${condName} until end of next turn. ${anyFailed ? 'Some targets failed.' : 'All saved.'}`,
+    targets: feyTargets,
+    notes: [
+      `Archfey Warlock L1`,
+      `10-ft cube originating from caster`,
+      `Save DC: ${dc} (WIS)`,
+      `Effect on fail: ${condName}`,
+    ],
+  };
+  broadcastSystem(c.io, c.ctx, lines.join('\n'), { actionResult: feyBreakdown });
   return true;
 }
 
@@ -1034,9 +1186,32 @@ async function handleGrimHarvest(c: ChatCommandContext): Promise<boolean> {
     type: 'heal',
   });
   const callerName = (row?.name as string) || caller.name;
+  const ghBreakdown: ActionBreakdown = {
+    actor: { name: callerName, tokenId: caller.id },
+    action: {
+      name: 'Grim Harvest',
+      category: 'class-feature',
+      icon: '💀',
+      cost: '1/turn',
+    },
+    effect: `Regain **${heal} HP** (${isNecromancy ? '3×' : '2×'} spell level ${lvl}) → ${newHp}/${maxHp}.`,
+    targets: [{
+      name: callerName,
+      tokenId: caller.id,
+      effect: `HP ${hp} → ${newHp} (+${heal})`,
+      healing: { amount: heal, hpBefore: hp, hpAfter: newHp },
+    }],
+    notes: [
+      `Necromancy Wizard L2`,
+      `Heal formula: ${isNecromancy ? '3×' : '2×'} spell level (${lvl})`,
+      `Not applicable vs constructs or undead`,
+      `Once per turn`,
+    ],
+  };
   broadcastSystem(
     c.io, c.ctx,
     `💀 **Grim Harvest** — ${callerName} drains life from the kill, regains **${heal} HP** (${isNecromancy ? '3×' : '2×'} spell level ${lvl}) → ${newHp}/${maxHp}.`,
+    { actionResult: ghBreakdown },
   );
   return true;
 }

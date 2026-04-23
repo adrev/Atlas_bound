@@ -6,7 +6,7 @@ import {
 } from '../ChatCommands.js';
 import * as ConditionService from '../ConditionService.js';
 import pool from '../../db/connection.js';
-import type { Token } from '@dnd-vtt/shared';
+import type { Token, ActionBreakdown } from '@dnd-vtt/shared';
 import type { PlayerContext } from '../../utils/roomState.js';
 import { tokenConditionChanges } from '../../utils/conditionSources.js';
 
@@ -115,9 +115,26 @@ async function handleGloomStalker(c: ChatCommandContext): Promise<boolean> {
   const wis = Math.floor((((scores as Record<string, number>).wis ?? 10) - 10) / 2);
   const bonus = Math.max(0, wis);
   const r = roll(1, 8);
+  const gsBreakdown: ActionBreakdown = {
+    actor: { name: loaded.callerName, tokenId: loaded.caller.id },
+    action: {
+      name: `Dread Ambusher (+${r.sum})`,
+      category: 'class-feature',
+      icon: '🌑',
+      cost: 'Triggered on first-turn attack',
+    },
+    effect: `Initiative +${bonus} WIS, speed +10 ft on turn 1, first-turn extra attack deals **+1d8 = ${r.sum}** extra damage. Umbral Sight: darkvision +30 ft, invisible in dim/dark.`,
+    notes: [
+      `Gloom Stalker Ranger L3`,
+      `Initiative bonus: WIS mod = ${bonus}`,
+      `Extra damage roll: 1d8 = ${r.sum}`,
+      `Turn-1 bonus attack required`,
+    ],
+  };
   broadcastSystem(
     c.io, c.ctx,
     `🌑 **Dread Ambusher** (Gloom Stalker L3) — ${loaded.callerName}: initiative +${bonus} WIS. First-turn extra attack deals **+1d8 = ${r.sum}** extra damage. Speed +10 ft on turn 1. Umbral Sight: darkvision +30 ft, invisible to darkvision in dim/dark.`,
+    { actionResult: gsBreakdown },
   );
   return true;
 }
@@ -134,9 +151,26 @@ async function handleHorizonWalker(c: ChatCommandContext): Promise<boolean> {
   }
   const dice = loaded.level >= 11 ? 2 : 1;
   const r = roll(dice, 8);
+  const hwBreakdown: ActionBreakdown = {
+    actor: { name: loaded.callerName, tokenId: loaded.caller.id },
+    action: {
+      name: `Planar Warrior (+${r.sum} force)`,
+      category: 'class-feature',
+      icon: '🌐',
+      cost: 'Bonus action',
+    },
+    effect: `Target becomes planar-marked. First attack vs target this turn deals **+${dice}d8 force = ${r.sum}** force damage.`,
+    notes: [
+      `Horizon Walker Ranger L${loaded.level}`,
+      `Dice: ${dice}d8 (1d8 at L3, 2d8 at L11)`,
+      `Damage rolls: [${r.rolls.join(', ')}] = ${r.sum}`,
+      `Also: Detect Portal, Ethereal Step (L7)`,
+    ],
+  };
   broadcastSystem(
     c.io, c.ctx,
     `🌐 **Planar Warrior** (Horizon Walker L3) — ${loaded.callerName}: target becomes planar-marked (bonus action). First attack vs that target this turn deals **+${dice}d8 force** [${r.rolls.join(',')}] = +${r.sum} force damage. Also grants Detect Portal (minor action) + Ethereal Step at L7.`,
+    { actionResult: hwBreakdown },
   );
   return true;
 }
@@ -314,8 +348,34 @@ async function handleFathomless(c: ChatCommandContext): Promise<boolean> {
   const dice = loaded.level >= 10 ? 2 : 1;
   const dmg = roll(dice, 8);
   const total = dmg.sum + cha;
+  const flBreakdown: ActionBreakdown = {
+    actor: { name: loaded.callerName, tokenId: loaded.caller.id },
+    action: {
+      name: `Tentacle of the Deeps (${total} cold)`,
+      category: 'class-feature',
+      icon: '🐙',
+      cost: 'Bonus action',
+    },
+    effect: `Lash 60-ft — ${dice}d8 + CHA (${cha}) = **${total} cold** damage. Target speed reduced 10 ft this turn (no save).`,
+    ...(target ? {
+      targets: [{
+        name: target.name,
+        tokenId: target.id,
+        effect: `${total} cold damage + speed -10 ft`,
+        damage: { amount: total, damageType: 'cold' },
+      }],
+    } : {}),
+    notes: [
+      `Fathomless Warlock L${loaded.level}`,
+      `Dice: ${dice}d8 (1d8 at L1, 2d8 at L10)`,
+      `Rolls: [${dmg.rolls.join(', ')}] + CHA (${cha}) = ${total}`,
+      `Duration: 1 min or dismissed`,
+      `Uses: PB per long rest`,
+    ],
+  };
   broadcastSystem(c.io, c.ctx,
-    `🐙 **Tentacle of the Deeps** (Fathomless L1) — ${loaded.callerName}${target ? ` → ${target.name}` : ''}: bonus action, lash 60-ft, ${dice}d8+${cha} = **${total} cold** [${dmg.rolls.join(',')}]+${cha}. Target's speed reduced by 10 ft this turn (no save). Tentacle lasts 1 min or until dismissed. PB uses per long rest.`);
+    `🐙 **Tentacle of the Deeps** (Fathomless L1) — ${loaded.callerName}${target ? ` → ${target.name}` : ''}: bonus action, lash 60-ft, ${dice}d8+${cha} = **${total} cold** [${dmg.rolls.join(',')}]+${cha}. Target's speed reduced by 10 ft this turn (no save). Tentacle lasts 1 min or until dismissed. PB uses per long rest.`,
+    { actionResult: flBreakdown });
   return true;
 }
 
@@ -413,13 +473,46 @@ async function handleMercy(c: ChatCommandContext): Promise<boolean> {
   if (sub === 'healing' || sub === 'heal') {
     const r = roll(1, martialDie);
     const total = r.sum + wis;
+    const hhBreakdown: ActionBreakdown = {
+      actor: { name: loaded.callerName, tokenId: loaded.caller.id },
+      action: {
+        name: `Hand of Healing (${total} HP)`,
+        category: 'class-feature',
+        icon: '🩹',
+        cost: '1 ki',
+      },
+      effect: `Heal 1d${martialDie} (${r.sum}) + WIS (${wis}) = **${total} HP**.`,
+      notes: [
+        `Mercy Monk L${loaded.level}`,
+        `Martial Arts die: d${martialDie} (L3=d4, L5=d6, L11=d8, L17=d10)`,
+        `Roll: 1d${martialDie} = ${r.sum} + WIS (${wis}) = ${total}`,
+      ],
+    };
     broadcastSystem(c.io, c.ctx,
-      `🩹 **Hand of Healing** (Mercy L3) — ${loaded.callerName} heals: 1d${martialDie}+${wis} [${r.sum}]+${wis} = **${total} HP** (1 ki).`);
+      `🩹 **Hand of Healing** (Mercy L3) — ${loaded.callerName} heals: 1d${martialDie}+${wis} [${r.sum}]+${wis} = **${total} HP** (1 ki).`,
+      { actionResult: hhBreakdown });
   } else if (sub === 'harm' || sub === 'damage') {
     const r = roll(1, martialDie);
     const total = r.sum + wis;
+    const hmBreakdown: ActionBreakdown = {
+      actor: { name: loaded.callerName, tokenId: loaded.caller.id },
+      action: {
+        name: `Hand of Harm (+${total} necrotic)`,
+        category: 'class-feature',
+        icon: '💢',
+        cost: '1 ki (1/turn)',
+      },
+      effect: `Rider on unarmed strike hit: +1d${martialDie} (${r.sum}) + WIS (${wis}) = **${total} necrotic** damage.`,
+      notes: [
+        `Mercy Monk L${loaded.level}`,
+        `Martial Arts die: d${martialDie}`,
+        `Roll: 1d${martialDie} = ${r.sum} + WIS (${wis}) = ${total}`,
+        `Gate: once per turn on unarmed strike hit`,
+      ],
+    };
     broadcastSystem(c.io, c.ctx,
-      `💢 **Hand of Harm** (Mercy L3) — ${loaded.callerName}: on hit with unarmed strike, add 1d${martialDie}+${wis} [${r.sum}]+${wis} = **${total} necrotic** (1 ki, once per turn).`);
+      `💢 **Hand of Harm** (Mercy L3) — ${loaded.callerName}: on hit with unarmed strike, add 1d${martialDie}+${wis} [${r.sum}]+${wis} = **${total} necrotic** (1 ki, once per turn).`,
+      { actionResult: hmBreakdown });
   } else {
     whisperToCaller(c.io, c.ctx,
       `!mercy: usage \`!mercy <healing|harm>\``);
@@ -477,8 +570,25 @@ async function handlePhantom(c: ChatCommandContext): Promise<boolean> {
   const sneakDice = Math.ceil(loaded.level / 2);
   const halfSneak = Math.floor(sneakDice / 2);
   const r = roll(halfSneak, 6);
+  const phBreakdown: ActionBreakdown = {
+    actor: { name: loaded.callerName, tokenId: loaded.caller.id },
+    action: {
+      name: `Wails from the Grave (${r.sum} necrotic)`,
+      category: 'class-feature',
+      icon: '👻',
+      cost: 'Rider on Sneak Attack',
+    },
+    effect: `Secondary target within 30 ft takes **${halfSneak}d6 = ${r.sum}** necrotic damage.`,
+    notes: [
+      `Phantom Rogue L${loaded.level}`,
+      `Sneak Attack dice: ${sneakDice}d6; half = ${halfSneak}d6`,
+      `Rolls: [${r.rolls.join(', ')}] = ${r.sum}`,
+      `Uses: PB per long rest`,
+    ],
+  };
   broadcastSystem(c.io, c.ctx,
-    `👻 **Wails from the Grave** (Phantom L3) — ${loaded.callerName}: when you deal Sneak Attack, a 2nd creature within 30 ft takes **${halfSneak}d6 = ${r.sum} necrotic** [${r.rolls.join(',')}] (half your Sneak Attack dice, PB times/long rest). Plus Whispers of the Dead: swap skill proficiency after short/long rest. L9 Tokens of the Departed: PB soul trinkets → advantage on CON / WIS saves + 1 use of Wails per rest from a token.`);
+    `👻 **Wails from the Grave** (Phantom L3) — ${loaded.callerName}: when you deal Sneak Attack, a 2nd creature within 30 ft takes **${halfSneak}d6 = ${r.sum} necrotic** [${r.rolls.join(',')}] (half your Sneak Attack dice, PB times/long rest). Plus Whispers of the Dead: swap skill proficiency after short/long rest. L9 Tokens of the Departed: PB soul trinkets → advantage on CON / WIS saves + 1 use of Wails per rest from a token.`,
+    { actionResult: phBreakdown });
   return true;
 }
 
@@ -561,8 +671,25 @@ async function handleGloryPaladin(c: ChatCommandContext): Promise<boolean> {
       `🏅 **Peerless Athlete** (Glory L3 CD) — ${loaded.callerName}: for 10 min, advantage on STR (Athletics) + DEX (Acrobatics) checks, jumping distance doubled, carry capacity doubled.`);
   } else if (sub === 'inspiring' || sub === 'smite') {
     const r = roll(2, 8);
+    const isBreakdown: ActionBreakdown = {
+      actor: { name: loaded.callerName, tokenId: loaded.caller.id },
+      action: {
+        name: `Inspiring Smite (${r.sum} temp HP)`,
+        category: 'class-feature',
+        icon: '🏅',
+        cost: 'Bonus action + Channel Divinity',
+      },
+      effect: `Distribute **2d8 = ${r.sum}** temp HP across any creatures within 30 ft (any split).`,
+      notes: [
+        `Oath of Glory Paladin L3 (CD)`,
+        `Rolls: 2d8 = [${r.rolls.join(', ')}] = ${r.sum}`,
+        `Range: 30 ft`,
+        `Must follow a Divine Smite hit`,
+      ],
+    };
     broadcastSystem(c.io, c.ctx,
-      `🏅 **Inspiring Smite** (Glory L3 CD) — ${loaded.callerName}: after dealing damage with Divine Smite, bonus action to distribute **2d8 = ${r.sum}** temp HP across any creatures within 30 ft (any split).`);
+      `🏅 **Inspiring Smite** (Glory L3 CD) — ${loaded.callerName}: after dealing damage with Divine Smite, bonus action to distribute **2d8 = ${r.sum}** temp HP across any creatures within 30 ft (any split).`,
+      { actionResult: isBreakdown });
   } else {
     whisperToCaller(c.io, c.ctx,
       `!glorypaladin: usage \`!glorypaladin <peerless|inspiring>\``);

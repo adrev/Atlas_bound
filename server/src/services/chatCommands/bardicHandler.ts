@@ -6,7 +6,7 @@ import {
 } from '../ChatCommands.js';
 import * as ConditionService from '../ConditionService.js';
 import type { PlayerContext } from '../../utils/roomState.js';
-import type { Token } from '@dnd-vtt/shared';
+import type { Token, ActionBreakdown } from '@dnd-vtt/shared';
 import { tokenConditionChanges } from '../../utils/conditionSources.js';
 
 /**
@@ -146,9 +146,25 @@ async function handleUnbardic(c: ChatCommandContext): Promise<boolean> {
     broadcastSystem(c.io, c.ctx, `🎵 ${target.name}'s Bardic Inspiration fades unused.`);
   } else {
     const roll = Math.floor(Math.random() * dieSize) + 1;
+    const biBreakdown: ActionBreakdown = {
+      actor: { name: target.name, tokenId: target.id },
+      action: {
+        name: `Bardic Inspiration spend (+${roll})`,
+        category: 'class-feature',
+        icon: '🎵',
+        cost: 'No action (after seeing roll)',
+      },
+      effect: `Spend d${dieSize} BI = **${roll}** — add to attack / save / check just rolled.`,
+      notes: [
+        `Bardic Inspiration die: d${dieSize}`,
+        `Rolled value: ${roll}`,
+        `Rider target: last attack/save/check by ${target.name}`,
+      ],
+    };
     broadcastSystem(
       c.io, c.ctx,
       `🎵 ${target.name} spends Bardic Inspiration — d${dieSize} = **${roll}** (add to attack / save / check they just rolled).`,
+      { actionResult: biBreakdown },
     );
   }
   return true;
@@ -222,9 +238,31 @@ async function handleCuttingWords(c: ChatCommandContext): Promise<boolean> {
   }
 
   const roll = Math.floor(Math.random() * dieSize) + 1;
+  const cwBreakdown: ActionBreakdown = {
+    actor: { name: caller.name, tokenId: caller.id },
+    action: {
+      name: `Cutting Words (-${roll})`,
+      category: 'class-feature',
+      icon: '🎵',
+      cost: 'Reaction + 1 BI die',
+    },
+    effect: `Subtract **d${dieSize} = ${roll}** from ${target.name}'s attack / check / damage roll.`,
+    targets: [{
+      name: target.name,
+      tokenId: target.id,
+      effect: `-${roll} to triggering roll`,
+    }],
+    notes: [
+      `College of Lore Bard L${level}`,
+      `BI die: d${dieSize} (L1-4: d6, L5-9: d8, L10-14: d10, L15+: d12)`,
+      `Rolled value: ${roll}`,
+      `Range: 60 ft; requires sight or hearing`,
+    ],
+  };
   broadcastSystem(
     c.io, c.ctx,
     `🎵 ${caller.name} uses Cutting Words on ${target.name} — d${dieSize} = **${roll}**. Subtract from ${target.name}'s attack / check / damage roll.`,
+    { actionResult: cwBreakdown },
   );
   return true;
 }

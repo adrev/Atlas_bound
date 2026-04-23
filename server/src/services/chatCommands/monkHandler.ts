@@ -6,7 +6,7 @@ import {
 } from '../ChatCommands.js';
 import * as ConditionService from '../ConditionService.js';
 import pool from '../../db/connection.js';
-import type { Token } from '@dnd-vtt/shared';
+import type { Token, ActionBreakdown } from '@dnd-vtt/shared';
 import type { PlayerContext } from '../../utils/roomState.js';
 import { tokenConditionChanges } from '../../utils/conditionSources.js';
 
@@ -326,7 +326,30 @@ async function handleStunStrike(c: ChatCommandContext): Promise<boolean> {
     });
   }
   lines.push(`   Ki ${ki.remaining}/${ki.max}.`);
-  broadcastSystem(c.io, c.ctx, lines.join('\n'));
+  const ssBreakdown: ActionBreakdown = {
+    actor: { name: monk.monkName, tokenId: monk.caller.id },
+    action: {
+      name: `Stunning Strike (CON DC ${dc})`,
+      category: 'class-feature',
+      icon: '👊',
+      cost: '1 ki + rider on melee hit',
+    },
+    effect: `${tName} CON save d20=${d20}${modSign}${saveMod}=${total} vs DC ${dc} → ${saved ? 'SAVED' : 'STUNNED until end of next turn'}.`,
+    targets: [{
+      name: tName,
+      tokenId: target.id,
+      effect: saved
+        ? `SAVED (${total} ≥ ${dc})`
+        : `FAILED (${total} < ${dc}) — stunned until end of next turn`,
+      ...(saved ? {} : { conditionsApplied: ['stunned'] }),
+    }],
+    notes: [
+      `Monk L${monk.level}`,
+      `Save: CON d20=${d20} ${modSign}${saveMod} = ${total} vs DC ${dc}`,
+      `Ki remaining: ${ki.remaining}/${ki.max}`,
+    ],
+  };
+  broadcastSystem(c.io, c.ctx, lines.join('\n'), { actionResult: ssBreakdown });
   return true;
 }
 

@@ -6,7 +6,7 @@ import {
 } from '../ChatCommands.js';
 import * as ConditionService from '../ConditionService.js';
 import pool from '../../db/connection.js';
-import type { Token } from '@dnd-vtt/shared';
+import type { Token, ActionBreakdown } from '@dnd-vtt/shared';
 import type { PlayerContext } from '../../utils/roomState.js';
 import { tokenConditionChanges } from '../../utils/conditionSources.js';
 
@@ -217,9 +217,34 @@ async function handleInsightFight(c: ChatCommandContext): Promise<boolean> {
       changes: tokenConditionChanges(c.ctx.room, target.id),
     });
   }
+  const ifBreakdown: ActionBreakdown = {
+    actor: { name: callerName, tokenId: caller.id },
+    action: {
+      name: 'Insightful Fighting',
+      category: 'class-feature',
+      icon: '🔍',
+      cost: 'Bonus action',
+    },
+    effect: `Contest: ${callerName} Insight d20=${d20a}${iSign}${insightMod}=${insTotal} vs ${tName} Deception d20=${d20b}${dSign}${decMod}=${decTotal} → ${win ? `INSIGHT — Sneak Attack without advantage vs ${tName} for 1 min` : 'MISS — no benefit'}.`,
+    targets: [{
+      name: tName,
+      tokenId: target.id,
+      effect: win
+        ? `INSIGHT: Sneak Attack vs this target for 1 min without advantage`
+        : `Miss: no benefit`,
+      ...(win ? { conditionsApplied: ['insight-marked'] } : {}),
+    }],
+    notes: [
+      `Inquisitive Rogue L3`,
+      `Caller Insight: d20=${d20a} ${iSign}${insightMod} = ${insTotal}`,
+      `Target Deception: d20=${d20b} ${dSign}${decMod} = ${decTotal}`,
+      `Result: ${win ? 'Caller wins' : 'Target wins (tie = target)'}`,
+    ],
+  };
   broadcastSystem(
     c.io, c.ctx,
     `🔍 **Insightful Fighting** — ${callerName} Insight d20=${d20a}${iSign}${insightMod}=${insTotal} vs ${tName} Deception d20=${d20b}${dSign}${decMod}=${decTotal} → ${win ? `INSIGHT ON ${tName}: Sneak Attack without advantage for 1 min` : 'MISSED — no Sneak Attack benefit'}`,
+    { actionResult: ifBreakdown },
   );
   return true;
 }
@@ -319,9 +344,32 @@ async function handlePsyBlade(c: ChatCommandContext): Promise<boolean> {
   const d = isBonus ? die.offhand : die.primary;
   const roll = Math.floor(Math.random() * d) + 1;
   const total = roll + (isBonus ? 0 : dexMod);
+  const pbBreakdown: ActionBreakdown = {
+    actor: { name: callerName, tokenId: caller.id },
+    action: {
+      name: `Psychic Blade${isBonus ? ' (bonus)' : ''}`,
+      category: 'class-feature',
+      icon: '🗡',
+      cost: isBonus ? 'Bonus action' : 'Action (part of Attack)',
+    },
+    effect: `1d${d}${isBonus ? '' : `+${dexMod}`} = **${total} psychic** damage (finesse, thrown 60/120).`,
+    targets: [{
+      name: target.name,
+      tokenId: target.id,
+      effect: `${total} psychic damage`,
+      damage: { amount: total, damageType: 'psychic' },
+    }],
+    notes: [
+      `Soulknife Rogue L${level}`,
+      `Die: ${isBonus ? `offhand d${d}` : `primary d${d}`}`,
+      `Roll: 1d${d} = ${roll}${isBonus ? '' : ` + DEX (${dexMod})`} = ${total}`,
+      `Scaling: L3 d6/d4, L5 d8/d6, L11 d10/d8, L17 d12/d10`,
+    ],
+  };
   broadcastSystem(
     c.io, c.ctx,
     `🗡 **Psychic Blade${isBonus ? ' (bonus)' : ''}** — ${callerName} → ${target.name}: 1d${d}${isBonus ? '' : `+${dexMod}`} = **${total} psychic** (finesse, thrown 60/120).`,
+    { actionResult: pbBreakdown },
   );
   return true;
 }
@@ -378,9 +426,26 @@ async function handlePsiKnack(c: ChatCommandContext): Promise<boolean> {
   pool_.remaining -= 1;
   const die = psychicDieSize(level).primary;
   const roll = Math.floor(Math.random() * die) + 1;
+  const pkBreakdown: ActionBreakdown = {
+    actor: { name: callerName, tokenId: caller.id },
+    action: {
+      name: `Psi-Bolstered Knack (+${roll})`,
+      category: 'class-feature',
+      icon: '🧠',
+      cost: '1 psionic die',
+    },
+    effect: `Roll 1d${die} = **${roll}** and add to a failed ability check using a proficient skill.`,
+    notes: [
+      `Soulknife Rogue L${level}`,
+      `Die: d${die}`,
+      `Rolled value: ${roll}`,
+      `Pool remaining: ${pool_.remaining}/${pool_.max}`,
+    ],
+  };
   broadcastSystem(
     c.io, c.ctx,
     `🧠 **Psi-Bolstered Knack** — ${callerName} rolls 1d${die} = **${roll}** and adds it to a failed ability check (proficient skill). Dice ${pool_.remaining}/${pool_.max}.`,
+    { actionResult: pkBreakdown },
   );
   return true;
 }
