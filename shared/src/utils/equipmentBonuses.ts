@@ -112,6 +112,23 @@ export function calculateEquipmentBonuses(
     acBreakdown += ` + ${shieldBonus + magicShieldBonus} shield`;
   }
 
+  // Natural-armor / class-feature fallback. Races like Tortle
+  // ("Natural Armor 17", ignores DEX, can't wear body armor) and
+  // class features like Unarmored Defense (Barbarian, Monk),
+  // Draconic Resilience (Draconic Sorcerer), Barkskin, and Mage
+  // Armor give a higher baseline than 10+DEX, but aren't modeled
+  // as "armor" rows in inventory. The character's stored
+  // `armorClass` field (from DDB import or manual entry) already
+  // bakes them in — trust it as a floor whenever it exceeds what
+  // we computed from the equipment path. This includes any shield
+  // bonus DDB might have folded in, so we take max here instead of
+  // stacking shield a second time. Matches the user-facing rule:
+  // "if DDB says 19 and we computed 14, the character is 19."
+  if (baseAC && baseAC > ac) {
+    ac = baseAC;
+    acBreakdown = `${baseAC} (natural / class feature)`;
+  }
+
   // Global attack/damage bonuses from equipped magic items (rings, amulets, etc.)
   let attackBonus = 0;
   let damageBonus = 0;
