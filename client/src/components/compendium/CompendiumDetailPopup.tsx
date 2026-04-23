@@ -1481,14 +1481,19 @@ function RuleOrConditionDetail({
   const accent = entry.color ?? theme.gold.primary;
   return (
     <div style={{ padding: '4px 0' }}>
-      {/* Hero image — 100% width, 180px tall, cover-cropped so a FLUX
-          landscape portrait reads cleanly in the popup header. Only
-          renders when an imageUrl is provided. */}
+      {/* Hero image — 100% width × 260px tall with `object-position:
+          center top` so a 512×512 FLUX portrait anchors to the head /
+          shoulders instead of center-cropping to the torso. 180px was
+          too short to show the subject's face for the classes, races,
+          and backgrounds entries — the popup landed on a strip of
+          belt/hands that read as a generic abstract. 260px + top-
+          anchor fits roughly half of a square render and keeps the
+          face front-and-centre. */}
       {entry.imageUrl && (
         <div style={{
           position: 'relative',
           width: '100%',
-          height: 180,
+          height: 260,
           borderRadius: theme.radius.md,
           overflow: 'hidden',
           marginBottom: 10,
@@ -1509,6 +1514,7 @@ function RuleOrConditionDetail({
               width: '100%',
               height: '100%',
               objectFit: 'cover',
+              objectPosition: 'center top',
               display: 'block',
             }}
           />
