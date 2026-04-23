@@ -47,7 +47,8 @@ export async function assertCharacterOwnerOrDM(
     if (spRows.length > 0) return;
   }
 
-  // Fallback: check if user is DM of ANY session the character is linked to
+  // Fallback #1: user is DM of ANY session where this character is
+  // linked via session_players. Covers the PC case.
   const { rows: dmRows } = await pool.query(
     `SELECT 1 FROM session_players sp
      JOIN session_players sp2 ON sp2.session_id = sp.session_id
@@ -58,6 +59,23 @@ export async function assertCharacterOwnerOrDM(
     [characterId, userId],
   );
   if (dmRows.length > 0) return;
+
+  // Fallback #2: NPCs (creatures, loot bags) are never in
+  // session_players — they exist only as tokens on maps. A DM editing
+  // a creature's inventory or loot needs the session-via-token path
+  // or they hit 403 on every "add loot to creature" / "toggle NPC
+  // weapon equipped" call. Same pattern we fixed on /loot/transfer.
+  const { rows: npcDmRows } = await pool.query(
+    `SELECT 1 FROM tokens t
+       JOIN maps m ON m.id = t.map_id
+       JOIN session_players sp ON sp.session_id = m.session_id
+      WHERE t.character_id = $1
+        AND sp.user_id = $2
+        AND sp.role = 'dm'
+      LIMIT 1`,
+    [characterId, userId],
+  );
+  if (npcDmRows.length > 0) return;
 
   const err = new Error('Not authorized') as Error & { status: number };
   err.status = 403;
