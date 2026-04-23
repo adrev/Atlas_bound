@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
 // Tests interact with Express routers and mock response objects, both
 // of which use `any` extensively in their own typings. Scoping the
 // loosening to this file keeps production code strict.

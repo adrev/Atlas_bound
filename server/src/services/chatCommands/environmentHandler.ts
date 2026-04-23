@@ -4,7 +4,6 @@ import {
   broadcastSystem,
   type ChatCommandContext,
 } from '../ChatCommands.js';
-import * as ConditionService from '../ConditionService.js';
 import pool from '../../db/connection.js';
 import type { Token, ActionBreakdown } from '@dnd-vtt/shared';
 import type { PlayerContext } from '../../utils/roomState.js';
@@ -19,14 +18,6 @@ import type { PlayerContext } from '../../utils/roomState.js';
  *   !chase [urban|wilderness|...] — roll on the XGE chase complication
  *                                  table for the chosen terrain
  */
-
-function resolveCallerToken(ctx: PlayerContext): Token | null {
-  const all = Array.from(ctx.room.tokens.values());
-  const own = all
-    .filter((t) => (t as Token).ownerUserId === ctx.player.userId)
-    .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
-  return own[0] ?? null;
-}
 
 function resolveTargetByName(ctx: PlayerContext, name: string): Token | null {
   const needle = name.toLowerCase();

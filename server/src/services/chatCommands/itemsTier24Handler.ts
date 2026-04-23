@@ -5,7 +5,6 @@ import {
   type ChatCommandContext,
 } from '../ChatCommands.js';
 import * as ConditionService from '../ConditionService.js';
-import pool from '../../db/connection.js';
 import type { Token } from '@dnd-vtt/shared';
 import type { PlayerContext } from '../../utils/roomState.js';
 import { tokenConditionChanges } from '../../utils/conditionSources.js';

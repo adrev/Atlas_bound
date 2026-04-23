@@ -40,7 +40,7 @@ function resolveTargetOrSelf(
     // exactly one PC token — if there are multiple we pick the one
     // owned by the caller and most recently created.
     const ownTokens = all
-      .filter((t) => (t as any).ownerUserId === ctx.player.userId)
+      .filter((t) => (t as Token).ownerUserId === ctx.player.userId)
       .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
     return ownTokens[0] ?? null;
   }
@@ -53,7 +53,7 @@ function resolveTargetOrSelf(
 
 function canTarget(ctx: PlayerContext, token: Token): boolean {
   if (ctx.player.role === 'dm') return true;
-  return (token as any).ownerUserId === ctx.player.userId;
+  return (token as Token).ownerUserId === ctx.player.userId;
 }
 
 async function handleRage(c: ChatCommandContext): Promise<boolean> {

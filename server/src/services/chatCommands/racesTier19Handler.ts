@@ -33,15 +33,6 @@ function resolveCallerToken(ctx: PlayerContext): Token | null {
   return own[0] ?? null;
 }
 
-function resolveTargetByName(ctx: PlayerContext, name: string): Token | null {
-  const needle = name.toLowerCase();
-  const matches = Array.from(ctx.room.tokens.values()).filter(
-    (t) => t.name.toLowerCase() === needle,
-  );
-  if (matches.length === 0) return null;
-  matches.sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
-  return matches[0];
-}
 
 function abilityMod(scores: Record<string, number> | undefined, ability: string): number {
   const raw = (scores ?? {})[ability] ?? 10;

@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
 // Mocked Express request objects — `any` mirrors the upstream types.
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { Request } from 'express';

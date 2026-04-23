@@ -69,7 +69,7 @@ function resolveTargetOrSelf(
   const all = Array.from(ctx.room.tokens.values());
   if (!name) {
     const own = all
-      .filter((t) => (t as any).ownerUserId === ctx.player.userId)
+      .filter((t) => (t as Token).ownerUserId === ctx.player.userId)
       .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
     return own[0] ?? null;
   }

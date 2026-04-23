@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
 // Test mocks use `any` for hoisted vi helpers and handler shims.
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 

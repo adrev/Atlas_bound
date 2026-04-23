@@ -240,12 +240,13 @@ async function handleLegRes(c: ChatCommandContext): Promise<boolean> {
   }
 
   // Default: spend one — same target-name parsing as !legendary.
-  let consumed = 0;
+  // Longest match wins so "Ancient Red Dragon" resolves as the full
+  // token name rather than truncating at "Ancient".
   let target: Token | null = null;
   for (let i = 1; i <= parts.length; i++) {
     const candidate = parts.slice(0, i).join(' ');
     const match = resolveTarget(c.ctx, candidate);
-    if (match) { target = match; consumed = i; }
+    if (match) { target = match; }
   }
   // Allow "!legres <target>" with single-token target too (skip the
   // subcommand detection since we already set sub).

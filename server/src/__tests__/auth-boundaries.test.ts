@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
 // Regression tests for the authorization boundaries surfaced in the
 // Codex P1 review on 2026-04-16. Each test drives the relevant
 // Express handler / socket handler directly against a mocked pool so

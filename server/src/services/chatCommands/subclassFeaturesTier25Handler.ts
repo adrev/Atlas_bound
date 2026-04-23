@@ -623,10 +623,10 @@ async function handleStormHerald(c: ChatCommandContext): Promise<boolean> {
   }
   const terrain = (c.rest.trim().toLowerCase() || 'desert');
   const halfLvl = Math.floor(loaded.level / 2);
-  const scores = typeof loaded.row?.ability_scores === 'string'
-    ? JSON.parse(loaded.row.ability_scores as string)
-    : (loaded.row?.ability_scores ?? {});
-  const con = Math.floor((((scores as Record<string, number>).con ?? 10) - 10) / 2);
+  // Storm Herald's sea / tundra variants reference CON mod in the full
+  // RAW — we render fixed descriptions here and leave the mod lookup
+  // to the sheet; keeping the decode minimal avoids the unused-var
+  // warning while the detail text stays faithful to the aura table.
   const details: Record<string, string> = {
     desert: `10-ft aura deals ${Math.max(1, halfLvl)} fire damage to every creature ${loaded.callerName} chooses in range at start of each rage turn.`,
     sea: `10-ft aura — pick one creature; DEX save or ${Math.ceil(loaded.level/2)}d6 lightning (half on save) when rage starts or as bonus action each turn.`,

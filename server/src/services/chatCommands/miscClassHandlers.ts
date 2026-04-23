@@ -36,17 +36,6 @@ function resolveTargetByName(ctx: PlayerContext, name: string): Token | null {
   return matches[0];
 }
 
-function rollD6Pool(n: number): { total: number; rolls: number[] } {
-  const rolls: number[] = [];
-  let total = 0;
-  for (let i = 0; i < n; i++) {
-    const r = Math.floor(Math.random() * 6) + 1;
-    rolls.push(r);
-    total += r;
-  }
-  return { total, rolls };
-}
-
 // ────── !reckless (Barbarian, toggle) ──────────────────────
 async function handleReckless(c: ChatCommandContext): Promise<boolean> {
   const caller = resolveCallerToken(c.ctx);

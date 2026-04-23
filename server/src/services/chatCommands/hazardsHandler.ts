@@ -27,14 +27,6 @@ import { tokenConditionChanges } from '../../utils/conditionSources.js';
  * DM has the rule at hand.
  */
 
-function resolveCallerToken(ctx: PlayerContext): Token | null {
-  const all = Array.from(ctx.room.tokens.values());
-  const own = all
-    .filter((t) => (t as Token).ownerUserId === ctx.player.userId)
-    .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
-  return own[0] ?? null;
-}
-
 function resolveTargetByName(ctx: PlayerContext, name: string): Token | null {
   const needle = name.toLowerCase();
   const matches = Array.from(ctx.room.tokens.values()).filter(
