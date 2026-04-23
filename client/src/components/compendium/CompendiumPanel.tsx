@@ -822,16 +822,13 @@ function SubFilterBar(p: SubFilterBarProps) {
             </button>
           ))}
         </div>
+        {/* Class comes before School because the class constrains which
+         *  schools are actually available — e.g. a Cleric player
+         *  narrowing to "Cleric" first makes the School dropdown a
+         *  meaningful pick from Clr-accessible schools, rather than the
+         *  other way around where picking "Illusion" then switching
+         *  to Cleric returns zero hits. */}
         <div style={subStyles.row}>
-          <label style={subStyles.label}>School</label>
-          <select
-            value={p.spellSchool}
-            onChange={(e) => p.setSpellSchool(e.target.value)}
-            style={subStyles.select}
-          >
-            <option value="">Any</option>
-            {SPELL_SCHOOLS.map((s) => (<option key={s} value={s.toLowerCase()}>{s}</option>))}
-          </select>
           <label style={subStyles.label}>Class</label>
           <select
             value={p.spellClass}
@@ -840,6 +837,15 @@ function SubFilterBar(p: SubFilterBarProps) {
           >
             <option value="">Any</option>
             {SPELL_CLASSES.map((c) => (<option key={c} value={c.toLowerCase()}>{c}</option>))}
+          </select>
+          <label style={subStyles.label}>School</label>
+          <select
+            value={p.spellSchool}
+            onChange={(e) => p.setSpellSchool(e.target.value)}
+            style={subStyles.select}
+          >
+            <option value="">Any</option>
+            {SPELL_SCHOOLS.map((s) => (<option key={s} value={s.toLowerCase()}>{s}</option>))}
           </select>
         </div>
       </div>
