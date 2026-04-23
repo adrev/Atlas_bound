@@ -1,4 +1,4 @@
-import type { Token } from '@dnd-vtt/shared';
+import type { Token, ActionBreakdown } from '@dnd-vtt/shared';
 import {
   registerChatCommand,
   whisperToCaller,
@@ -97,22 +97,51 @@ async function handleStealth(c: ChatCommandContext): Promise<boolean> {
 
   const seenBy: string[] = [];
   const hiddenFrom: string[] = [];
+  const stealthTargets: NonNullable<ActionBreakdown['targets']> = [];
   for (const enemy of visibleEnemies) {
     let pp: number | null = null;
     if (enemy.characterId) pp = await loadPassivePerception(enemy.characterId);
+    const usedDefault = pp === null;
     if (pp === null) {
       // Unknown PP — conservative: assume 10, the 5e baseline.
       pp = 10;
     }
-    if (total > pp) hiddenFrom.push(`${enemy.name} (PP ${pp})`);
+    const hidden = total > pp;
+    if (hidden) hiddenFrom.push(`${enemy.name} (PP ${pp})`);
     else seenBy.push(`${enemy.name} (PP ${pp})`);
+    stealthTargets.push({
+      name: enemy.name,
+      tokenId: enemy.id,
+      effect: hidden
+        ? `HIDDEN: Stealth ${total} > PP ${pp}${usedDefault ? ' (default)' : ''}`
+        : `SEEN: Stealth ${total} ≤ PP ${pp}${usedDefault ? ' (default)' : ''}`,
+    });
   }
 
   const broadcastLines: string[] = [];
   broadcastLines.push(
     `👤 ${displayName} rolls Stealth: d20=${d20}${modSign}${mod}=${total}`,
   );
-  broadcastSystem(c.io, c.ctx, broadcastLines.join('\n'));
+  const stealthBreakdown: ActionBreakdown = {
+    actor: { name: displayName, tokenId: caller.id },
+    action: {
+      name: `Stealth (d20=${d20}+${mod}=${total})`,
+      category: 'other',
+      icon: '👤',
+      cost: arg === 'hide' ? 'Action (Hide)' : 'Check',
+    },
+    effect: visibleEnemies.length === 0
+      ? `Rolled Stealth ${total} — no opposing tokens in sight.`
+      : `Stealth ${total} vs passive Perception: hidden from ${hiddenFrom.length}, seen by ${seenBy.length}.`,
+    ...(stealthTargets.length > 0 ? { targets: stealthTargets } : {}),
+    notes: [
+      `Roller: ${displayName}`,
+      `Stealth roll: d20=${d20} ${modSign}${mod} = ${total}`,
+      `Compared against each visible enemy's passive Perception`,
+      ...(autoApply ? ['Requested `hide` auto-apply'] : []),
+    ],
+  };
+  broadcastSystem(c.io, c.ctx, broadcastLines.join('\n'), { actionResult: stealthBreakdown });
 
   // Whisper the detailed per-enemy comparison to the DM + caller —
   // this is DM-only info normally; the caller seeing their own

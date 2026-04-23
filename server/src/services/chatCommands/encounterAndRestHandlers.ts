@@ -5,7 +5,7 @@ import {
   type ChatCommandContext,
 } from '../ChatCommands.js';
 import pool from '../../db/connection.js';
-import type { Token } from '@dnd-vtt/shared';
+import type { Token, ActionBreakdown, SpellCastBreakdown } from '@dnd-vtt/shared';
 import type { PlayerContext } from '../../utils/roomState.js';
 
 /**
@@ -193,9 +193,35 @@ async function handleHitDice(c: ChatCommandContext): Promise<boolean> {
       characterId: caller.characterId,
       changes: { hitPoints: newHp },
     });
+    const hdFallback: SpellCastBreakdown = {
+      caster: { name: charName, tokenId: caller.id },
+      spell: {
+        name: `Hit Dice — ${n}d${die}+CON`,
+        level: 0,
+        kind: 'heal',
+      },
+      notes: [
+        `Short-rest healing`,
+        `HD pool not tracked on sheet (using fallback)`,
+        `Dice: ${n}d${die} + ${n}×CON(${conMod})`,
+      ],
+      targets: [{
+        name: charName,
+        tokenId: caller.id,
+        kind: 'heal',
+        healing: {
+          dice: `${n}d${die}+${n * conMod}`,
+          diceRolls: rolls,
+          mainRoll: heal,
+          targetHpBefore: hp,
+          targetHpAfter: newHp,
+        },
+      }],
+    };
     broadcastSystem(
       c.io, c.ctx,
       `💤 ${charName} spends ${n}d${die} HD — ${n}d${die}(${rolls.join('+')}) + ${n}×CON(${conMod}) = **${heal}** → ${newHp}/${maxHp} HP. (HD tracked manually — no pool on sheet.)`,
+      { spellResult: hdFallback },
     );
     return true;
   }
@@ -222,7 +248,8 @@ async function handleHitDice(c: ChatCommandContext): Promise<boolean> {
   if (remaining > 0) {
     whisperToCaller(c.io, c.ctx, `!hd: only had ${n - remaining} HD left to spend (requested ${n}).`);
   }
-  const heal = totalRolled + (conMod * (n - remaining));
+  const spent = n - remaining;
+  const heal = totalRolled + (conMod * spent);
   const newHp = Math.min(maxHp, hp + heal);
   await pool.query(
     'UPDATE characters SET hit_points = $1, hit_dice = $2 WHERE id = $3',
@@ -232,9 +259,42 @@ async function handleHitDice(c: ChatCommandContext): Promise<boolean> {
     characterId: caller.characterId,
     changes: { hitPoints: newHp, hitDice: hdPools },
   });
+  // Gather all rolled dice across pools for the breakdown.
+  const allRolls: number[] = [];
+  for (const detail of rollsDetail) {
+    const m = detail.match(/\(([^)]+)\)/);
+    if (m) for (const v of m[1].split('+')) allRolls.push(parseInt(v, 10));
+  }
+  const hdBreakdown: SpellCastBreakdown = {
+    caster: { name: charName, tokenId: caller.id },
+    spell: {
+      name: `Hit Dice (${spent} spent)`,
+      level: 0,
+      kind: 'heal',
+    },
+    notes: [
+      `Short-rest healing`,
+      `Dice spent: ${rollsDetail.join(' + ')}`,
+      `CON bonus: ${spent}×${conMod} = ${spent * conMod}`,
+      ...(remaining > 0 ? [`Requested ${n} but only had ${spent}`] : []),
+    ],
+    targets: [{
+      name: charName,
+      tokenId: caller.id,
+      kind: 'heal',
+      healing: {
+        dice: rollsDetail.join(' + '),
+        diceRolls: allRolls,
+        mainRoll: heal,
+        targetHpBefore: hp,
+        targetHpAfter: newHp,
+      },
+    }],
+  };
   broadcastSystem(
     c.io, c.ctx,
-    `💤 ${charName} spends ${n - remaining} HD — ${rollsDetail.join(' + ')} + ${n - remaining}×CON(${conMod}) = **${heal}** → ${newHp}/${maxHp} HP.`,
+    `💤 ${charName} spends ${spent} HD — ${rollsDetail.join(' + ')} + ${spent}×CON(${conMod}) = **${heal}** → ${newHp}/${maxHp} HP.`,
+    { spellResult: hdBreakdown },
   );
   return true;
 }
@@ -272,9 +332,26 @@ async function handleIndomitable(c: ChatCommandContext): Promise<boolean> {
   indomitableUsed.set(caller.characterId, used + 1);
   const d20 = Math.floor(Math.random() * 20) + 1;
   const charName = (row?.name as string) || caller.name;
+  const indomBreakdown: ActionBreakdown = {
+    actor: { name: charName, tokenId: caller.id },
+    action: {
+      name: `Indomitable reroll (d20 = ${d20})`,
+      category: 'class-feature',
+      icon: '🛡',
+      cost: '1 use (long rest)',
+    },
+    effect: `Rerolls the failed save: new d20 = **${d20}** (+ save mod). Must use the new roll.`,
+    notes: [
+      `Fighter L${lvl}`,
+      `New d20: ${d20}`,
+      `Uses remaining: ${maxUses - (used + 1)}/${maxUses}`,
+      `Max uses: ${maxUses} (1 @ L9, 2 @ L13, 3 @ L17)`,
+    ],
+  };
   broadcastSystem(
     c.io, c.ctx,
     `🛡 **${charName} uses Indomitable** — rerolls the failed save, new d20 = **${d20}** (+ save mod). (${used + 1}/${maxUses} used; long rest to refresh.)`,
+    { actionResult: indomBreakdown },
   );
   return true;
 }
@@ -348,9 +425,26 @@ async function handleHalflingLucky(c: ChatCommandContext): Promise<boolean> {
   }
   const newRoll = Math.floor(Math.random() * 20) + 1;
   const charName = (row?.name as string) || caller.name;
+  const luckyBreakdown: ActionBreakdown = {
+    actor: { name: charName, tokenId: caller.id },
+    action: {
+      name: `Halfling Lucky (1 \u2192 ${newRoll})`,
+      category: 'racial',
+      icon: '🍀',
+      cost: 'Triggered on natural 1',
+    },
+    effect: `Rerolled natural 1: new d20 = **${newRoll}** (must use, no choice).`,
+    notes: [
+      `Halfling racial (unrelated to Lucky feat)`,
+      `Original roll: 1`,
+      `Reroll: ${newRoll}`,
+      `No pool — unlimited uses`,
+    ],
+  };
   broadcastSystem(
     c.io, c.ctx,
     `🍀 **Halfling Lucky** — ${charName} rerolls the natural 1, new d20 = **${newRoll}** (must use, no choice).`,
+    { actionResult: luckyBreakdown },
   );
   return true;
 }

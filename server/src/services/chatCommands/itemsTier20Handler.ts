@@ -5,7 +5,7 @@ import {
   type ChatCommandContext,
 } from '../ChatCommands.js';
 import pool from '../../db/connection.js';
-import type { Token } from '@dnd-vtt/shared';
+import type { Token, ActionBreakdown, SpellCastBreakdown } from '@dnd-vtt/shared';
 import type { PlayerContext } from '../../utils/roomState.js';
 
 /**
@@ -36,10 +36,11 @@ function resolveTargetByName(ctx: PlayerContext, name: string): Token | null {
   return matches[0];
 }
 
-async function applyHealToToken(c: ChatCommandContext, target: Token, amount: number): Promise<{ newHp: number; maxHp: number }> {
+async function applyHealToToken(c: ChatCommandContext, target: Token, amount: number): Promise<{ hpBefore: number; newHp: number; maxHp: number }> {
   const combat = c.ctx.room.combatState;
   const combatant = combat?.combatants.find((x) => x.tokenId === target.id);
   if (combatant) {
+    const hpBefore = combatant.hp;
     combatant.hp = Math.min(combatant.maxHp, combatant.hp + amount);
     if (combatant.characterId) {
       await pool.query('UPDATE characters SET hit_points = $1 WHERE id = $2', [combatant.hp, combatant.characterId]).catch(() => {});
@@ -55,7 +56,7 @@ async function applyHealToToken(c: ChatCommandContext, target: Token, amount: nu
       change: amount,
       type: 'heal',
     });
-    return { newHp: combatant.hp, maxHp: combatant.maxHp };
+    return { hpBefore, newHp: combatant.hp, maxHp: combatant.maxHp };
   }
   if (target.characterId) {
     const { rows } = await pool.query('SELECT hit_points, max_hit_points FROM characters WHERE id = $1', [target.characterId]);
@@ -75,9 +76,9 @@ async function applyHealToToken(c: ChatCommandContext, target: Token, amount: nu
       change: amount,
       type: 'heal',
     });
-    return { newHp, maxHp };
+    return { hpBefore: curHp, newHp, maxHp };
   }
-  return { newHp: 0, maxHp: 0 };
+  return { hpBefore: 0, newHp: 0, maxHp: 0 };
 }
 
 /**
@@ -142,9 +143,39 @@ async function handleWand(c: ChatCommandContext): Promise<boolean> {
     rolls.push(r - 1);
     total += r;
   }
+  const wandBreakdown: SpellCastBreakdown = {
+    caster: { name: caller.name, tokenId: caller.id },
+    spell: {
+      name: `Wand of Magic Missiles (${darts} missile${darts > 1 ? 's' : ''})`,
+      level: darts,
+      kind: 'auto-damage',
+      damageType: 'force',
+    },
+    notes: [
+      `Charges spent: ${darts} (1 per missile)`,
+      `Charges remaining: ${pool_.remaining}/${pool_.max}`,
+      `Per-missile damage: 1d4+1`,
+      `Auto-hit (no attack roll)`,
+    ],
+    targets: [{
+      name: target.name,
+      tokenId: target.id,
+      kind: 'damage-flat',
+      damage: {
+        dice: `${darts}d4+${darts}`,
+        diceRolls: rolls,
+        mainRoll: total,
+        bonuses: [],
+        finalDamage: total,
+        targetHpBefore: 0,
+        targetHpAfter: 0,
+      },
+    }],
+  };
   broadcastSystem(
     c.io, c.ctx,
     `🪄 **Wand of Magic Missiles** — ${darts} missile${darts > 1 ? 's' : ''} → ${target.name}: [${rolls.map((r) => `${r}+1`).join(', ')}] = **${total} force** (auto-hit). Charges ${pool_.remaining}/${pool_.max}.`,
+    { spellResult: wandBreakdown },
   );
   return true;
 }
@@ -205,15 +236,63 @@ async function handleStaffHeal(c: ChatCommandContext): Promise<boolean> {
       rolls.push(r);
       total += r;
     }
-    const { newHp, maxHp } = await applyHealToToken(c, target, total);
+    const { hpBefore, newHp, maxHp } = await applyHealToToken(c, target, total);
+    const shBreakdown: SpellCastBreakdown = {
+      caster: { name: caller.name, tokenId: caller.id },
+      spell: {
+        name: `Staff of Healing — ${label}`,
+        level: slot,
+        kind: 'heal',
+      },
+      notes: [
+        `Magic item charge cost: ${cost}`,
+        `Charges remaining: ${pool_.remaining}/${pool_.max}`,
+        `Heal formula: ${dice}d8 + caster spell mod (assumed +3)`,
+      ],
+      targets: [{
+        name: target.name,
+        tokenId: target.id,
+        kind: 'heal',
+        healing: {
+          dice: `${dice}d8+3`,
+          diceRolls: rolls,
+          mainRoll: total,
+          targetHpBefore: hpBefore,
+          targetHpAfter: newHp,
+        },
+      }],
+    };
     broadcastSystem(
       c.io, c.ctx,
       `🌿 **Staff of Healing — ${label}** → ${target.name}: ${dice}d8+mod [${rolls.join(',')}] = **${total}**${maxHp ? ` (${newHp}/${maxHp})` : ''}. Charges ${pool_.remaining}/${pool_.max}.`,
+      { spellResult: shBreakdown },
     );
   } else {
+    // Lesser Restoration — no dice, but structured action card.
+    const lrBreakdown: ActionBreakdown = {
+      actor: { name: caller.name, tokenId: caller.id },
+      action: {
+        name: `Staff of Healing — ${label}`,
+        category: 'magic-item',
+        icon: '🌿',
+        cost: `${cost} charges`,
+      },
+      effect: `${target.name} is cured of one non-exhaustion, non-disease condition.`,
+      targets: [{
+        name: target.name,
+        tokenId: target.id,
+        effect: 'One condition cured',
+      }],
+      notes: [
+        `Staff of Healing`,
+        `Charges spent: ${cost}`,
+        `Charges remaining: ${pool_.remaining}/${pool_.max}`,
+      ],
+    };
     broadcastSystem(
       c.io, c.ctx,
       `🌿 **Staff of Healing — ${label}** → ${target.name}: cures a non-exhaustion, non-disease condition. Charges ${pool_.remaining}/${pool_.max}.`,
+      { actionResult: lrBreakdown },
     );
   }
   return true;
@@ -253,10 +332,37 @@ async function handlePotionPlus(c: ChatCommandContext): Promise<boolean> {
     sum += r;
   }
   const total = sum + cfg.flat;
-  const { newHp, maxHp } = await applyHealToToken(c, target, total);
+  const { hpBefore, newHp, maxHp } = await applyHealToToken(c, target, total);
+  const caller = resolveCallerToken(c.ctx);
+  const potionBreakdown: SpellCastBreakdown = {
+    caster: { name: caller?.name ?? 'Someone', tokenId: caller?.id },
+    spell: {
+      name: `Potion of ${tier.charAt(0).toUpperCase() + tier.slice(1)} Healing`,
+      level: 0,
+      kind: 'heal',
+    },
+    notes: [
+      `Magic item (${cfg.rarity})`,
+      `Heal formula: ${cfg.dice}d${cfg.die}+${cfg.flat} = ${total}`,
+      `Action: use consumable`,
+    ],
+    targets: [{
+      name: target.name,
+      tokenId: target.id,
+      kind: 'heal',
+      healing: {
+        dice: `${cfg.dice}d${cfg.die}+${cfg.flat}`,
+        diceRolls: rolls,
+        mainRoll: total,
+        targetHpBefore: hpBefore,
+        targetHpAfter: newHp,
+      },
+    }],
+  };
   broadcastSystem(
     c.io, c.ctx,
     `🧪 **Potion of ${tier.charAt(0).toUpperCase() + tier.slice(1)} Healing** (${cfg.rarity}) → ${target.name}: ${cfg.dice}d${cfg.die}+${cfg.flat} [${rolls.join(',')}]+${cfg.flat} = **${total}**${maxHp ? ` (${newHp}/${maxHp})` : ''}.`,
+    { spellResult: potionBreakdown },
   );
   return true;
 }
@@ -328,9 +434,25 @@ async function handleDeck(c: ChatCommandContext): Promise<boolean> {
   const chosen = DOMT_13[roll];
   const caller = resolveCallerToken(c.ctx);
   const callerName = caller?.name ?? 'Someone';
+  const deckBreakdown: ActionBreakdown = {
+    actor: { name: callerName, tokenId: caller?.id },
+    action: {
+      name: `Deck of Many Things — ${chosen.card}`,
+      category: 'magic-item',
+      icon: '🎴',
+      cost: '1 draw',
+    },
+    effect: chosen.effect,
+    notes: [
+      `Card drawn: ${chosen.card}`,
+      `Table entry: ${roll + 1} of ${DOMT_13.length}`,
+      `DM adjudicates consequences`,
+    ],
+  };
   broadcastSystem(
     c.io, c.ctx,
     `🎴 **Deck of Many Things** — ${callerName} draws **${chosen.card}**:\n   ${chosen.effect}`,
+    { actionResult: deckBreakdown },
   );
   return true;
 }

@@ -6,7 +6,7 @@ import {
 } from '../ChatCommands.js';
 import * as ConditionService from '../ConditionService.js';
 import pool from '../../db/connection.js';
-import type { Token } from '@dnd-vtt/shared';
+import type { Token, ActionBreakdown } from '@dnd-vtt/shared';
 import type { PlayerContext } from '../../utils/roomState.js';
 import { tokenConditionChanges } from '../../utils/conditionSources.js';
 
@@ -207,9 +207,34 @@ async function handleShieldMaster(c: ChatCommandContext): Promise<boolean> {
       changes: tokenConditionChanges(c.ctx.room, target.id),
     });
   }
+  const smBreakdown: ActionBreakdown = {
+    actor: { name: loaded.callerName, tokenId: loaded.caller.id },
+    action: {
+      name: `Shield Master (${effect})`,
+      category: 'class-feature',
+      icon: '🛡',
+      cost: 'Bonus action',
+    },
+    effect: `Athletics contest: atk d20=${atkD20}+${atkMod}=${atkTot} vs ${tName} d20=${defD20}+${defMod}=${defTot} → ${win ? (effect === 'prone' ? 'knocked prone' : 'pushed 5 ft') : 'failed'}.`,
+    targets: [{
+      name: tName,
+      tokenId: target.id,
+      effect: win
+        ? `FAIL: atk ${atkTot} > def ${defTot} — ${effect === 'prone' ? 'prone' : 'pushed 5 ft'}`
+        : `SAVED: def ${defTot} ≥ atk ${atkTot} — no effect`,
+      ...(win && effect === 'prone' ? { conditionsApplied: ['prone'] } : {}),
+    }],
+    notes: [
+      `Shield Master feat`,
+      `Attacker Athletics: d20=${atkD20} + STR+prof (${atkMod}) = ${atkTot}`,
+      `Defender: d20=${defD20} + best(STR, DEX) (${defMod}) = ${defTot}`,
+      `Win condition: attacker total > defender total`,
+    ],
+  };
   broadcastSystem(
     c.io, c.ctx,
     `🛡 **Shield Master** (${effect}) — ${loaded.callerName}: atk d20=${atkD20}+${atkMod}=${atkTot} vs ${tName} d20=${defD20}+${defMod}=${defTot} → ${win ? (effect === 'prone' ? 'KNOCKED PRONE' : 'pushed 5 ft') : 'failed'}`,
+    { actionResult: smBreakdown },
   );
   return true;
 }

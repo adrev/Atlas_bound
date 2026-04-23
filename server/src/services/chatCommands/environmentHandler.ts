@@ -6,7 +6,7 @@ import {
 } from '../ChatCommands.js';
 import * as ConditionService from '../ConditionService.js';
 import pool from '../../db/connection.js';
-import type { Token } from '@dnd-vtt/shared';
+import type { Token, ActionBreakdown } from '@dnd-vtt/shared';
 import type { PlayerContext } from '../../utils/roomState.js';
 
 /**
@@ -229,8 +229,25 @@ async function handleChase(c: ChatCommandContext): Promise<boolean> {
   const d20 = Math.floor(Math.random() * 20) + 1;
   const entry = table.find((e) => e.roll === d20)
     ?? { roll: d20, text: `No complication — fleet foot or lucky break (roll ${d20}).` };
+  const caller = Array.from(c.ctx.room.tokens.values()).find((t) => t.ownerUserId === c.ctx.player.userId);
+  const chaseBreakdown: ActionBreakdown = {
+    actor: { name: c.ctx.player.displayName, tokenId: caller?.id },
+    action: {
+      name: `Chase complication (d20 = ${d20})`,
+      category: 'chase',
+      icon: '🏃',
+      cost: 'Triggered on chase tick',
+    },
+    effect: entry.text,
+    notes: [
+      `Chase terrain: ${tableLabel}`,
+      `d20 roll: ${d20}`,
+      `Table: ${terrain in CHASE_TABLES ? terrain : 'urban (default)'}`,
+    ],
+  };
   broadcastSystem(c.io, c.ctx,
-    `🏃 **Chase complication** (${tableLabel}, d20=${d20}):\n   ${entry.text}`);
+    `🏃 **Chase complication** (${tableLabel}, d20=${d20}):\n   ${entry.text}`,
+    { actionResult: chaseBreakdown });
   return true;
 }
 

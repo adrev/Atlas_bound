@@ -6,7 +6,7 @@ import {
 } from '../ChatCommands.js';
 import * as ConditionService from '../ConditionService.js';
 import pool from '../../db/connection.js';
-import type { Token } from '@dnd-vtt/shared';
+import type { Token, ActionBreakdown } from '@dnd-vtt/shared';
 import type { PlayerContext } from '../../utils/roomState.js';
 import { tokenConditionChanges } from '../../utils/conditionSources.js';
 
@@ -164,6 +164,8 @@ async function handleStonesEndurance(c: ChatCommandContext): Promise<boolean> {
   const actualRed = Math.min(reduction, dmg);
   const newDmg = Math.max(0, dmg - reduction);
   // Refund HP if PC.
+  let hpBefore: number | undefined;
+  let hpAfter: number | undefined;
   if (actualRed > 0 && loaded.caller.characterId) {
     const { rows } = await pool.query(
       'SELECT hit_points, max_hit_points FROM characters WHERE id = $1',
@@ -172,16 +174,43 @@ async function handleStonesEndurance(c: ChatCommandContext): Promise<boolean> {
     const row = rows[0] as Record<string, unknown> | undefined;
     const cur = Number(row?.hit_points) || 0;
     const maxHp = Number(row?.max_hit_points) || 0;
+    hpBefore = cur;
     const newHp = Math.min(maxHp, cur + actualRed);
+    hpAfter = newHp;
     await pool.query('UPDATE characters SET hit_points = $1 WHERE id = $2', [newHp, loaded.caller.characterId]).catch(() => {});
     c.io.to(c.ctx.room.sessionId).emit('character:updated', {
       characterId: loaded.caller.characterId,
       changes: { hitPoints: newHp },
     });
   }
+  const seBreakdown: ActionBreakdown = {
+    actor: { name: loaded.callerName, tokenId: loaded.caller.id },
+    action: {
+      name: `Stone's Endurance (-${actualRed} damage)`,
+      category: 'racial',
+      icon: '⛰',
+      cost: 'Reaction (1/short rest)',
+    },
+    effect: `1d12 (${roll}) + CON (${conMod}) = **${reduction}** damage reduction (clamped to ${actualRed} vs ${dmg} incoming). Takes ${newDmg} instead.`,
+    targets: [{
+      name: loaded.callerName,
+      tokenId: loaded.caller.id,
+      effect: `Damage ${dmg} → ${newDmg} (reduced by ${actualRed})`,
+      ...(hpBefore !== undefined && hpAfter !== undefined
+        ? { healing: { amount: actualRed, hpBefore, hpAfter } }
+        : {}),
+    }],
+    notes: [
+      `Goliath racial trait`,
+      `Reduction formula: 1d12 (${roll}) + CON mod (${conMod}) = ${reduction}`,
+      `Incoming damage: ${dmg}`,
+      `Uses: 1/short rest`,
+    ],
+  };
   broadcastSystem(
     c.io, c.ctx,
     `⛰ **Stone's Endurance** — ${loaded.callerName} absorbs 1d12+${conMod} = **${reduction}** damage (${dmg} → ${newDmg}). 1/short rest.`,
+    { actionResult: seBreakdown },
   );
   return true;
 }
