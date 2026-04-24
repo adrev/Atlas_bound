@@ -3,6 +3,7 @@ import { getSocket, disconnectSocket } from '../socket/client';
 import { registerListeners } from '../socket/listeners';
 import { emitJoinSession } from '../socket/emitters';
 import { pullEventCursor, recordEventId, resetEventCursor } from '../socket/eventCursor';
+import { pullStateSnapshot } from '../socket/stateSnapshot';
 
 /**
  * Socket.io connection lifecycle bound to the active session.
@@ -76,9 +77,13 @@ export function useSocket(roomCode: string | undefined) {
       // tolerates duplicates — it just refreshes the RoomPlayer
       // record with the (current) socketId.
       rejoin();
-      // Pull any events we missed while the socket was dead / paused.
-      // Handlers for each event kind are idempotent so re-applying
-      // an event that also arrived live is safe.
+      // Pull the authoritative state snapshot — this is the
+      // ground-truth reconciliation that closes EVERY drift window,
+      // regardless of whether the causing broadcast was wrapped in
+      // the event cursor or not. See stateSnapshot.ts comments.
+      void pullStateSnapshot();
+      // Also pull the event cursor delta for live event replay
+      // (animations, chat) the snapshot doesn't carry.
       void pullEventCursor(socket);
     };
     const onVisibility = () => {
@@ -88,25 +93,30 @@ export function useSocket(roomCode: string | undefined) {
     document.addEventListener('visibilitychange', onVisibility);
     window.addEventListener('online', onOnline);
 
-    // Periodic proactive re-join (every 30 s) as final safety net. If
-    // the primary socket lost its room membership for any reason we
-    // can't detect, the next rejoin tick will re-add it. `emitJoin`
-    // is a no-op on the UX side (server resolves the user server-
-    // authoritatively); costs one tiny socket message per 30 s.
-    // Previously 90 s, tightened after repeat sync-loss reports where
-    // players missed entire combat turns before the next tick healed
-    // the room membership.
+    // Periodic keep-alive — three layers of self-heal every 15 s:
+    //   1. rejoin()          → refresh server's RoomPlayer record
+    //   2. pullStateSnapshot → authoritative state reconciliation
+    //                          (fixes drift regardless of which
+    //                          broadcast path was used server-side)
+    //   3. pullEventCursor   → replay any live-animation events we
+    //                          missed (chat, spell animations)
+    //
+    // 15 s is a tradeoff: the snapshot call is ~5-30 KB depending on
+    // room size, so 4 clients × 4 calls/min = 16 calls/min per session.
+    // Low enough to be free at our scale, tight enough that no drift
+    // lingers more than half a turn-change. The snapshot endpoint
+    // also does proper per-recipient filtering so the DM sees more
+    // than the players and a hidden token stays hidden on replay.
+    //
+    // Previously 90 s → 30 s → 15 s: every tightening was in response
+    // to a specific user-reported sync bug. Below 15 s the HTTP
+    // cadence starts to matter and we'd want ETags or long-polling.
     const keepAliveId = window.setInterval(() => {
       if (!socket.connected) socket.connect();
       rejoin();
-      // Event-cursor delta fetch. Even if the socket has been happily
-      // connected the whole time, we still poll — catches the edge
-      // case where socket.io thought it delivered a frame but the
-      // client actually missed it (e.g. OS tab throttling during a
-      // high-burst turn-change). Bounded cost: one HTTP GET per 30 s
-      // returning an empty array when we're caught up.
+      void pullStateSnapshot();
       void pullEventCursor(socket);
-    }, 30_000);
+    }, 15_000);
 
     return () => {
       if (cleanupRef.current) {

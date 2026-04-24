@@ -908,6 +908,147 @@ router.post('/:id/transfer-ownership', async (req: Request, res: Response) => {
   res.status(204).send();
 });
 
+// ─── Authoritative state snapshot ────────────────────────────────
+//
+// GET /api/sessions/:id/state
+//
+// Returns the server's current view of everything a client needs to
+// render gameplay — tokens on the caller's active map, combat state,
+// and every character they can see. Used as the ground-truth
+// reconciliation path: the event cursor gives us low-latency deltas
+// for free, but if ANY broadcast path ever slips through unwrapped
+// (there are ~90 legacy emit sites across chat command handlers that
+// still bypass the cursor), the snapshot gets pulled on every 15 s
+// keep-alive tick and the client replaces local state wholesale.
+//
+// Per-recipient filtering:
+//   - Tokens: DMs see everything; players drop tokens with
+//     visible=false or in-session Invisible without Faerie Fire.
+//   - Combat combatants: same visibility rule as tokens.
+//   - Characters: the caller's own + NPCs the caller has a token for
+//     (so the panel can read HP / conditions), but filtered further
+//     by the session's showPlayersToPlayers / showCreatureStats.
+router.get('/:id/state', async (req: Request, res: Response) => {
+  const userId = getAuthUserId(req);
+  const sessionId = String(req.params.id);
+  await assertSessionMember(sessionId, userId);
+
+  const room = getRoom(sessionId);
+  if (!room) {
+    res.json({
+      tokens: [],
+      combat: null,
+      characters: {},
+      nextEventId: 0,
+      roundNumber: 0,
+      serverTime: Date.now(),
+    });
+    return;
+  }
+
+  const player = room.players.get(userId);
+  const isDM = player?.role === 'dm';
+
+  // Tokens on the map this user is currently viewing — DM preview or
+  // player ribbon — plus filtered for visibility + invisibility.
+  const viewingMapId = isDM
+    ? (room.dmViewingMap.get(userId) ?? room.playerMapId ?? room.currentMapId)
+    : room.playerMapId;
+  const allTokens = Array.from(room.tokens.values())
+    .filter((t) => t.mapId === viewingMapId);
+  const visibleTokens = isDM
+    ? allTokens
+    : allTokens.filter((t) => {
+        if (t.visible === false) return false;
+        const conds = (t.conditions || []) as string[];
+        if (conds.includes('invisible') && !conds.includes('outlined')) {
+          // Same-side (player's own token) stays visible to owner.
+          if (t.ownerUserId !== userId) return false;
+        }
+        return true;
+      });
+
+  // Combat — filter combatants with the same hidden-token rule so the
+  // initiative tracker snapshot doesn't leak NPC names a player can't
+  // see yet on the map.
+  let combat: unknown = null;
+  if (room.combatState?.active) {
+    const filtered = isDM
+      ? room.combatState.combatants
+      : room.combatState.combatants.filter((c) => {
+          const tok = room.tokens.get(c.tokenId);
+          return tok ? tok.visible !== false : false;
+        });
+    combat = {
+      active: true,
+      roundNumber: room.combatState.roundNumber,
+      currentTurnIndex: room.combatState.currentTurnIndex,
+      combatants: filtered,
+      startedAt: room.combatState.startedAt,
+    };
+  }
+
+  // Characters — return every character referenced by a visible token
+  // plus the caller's own character, filtered by the session privacy
+  // toggles. The DM gets everything. A player gets:
+  //   - their own characters (always)
+  //   - NPCs linked to visible tokens IF showCreatureStatsToPlayers
+  //   - other PCs linked to visible tokens IF showPlayersToPlayers
+  const { rows: sessionRows } = await pool.query(
+    'SELECT settings FROM sessions WHERE id = $1',
+    [sessionId],
+  );
+  const settings = sessionRows[0]
+    ? safeParseJSON<Record<string, unknown>>(sessionRows[0].settings, {}, 'sessions.settings')
+    : {};
+  const showCreatureStats = settings.showCreatureStatsToPlayers === true;
+  const showPlayersToPlayers = settings.showPlayersToPlayers === true;
+
+  const charIds = new Set<string>();
+  for (const t of visibleTokens) {
+    if (t.characterId) charIds.add(t.characterId);
+  }
+  // Always include the caller's own character row(s) even when their
+  // token isn't on this map (late-join / Hero tab access).
+  const { rows: myCharRows } = await pool.query(
+    'SELECT id FROM characters WHERE user_id = $1',
+    [userId],
+  );
+  for (const r of myCharRows) charIds.add(r.id as string);
+
+  const characters: Record<string, unknown> = {};
+  if (charIds.size > 0) {
+    const idList = Array.from(charIds);
+    const { rows: charRows } = await pool.query(
+      `SELECT * FROM characters WHERE id = ANY($1::text[])`,
+      [idList],
+    );
+    for (const row of charRows) {
+      const ownUserId = row.user_id as string;
+      const isOwnChar = ownUserId === userId;
+      const isNPCChar = ownUserId === 'npc';
+      const isOtherPC = !isNPCChar && !isOwnChar;
+      if (!isDM && !isOwnChar) {
+        if (isNPCChar && !showCreatureStats) continue;
+        if (isOtherPC && !showPlayersToPlayers) continue;
+      }
+      // Full character row — matches what character:synced ships.
+      // Cheaper to ship the whole row and let the client's applyRemoteSync
+      // reconcile than to diff field-by-field.
+      characters[row.id as string] = row;
+    }
+  }
+
+  res.json({
+    tokens: visibleTokens,
+    combat,
+    characters,
+    nextEventId: room.nextEventId,
+    roundNumber: room.combatState?.roundNumber ?? 0,
+    serverTime: Date.now(),
+  });
+});
+
 // ─── Event cursor replay ─────────────────────────────────────────
 //
 // GET /api/sessions/:id/events?since=<id>
