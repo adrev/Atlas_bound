@@ -2,6 +2,7 @@ import { getSocket } from './client';
 import { useCharacterStore } from '../stores/useCharacterStore';
 import { useMapStore } from '../stores/useMapStore';
 import { useDiceAnimationStore } from '../stores/useDiceAnimationStore';
+import { triggerSnapshot } from './stateSnapshot';
 import type {
   Token,
   Condition,
@@ -174,6 +175,7 @@ export function emitTokenUpdate(
   if (!opts.skipLocal) {
     useMapStore.getState().updateToken(tokenId, changes);
   }
+  triggerSnapshot('token:update');
 }
 
 export function emitFogReveal(points: number[]) {
@@ -221,15 +223,23 @@ export function emitReadyResponse(ready: boolean) {
 // --- Combat ---
 export function emitStartCombat(tokenIds: string[]) {
   getSocket().emit('combat:start', { tokenIds });
+  // Start fans out into initiative rolls, action-economy creation,
+  // Alert/Jack-of-All-Trades/Rakish bonuses, Gift of Alacrity, and
+  // a pile of per-combatant state. Snapshot catches it all at once.
+  triggerSnapshot('combat:start');
 }
 
 /** Add a single token to the in-progress initiative order. DM-only; server refuses otherwise. */
 export function emitAddCombatant(tokenId: string) {
   getSocket().emit('combat:add-combatant', { tokenId });
+  triggerSnapshot('combat:add-combatant');
 }
 
 export function emitEndCombat() {
   getSocket().emit('combat:end', {});
+  // End fans out into XP awards, damage recap, condition cleanup,
+  // legendary action reset, and a pile of rule-engine teardown.
+  triggerSnapshot('combat:end');
 }
 
 /**
@@ -239,6 +249,7 @@ export function emitEndCombat() {
  */
 export function emitLockInitiative() {
   getSocket().emit('combat:lock-initiative', {});
+  triggerSnapshot('combat:lock-initiative');
 }
 
 /**
@@ -253,42 +264,54 @@ export function emitLockInitiative() {
  */
 export function emitCancelReview() {
   getSocket().emit('combat:cancel-review', {});
+  triggerSnapshot('combat:cancel-review');
 }
 
 export function emitRollInitiative(tokenId: string, bonus: number) {
   getSocket().emit('combat:roll-initiative', { tokenId, bonus });
+  triggerSnapshot('combat:roll-initiative');
 }
 
 export function emitSetInitiative(tokenId: string, total: number) {
   getSocket().emit('combat:set-initiative', { tokenId, total });
+  triggerSnapshot('combat:set-initiative');
 }
 
 export function emitNextTurn() {
   getSocket().emit('combat:next-turn', {});
+  // End-of-turn triggers condition expiries, turn hooks, legendary
+  // refills — all server-authoritative.
+  triggerSnapshot('combat:next-turn');
 }
 
 export function emitDamage(tokenId: string, amount: number) {
   getSocket().emit('combat:damage', { tokenId, amount });
+  triggerSnapshot('combat:damage');
 }
 
 export function emitHeal(tokenId: string, amount: number) {
   getSocket().emit('combat:heal', { tokenId, amount });
+  triggerSnapshot('combat:heal');
 }
 
 export function emitConditionAdd(tokenId: string, condition: Condition) {
   getSocket().emit('combat:condition-add', { tokenId, condition });
+  triggerSnapshot('condition:add');
 }
 
 export function emitConditionRemove(tokenId: string, condition: Condition) {
   getSocket().emit('combat:condition-remove', { tokenId, condition });
+  triggerSnapshot('condition:remove');
 }
 
 export function emitDeathSave(tokenId: string) {
   getSocket().emit('combat:death-save', { tokenId });
+  triggerSnapshot('death-save');
 }
 
 export function emitUseAction(actionType: ActionType) {
   getSocket().emit('combat:use-action', { actionType });
+  triggerSnapshot('use-action');
 }
 
 /**
@@ -298,6 +321,7 @@ export function emitUseAction(actionType: ActionType) {
  */
 export function emitDash() {
   getSocket().emit('combat:dash', {});
+  triggerSnapshot('dash');
 }
 
 /**
@@ -384,6 +408,11 @@ export function emitUseMovement(feet: number) {
 
 export function emitCastSpell(event: SpellCastEvent) {
   getSocket().emit('combat:cast-spell', event);
+  // Casts fan out into HP changes, conditions, spell-slot consumption,
+  // concentration registration, buff stacks — most of which flow
+  // through handlers that mutate in-memory RoomState without a
+  // corresponding broadcastEvent wrap. Snapshot catches all of it.
+  triggerSnapshot('cast-spell');
 }
 
 // --- Conditions with metadata (Phase 5 — duration tracking) ---
@@ -407,6 +436,7 @@ export interface ConditionApplyOptions {
  */
 export function emitApplyConditionWithMeta(opts: ConditionApplyOptions) {
   getSocket().emit('condition:apply-with-meta', opts);
+  triggerSnapshot('condition:apply-meta');
 }
 
 /**
@@ -416,6 +446,7 @@ export function emitApplyConditionWithMeta(opts: ConditionApplyOptions) {
  */
 export function emitConcentrationDropped(casterTokenId: string, spellName: string) {
   getSocket().emit('concentration:dropped', { casterTokenId, spellName });
+  triggerSnapshot('concentration:dropped');
 }
 
 /**
@@ -430,6 +461,7 @@ export function emitConcentrationDropped(casterTokenId: string, spellName: strin
 export function emitDamageSideEffects(tokenId: string, damageAmount: number) {
   if (damageAmount <= 0) return;
   getSocket().emit('damage:side-effects', { tokenId, damageAmount });
+  triggerSnapshot('damage-side-effects');
 }
 
 // --- Music ---
@@ -462,6 +494,10 @@ export function emitCharacterUpdate(
   if (!opts.skipLocal) {
     useCharacterStore.getState().applyRemoteUpdate(characterId, changes);
   }
+  // Every character edit (HP, inventory, spells, conditions, class
+  // features) potentially ripples into server-authoritative state we
+  // don't directly set here. Debounced snapshot catches it.
+  triggerSnapshot('character:update');
 }
 
 export function emitCharacterSyncRequest(characterId: string) {

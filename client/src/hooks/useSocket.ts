@@ -93,7 +93,7 @@ export function useSocket(roomCode: string | undefined) {
     document.addEventListener('visibilitychange', onVisibility);
     window.addEventListener('online', onOnline);
 
-    // Periodic keep-alive — three layers of self-heal every 15 s:
+    // Periodic keep-alive — three layers of self-heal every 5 s:
     //   1. rejoin()          → refresh server's RoomPlayer record
     //   2. pullStateSnapshot → authoritative state reconciliation
     //                          (fixes drift regardless of which
@@ -101,22 +101,28 @@ export function useSocket(roomCode: string | undefined) {
     //   3. pullEventCursor   → replay any live-animation events we
     //                          missed (chat, spell animations)
     //
-    // 15 s is a tradeoff: the snapshot call is ~5-30 KB depending on
-    // room size, so 4 clients × 4 calls/min = 16 calls/min per session.
-    // Low enough to be free at our scale, tight enough that no drift
-    // lingers more than half a turn-change. The snapshot endpoint
-    // also does proper per-recipient filtering so the DM sees more
-    // than the players and a hidden token stays hidden on replay.
+    // Tightened from 15 s → 5 s so even a passive session
+    // (everyone AFK, no events triggering on-demand snapshots)
+    // reconciles well before a human can notice drift. Combined
+    // with the on-demand `triggerSnapshot()` calls wired into every
+    // user action (attack, damage, heal, inventory edit, spell,
+    // token move, combat state change, map / character load), the
+    // client is essentially always at most 150 ms behind the
+    // server's idea of the world.
     //
-    // Previously 90 s → 30 s → 15 s: every tightening was in response
-    // to a specific user-reported sync bug. Below 15 s the HTTP
-    // cadence starts to matter and we'd want ETags or long-polling.
+    // Bandwidth at 4 clients × 12 calls/min = 48 /min per session.
+    // Snapshot is ~5-30 KB. Below 5 s we'd want long-polling or
+    // SSE; this is the natural floor for plain HTTP polling.
+    //
+    // Previously 90 s → 30 s → 15 s → 5 s: each tightening traced
+    // to a user-reported sync symptom. 5 s is below the human
+    // notice threshold for "things are out of sync."
     const keepAliveId = window.setInterval(() => {
       if (!socket.connected) socket.connect();
       rejoin();
       void pullStateSnapshot();
       void pullEventCursor(socket);
-    }, 15_000);
+    }, 5_000);
 
     return () => {
       if (cleanupRef.current) {

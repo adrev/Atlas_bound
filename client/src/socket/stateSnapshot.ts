@@ -6,6 +6,51 @@ import type { Token, Combatant } from '@dnd-vtt/shared';
 import { recordEventId } from './eventCursor';
 
 /**
+ * Debounced snapshot trigger. Callers (UI actions, socket listeners)
+ * call this the moment they know the server side has just mutated,
+ * and the actual /state fetch fires once after a short quiet window.
+ *
+ * Why debounce at all? A single "fire a spell" flow fans out into
+ * several back-to-back events (token-updated, character:updated,
+ * combat:action-used, chat:new-message). Each one should ideally
+ * resync, but doing four parallel /state fetches burns bandwidth
+ * for no gain — the last one would win anyway. 150 ms groups a burst
+ * into one request while still feeling instant (well under the
+ * human-perception threshold of ~200 ms).
+ *
+ * The periodic 5 s keep-alive still runs independently as the
+ * ultimate floor — if every trigger site gets removed tomorrow,
+ * sync is still guaranteed within 5 seconds.
+ */
+let snapshotTimer: ReturnType<typeof setTimeout> | null = null;
+let lastSnapshotAt = 0;
+const MIN_INTERVAL_MS = 80;
+
+/**
+ * Schedule an authoritative state resync from the server. Safe to
+ * call from anywhere — event listeners, UI handlers, imperative
+ * code. Repeat calls within a 150 ms window are coalesced into a
+ * single HTTP fetch; that keeps a multi-event turn (attack roll +
+ * damage + condition apply + action economy + chat line) from
+ * hammering the endpoint.
+ *
+ * Optional `reason` string for observability — not sent to the
+ * server, just logged for local debugging.
+ */
+export function triggerSnapshot(_reason?: string): void {
+  if (snapshotTimer) clearTimeout(snapshotTimer);
+  // Hard floor so rapid-fire triggers (e.g. a token drag emitting
+  // 30 move events/sec) can't escalate into 30 HTTP calls.
+  const elapsed = Date.now() - lastSnapshotAt;
+  const delay = elapsed < MIN_INTERVAL_MS ? MIN_INTERVAL_MS - elapsed : 150;
+  snapshotTimer = setTimeout(() => {
+    snapshotTimer = null;
+    lastSnapshotAt = Date.now();
+    void pullStateSnapshot();
+  }, delay);
+}
+
+/**
  * Authoritative state reconciler.
  *
  * The client polls `GET /api/sessions/:id/state` every keep-alive

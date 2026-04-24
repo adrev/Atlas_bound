@@ -169,6 +169,7 @@ export function LootEditor({ characterId, tokenName, onClose, canEdit = true }: 
   const transferItem = async (entry: LootEntry, targetChar: PlayerCharacter) => {
     setLoadingTransfer(true);
     try {
+      const { triggerSnapshot } = await import('../../socket/stateSnapshot');
       const resp = await fetch('/api/loot/transfer', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -178,6 +179,10 @@ export function LootEditor({ characterId, tokenName, onClose, canEdit = true }: 
           lootEntryId: entry.id,
         }),
       });
+      // Snapshot catches the inventory shuffle on BOTH source + target
+      // even though the server emits a character:updated too — belt +
+      // suspenders so a dropped socket doesn't leave either side stale.
+      triggerSnapshot('loot:transfer');
       if (!resp.ok) {
         const detail = await resp.text().catch(() => '');
         console.error('Transfer failed:', resp.status, detail);

@@ -9,6 +9,7 @@ import { useCharacterStore } from '../stores/useCharacterStore';
 import { useDrawStore } from '../stores/useDrawStore';
 import { useSceneStore } from '../stores/useSceneStore';
 import { pushHandout } from '../components/session/HandoutModal';
+import { triggerSnapshot } from './stateSnapshot';
 import { pushOpportunityAttack } from '../components/combat/OpportunityAttackModal';
 import { pushCounterspellOpportunity } from '../components/combat/CounterspellModal';
 import { pushShieldOpportunity } from '../components/combat/ShieldModal';
@@ -202,6 +203,12 @@ export function registerListeners(socket: Socket): () => void {
     if (!isPreview) {
       useSceneStore.getState().updatePlayerMap(map.id);
     }
+    // After a map switch the server has a fresh set of tokens + combat
+    // state targeted at the new map. Pull the snapshot so our view
+    // aligns with what the server says should be visible here — no
+    // ghost tokens from the prior scene, no missing invisible-turned-
+    // visible enemies.
+    triggerSnapshot('map:loaded');
   });
 
   // Scene Manager: full list of maps in this session arrived.
@@ -232,22 +239,30 @@ export function registerListeners(socket: Socket): () => void {
   socket.on('map:token-moved', ({ tokenId, x, y, mapId }) => {
     if (!isForCurrentMap(mapId)) return;
     useMapStore.getState().moveToken(tokenId, x, y);
+    // Movement can imply conditions changing (triggered opportunity
+    // attacks, difficult terrain halting a move, etc.). Debounced
+    // so a 30 Hz drag collapses to one server pull at the end of
+    // the burst.
+    triggerSnapshot('map:token-moved');
   });
 
   socket.on('map:token-added', (token) => {
     // `token.mapId` is on the Token type itself; use it for filtering.
     if (!isForCurrentMap(token.mapId)) return;
     useMapStore.getState().addToken(token);
+    triggerSnapshot('map:token-added');
   });
 
   socket.on('map:token-removed', ({ tokenId, mapId }) => {
     if (!isForCurrentMap(mapId)) return;
     useMapStore.getState().removeToken(tokenId);
+    triggerSnapshot('map:token-removed');
   });
 
   socket.on('map:token-updated', ({ tokenId, changes, mapId }) => {
     if (!isForCurrentMap(mapId)) return;
     useMapStore.getState().updateToken(tokenId, changes);
+    triggerSnapshot('map:token-updated');
   });
 
   socket.on('map:fog-updated', ({ fogState, mapId }) => {
@@ -305,6 +320,7 @@ export function registerListeners(socket: Socket): () => void {
     );
     useCombatStore.getState().startCombat(combatants, roundNumber, !!reviewPhase);
     useSessionStore.getState().setGameMode('combat');
+    triggerSnapshot('combat:started');
   });
 
   // DM has confirmed the initiative order — clear the review banner /
@@ -330,6 +346,7 @@ export function registerListeners(socket: Socket): () => void {
   socket.on('combat:ended', () => {
     useCombatStore.getState().endCombat();
     useSessionStore.getState().setGameMode('free-roam');
+    triggerSnapshot('combat:ended');
   });
 
   // DM canceled out of the initiative review modal before any turns
@@ -378,6 +395,11 @@ export function registerListeners(socket: Socket): () => void {
 
   socket.on('combat:turn-advanced', ({ currentTurnIndex, roundNumber, actionEconomy }) => {
     useCombatStore.getState().nextTurn(currentTurnIndex, roundNumber, actionEconomy);
+    // End-of-turn triggers the big one: condition expiries, legendary
+    // action refills, lair actions, etc. all fire server-side during
+    // turn advance. Pull the snapshot so the new turn's combatant
+    // starts with the authoritative HP / condition / economy values.
+    triggerSnapshot('combat:turn-advanced');
 
     // Pan the camera to whoever's turn it is now. BattleMap listens
     // for `canvas-center-on` and adjusts the viewport at the current
@@ -419,18 +441,27 @@ export function registerListeners(socket: Socket): () => void {
       }
     }
     combatState.updateHP(tokenId, hp, tempHp);
+    triggerSnapshot('combat:hp-changed');
   });
 
   socket.on('combat:condition-changed', ({ tokenId, conditions }) => {
     useCombatStore.getState().addCondition(tokenId, conditions);
+    triggerSnapshot('combat:condition-changed');
   });
 
   socket.on('combat:death-save-updated', ({ tokenId, deathSaves }) => {
     useCombatStore.getState().setDeathSaves(tokenId, deathSaves);
+    triggerSnapshot('combat:death-save-updated');
   });
 
   socket.on('combat:action-used', ({ economy }) => {
     useCombatStore.getState().updateActionEconomy(economy);
+    // Spending an action / bonus / reaction consumes resources
+    // (spell slots, legendary actions, uses-per-rest) that often
+    // only update via in-memory mutations. Pull the snapshot so
+    // the consumed values are visible on every client, not just
+    // the attacker's.
+    triggerSnapshot('combat:action-used');
   });
 
   // Opportunity Attack prompt — the server sends this to the
@@ -503,10 +534,16 @@ export function registerListeners(socket: Socket): () => void {
   // --- Character ---
   socket.on('character:updated', ({ characterId, changes }) => {
     useCharacterStore.getState().applyRemoteUpdate(characterId, changes);
+    // Character updates carry HP / conditions / inventory — the
+    // three most-reported drift sources. Trigger server reconciliation
+    // so an out-of-band handler that wrote to the DB without a matching
+    // in-memory RoomState update still shows up accurately.
+    triggerSnapshot('character:updated');
   });
 
   socket.on('character:synced', ({ character }) => {
     useCharacterStore.getState().applyRemoteSync(character as Record<string, unknown>);
+    triggerSnapshot('character:synced');
   });
 
   // --- Chat ---
@@ -576,6 +613,10 @@ export function registerListeners(socket: Socket): () => void {
     pushHandout(payload);
   });
 
+  // --- Rests pull a fresh snapshot because they reset HP + slots + HD +
+  // uses-per-rest across every applicable character, most of it via
+  // the !rest chat command which never hit the legacy per-event
+  // broadcast path. Snapshot catches all of it at once.
   // --- Rest trigger from !rest chat command ---
   // The DM fires `!rest long` or `!rest short [target]` and the
   // server broadcasts `rest:party-trigger` to every client in the
@@ -596,6 +637,7 @@ export function registerListeners(socket: Socket): () => void {
     const { performLongRest, performShortRest } = await import('../utils/rest');
     if (payload.kind === 'long') performLongRest(myChar);
     else performShortRest(myChar);
+    triggerSnapshot('rest');
   });
 
   // Return cleanup function

@@ -173,6 +173,7 @@ import {
 } from '../../utils/roll-engine';
 import { getSpellDurationMeta } from '../../utils/spell-durations';
 import { emitApplyConditionWithMeta, emitDamageSideEffects } from '../../socket/emitters';
+import { triggerSnapshot } from '../../socket/stateSnapshot';
 import { abilityModifier, calculateEquipmentBonuses, SPELL_CONDITIONS, SPELL_BUFFS, getSpellAnimation } from '@dnd-vtt/shared';
 import { useEffectStore } from '../../stores/useEffectStore';
 import { LootBagPanel } from '../loot/LootBagPanel';
@@ -2787,10 +2788,15 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
               if (charId) {
                 emitCharacterUpdate(charId, { hitPoints: newHp });
                 useCharacterStore.getState().applyRemoteUpdate(charId, { hitPoints: newHp });
+                // Pull the server's authoritative view after a damage
+                // apply — in-memory combat HP might diverge from DB
+                // depending on which emit path the damage went through.
+                triggerSnapshot('damage-apply');
                 showHpUndoToast(token.name, oldHp, newHp, true, () => {
                   setLocalHp(oldHp);
                   emitCharacterUpdate(charId, { hitPoints: oldHp });
                   useCharacterStore.getState().applyRemoteUpdate(charId, { hitPoints: oldHp });
+                  triggerSnapshot('damage-undo');
                 });
               } else {
                 // Create character record in background
@@ -2807,10 +2813,12 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
               if (charId) {
                 emitCharacterUpdate(charId, { hitPoints: newHp });
                 useCharacterStore.getState().applyRemoteUpdate(charId, { hitPoints: newHp });
+                triggerSnapshot('heal-apply');
                 showHpUndoToast(token.name, oldHp, newHp, false, () => {
                   setLocalHp(oldHp);
                   emitCharacterUpdate(charId, { hitPoints: oldHp });
                   useCharacterStore.getState().applyRemoteUpdate(charId, { hitPoints: oldHp });
+                  triggerSnapshot('heal-undo');
                 });
               } else {
                 createCharForToken(token, compendiumData, newHp, maxHp, ac, speed).then(id => {

@@ -2439,6 +2439,10 @@ function InventoryTab({
                           headers: { 'Content-Type': 'application/json' },
                           body: JSON.stringify({ itemIndex: i, mapId: currentMap.id, x: dropX, y: dropY }),
                         });
+                        // Drop mutates inventory + spawns a token — pull
+                        // snapshot so both stick on every client.
+                        const { triggerSnapshot } = await import('../../socket/stateSnapshot');
+                        triggerSnapshot('inventory:drop');
                         if (!resp.ok) {
                           console.error('Drop failed:', await resp.text());
                           showInfo('Couldn\u2019t drop item \u2014 server rejected the request.', 'danger');

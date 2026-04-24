@@ -124,6 +124,11 @@ export function CharacterImport({ onClose }: CharacterImportProps) {
         const fullChar = await charResp.json();
         setCharacter(fullChar as Character);
         localStorage.setItem('dnd-vtt-characterId', result.id);
+        // Newly imported character — pull snapshot so the server's
+        // view of everything else (tokens, combat, other chars)
+        // rehydrates with this character properly linked.
+        const { triggerSnapshot } = await import('../../socket/stateSnapshot');
+        triggerSnapshot('character:import');
 
         // Link this character to the player's session so it auto-loads on rejoin
         const sessionId = useSessionStore.getState().sessionId;

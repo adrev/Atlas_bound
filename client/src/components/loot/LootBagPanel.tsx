@@ -97,6 +97,11 @@ export function LootBagPanel({ characterId, creatureName }: LootBagPanelProps) {
         }
       }
       window.dispatchEvent(new Event('loot-updated'));
+      // Pull the snapshot so the target character's inventory (and
+      // the source loot-bag's remaining entries) reconcile on every
+      // client without waiting for the 5 s tick.
+      const { triggerSnapshot } = await import('../../socket/stateSnapshot');
+      triggerSnapshot('loot:take');
     } catch { /* ignore */ }
     setTakingId(null);
   };
