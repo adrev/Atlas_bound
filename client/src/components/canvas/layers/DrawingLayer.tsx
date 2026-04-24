@@ -1,10 +1,45 @@
 import { useEffect, useState } from 'react';
-import { Line, Rect, Circle, Arrow, Text, Group } from 'react-konva';
+import { Line, Rect, Circle, Arrow, Text, Group, Wedge } from 'react-konva';
 import type Konva from 'konva';
 import type { Drawing, DrawingGeometry, DrawingKind } from '@dnd-vtt/shared';
 import { useDrawStore, type PreviewDrawing } from '../../../stores/useDrawStore';
 import { useSessionStore } from '../../../stores/useSessionStore';
 import { emitDrawingUpdate } from '../../../socket/emitters';
+
+/**
+ * Element-to-gradient palette for the `aoe-*` drawings. Keyed off
+ * `geometry.element` so the DM's "Fireball" reads hot orange while
+ * "Cone of Cold" reads cold cyan. Falls back to `color` when the
+ * element isn't provided (legacy drawings without an element hint).
+ */
+const AOE_PALETTE: Record<string, { fill: string; stroke: string; glow: string }> = {
+  fire:      { fill: 'rgba(255, 140, 40, 0.40)',  stroke: 'rgba(255, 100, 20, 0.9)',   glow: '#ff6a20' },
+  cold:      { fill: 'rgba(180, 220, 255, 0.40)', stroke: 'rgba(120, 180, 240, 0.9)',  glow: '#a0c8ff' },
+  lightning: { fill: 'rgba(255, 255, 180, 0.40)', stroke: 'rgba(200, 220, 255, 0.9)',  glow: '#ffffa0' },
+  acid:      { fill: 'rgba(160, 220, 60, 0.40)',  stroke: 'rgba(110, 180, 40, 0.9)',   glow: '#a0dc3c' },
+  poison:    { fill: 'rgba(110, 180, 70, 0.40)',  stroke: 'rgba(60, 130, 50, 0.9)',    glow: '#6eb446' },
+  radiant:   { fill: 'rgba(255, 230, 140, 0.40)', stroke: 'rgba(230, 200, 100, 0.9)',  glow: '#ffe68c' },
+  necrotic:  { fill: 'rgba(120, 60, 140, 0.45)',  stroke: 'rgba(60, 30, 80, 0.9)',     glow: '#783c8c' },
+  thunder:   { fill: 'rgba(200, 220, 255, 0.40)', stroke: 'rgba(140, 160, 200, 0.9)',  glow: '#c8dcff' },
+  force:     { fill: 'rgba(230, 210, 255, 0.40)', stroke: 'rgba(170, 140, 230, 0.9)',  glow: '#e6d2ff' },
+  psychic:   { fill: 'rgba(255, 180, 220, 0.40)', stroke: 'rgba(200, 120, 180, 0.9)',  glow: '#ffb4dc' },
+  neutral:   { fill: 'rgba(220, 220, 230, 0.35)', stroke: 'rgba(180, 180, 200, 0.8)',  glow: '#dcdce6' },
+};
+
+function aoeStyle(drawing: Drawing): { fill: string; stroke: string; glow: string } {
+  const el = drawing.geometry.element;
+  if (el && AOE_PALETTE[el]) return AOE_PALETTE[el];
+  // Fallback: use drawing.color (hex) for all three slots with different alphas.
+  const hex = drawing.color.replace('#', '');
+  const r = parseInt(hex.slice(0, 2) || '80', 16);
+  const g = parseInt(hex.slice(2, 4) || '80', 16);
+  const b = parseInt(hex.slice(4, 6) || '80', 16);
+  return {
+    fill: `rgba(${r}, ${g}, ${b}, 0.35)`,
+    stroke: `rgba(${r}, ${g}, ${b}, 0.9)`,
+    glow: drawing.color,
+  };
+}
 
 /**
  * DrawingLayer — renders all DM / player annotations on top of
@@ -261,6 +296,88 @@ function renderShape(drawing: Drawing) {
         shadowColor="#000"
         shadowBlur={3}
         shadowOpacity={0.6}
+      />
+    );
+  }
+
+  // ── Filled AoE footprints ─────────────────────────────────────
+  // Render each with element-tinted fill + rim stroke + soft glow so
+  // a dropped fireball actually reads "this is a fire effect" at a
+  // glance. Style lookup lives in aoeStyle() above.
+  if (kind === 'aoe-sphere' && geometry.circle) {
+    const style = aoeStyle(drawing);
+    const c = geometry.circle;
+    return (
+      <Circle
+        x={c.x}
+        y={c.y}
+        radius={c.radius}
+        fill={style.fill}
+        stroke={style.stroke}
+        strokeWidth={2}
+        shadowColor={style.glow}
+        shadowBlur={16}
+        shadowEnabled
+      />
+    );
+  }
+
+  if (kind === 'aoe-cone' && geometry.cone) {
+    const style = aoeStyle(drawing);
+    const w = geometry.cone;
+    return (
+      <Wedge
+        x={w.x}
+        y={w.y}
+        radius={w.radius}
+        angle={53}
+        rotation={w.rotation - 26.5}
+        fill={style.fill}
+        stroke={style.stroke}
+        strokeWidth={2}
+        shadowColor={style.glow}
+        shadowBlur={16}
+        shadowEnabled
+      />
+    );
+  }
+
+  if (kind === 'aoe-cube' && geometry.orientedRect) {
+    const style = aoeStyle(drawing);
+    const r = geometry.orientedRect;
+    return (
+      <Rect
+        x={r.x}
+        y={r.y}
+        width={r.width}
+        height={r.height}
+        offsetX={r.width / 2}
+        offsetY={r.height / 2}
+        rotation={r.rotation}
+        fill={style.fill}
+        stroke={style.stroke}
+        strokeWidth={2}
+        shadowColor={style.glow}
+        shadowBlur={16}
+        shadowEnabled
+      />
+    );
+  }
+
+  if (kind === 'aoe-line' && geometry.points && geometry.points.length >= 4) {
+    // Two-point payload: [x1,y1,x2,y2]. Render as a thick rounded
+    // strip (5 ft wide) instead of a hair-thin stroke.
+    const style = aoeStyle(drawing);
+    return (
+      <Line
+        points={geometry.points}
+        stroke={style.fill}
+        strokeWidth={Math.max(strokeWidth, 18)}
+        lineCap="round"
+        lineJoin="round"
+        shadowColor={style.glow}
+        shadowBlur={16}
+        shadowEnabled
       />
     );
   }

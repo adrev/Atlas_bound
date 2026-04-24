@@ -200,6 +200,11 @@ export const mapReorderSchema = z.object({
 
 const drawingKindSchema = z.enum([
   'freehand', 'rect', 'circle', 'line', 'arrow', 'text', 'ephemeral',
+  // Filled AoE footprints written by the AoE palette. The renderer
+  // draws them via Konva.Wedge / filled Line so cones and 5-ft-wide
+  // lines actually look like cones and lines instead of hollow
+  // circles-for-cones.
+  'aoe-sphere', 'aoe-cone', 'aoe-cube', 'aoe-line',
 ]);
 const drawingVisibilitySchema = z.enum(['shared', 'dm-only', 'player-only']);
 
@@ -222,6 +227,23 @@ const drawingGeometrySchema = z.object({
     content: z.string().max(500),
     fontSize: z.number().finite().min(6).max(120),
   }).optional(),
+  cone: z.object({
+    x: coord,
+    y: coord,
+    radius: z.number().finite().min(0).max(30000),
+    rotation: z.number().finite().min(-720).max(720),
+  }).optional(),
+  orientedRect: z.object({
+    x: coord,
+    y: coord,
+    width: z.number().finite().min(0).max(30000),
+    height: z.number().finite().min(0).max(30000),
+    rotation: z.number().finite().min(-720).max(720),
+  }).optional(),
+  element: z.enum([
+    'fire', 'cold', 'lightning', 'acid', 'poison', 'radiant',
+    'necrotic', 'thunder', 'force', 'psychic', 'neutral',
+  ]).optional(),
 });
 
 export const drawingCreateSchema = z.object({

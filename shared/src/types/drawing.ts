@@ -20,7 +20,16 @@ export type DrawingKind =
   | 'line'        // Straight line, two endpoints
   | 'arrow'       // Line with an arrowhead at end
   | 'text'        // Text label
-  | 'ephemeral';  // Quick-sketch pencil that fades after fadeAfterMs
+  | 'ephemeral'   // Quick-sketch pencil that fades after fadeAfterMs
+  // Filled AoE footprints from the DM's AoE palette. Rendered filled
+  // + tinted by the element-colored palette, not as hollow outlines —
+  // the DM places "a fireball here" and every client sees a proper
+  // coloured sphere / cone / line / cube instead of a flat outline
+  // they have to squint at.
+  | 'aoe-sphere'  // Filled circle, glow tint, element color
+  | 'aoe-cone'    // 53° wedge (5e RAW) anchored at origin, rotation in deg
+  | 'aoe-cube'    // Filled oriented rectangle
+  | 'aoe-line';   // Thick filled strip (5 ft wide), origin → endpoint
 
 export type DrawingVisibility =
   /** Everyone in the room sees the drawing */
@@ -45,6 +54,25 @@ export interface DrawingGeometry {
   rect?: { x: number; y: number; width: number; height: number };
   circle?: { x: number; y: number; radius: number };
   text?: { x: number; y: number; content: string; fontSize: number };
+  /**
+   * 5e-standard cone anchored at (x, y), extending `radius` px in
+   * the direction of `rotation` (degrees, 0° = east). Angle fixed at
+   * 53° per RAW (matches EffectLayer's SpellTemplate) so we don't
+   * need to carry it in the payload. Used by `aoe-cone`.
+   */
+  cone?: { x: number; y: number; radius: number; rotation: number };
+  /**
+   * Oriented rectangle centered on (x, y), rotated `rotation`
+   * degrees. Used by `aoe-cube` (square footprint that can angle
+   * off-axis for diagonal placements).
+   */
+  orientedRect?: { x: number; y: number; width: number; height: number; rotation: number };
+  /**
+   * Element hint for the AoE palette so the renderer picks the right
+   * gradient palette. Optional because nothing depends on it — falls
+   * back to the drawing's `color` field if absent.
+   */
+  element?: 'fire' | 'cold' | 'lightning' | 'acid' | 'poison' | 'radiant' | 'necrotic' | 'thunder' | 'force' | 'psychic' | 'neutral';
 }
 
 export interface Drawing {
