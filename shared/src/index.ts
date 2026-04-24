@@ -67,6 +67,8 @@ export { SPELL_CONDITIONS, SPELL_BUFFS } from './constants/spell-conditions.js';
 export type { ConditionInfo } from './constants/conditions.js';
 export { SPELL_ANIMATIONS, getSpellAnimation } from './constants/spell-animations.js';
 export type { AnimationType, SpellAnimationConfig } from './constants/spell-animations.js';
+export { LIGHT_SOURCE_PRESETS, findLightPresetForName } from './constants/light-sources.js';
+export type { LightSourcePreset } from './constants/light-sources.js';
 
 // Utils
 export { parseDiceNotation, rollDice, rollWithAdvantage } from './utils/dice-parser.js';

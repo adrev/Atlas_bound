@@ -7,7 +7,7 @@ import {
   emitTokenRemove, emitTokenUpdate, emitCharacterUpdate,
   emitRoll, emitPing, emitStartCombat, emitAddCombatant,
 } from '../../socket/emitters';
-import { abilityModifier } from '@dnd-vtt/shared';
+import { abilityModifier, LIGHT_SOURCE_PRESETS } from '@dnd-vtt/shared';
 import { theme } from '../../styles/theme';
 
 // Theme-routed palette — matches TokenActionPanel + TokenTooltip so
@@ -33,7 +33,7 @@ function parse<T>(val: unknown, fallback: T): T {
   return (val as T) ?? fallback;
 }
 
-type SubMenu = null | 'hp' | 'attack' | 'conditions' | 'aura';
+type SubMenu = null | 'hp' | 'attack' | 'conditions' | 'aura' | 'light';
 
 export function TokenContextMenu() {
   const contextTokenId = useMapStore((s) => s.contextMenuTokenId);
@@ -195,6 +195,59 @@ export function TokenContextMenu() {
           </div>
         )}
 
+        {subMenu === 'light' && (
+          <div style={{ padding: '8px 12px', borderBottom: `1px solid ${C.border}` }}>
+            <div style={{ fontSize: 10, color: C.textMuted, marginBottom: 6 }}>
+              5e Light Source (PHB p.183)
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 4, marginBottom: 8 }}>
+              {LIGHT_SOURCE_PRESETS.map((preset) => {
+                const expectedBright = preset.bright * gridSize / 5;
+                const active = token.hasLight
+                  && Math.abs(token.lightRadius - expectedBright) < 1
+                  && token.lightColor === preset.color;
+                return (
+                  <button
+                    key={preset.id}
+                    onClick={() => {
+                      emitTokenUpdate(token.id, {
+                        hasLight: true,
+                        lightRadius: preset.bright * gridSize / 5,
+                        lightDimRadius: preset.dim * gridSize / 5,
+                        lightColor: preset.color,
+                      } as any);
+                      close();
+                    }}
+                    title={`${preset.bright} ft bright / ${preset.dim - preset.bright} ft dim · ${preset.ref ?? ''}`}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: 4,
+                      padding: '4px 6px', fontSize: 10, borderRadius: 3, cursor: 'pointer',
+                      background: active ? 'rgba(212,168,67,0.3)' : C.bgHover,
+                      border: `1px solid ${active ? C.gold : C.border}`,
+                      color: active ? C.gold : C.textSec, fontWeight: 600, textAlign: 'left',
+                    }}
+                  >
+                    <span aria-hidden style={{ fontSize: 12 }}>{preset.icon}</span>
+                    <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {preset.label}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+            {token.hasLight && (
+              <Btn label="Remove Light" color={C.red} onClick={() => {
+                emitTokenUpdate(token.id, {
+                  hasLight: false,
+                  lightRadius: 0,
+                  lightDimRadius: 0,
+                } as any);
+                close();
+              }} />
+            )}
+          </div>
+        )}
+
         {subMenu === 'aura' && (
           <div style={{ padding: '8px 12px', borderBottom: `1px solid ${C.border}` }}>
             <div style={{ fontSize: 10, color: C.textMuted, marginBottom: 4 }}>Radius (feet)</div>
@@ -268,6 +321,7 @@ export function TokenContextMenu() {
                 so through the cast flow, not by picking from this menu. */}
             {isDM && <Item icon="🎭" label="Conditions" onClick={() => setSubMenu('conditions')} hasArrow />}
             {isDM && <Item icon="🔮" label={(token as any).aura ? 'Aura (active)' : 'Aura'} onClick={() => setSubMenu('aura')} hasArrow />}
+            {isDM && <Item icon={token.hasLight ? '💡' : '🔆'} label={token.hasLight ? `Light (${Math.round(token.lightRadius / gridSize * 5)} ft)` : 'Light source'} onClick={() => setSubMenu('light')} hasArrow />}
             <Item icon="📊" label="View Stats" onClick={async () => {
               // For NPC/creature tokens: open compendium stat block
               // For player tokens: open character sheet

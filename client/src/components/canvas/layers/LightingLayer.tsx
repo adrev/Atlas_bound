@@ -10,17 +10,19 @@ interface LightingLayerProps {
   mapHeight: number;
 }
 
-/** Warm torch-like colors for mundane light sources. Hot near the
- *  source, gentle warm glow at the dim edge. */
-const TORCH_GRADIENT_INNER = 'rgba(255, 230, 170, 0.55)';
-const TORCH_GRADIENT_OUTER = 'rgba(255, 190, 120, 0.08)';
-
-/** Magical lights. Prior mix was too aggressively blue and read as a
- *  tinted circle rather than "illumination". Lean into a near-white
- *  core with a faint lavender halo — the color still reads as arcane
- *  but the lit area actually looks lit, not blue-filtered. */
-const MAGIC_GRADIENT_INNER = 'rgba(245, 240, 255, 0.55)';
-const MAGIC_GRADIENT_OUTER = 'rgba(180, 190, 230, 0.08)';
+/** Tinted overlays stay SUBTLE on the bright-light area because the
+ *  underlying map should read "as if in daylight" per 5e RAW — a
+ *  strong white/blue overlay inside the bright poly was the "bright
+ *  looks dark" symptom users reported, since 55% white on top
+ *  obscures the map details more than the 38% darkness remaining in
+ *  the dim halo. 5e bright = see normally → minimal tint. The glow
+ *  feel comes from the outer falloff ring, not a washout over the
+ *  center. Torches tint warm amber; the Light cantrip / Daylight
+ *  spell / other arcane sources tint cool. */
+const TORCH_GRADIENT_INNER = 'rgba(255, 220, 160, 0.12)';
+const TORCH_GRADIENT_OUTER = 'rgba(255, 180, 100, 0.05)';
+const MAGIC_GRADIENT_INNER = 'rgba(230, 235, 255, 0.12)';
+const MAGIC_GRADIENT_OUTER = 'rgba(170, 190, 240, 0.05)';
 
 /** Default darkness overlay alpha */
 const DARKNESS_ALPHA = 0.85;
