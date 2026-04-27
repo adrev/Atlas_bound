@@ -86,6 +86,24 @@ describe('buildFeedbackEmbed', () => {
     const out = buildFeedbackEmbed({ ...basePayload, category: 'mystery' as unknown as 'other' }) as any;
     expect(out.embeds[0].title).toMatch(/^💬 Other/);
   });
+
+  it('emits a thread_name so forum-channel webhooks accept the post', () => {
+    const out = buildFeedbackEmbed(basePayload) as any;
+    // Forum channels require thread_name; regular text channels
+    // ignore it. Always emit so a single payload works in both.
+    expect(typeof out.thread_name).toBe('string');
+    expect(out.thread_name.length).toBeGreaterThan(0);
+    expect(out.thread_name.length).toBeLessThanOrEqual(100);
+    // Thread name leads with the category dressing so the forum
+    // sidebar reads naturally — "🐞 Bug: <summary>".
+    expect(out.thread_name).toMatch(/^🐞 Bug:/);
+  });
+
+  it('clamps thread_name to 100 chars even with long content', () => {
+    const longContent = 'A'.repeat(500);
+    const out = buildFeedbackEmbed({ ...basePayload, content: longContent }) as any;
+    expect(out.thread_name.length).toBeLessThanOrEqual(100);
+  });
 });
 
 describe('sendFeedbackWebhook', () => {

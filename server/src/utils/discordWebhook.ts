@@ -82,12 +82,21 @@ export function buildFeedbackEmbed(p: FeedbackWebhookPayload): unknown {
   // isn't set (dev).
   const adminUrl = `${BASE_URL.replace(/\/$/, '')}/admin/feedback`;
 
+  // Thread title for forum-channel webhooks. Discord requires
+  // `thread_name` (≤100 chars) on any webhook posted to a forum
+  // channel — each submission becomes its own thread, which is also
+  // a nicer triage UX than a flat firehose. Regular text-channel
+  // webhooks ignore the field, so it's safe to send unconditionally.
+  const summary = p.content.replace(/\s+/g, ' ').trim().slice(0, 70);
+  const threadName = `${dressing.emoji} ${dressing.label}: ${summary || '(no summary)'}`.slice(0, 100);
+
   return {
     // Username + avatar override on the webhook so the bot identity
     // is consistent regardless of which Discord channel hosts the
     // webhook. (No avatar URL — Discord falls back to the channel
     // default, which is fine.)
     username: 'Atlas Bound · Feedback',
+    thread_name: threadName,
     embeds: [
       {
         title: `${dressing.emoji} ${dressing.label} — from ${submitter}`,
