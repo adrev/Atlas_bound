@@ -109,6 +109,10 @@ emit_env CLOUD_SQL_CONNECTION_NAME "atlas-bound:us-central1:atlas-bound-db"
 # admin-only endpoints (compendium sync/upload). Empty in production refuses
 # admin access — set this before deploying if admin endpoints are needed.
 emit_env ADMIN_USER_IDS          "${ADMIN_USER_IDS:-}"
+# DISCORD_FEEDBACK_WEBHOOK_URL: when set, every successful POST to
+# /api/feedback fires a Discord embed to this webhook. Optional — if
+# unset the notifier silently no-ops and feedback still lands in the DB.
+emit_env DISCORD_FEEDBACK_WEBHOOK_URL "${DISCORD_FEEDBACK_WEBHOOK_URL:-}"
 
 gcloud run deploy atlas-bound \
   --image "$IMAGE" \
