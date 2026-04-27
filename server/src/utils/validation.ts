@@ -1095,4 +1095,12 @@ export const createMapSchema = z.object({
    * walls / fog / tokens they've already set up on it.
    */
   prebuiltKey: z.string().max(100).optional(),
+  /**
+   * Initial ambient lighting tier — DM picks "Outdoor — Twilight" /
+   * "Underground — Unlit Dungeon" / etc. at upload time so the map
+   * lands on the correct 5e Vision tier without the DM having to
+   * flip toggles after the fact. See `LIGHTING_SCENARIOS` in shared.
+   */
+  ambientLight: z.enum(['bright', 'dim', 'dark', 'custom']).optional(),
+  ambientOpacity: z.coerce.number().min(0).max(1).optional(),
 });

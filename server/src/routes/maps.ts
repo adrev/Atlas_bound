@@ -58,7 +58,7 @@ router.post(
       return;
     }
 
-    const { name, width, height, gridSize, gridType, prebuiltKey } = parsed.data;
+    const { name, width, height, gridSize, gridType, prebuiltKey, ambientLight, ambientOpacity } = parsed.data;
 
     if (prebuiltKey) {
       const { rows: existingRows } = await pool.query(
@@ -121,10 +121,20 @@ router.post(
       }
     }
 
+    // The DM may have picked a 5e lighting scenario at upload time
+    // (Outdoor — Twilight, Underground — Unlit Dungeon, etc.). If so,
+    // bake it into the row so the map opens with the correct ambient
+    // tier without an extra round-trip. `null` for opacity means
+    // "use the canonical preset alpha"; only `custom` carries a numeric
+    // opacity value.
     await pool.query(`
-      INSERT INTO maps (id, session_id, name, image_url, thumbnail_url, width, height, grid_size, grid_type)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-    `, [mapId, sessionId, name, imageUrl, thumbnailUrl, width, height, gridSize, gridType]);
+      INSERT INTO maps (id, session_id, name, image_url, thumbnail_url, width, height, grid_size, grid_type, ambient_light, ambient_opacity)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+    `, [
+      mapId, sessionId, name, imageUrl, thumbnailUrl, width, height, gridSize, gridType,
+      ambientLight ?? 'bright',
+      ambientLight === 'custom' ? (ambientOpacity ?? null) : null,
+    ]);
 
     const { rows: mapRows } = await pool.query('SELECT * FROM maps WHERE id = $1', [mapId]);
     const map = mapRows[0] as Record<string, unknown>;

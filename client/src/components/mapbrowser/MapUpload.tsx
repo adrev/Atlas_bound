@@ -9,6 +9,7 @@ import { GridAligner } from './GridAligner';
 import type { GridSettings } from './GridAligner';
 import { detectGrid } from '../../utils/detect-grid';
 import { generateMapThumbnail } from '../../utils/generate-map-thumbnail';
+import { LIGHTING_SCENARIOS } from '@dnd-vtt/shared';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -47,6 +48,12 @@ export function MapUpload({ open, onClose, onMapCreated }: MapUploadProps) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [autoGrid, setAutoGrid] = useState<{ cellSize: number; confidence: number } | null>(null);
+  // 5e Vision scenario chosen at upload time. Defaults to 'outdoor-noon'
+  // (bright) — matches the legacy "no preset" behaviour, just makes
+  // it explicit. The DM can switch to "Underground — Unlit Dungeon"
+  // before clicking Upload to skip the round-trip of changing it
+  // afterwards in DM Tools.
+  const [lightingScenarioId, setLightingScenarioId] = useState<string>('outdoor-noon');
 
   // -----------------------------------------------------------------------
   // File handling
@@ -99,6 +106,18 @@ export function MapUpload({ open, onClose, onMapCreated }: MapUploadProps) {
       formData.append('gridSize', String(grid.cellSize));
       formData.append('gridType', 'square');
 
+      // Lighting scenario → tier + opacity per RAW (PHB 183 / DMG 243).
+      // Server stores them on the map row so it opens with the right
+      // ambient on first load; if the DM forgot to pick they get the
+      // default "outdoor-noon" → bright, identical to legacy behaviour.
+      const scenario = LIGHTING_SCENARIOS.find((s) => s.id === lightingScenarioId);
+      if (scenario) {
+        formData.append('ambientLight', scenario.tier);
+        if (scenario.tier === 'custom' && typeof scenario.opacity === 'number') {
+          formData.append('ambientOpacity', String(scenario.opacity));
+        }
+      }
+
       // Generate a 480-px JPEG thumbnail client-side and ship it
       // alongside the original. The server stores it under
       // /uploads/maps/thumbnails/. Failure to generate is non-fatal —
@@ -139,7 +158,7 @@ export function MapUpload({ open, onClose, onMapCreated }: MapUploadProps) {
     } finally {
       setLoading(false);
     }
-  }, [sessionId, file, mapName, imageDims, grid, isDM, playerMapId, onMapCreated, onClose]);
+  }, [sessionId, file, mapName, imageDims, grid, isDM, playerMapId, onMapCreated, onClose, lightingScenarioId]);
 
   // -----------------------------------------------------------------------
   // Cleanup preview URL
@@ -215,6 +234,53 @@ export function MapUpload({ open, onClose, onMapCreated }: MapUploadProps) {
             style={{ ...styles.textInput, fontSize: 16, padding: '10px 14px', fontWeight: 600 }}
             autoComplete="off"
           />
+        </div>
+
+        {/* Lighting scenario — picks the 5e ambient tier + opacity at
+            upload time. Saves the DM the round-trip of opening DM
+            Tools after the map loads to flip "Underground — Unlit
+            Dungeon" before the players walk in. */}
+        <div style={styles.section}>
+          <label style={styles.label}>
+            Lighting Scenario
+            <span style={{ fontSize: 10, color: theme.text.muted, fontWeight: 400, marginLeft: 6 }}>
+              · 5e RAW
+            </span>
+          </label>
+          <select
+            value={lightingScenarioId}
+            onChange={(e) => { e.stopPropagation(); setLightingScenarioId(e.target.value); }}
+            onClick={(e) => e.stopPropagation()}
+            style={{ ...styles.textInput, fontSize: 13, padding: '8px 12px', cursor: 'pointer' }}
+          >
+            <optgroup label="Outdoor">
+              {LIGHTING_SCENARIOS.filter(s => s.group === 'outdoor').map(s => (
+                <option key={s.id} value={s.id}>{s.icon} {s.label}</option>
+              ))}
+            </optgroup>
+            <optgroup label="Indoor">
+              {LIGHTING_SCENARIOS.filter(s => s.group === 'indoor').map(s => (
+                <option key={s.id} value={s.id}>{s.icon} {s.label}</option>
+              ))}
+            </optgroup>
+            <optgroup label="Underground">
+              {LIGHTING_SCENARIOS.filter(s => s.group === 'underground').map(s => (
+                <option key={s.id} value={s.id}>{s.icon} {s.label}</option>
+              ))}
+            </optgroup>
+            <optgroup label="Magical">
+              {LIGHTING_SCENARIOS.filter(s => s.group === 'magical').map(s => (
+                <option key={s.id} value={s.id}>{s.icon} {s.label}</option>
+              ))}
+            </optgroup>
+          </select>
+          <div style={{ fontSize: 10, color: theme.text.muted, marginTop: 4 }}>
+            {LIGHTING_SCENARIOS.find(s => s.id === lightingScenarioId)?.hint}
+            {(() => {
+              const ref = LIGHTING_SCENARIOS.find(s => s.id === lightingScenarioId)?.ref;
+              return ref ? <span style={{ opacity: 0.6 }}> · {ref}</span> : null;
+            })()}
+          </div>
         </div>
 
         {error && <div style={styles.error}>{error}</div>}
