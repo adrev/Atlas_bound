@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef, lazy, Suspense } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { Copy, PanelRightClose, PanelRightOpen, X, LogOut, Home, UserCog, ChevronDown, Menu, Settings, Volume2, VolumeX } from 'lucide-react';
+import { Copy, PanelRightClose, PanelRightOpen, X, LogOut, Home, UserCog, ChevronDown, Menu, Settings, Volume2, VolumeX, Shield } from 'lucide-react';
 import { TweaksPanel } from '../../kbrt/TweaksPanel';
 import { useSocket } from '../../hooks/useSocket';
 import { useIsMobile } from '../../hooks/useIsMobile';
@@ -24,6 +24,7 @@ import { AudioPopover } from '../audio/AudioPopover';
 import { TRACKS } from '../audio/tracks';
 import { useAudioStore } from '../../stores/useAudioStore';
 import { FirstJoinTour } from '../onboarding/FirstJoinTour';
+import { FeedbackButton } from '../feedback/FeedbackButton';
 // Sidebar is large (DM panels, scene manager, creature library). Lazy-loaded
 // so the initial session bundle stays under the 500 kB warning threshold.
 const Sidebar = lazy(() => import('./Sidebar').then((m) => ({ default: m.Sidebar })));
@@ -412,6 +413,7 @@ export function AppShell() {
       <MusicEngine />
       <ToastHost />
       <DialogHost />
+      <FeedbackButton />
       <Suspense fallback={null}>
         <HandoutModal />
       </Suspense>
@@ -634,6 +636,15 @@ export function AppShell() {
                     <Home size={14} />
                     Back to Lobby
                   </button>
+                  {authUser.isAdmin && (
+                    <button
+                      style={styles.dropdownItem}
+                      onClick={() => { setShowUserMenu(false); navigate('/admin/feedback'); }}
+                    >
+                      <Shield size={14} />
+                      Feedback Admin
+                    </button>
+                  )}
                   <div style={styles.dropdownDivider} />
                   <button
                     style={{ ...styles.dropdownItem, color: theme.danger }}

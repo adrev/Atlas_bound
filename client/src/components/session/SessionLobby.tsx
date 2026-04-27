@@ -6,6 +6,7 @@ import { useSessionStore } from '../../stores/useSessionStore';
 import { useAuthStore } from '../../stores/useAuthStore';
 import { theme } from '../../styles/theme';
 import { Button } from '../ui';
+import { FeedbackButton } from '../feedback/FeedbackButton';
 
 interface SavedSession {
   roomCode: string;
@@ -285,6 +286,17 @@ export function SessionLobby() {
               </div>
             )}
             <span style={styles.userName}>{authUser.displayName}</span>
+            {authUser.isAdmin && (
+              <Button
+                variant="ghost"
+                size="sm"
+                leadingIcon={<Shield size={14} />}
+                onClick={() => navigate('/admin/feedback')}
+                title="Review user feedback"
+              >
+                Admin
+              </Button>
+            )}
             <Button
               variant="ghost"
               size="sm"
@@ -611,6 +623,7 @@ export function SessionLobby() {
           </div>
         </div>
       )}
+      <FeedbackButton />
     </div>
   );
 }

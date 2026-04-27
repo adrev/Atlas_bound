@@ -15,6 +15,25 @@ function getAdminIdentifiers(): Set<string> {
 }
 
 /**
+ * Pure predicate for "is this user an admin?" used by both the
+ * requireAdmin middleware and read-only callers like /api/auth/me
+ * that just want to surface an `isAdmin` flag back to the client so
+ * the navbar can hide/show the admin link.
+ */
+export function isAdminUser(user: { id?: string; email?: string | null } | null | undefined): boolean {
+  if (!user || !user.id) return false;
+  const admins = getAdminIdentifiers();
+  if (admins.size === 0) {
+    // In dev, allow anyone (matches requireAdmin's behaviour). In
+    // production, no ADMIN_USER_IDS = no admins.
+    return process.env.NODE_ENV !== 'production';
+  }
+  if (admins.has(user.id)) return true;
+  const email = user.email ?? '';
+  return Boolean(email && admins.has(email));
+}
+
+/**
  * Middleware that gates a route to admin users only.
  *
  * Requires `requireAuth` to have run first so `req.user` is populated.
@@ -54,8 +73,7 @@ export function requireAdmin(
     return;
   }
 
-  const email = (user as { email?: string | null }).email ?? '';
-  if (admins.has(user.id) || (email && admins.has(email))) {
+  if (isAdminUser({ id: user.id, email: (user as { email?: string | null }).email ?? null })) {
     next();
     return;
   }

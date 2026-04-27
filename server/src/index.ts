@@ -19,6 +19,7 @@ import customContentRouter from './routes/customContent.js';
 import notesRouter from './routes/notes.js';
 import encountersRouter from './routes/encounters.js';
 import errorsRouter from './routes/errors.js';
+import feedbackRouter from './routes/feedback.js';
 import { seedCompendium, isCompendiumSeeded } from './services/Open5eService.js';
 import { seedEquipment, isEquipmentSeeded } from './services/seedEquipment.js';
 import { backfillTokenSnaps } from './services/backfillTokenSnaps.js';
@@ -279,6 +280,12 @@ app.use('/api', requireAuth, lootRouter);
 app.use('/api/custom', requireAuth, customContentRouter);
 app.use('/api', requireAuth, notesRouter);
 app.use('/api', requireAuth, encountersRouter);
+
+// Feedback router. Submit endpoint is auth-gated inside the router
+// (so it can rate-limit per user); admin endpoints layer requireAdmin
+// on top inside the router too. Mounting at /api covers both
+// /api/feedback and /api/admin/feedback.
+app.use('/api', requireAuth, feedbackRouter);
 
 // Upload endpoints (authenticated, magic-byte validated, rate-limited).
 // Without a per-user cap any logged-in account could repeatedly store

@@ -133,9 +133,12 @@ describe('assertCharacterOwnerOrDM', () => {
   });
 
   it('throws 403 when user is neither owner nor DM', async () => {
-    // Character lookup: owned by someone else
+    // Character lookup: owned by someone else (a real PC, not an NPC,
+    // so fallback #3 — "is the caller any-DM-anywhere" — never fires).
     mockQuery.mockResolvedValueOnce({ rows: [{ user_id: 'real-owner' }] });
-    // Fallback DM check: not a DM of any linked session
+    // Fallback #1 (DM-of-session-via-session_players link): empty
+    mockQuery.mockResolvedValueOnce({ rows: [] });
+    // Fallback #2 (DM-of-session-via-NPC-token link): empty too
     mockQuery.mockResolvedValueOnce({ rows: [] });
 
     try {

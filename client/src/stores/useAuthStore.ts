@@ -6,6 +6,14 @@ export interface AuthUser {
   email: string | null;
   displayName: string;
   avatarUrl: string | null;
+  /**
+   * True when the server-side `isAdminUser()` predicate matches —
+   * surfaced from `/api/auth/me` so the client can show the /admin
+   * nav link without an extra round-trip. Admin endpoints still
+   * re-check on the server, so flipping this client-side grants
+   * no real privileges.
+   */
+  isAdmin?: boolean;
 }
 
 interface AuthState {

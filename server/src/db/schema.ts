@@ -586,6 +586,32 @@ export async function initDatabase(): Promise<void> {
 
     CREATE INDEX IF NOT EXISTS idx_map_zones_map ON map_zones(map_id);
 
+    -- ── User feedback / suggestions ───────────────────────────────────
+    -- Users submit free-form feedback through the in-app modal; rows
+    -- land here and the admin panel under /admin/feedback reads them.
+    -- Anonymous submissions still record user_id (we trust the callers
+    -- session) but the admin UI hides the name when anonymous = 1.
+    CREATE TABLE IF NOT EXISTS feedback (
+      id TEXT PRIMARY KEY,
+      user_id TEXT REFERENCES auth_users(id) ON DELETE SET NULL,
+      session_id TEXT REFERENCES sessions(id) ON DELETE SET NULL,
+      category TEXT NOT NULL DEFAULT 'other',
+      content TEXT NOT NULL DEFAULT '',
+      page_url TEXT,
+      browser TEXT,
+      app_version TEXT,
+      screenshot_url TEXT,
+      anonymous INTEGER NOT NULL DEFAULT 0,
+      status TEXT NOT NULL DEFAULT 'open',
+      admin_notes TEXT,
+      created_at TEXT NOT NULL DEFAULT (NOW()::text),
+      updated_at TEXT NOT NULL DEFAULT (NOW()::text)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_feedback_status ON feedback(status);
+    CREATE INDEX IF NOT EXISTS idx_feedback_created ON feedback(created_at);
+    CREATE INDEX IF NOT EXISTS idx_feedback_user ON feedback(user_id);
+
     -- Owner must also be present in session_players with role='dm'.
     -- Back-fill for any legacy sessions where the owner row is missing,
     -- otherwise the co-DM logic won't find them when checking role.

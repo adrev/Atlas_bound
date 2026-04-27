@@ -6,6 +6,7 @@ import rateLimit from 'express-rate-limit';
 import pool from '../db/connection.js';
 import { lucia } from './lucia.js';
 import { optionalAuth, requireAuth } from './middleware.js';
+import { isAdminUser } from './admin.js';
 import { safeImageUrlSchema } from '../utils/imageUrlValidator.js';
 
 const router = Router();
@@ -126,7 +127,18 @@ router.post('/logout', async (req: Request, res: Response) => {
 // GET /api/auth/me
 router.get('/me', optionalAuth, (req: Request, res: Response) => {
   if (!req.user) { res.json({ user: null }); return; }
-  res.json({ user: { id: req.user.id, email: req.user.email, displayName: req.user.displayName, avatarUrl: req.user.avatarUrl } });
+  res.json({
+    user: {
+      id: req.user.id,
+      email: req.user.email,
+      displayName: req.user.displayName,
+      avatarUrl: req.user.avatarUrl,
+      // Surfaced so the client navbar can show/hide the /admin link
+      // without an extra round-trip. Admin endpoints still re-check
+      // server-side via requireAdmin.
+      isAdmin: isAdminUser({ id: req.user.id, email: req.user.email ?? null }),
+    },
+  });
 });
 
 // PUT /api/auth/profile
