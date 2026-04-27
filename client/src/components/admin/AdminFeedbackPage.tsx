@@ -206,6 +206,22 @@ export function AdminFeedbackPage() {
           <ArrowLeft size={14} />
           Lobby
         </button>
+        <div style={styles.adminNav}>
+          <button
+            type="button"
+            style={{ ...styles.adminNavBtn, ...styles.adminNavBtnActive }}
+            disabled
+          >
+            Feedback
+          </button>
+          <button
+            type="button"
+            onClick={() => navigate('/admin/tidings')}
+            style={styles.adminNavBtn}
+          >
+            Tidings
+          </button>
+        </div>
         <div style={{ flex: 1, display: 'flex', alignItems: 'baseline', gap: 12 }}>
           <h1 style={{ ...theme.type.display, color: theme.gold.primary, margin: 0 }}>
             Feedback
@@ -497,6 +513,31 @@ const styles: Record<string, React.CSSProperties> = {
     color: theme.text.secondary,
     fontSize: 12,
     cursor: 'pointer',
+  },
+  adminNav: {
+    display: 'inline-flex',
+    background: theme.bg.deep,
+    border: `1px solid ${theme.border.default}`,
+    borderRadius: theme.radius.sm,
+    padding: 2,
+    gap: 2,
+  },
+  adminNavBtn: {
+    padding: '4px 10px',
+    background: 'transparent',
+    border: 'none',
+    color: theme.text.secondary,
+    fontSize: 11,
+    fontWeight: 700,
+    letterSpacing: '0.06em',
+    textTransform: 'uppercase',
+    borderRadius: theme.radius.sm,
+    cursor: 'pointer',
+  },
+  adminNavBtnActive: {
+    background: theme.gold.bg,
+    color: theme.gold.primary,
+    cursor: 'default',
   },
   filters: {
     display: 'flex',

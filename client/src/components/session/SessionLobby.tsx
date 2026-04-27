@@ -22,7 +22,8 @@
  * Spec stubs (deliberately not built yet — server features missing):
  *   - Chronicle = empty state until the LLM recap pipeline ships
  *   - Companions = empty state until the friend system ships
- *   - Tidings    = static seed copy until the patch-notes CMS ships
+ *   - Tidings    = LIVE — pulled from /api/tidings; admin authoring at
+ *                  /admin/tidings; bell badge surfaces unread count.
  *
  * Styling lives in a single `<style>` block scoped under `.kbrt-lobby`
  * so the design system doesn't leak into the in-session AppShell. The
@@ -44,6 +45,7 @@ import {
   Settings,
   Lightbulb,
   Shield,
+  Megaphone,
 } from 'lucide-react';
 import { createSession, joinSession } from '../../services/api';
 import { useSessionStore } from '../../stores/useSessionStore';
@@ -93,6 +95,18 @@ interface MyCharacter {
   activeCampaignId?: string;
 }
 
+/** Lobby-side shape for a tiding row from /api/tidings. Mirrors the
+ *  server's wire shape but only the subset the rail actually renders. */
+interface Tiding {
+  id: string;
+  kind: 'patch' | 'content' | 'announcement';
+  title: string;
+  body: string;
+  versionTag: string | null;
+  publishedAt: string;
+  pinned: boolean;
+}
+
 // ────────────────────────────────────────────────────────────────
 // Helpers
 // ────────────────────────────────────────────────────────────────
@@ -127,6 +141,28 @@ function heroTint(seed: string): string {
   let h = 0;
   for (let i = 0; i < seed.length; i++) h = (h * 31 + seed.charCodeAt(i)) >>> 0;
   return HERO_TINTS[h % HERO_TINTS.length];
+}
+
+/**
+ * Render a tiding body with a single emphasis style: `*word*` becomes
+ * `<em>word</em>`. The design's right-rail leans hard on this lead-noun
+ * emphasis ("*Patch 0.7* — …"), so we let admins author it inline
+ * without dragging in a markdown lib. Anything that isn't `*foo*` is
+ * rendered as-is and HTML-escaped by React's text node handling.
+ */
+function renderTidingText(body: string, key: string | number): React.ReactNode {
+  const parts: React.ReactNode[] = [];
+  const regex = /\*([^*\n]+)\*/g;
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+  let i = 0;
+  while ((match = regex.exec(body)) !== null) {
+    if (match.index > lastIndex) parts.push(body.slice(lastIndex, match.index));
+    parts.push(<em key={`${key}-em-${i++}`}>{match[1]}</em>);
+    lastIndex = regex.lastIndex;
+  }
+  if (lastIndex < body.length) parts.push(body.slice(lastIndex));
+  return parts;
 }
 
 /** "Just now / 2h ago / 3 days ago" — only used for the lobby tiles
@@ -202,6 +238,12 @@ export function SessionLobby() {
   // Filter tab state for My Campaigns: All / DMing / Playing
   const [gameFilter, setGameFilter] = useState<'all' | 'dm' | 'player'>('all');
 
+  // Tidings (patch notes / announcements). The rail renders the most
+  // recent entries from /api/tidings, and the bell badge surfaces the
+  // unread count. mark-read fires once on first view of the lobby.
+  const [tidings, setTidings] = useState<Tiding[]>([]);
+  const [unreadTidings, setUnreadTidings] = useState(0);
+
   // ── Data fetch ────────────────────────────────────────────────
   const fetchMyGames = async () => {
     setMyGamesLoading(true);
@@ -233,10 +275,38 @@ export function SessionLobby() {
     }
   };
 
+  // Fetch tidings whenever auth is available. The right-rail renders
+  // up to ~5 entries; the bell shows the unread badge from the
+  // server-side count (rows published after the user's lastReadAt).
+  const fetchTidings = async () => {
+    try {
+      const res = await fetch('/api/tidings', { credentials: 'include' });
+      if (!res.ok) return;
+      const data = await res.json();
+      setTidings(Array.isArray(data.tidings) ? data.tidings : []);
+      setUnreadTidings(typeof data.unreadCount === 'number' ? data.unreadCount : 0);
+    } catch {
+      /* silently fail — the rail just stays empty */
+    }
+  };
+
+  /** Bump the user's lastReadTidingsAt so the bell badge clears.
+   *  Idempotent on the server; safe to call repeatedly. */
+  const markTidingsRead = async () => {
+    if (unreadTidings === 0) return;
+    setUnreadTidings(0);
+    try {
+      await fetch('/api/tidings/mark-read', { method: 'POST', credentials: 'include' });
+    } catch {
+      /* best-effort; if the request fails the next visit will retry */
+    }
+  };
+
   useEffect(() => {
     if (authUser) {
       fetchMyGames();
       fetchMyCharacters();
+      fetchTidings();
     }
   }, [authUser]);
 
@@ -396,8 +466,24 @@ export function SessionLobby() {
           <a onClick={() => showSoon('Settings')}>Settings</a>
         </div>
         <div className="spacer" />
-        <button className="icon-btn" title="Notifications (coming soon)" onClick={() => showSoon('Notifications')}>
+        <button
+          className="icon-btn bell-btn"
+          title={unreadTidings > 0 ? `${unreadTidings} new ${unreadTidings === 1 ? 'tiding' : 'tidings'}` : 'Tidings'}
+          onClick={() => {
+            // Scroll the right-rail Tidings into view + clear the badge.
+            // The list itself is always rendered in the rail, so this
+            // is just a polite "look here" gesture.
+            markTidingsRead();
+            const rail = document.querySelector('.kbrt-lobby .right-rail');
+            if (rail) rail.scrollTo({ top: 0, behavior: 'smooth' });
+          }}
+        >
           <Bell size={16} />
+          {unreadTidings > 0 && (
+            <span className="bell-badge" aria-label={`${unreadTidings} unread`}>
+              {unreadTidings > 9 ? '9+' : unreadTidings}
+            </span>
+          )}
         </button>
         <button className="icon-btn" title="Send feedback" onClick={() => setFeedbackOpen(true)}>
           <Lightbulb size={16} />
@@ -412,6 +498,15 @@ export function SessionLobby() {
             onClick={() => navigate('/admin/feedback')}
           >
             <Shield size={16} />
+          </button>
+        )}
+        {authUser?.isAdmin && (
+          <button
+            className="icon-btn"
+            title="Tidings (patch notes)"
+            onClick={() => navigate('/admin/tidings')}
+          >
+            <Megaphone size={16} />
           </button>
         )}
         <div className="me" title={authUser?.email ?? ''}>
@@ -683,31 +778,46 @@ export function SessionLobby() {
         <aside className="right-rail">
           <h3 className="rr-head">
             Tidings
+            {unreadTidings > 0 && (
+              <span className="rr-count" style={{ color: 'var(--accent)' }}>
+                {unreadTidings} NEW
+              </span>
+            )}
             <span className="rr-rule" />
+            {authUser?.isAdmin && (
+              <button
+                className="rr-action"
+                title="Author tidings"
+                onClick={() => navigate('/admin/tidings')}
+              >
+                + Author
+              </button>
+            )}
           </h3>
           <div className="news">
             <div className="head">
               <ScrollText size={12} />
               From the Loremasters
             </div>
-            <div className="item">
-              <span className="when">This week</span>
-              <span className="text">
-                <em>Great Hall</em> — a brass-bound lobby redesign goes live, with chronicles, companions, and quick actions.
-              </span>
-            </div>
-            <div className="item">
-              <span className="when">Recently</span>
-              <span className="text">
-                <em>Feedback</em> — drop a note in the user menu and the Loremasters will see it within minutes.
-              </span>
-            </div>
-            <div className="item">
-              <span className="when">Coming soon</span>
-              <span className="text">
-                <em>Chronicle</em> — auto-summarized session recaps appear on the home view after every game.
-              </span>
-            </div>
+            {tidings.length === 0 ? (
+              <div className="news-empty">
+                The Loremasters have been quiet of late. Patch notes will appear here when there is news to share.
+              </div>
+            ) : (
+              tidings.slice(0, 5).map((t) => (
+                <div className="item" key={t.id}>
+                  <span className="when">
+                    {t.versionTag ? `${t.kind === 'patch' ? 'Patch ' : ''}${t.versionTag} · ` : ''}
+                    {formatRelative(t.publishedAt) || 'just now'}
+                  </span>
+                  <span className="text">
+                    <em>{t.title}</em>
+                    {t.body ? ' — ' : ''}
+                    {renderTidingText(t.body, t.id)}
+                  </span>
+                </div>
+              ))
+            )}
           </div>
 
           <h3 className="rr-head">
@@ -1034,8 +1144,31 @@ const LOBBY_CSS = `
   width:36px; height:36px; display:grid; place-items:center; cursor:pointer;
   color: var(--text-muted); border:1px solid transparent; background:transparent; border-radius:3px;
   transition: all .15s;
+  position: relative;
 }
 .kbrt-lobby .icon-btn:hover { color: var(--accent); border-color: var(--border-line); background: var(--bg-panel); }
+
+/* Bell badge — small gold pill in the top-right corner of the bell
+   button when there are unread tidings. Pulse-free; the design is
+   already busy and the gold is loud enough on its own. */
+.kbrt-lobby .bell-badge {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  min-width: 14px;
+  height: 14px;
+  padding: 0 4px;
+  border-radius: 7px;
+  background: var(--accent);
+  color: var(--ink-900);
+  font-family: var(--font-ui);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.2px;
+  line-height: 14px;
+  text-align: center;
+  box-shadow: 0 0 6px rgba(224, 180, 79, .6);
+}
 
 /* ===== HALL LAYOUT ===== */
 .kbrt-lobby .hall {
@@ -1352,6 +1485,12 @@ const LOBBY_CSS = `
 }
 .kbrt-lobby .rr-rule { flex:1; height:1px; background: linear-gradient(90deg, var(--accent), transparent); opacity:.4; }
 .kbrt-lobby .rr-count { font-family: var(--font-ui); font-size:9px; color: var(--success); letter-spacing:1.5px; }
+.kbrt-lobby .rr-action {
+  font-family: var(--font-display); font-size: 9px; letter-spacing: 1.5px; color: var(--text-muted);
+  text-transform: uppercase; cursor: pointer; padding: 4px 8px; border-radius: 2px;
+  background: transparent; border: 1px solid var(--border-line); transition: all .15s;
+}
+.kbrt-lobby .rr-action:hover { color: var(--accent); border-color: var(--accent); }
 .kbrt-lobby .rr-empty {
   font-family: var(--font-script); font-style: italic; color: var(--text-muted);
   font-size:12px; line-height:1.6; margin: 0 0 24px;
@@ -1379,6 +1518,10 @@ const LOBBY_CSS = `
   letter-spacing:1.5px; display:block; margin-bottom:2px; text-transform: uppercase;
 }
 .kbrt-lobby .news .item .text em { color: var(--accent); font-style: normal; font-weight:600; }
+.kbrt-lobby .news-empty {
+  font-family: var(--font-script); font-style: italic; color: var(--text-muted);
+  font-size: 12px; line-height: 1.5; padding: 8px 0;
+}
 
 /* Empty / quill */
 .kbrt-lobby .empty-prose {

@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef, lazy, Suspense } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { Copy, PanelRightClose, PanelRightOpen, X, LogOut, Home, UserCog, ChevronDown, Menu, Settings, Volume2, VolumeX, Shield, Lightbulb } from 'lucide-react';
+import { Copy, PanelRightClose, PanelRightOpen, X, LogOut, Home, UserCog, ChevronDown, Menu, Settings, Volume2, VolumeX, Shield, Lightbulb, Megaphone } from 'lucide-react';
 import { TweaksPanel } from '../../kbrt/TweaksPanel';
 import { useSocket } from '../../hooks/useSocket';
 import { useIsMobile } from '../../hooks/useIsMobile';
@@ -667,6 +667,15 @@ export function AppShell() {
                     >
                       <Shield size={14} />
                       Feedback Admin
+                    </button>
+                  )}
+                  {authUser.isAdmin && (
+                    <button
+                      style={styles.dropdownItem}
+                      onClick={() => { setShowUserMenu(false); navigate('/admin/tidings'); }}
+                    >
+                      <Megaphone size={14} />
+                      Patch Notes
                     </button>
                   )}
                   <div style={styles.dropdownDivider} />

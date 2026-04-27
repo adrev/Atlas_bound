@@ -20,6 +20,7 @@ import notesRouter from './routes/notes.js';
 import encountersRouter from './routes/encounters.js';
 import errorsRouter from './routes/errors.js';
 import feedbackRouter from './routes/feedback.js';
+import tidingsRouter from './routes/tidings.js';
 import { seedCompendium, isCompendiumSeeded } from './services/Open5eService.js';
 import { seedEquipment, isEquipmentSeeded } from './services/seedEquipment.js';
 import { backfillTokenSnaps } from './services/backfillTokenSnaps.js';
@@ -286,6 +287,11 @@ app.use('/api', requireAuth, encountersRouter);
 // on top inside the router too. Mounting at /api covers both
 // /api/feedback and /api/admin/feedback.
 app.use('/api', requireAuth, feedbackRouter);
+
+// Tidings router — patch notes / announcements that surface in the
+// lobby right rail and behind the bell badge. Admin endpoints inside
+// the router layer requireAdmin on top of requireAuth.
+app.use('/api', requireAuth, tidingsRouter);
 
 // Upload endpoints (authenticated, magic-byte validated, rate-limited).
 // Without a per-user cap any logged-in account could repeatedly store

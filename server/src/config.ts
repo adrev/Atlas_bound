@@ -36,3 +36,13 @@ export const BASE_URL = process.env.BASE_URL || 'http://localhost:5173';
  * URL via Cloud Run env vars.
  */
 export const DISCORD_FEEDBACK_WEBHOOK_URL = process.env.DISCORD_FEEDBACK_WEBHOOK_URL || '';
+
+/**
+ * Discord webhook URL pinged when a patch-kind Tiding is published —
+ * this is the "release notes" channel. Lives separately from the
+ * feedback webhook so admins can route releases to a dedicated
+ * forum (Releases) without spamming the feedback channel. Optional;
+ * when unset the lobby's Tidings still publish, only the side-channel
+ * announcement is skipped.
+ */
+export const DISCORD_RELEASES_WEBHOOK_URL = process.env.DISCORD_RELEASES_WEBHOOK_URL || '';

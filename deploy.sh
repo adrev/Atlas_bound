@@ -114,6 +114,13 @@ emit_env ADMIN_USER_IDS          "${ADMIN_USER_IDS:-}"
 # unset the notifier silently no-ops and feedback still lands in the DB.
 emit_env DISCORD_FEEDBACK_WEBHOOK_URL "${DISCORD_FEEDBACK_WEBHOOK_URL:-}"
 
+# DISCORD_RELEASES_WEBHOOK_URL: when an admin publishes a patch-kind
+# Tiding via /admin/tidings, an embed is posted to this webhook (a
+# dedicated #releases forum). Patch tidings include back-links to any
+# user-feedback threads they reference. Optional; the lobby Tidings
+# rail still publishes when this is unset.
+emit_env DISCORD_RELEASES_WEBHOOK_URL "${DISCORD_RELEASES_WEBHOOK_URL:-}"
+
 gcloud run deploy atlas-bound \
   --image "$IMAGE" \
   --project atlas-bound \

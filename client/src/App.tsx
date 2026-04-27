@@ -16,6 +16,9 @@ const InviteLanding = lazy(() =>
 const AdminFeedbackPage = lazy(() =>
   import('./components/admin/AdminFeedbackPage').then((m) => ({ default: m.AdminFeedbackPage })),
 );
+const AdminTidingsPage = lazy(() =>
+  import('./components/admin/AdminTidingsPage').then((m) => ({ default: m.AdminTidingsPage })),
+);
 
 function RouteLoadingFallback() {
   return (
@@ -98,6 +101,7 @@ export function App() {
         <Route path="/session/:roomCode" element={<AppShell />} />
         <Route path="/join/:token" element={<InviteLanding />} />
         <Route path="/admin/feedback" element={<AdminFeedbackPage />} />
+        <Route path="/admin/tidings" element={<AdminTidingsPage />} />
       </Routes>
     </Suspense>
   );

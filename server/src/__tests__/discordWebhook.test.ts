@@ -19,7 +19,7 @@ vi.mock('../config.js', () => ({
   get BASE_URL() { return mockEnv.BASE_URL; },
 }));
 
-import { buildFeedbackEmbed, sendFeedbackWebhook, type FeedbackWebhookPayload } from '../utils/discordWebhook.js';
+import { buildFeedbackEmbed, sendFeedbackWebhook, _resetGuildIdCache, type FeedbackWebhookPayload } from '../utils/discordWebhook.js';
 
 const basePayload: FeedbackWebhookPayload = {
   id: 'fb-123',
@@ -115,53 +115,89 @@ describe('sendFeedbackWebhook', () => {
     (globalThis as any).fetch = fetchSpy;
     mockEnv.DISCORD_FEEDBACK_WEBHOOK_URL = '';
     mockEnv.BASE_URL = 'https://kbrt.ai';
+    // Reset the in-module guild_id cache so each test sees a fresh
+    // "first call" state. Production never resets, but tests must
+    // each assert behaviour from scratch.
+    _resetGuildIdCache();
   });
 
   afterEach(() => {
     vi.useRealTimers();
   });
 
-  it('returns false and skips fetch when no webhook URL is configured', async () => {
+  it('returns ok=false and skips fetch when no webhook URL is configured', async () => {
     const result = await sendFeedbackWebhook(basePayload);
-    expect(result).toBe(false);
+    expect(result).toEqual({ ok: false, threadUrl: null });
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
-  it('POSTs JSON to the webhook URL and returns true on 2xx', async () => {
+  it('POSTs JSON with ?wait=true and resolves a thread URL when guild_id is discoverable', async () => {
     mockEnv.DISCORD_FEEDBACK_WEBHOOK_URL = 'https://discord.com/api/webhooks/xxx/yyy';
-    fetchSpy.mockResolvedValueOnce({ ok: true, status: 204 });
+    // POST → returns the message including the channel_id (== thread_id for forum channels)
+    fetchSpy.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => ({ id: 'msg-1', channel_id: 'thread-99' }),
+    });
+    // GET on the webhook URL → returns guild_id for the URL builder
+    fetchSpy.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => ({ id: 'webhook-xxx', guild_id: 'guild-42' }),
+    });
 
     const result = await sendFeedbackWebhook(basePayload);
 
-    expect(result).toBe(true);
-    expect(fetchSpy).toHaveBeenCalledTimes(1);
-    const [url, init] = fetchSpy.mock.calls[0];
-    expect(url).toBe('https://discord.com/api/webhooks/xxx/yyy');
-    expect(init.method).toBe('POST');
-    expect(init.headers['Content-Type']).toBe('application/json');
-    const body = JSON.parse(init.body as string);
+    expect(result.ok).toBe(true);
+    expect(result.threadUrl).toBe('https://discord.com/channels/guild-42/thread-99');
+
+    // First call is the POST with ?wait=true appended.
+    const [postUrl, postInit] = fetchSpy.mock.calls[0];
+    expect(postUrl).toBe('https://discord.com/api/webhooks/xxx/yyy?wait=true');
+    expect(postInit.method).toBe('POST');
+    expect(postInit.headers['Content-Type']).toBe('application/json');
+    const body = JSON.parse(postInit.body as string);
     expect(body.username).toBe('Atlas Bound · Feedback');
     expect(Array.isArray(body.embeds)).toBe(true);
+
+    // Second call is the GET to discover guild_id.
+    const [getUrl, getInit] = fetchSpy.mock.calls[1];
+    expect(getUrl).toBe('https://discord.com/api/webhooks/xxx/yyy');
+    expect(getInit.method).toBe('GET');
   });
 
-  it('returns false (does not throw) on non-2xx Discord response', async () => {
+  it('returns ok=true / threadUrl=null when guild_id lookup fails', async () => {
+    mockEnv.DISCORD_FEEDBACK_WEBHOOK_URL = 'https://discord.com/api/webhooks/xxx/yyy';
+    fetchSpy.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => ({ id: 'msg-1', channel_id: 'thread-99' }),
+    });
+    fetchSpy.mockResolvedValueOnce({ ok: false, status: 401 });
+
+    const result = await sendFeedbackWebhook(basePayload);
+    expect(result.ok).toBe(true);
+    expect(result.threadUrl).toBeNull();
+  });
+
+  it('returns ok=false (does not throw) on non-2xx Discord response', async () => {
     mockEnv.DISCORD_FEEDBACK_WEBHOOK_URL = 'https://discord.com/api/webhooks/xxx/yyy';
     fetchSpy.mockResolvedValueOnce({ ok: false, status: 429 });
 
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const result = await sendFeedbackWebhook(basePayload);
-    expect(result).toBe(false);
+    expect(result).toEqual({ ok: false, threadUrl: null });
     expect(warn).toHaveBeenCalled();
     warn.mockRestore();
   });
 
-  it('swallows network errors and returns false', async () => {
+  it('swallows network errors and returns ok=false', async () => {
     mockEnv.DISCORD_FEEDBACK_WEBHOOK_URL = 'https://discord.com/api/webhooks/xxx/yyy';
     fetchSpy.mockRejectedValueOnce(new Error('connection refused'));
 
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const result = await sendFeedbackWebhook(basePayload);
-    expect(result).toBe(false);
+    expect(result).toEqual({ ok: false, threadUrl: null });
     expect(warn).toHaveBeenCalled();
     warn.mockRestore();
   });

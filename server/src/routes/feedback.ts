@@ -122,7 +122,13 @@ router.post('/feedback', requireAuth, async (req: Request, res: Response) => {
     }
   }
 
-  void sendFeedbackWebhook({
+  // Fire the webhook in the background. We DO want the result so we
+  // can stamp `discord_thread_url` onto the row for cross-referencing
+  // from later Releases announcements — but we deliberately don't
+  // block the user's response on it. The .then() handler below patches
+  // the row once Discord responds; if the webhook fails, the row just
+  // stays without a URL and everything else works.
+  sendFeedbackWebhook({
     id,
     category: data.category,
     content: data.content,
@@ -133,7 +139,22 @@ router.post('/feedback', requireAuth, async (req: Request, res: Response) => {
     anonymous: !!data.anonymous,
     userDisplayName: submitter.displayName,
     userEmail: submitter.email,
-  });
+  })
+    .then(async (result) => {
+      if (result.threadUrl) {
+        try {
+          await pool.query(
+            'UPDATE feedback SET discord_thread_url = $1 WHERE id = $2',
+            [result.threadUrl, id],
+          );
+        } catch (err) {
+          console.warn('[feedback] failed to backfill discord_thread_url:', err);
+        }
+      }
+    })
+    .catch((err) => {
+      console.warn('[feedback] webhook promise rejected unexpectedly:', err);
+    });
 
   res.status(201).json({ id });
 });

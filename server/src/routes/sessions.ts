@@ -240,7 +240,12 @@ router.get('/invites/:token', async (req: Request, res: Response) => {
   res.json({ sessionId: row.id, sessionName: row.name, roomCode: row.room_code });
 });
 
-// GET /api/sessions/mine - List sessions the current user belongs to
+// GET /api/sessions/mine - List sessions the current user belongs to.
+// Now also enriches each row with `onlineCount` (from in-memory room
+// state) and `lastActiveAt` (from `sessions.updated_at` falling back
+// to `created_at` for legacy rows). The lobby uses these to drive the
+// per-tile Live dot, "X online" badge, and "2d ago" relative time
+// without needing a separate presence service yet.
 router.get('/mine', async (req: Request, res: Response) => {
   const userId = req.user?.id;
   if (!userId) { res.json([]); return; }
@@ -248,17 +253,35 @@ router.get('/mine', async (req: Request, res: Response) => {
   const { rows } = await pool.query(`
     SELECT s.id, s.name, s.room_code, sp.role,
            (SELECT COUNT(*) FROM session_players WHERE session_id = s.id) as player_count,
-           s.created_at
+           s.created_at, s.updated_at
     FROM session_players sp
     JOIN sessions s ON sp.session_id = s.id
     WHERE sp.user_id = $1
-    ORDER BY s.created_at DESC
+    ORDER BY COALESCE(s.updated_at, s.created_at) DESC
   `, [userId]);
 
-  res.json(rows.map(r => ({
-    id: r.id, name: r.name, roomCode: r.room_code,
-    role: r.role, playerCount: r.player_count, createdAt: r.created_at,
-  })));
+  // Look up live presence for every row. The room state is in-process
+  // memory, so each lookup is O(1) and the join doesn't touch the DB.
+  // A room with zero connected userIds is treated as not-live.
+  const enriched = rows.map(r => {
+    const room = getRoom(r.id);
+    const onlineCount = room
+      ? Array.from(room.userSockets.values()).filter((s) => s.size > 0).length
+      : 0;
+    return {
+      id: r.id,
+      name: r.name,
+      roomCode: r.room_code,
+      role: r.role,
+      playerCount: r.player_count,
+      createdAt: r.created_at,
+      lastActiveAt: r.updated_at ?? r.created_at,
+      onlineCount,
+      isLive: onlineCount > 0,
+    };
+  });
+
+  res.json(enriched);
 });
 
 // DELETE /api/sessions/:id - Delete a session (Owner-only). Cascades to

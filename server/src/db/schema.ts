@@ -612,6 +612,67 @@ export async function initDatabase(): Promise<void> {
     CREATE INDEX IF NOT EXISTS idx_feedback_created ON feedback(created_at);
     CREATE INDEX IF NOT EXISTS idx_feedback_user ON feedback(user_id);
 
+    -- Discord deep-link to the forum thread the feedback webhook
+    -- created when this row was submitted. Lets the Releases webhook
+    -- (and the admin UI) cross-reference back to "the conversation
+    -- this fix came out of". Nullable: the webhook is optional, so
+    -- old rows + rows created while the webhook was misconfigured
+    -- legitimately have no URL.
+    ALTER TABLE feedback
+      ADD COLUMN IF NOT EXISTS discord_thread_url TEXT;
+
+    -- Tidings — admin-authored patch notes / announcements that surface
+    -- in the right rail of the lobby and behind the bell badge. The
+    -- table is small and append-mostly: every row is rendered to every
+    -- user (subject to the audience filter), so we want to keep it
+    -- short by retiring stale rows out via expires_at rather than
+    -- deleting outright.
+    CREATE TABLE IF NOT EXISTS tidings (
+      id TEXT PRIMARY KEY,
+      kind TEXT NOT NULL DEFAULT 'announcement',   -- 'patch' | 'content' | 'announcement'
+      title TEXT NOT NULL,
+      body TEXT NOT NULL,
+      expanded_body TEXT,                          -- optional longer markdown for "Read more"
+      audience TEXT NOT NULL DEFAULT 'all',        -- 'all' | 'dm' | 'player'
+      version_tag TEXT,                            -- e.g. "0.7.2" for patch entries
+      published_at TEXT NOT NULL,                  -- ISO timestamp; future = scheduled
+      expires_at TEXT,                             -- after which row stops surfacing in lobby
+      pinned INTEGER NOT NULL DEFAULT 0,           -- pinned items always come first
+      created_by TEXT REFERENCES auth_users(id) ON DELETE SET NULL,
+      created_at TEXT NOT NULL DEFAULT (NOW()::text),
+      updated_at TEXT NOT NULL DEFAULT (NOW()::text)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_tidings_published ON tidings(published_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_tidings_kind ON tidings(kind);
+
+    -- Per-user "I last saw the tidings list at <ts>". Used to drive the
+    -- bell badge unread count: any tiding with published_at > this
+    -- timestamp counts as unread for that user. Keeping it as a
+    -- single timestamp (rather than a per-row read table) is enough
+    -- for the lobby's UX and trivial to update from the client.
+    ALTER TABLE auth_users
+      ADD COLUMN IF NOT EXISTS last_read_tidings_at TEXT;
+
+    -- Tidings can cite the user-feedback rows that motivated each
+    -- release item. Stored as a TEXT[] of feedback.id values; the
+    -- Releases webhook expands each into a Discord deep-link back to
+    -- the original report so users see "your bug got fixed in this
+    -- release". Empty array (or null) for tidings that aren't tied
+    -- to user feedback (e.g. content drops, AI improvements).
+    ALTER TABLE tidings
+      ADD COLUMN IF NOT EXISTS linked_feedback_ids TEXT[];
+
+    -- Track whether a tiding has already been announced to Discord so
+    -- republishing the same row (status edits, expiration tweaks)
+    -- doesn't re-spam the channel. Stamped with the message URL the
+    -- moment delivery succeeds; nullable for rows that never had a
+    -- webhook delivery attempt.
+    ALTER TABLE tidings
+      ADD COLUMN IF NOT EXISTS discord_announced_at TEXT;
+    ALTER TABLE tidings
+      ADD COLUMN IF NOT EXISTS discord_thread_url TEXT;
+
     -- Owner must also be present in session_players with role='dm'.
     -- Back-fill for any legacy sessions where the owner row is missing,
     -- otherwise the co-DM logic won't find them when checking role.

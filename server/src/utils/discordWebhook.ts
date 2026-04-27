@@ -118,16 +118,88 @@ function truncateField(s: string, max: number): string {
 }
 
 /**
- * Send the feedback notification. Resolves immediately on success or
- * any failure mode — callers should `await` it only if they care
- * about the awaitable for tests; in the request handler we just call
- * it and move on. Returns `true` if the POST returned a 2xx status,
- * `false` otherwise (including when the webhook URL is unset).
+ * Result of a webhook POST. `threadUrl` is the deep-link to the Discord
+ * thread that received this submission — populated when the POST used
+ * `?wait=true` and the surrounding guild_id was discoverable via
+ * a webhook GET. Null when the webhook URL is unset, when Discord
+ * rejected the post, or when the guild lookup failed.
+ *
+ * Callers (routes/feedback.ts) persist `threadUrl` on the feedback row
+ * so a later release announcement can deep-link back to the original
+ * report. The "ok" boolean is kept for backwards compat with callers
+ * that only care whether delivery succeeded.
  */
-export async function sendFeedbackWebhook(payload: FeedbackWebhookPayload): Promise<boolean> {
-  if (!DISCORD_FEEDBACK_WEBHOOK_URL) return false;
+export interface FeedbackWebhookResult {
+  ok: boolean;
+  threadUrl: string | null;
+}
+
+// guild_id is the same for every post against a given webhook URL, so
+// resolve once on first call and cache for the lifetime of the
+// process. A new deploy reseeds the cache cheaply.
+const guildIdCache = new Map<string, string | null>();
+
+/**
+ * Test-only escape hatch: clear the guild_id cache. Production code
+ * never calls this — the module's natural lifecycle reseeds via
+ * deploy. Tests need it to assert behaviour at "first call".
+ */
+export function _resetGuildIdCache(): void {
+  guildIdCache.clear();
+}
+
+async function resolveGuildId(webhookUrl: string): Promise<string | null> {
+  const cached = guildIdCache.get(webhookUrl);
+  if (cached !== undefined) return cached;
+
+  try {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 3_000);
+    const res = await fetch(webhookUrl, { method: 'GET', signal: ctrl.signal })
+      .finally(() => clearTimeout(timer));
+    if (!res.ok) {
+      guildIdCache.set(webhookUrl, null);
+      return null;
+    }
+    const data = (await res.json()) as { guild_id?: string };
+    const gid = data.guild_id ?? null;
+    guildIdCache.set(webhookUrl, gid);
+    return gid;
+  } catch {
+    guildIdCache.set(webhookUrl, null);
+    return null;
+  }
+}
+
+/**
+ * Construct a https://discord.com/channels/<guild>/<channel> URL.
+ * Channel here is the *thread id* when the webhook target is a forum
+ * channel — that's exactly what we want for a deep-link to the
+ * per-feedback thread. Exported so the releases webhook can build the
+ * same shape from message_ids it captures.
+ */
+export function buildDiscordThreadUrl(guildId: string, threadId: string): string {
+  return `https://discord.com/channels/${guildId}/${threadId}`;
+}
+
+/**
+ * Send the feedback notification. Returns the thread URL when Discord
+ * accepts the post AND the guild_id lookup succeeds — so a later
+ * release announcement can back-link to this submission. Errors are
+ * swallowed; callers should treat the return value as best-effort and
+ * never block the user's submission on it.
+ */
+export async function sendFeedbackWebhook(payload: FeedbackWebhookPayload): Promise<FeedbackWebhookResult> {
+  if (!DISCORD_FEEDBACK_WEBHOOK_URL) return { ok: false, threadUrl: null };
 
   const body = buildFeedbackEmbed(payload);
+  // ?wait=true tells Discord to return the created message in the
+  // response body, including its `channel_id` (== thread_id for
+  // forum-channel webhooks). Without this flag the response is 204
+  // with an empty body and we'd have no way to construct a deep-link.
+  const url = DISCORD_FEEDBACK_WEBHOOK_URL.includes('?')
+    ? `${DISCORD_FEEDBACK_WEBHOOK_URL}&wait=true`
+    : `${DISCORD_FEEDBACK_WEBHOOK_URL}?wait=true`;
 
   try {
     // 5-second timeout via AbortController — Discord usually responds
@@ -136,7 +208,7 @@ export async function sendFeedbackWebhook(payload: FeedbackWebhookPayload): Prom
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), 5_000);
 
-    const res = await fetch(DISCORD_FEEDBACK_WEBHOOK_URL, {
+    const res = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
@@ -147,17 +219,23 @@ export async function sendFeedbackWebhook(payload: FeedbackWebhookPayload): Prom
       console.warn(
         `[discordWebhook] non-2xx status ${res.status} from Discord — feedback ${payload.id} not announced`,
       );
-      return false;
+      return { ok: false, threadUrl: null };
     }
-    return true;
+
+    const msg = (await res.json().catch(() => null)) as { channel_id?: string } | null;
+    if (!msg?.channel_id) return { ok: true, threadUrl: null };
+
+    const guildId = await resolveGuildId(DISCORD_FEEDBACK_WEBHOOK_URL);
+    const threadUrl = guildId ? buildDiscordThreadUrl(guildId, msg.channel_id) : null;
+    return { ok: true, threadUrl };
   } catch (err) {
-    // Anything else (network blip, timeout, DNS, malformed URL) lands here.
-    // We deliberately do NOT rethrow — the user's submission already
-    // succeeded; the webhook is purely a side channel.
+    // Network blip, timeout, DNS, malformed URL. We deliberately do
+    // NOT rethrow — the user's submission already succeeded; the
+    // webhook is purely a side channel.
     console.warn(
       `[discordWebhook] webhook delivery failed for feedback ${payload.id}:`,
       err instanceof Error ? err.message : err,
     );
-    return false;
+    return { ok: false, threadUrl: null };
   }
 }
