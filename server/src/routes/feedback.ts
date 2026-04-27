@@ -24,6 +24,7 @@ import pool from '../db/connection.js';
 import { requireAuth } from '../auth/middleware.js';
 import { requireAdmin } from '../auth/admin.js';
 import { getAuthUserId } from '../utils/authorization.js';
+import { sendFeedbackWebhook } from '../utils/discordWebhook.js';
 
 const router = Router();
 
@@ -95,6 +96,44 @@ router.post('/feedback', requireAuth, async (req: Request, res: Response) => {
       data.anonymous ? 1 : 0,
     ],
   );
+
+  // Side-channel notification to Discord. Look up the submitter's
+  // display name + email so admins see who sent it (unless the user
+  // ticked the anonymous box, in which case the webhook scrubs both).
+  // We deliberately don't await — the user has already succeeded;
+  // letting Discord delivery run in the background keeps the response
+  // snappy and means a slow webhook can't stretch the request.
+  let submitter: { displayName: string | null; email: string | null } = { displayName: null, email: null };
+  if (!data.anonymous) {
+    try {
+      const { rows: userRows } = await pool.query(
+        'SELECT display_name, email FROM auth_users WHERE id = $1',
+        [userId],
+      );
+      if (userRows[0]) {
+        submitter = {
+          displayName: (userRows[0].display_name as string | null) ?? null,
+          email: (userRows[0].email as string | null) ?? null,
+        };
+      }
+    } catch (err) {
+      // Lookup failure is non-fatal; the webhook will just say "Unknown user".
+      console.warn('[feedback] submitter lookup failed:', err);
+    }
+  }
+
+  void sendFeedbackWebhook({
+    id,
+    category: data.category,
+    content: data.content,
+    pageUrl: data.pageUrl ?? null,
+    browser: data.browser ?? null,
+    appVersion: data.appVersion ?? null,
+    sessionId: data.sessionId ?? null,
+    anonymous: !!data.anonymous,
+    userDisplayName: submitter.displayName,
+    userEmail: submitter.email,
+  });
 
   res.status(201).json({ id });
 });

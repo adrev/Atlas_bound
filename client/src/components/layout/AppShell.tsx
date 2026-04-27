@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef, lazy, Suspense } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { Copy, PanelRightClose, PanelRightOpen, X, LogOut, Home, UserCog, ChevronDown, Menu, Settings, Volume2, VolumeX, Shield } from 'lucide-react';
+import { Copy, PanelRightClose, PanelRightOpen, X, LogOut, Home, UserCog, ChevronDown, Menu, Settings, Volume2, VolumeX, Shield, Lightbulb } from 'lucide-react';
 import { TweaksPanel } from '../../kbrt/TweaksPanel';
 import { useSocket } from '../../hooks/useSocket';
 import { useIsMobile } from '../../hooks/useIsMobile';
@@ -24,7 +24,7 @@ import { AudioPopover } from '../audio/AudioPopover';
 import { TRACKS } from '../audio/tracks';
 import { useAudioStore } from '../../stores/useAudioStore';
 import { FirstJoinTour } from '../onboarding/FirstJoinTour';
-import { FeedbackButton } from '../feedback/FeedbackButton';
+import { FeedbackModal } from '../feedback/FeedbackModal';
 // Sidebar is large (DM panels, scene manager, creature library). Lazy-loaded
 // so the initial session bundle stays under the 500 kB warning threshold.
 const Sidebar = lazy(() => import('./Sidebar').then((m) => ({ default: m.Sidebar })));
@@ -85,6 +85,7 @@ export function AppShell() {
   const [showProfileModal, setShowProfileModal] = useState(false);
   const userMenuRef = useRef<HTMLDivElement>(null);
   const [showAudioPopover, setShowAudioPopover] = useState(false);
+  const [showFeedbackModal, setShowFeedbackModal] = useState(false);
   const audioButtonRef = useRef<HTMLButtonElement>(null);
   // Hold only the character ID — the actual character object is read live
   // from useCharacterStore so updates (e.g. adding a spell, healing) appear
@@ -413,7 +414,7 @@ export function AppShell() {
       <MusicEngine />
       <ToastHost />
       <DialogHost />
-      <FeedbackButton />
+      <FeedbackModal open={showFeedbackModal} onClose={() => setShowFeedbackModal(false)} />
       <Suspense fallback={null}>
         <HandoutModal />
       </Suspense>
@@ -533,12 +534,26 @@ export function AppShell() {
             <div style={styles.mobileSidebarContainer}>
               <div style={styles.mobileSidebarHeader}>
                 <span style={{ fontSize: 14, fontWeight: 700, color: theme.gold.primary }}>Menu</span>
-                <button
-                  style={styles.closeFullSheet}
-                  onClick={() => setMobileSidebarOpen(false)}
-                >
-                  <X size={16} />
-                </button>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <button
+                    type="button"
+                    onClick={() => { setMobileSidebarOpen(false); setShowFeedbackModal(true); }}
+                    title="Send feedback"
+                    aria-label="Send feedback"
+                    style={{
+                      ...styles.closeFullSheet,
+                      color: theme.gold.dim,
+                    }}
+                  >
+                    <Lightbulb size={14} />
+                  </button>
+                  <button
+                    style={styles.closeFullSheet}
+                    onClick={() => setMobileSidebarOpen(false)}
+                  >
+                    <X size={16} />
+                  </button>
+                </div>
               </div>
               <div style={{ flex: 1, overflow: 'auto' }}>
                 <Suspense fallback={null}>
@@ -635,6 +650,15 @@ export function AppShell() {
                   >
                     <Home size={14} />
                     Back to Lobby
+                  </button>
+                  <div style={styles.dropdownDivider} />
+                  <button
+                    style={styles.dropdownItem}
+                    onClick={() => { setShowUserMenu(false); setShowFeedbackModal(true); }}
+                    title="Suggest a feature, flag a bug, or send a note"
+                  >
+                    <Lightbulb size={14} />
+                    Send Feedback
                   </button>
                   {authUser.isAdmin && (
                     <button

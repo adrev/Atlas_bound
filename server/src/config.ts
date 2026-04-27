@@ -26,3 +26,13 @@ export const APPLE_TEAM_ID = process.env.APPLE_TEAM_ID || '';
 export const APPLE_KEY_ID = process.env.APPLE_KEY_ID || '';
 export const APPLE_PRIVATE_KEY = process.env.APPLE_PRIVATE_KEY || '';
 export const BASE_URL = process.env.BASE_URL || 'http://localhost:5173';
+
+/**
+ * Discord webhook URL pinged whenever a user submits feedback.
+ * Optional: when unset (e.g. in dev) the notifier silently no-ops, so
+ * feedback still lands in the database — only the side-channel ping
+ * is skipped. Create a webhook on a Discord channel you own (Server
+ * Settings → Integrations → Webhooks → New Webhook) and inject the
+ * URL via Cloud Run env vars.
+ */
+export const DISCORD_FEEDBACK_WEBHOOK_URL = process.env.DISCORD_FEEDBACK_WEBHOOK_URL || '';

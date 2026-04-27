@@ -118,6 +118,10 @@ describe('POST /api/feedback', () => {
     mockQuery.mockResolvedValueOnce({ rows: [{ n: 0 }] });
     // Insert query: no row needed in response
     mockQuery.mockResolvedValueOnce({ rows: [] });
+    // Submitter lookup (for non-anonymous webhook payloads): not the
+    // focus of this test, but the route now joins auth_users to enrich
+    // the Discord ping. Return a minimal row so the lookup completes.
+    mockQuery.mockResolvedValueOnce({ rows: [{ display_name: 'Bob', email: 'bob@example.com' }] });
 
     const { status, body } = await send(app, 'POST', '/api/feedback', {
       category: 'feature',
@@ -128,7 +132,7 @@ describe('POST /api/feedback', () => {
     expect(status).toBe(201);
     expect(body).toEqual({ id: '00000000-0000-0000-0000-000000000000' });
 
-    expect(mockQuery).toHaveBeenCalledTimes(2);
+    expect(mockQuery).toHaveBeenCalledTimes(3);
     const insertCall = mockQuery.mock.calls[1];
     // Insert SQL targets the feedback table and binds 10 positional params.
     expect(insertCall[0]).toMatch(/INSERT INTO feedback/);
@@ -137,6 +141,23 @@ describe('POST /api/feedback', () => {
     expect(insertCall[1][1]).toBe('user-1');                               // user_id
     expect(insertCall[1][3]).toBe('feature');                              // category
     expect(insertCall[1][9]).toBe(0);                                      // anonymous flag
+  });
+
+  it('skips the submitter lookup when the user opted into anonymous', async () => {
+    const app = makeApp();
+    // Rate-limit + insert; no auth_users SELECT this time.
+    mockQuery.mockResolvedValueOnce({ rows: [{ n: 0 }] });
+    mockQuery.mockResolvedValueOnce({ rows: [] });
+
+    const { status } = await send(app, 'POST', '/api/feedback', {
+      category: 'ux',
+      content: 'The sidebar feels too cluttered for new players.',
+      anonymous: true,
+    });
+
+    expect(status).toBe(201);
+    // Two queries: rate-limit + insert. No auth_users join.
+    expect(mockQuery).toHaveBeenCalledTimes(2);
   });
 
   it('returns 429 once the daily submission cap is reached', async () => {

@@ -1,12 +1,12 @@
 import { useState, useEffect } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { Swords, Users, History, Trash2, LogOut, Shield, User, AlertTriangle } from 'lucide-react';
+import { Swords, Users, History, Trash2, LogOut, Shield, User, AlertTriangle, Lightbulb } from 'lucide-react';
 import { createSession, joinSession } from '../../services/api';
 import { useSessionStore } from '../../stores/useSessionStore';
 import { useAuthStore } from '../../stores/useAuthStore';
 import { theme } from '../../styles/theme';
 import { Button } from '../ui';
-import { FeedbackButton } from '../feedback/FeedbackButton';
+import { FeedbackModal } from '../feedback/FeedbackModal';
 
 interface SavedSession {
   roomCode: string;
@@ -67,6 +67,7 @@ export function SessionLobby() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [savedSessions, setSavedSessions] = useState<SavedSession[]>([]);
+  const [showFeedbackModal, setShowFeedbackModal] = useState(false);
 
   // Server-backed data
   const [myGames, setMyGames] = useState<ServerGame[]>([]);
@@ -286,6 +287,15 @@ export function SessionLobby() {
               </div>
             )}
             <span style={styles.userName}>{authUser.displayName}</span>
+            <Button
+              variant="ghost"
+              size="sm"
+              leadingIcon={<Lightbulb size={14} />}
+              onClick={() => setShowFeedbackModal(true)}
+              title="Suggest a feature, flag a bug, or send a note"
+            >
+              Feedback
+            </Button>
             {authUser.isAdmin && (
               <Button
                 variant="ghost"
@@ -623,7 +633,7 @@ export function SessionLobby() {
           </div>
         </div>
       )}
-      <FeedbackButton />
+      <FeedbackModal open={showFeedbackModal} onClose={() => setShowFeedbackModal(false)} />
     </div>
   );
 }
