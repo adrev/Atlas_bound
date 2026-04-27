@@ -69,6 +69,10 @@ export { SPELL_ANIMATIONS, getSpellAnimation } from './constants/spell-animation
 export type { AnimationType, SpellAnimationConfig } from './constants/spell-animations.js';
 export { LIGHT_SOURCE_PRESETS, findLightPresetForName } from './constants/light-sources.js';
 export type { LightSourcePreset } from './constants/light-sources.js';
+export {
+  lightTierAt, effectiveVisionTier, canSeeTarget, visionAttackModifier, perceptionPenalty,
+} from './utils/vision-tier.js';
+export type { LightTier, TokenSenses } from './utils/vision-tier.js';
 
 // Utils
 export { parseDiceNotation, rollDice, rollWithAdvantage } from './utils/dice-parser.js';

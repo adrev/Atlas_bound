@@ -164,6 +164,7 @@ import {
   getOwnRollModifiers,
   getTargetRollModifiers,
   combineAttackModifiers,
+  computeVisionAttackModifier,
   rollAttackWithModifiers,
   rollSaveWithModifiers,
   effectiveAC,
@@ -175,6 +176,7 @@ import { getSpellDurationMeta } from '../../utils/spell-durations';
 import { emitApplyConditionWithMeta, emitDamageSideEffects } from '../../socket/emitters';
 import { triggerSnapshot } from '../../socket/stateSnapshot';
 import { abilityModifier, calculateEquipmentBonuses, SPELL_CONDITIONS, SPELL_BUFFS, getSpellAnimation } from '@dnd-vtt/shared';
+import type { Token, AmbientLight } from '@dnd-vtt/shared';
 import { useEffectStore } from '../../stores/useEffectStore';
 import { LootBagPanel } from '../loot/LootBagPanel';
 import { TokenDeadState } from './tokenPanel/TokenDeadState';
@@ -985,6 +987,38 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
           const targetIncoming = getTargetRollModifiers(targetConditions, 'ranged');
           const combined = combineAttackModifiers(attackerOwn, targetIncoming);
 
+          // 5e Vision rules (PHB p.194-195) — fold the lighting-based
+          // advantage/disadvantage into the existing modifier pipeline.
+          // Heavily obscured target (dark + no darkvision) → disadvantage;
+          // attacker hidden in darkness with darkvision while target has
+          // none → advantage; both blind → cancel. Notes feed the chat
+          // card so the breakdown shows "disadvantage from heavy
+          // obscurement" alongside Bless / Bane / Poisoned.
+          {
+            const mapState = useMapStore.getState();
+            const allChars = useCharacterStore.getState().allCharacters;
+            const visionMod = computeVisionAttackModifier(
+              casterToken as Token,
+              targetToken as Token,
+              {
+                ambient: (mapState.currentMap?.ambientLight ?? 'bright') as AmbientLight,
+                ambientOpacity: mapState.currentMap?.ambientOpacity,
+                allTokens: Object.values(mapState.tokens),
+                gridSize: mapState.currentMap?.gridSize ?? 70,
+                characters: allChars as Record<string, unknown>,
+              },
+            );
+            if (visionMod.advantage === 'advantage' && combined.attackAdvantage !== 'disadvantage') {
+              combined.attackAdvantage = 'advantage';
+            } else if (visionMod.advantage === 'disadvantage' && combined.attackAdvantage !== 'advantage') {
+              combined.attackAdvantage = 'disadvantage';
+            } else if (visionMod.advantage !== 'normal' && combined.attackAdvantage !== visionMod.advantage) {
+              // Existing combined had the OPPOSITE direction → cancel.
+              combined.attackAdvantage = 'normal';
+            }
+            if (visionMod.note) combined.notes.push(visionMod.note);
+          }
+
           const atkResult = rollAttackWithModifiers(casterSpellAttack, combined);
           // Effective AC accounts for Hasted +2, Shielded +2, Mage Armor floor, etc.
           const baseAC = targetChar?.armorClass ?? 10;
@@ -1487,6 +1521,33 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
           wIsMeleeForRange ? 'melee' : 'ranged',
         );
         const wCombined = combineAttackModifiers(wAttackerOwn, wTargetIncoming);
+
+        // 5e Vision rules — fold lighting-based advantage/disadvantage
+        // into the combined modifiers. Same pattern as the spell-attack
+        // path above; see PHB p.194-195 + the comment block there.
+        {
+          const wMapState = useMapStore.getState();
+          const wAllChars = useCharacterStore.getState().allCharacters;
+          const wVisionMod = computeVisionAttackModifier(
+            wCasterToken as Token,
+            targetToken as Token,
+            {
+              ambient: (wMapState.currentMap?.ambientLight ?? 'bright') as AmbientLight,
+              ambientOpacity: wMapState.currentMap?.ambientOpacity,
+              allTokens: Object.values(wMapState.tokens),
+              gridSize: wMapState.currentMap?.gridSize ?? 70,
+              characters: wAllChars as Record<string, unknown>,
+            },
+          );
+          if (wVisionMod.advantage === 'advantage' && wCombined.attackAdvantage !== 'disadvantage') {
+            wCombined.attackAdvantage = 'advantage';
+          } else if (wVisionMod.advantage === 'disadvantage' && wCombined.attackAdvantage !== 'advantage') {
+            wCombined.attackAdvantage = 'disadvantage';
+          } else if (wVisionMod.advantage !== 'normal' && wCombined.attackAdvantage !== wVisionMod.advantage) {
+            wCombined.attackAdvantage = 'normal';
+          }
+          if (wVisionMod.note) wCombined.notes.push(wVisionMod.note);
+        }
 
         // Vow of Enmity (Vengeance Paladin): caster has advantage
         // vs cursed target. Only the caster benefits, so we check

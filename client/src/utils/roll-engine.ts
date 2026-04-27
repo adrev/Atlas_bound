@@ -4,7 +4,10 @@ import {
   computeEffectiveSpeed,
   effectForCondition,
   resolveAdvantage,
+  visionAttackModifier,
   type EffectiveStat as SharedEffectiveStat,
+  type Token,
+  type AmbientLight,
 } from '@dnd-vtt/shared';
 
 /**
@@ -282,6 +285,89 @@ export function getTargetRollModifiers(
   }
 
   return out;
+}
+
+/**
+ * Compute the attack-roll modifier from the 5e Vision rules (PHB
+ * p.194-195). Wraps the shared `visionAttackModifier` so callers in
+ * the client roll engine don't have to import + assemble token
+ * positions / senses themselves.
+ *
+ * Returns `null` when:
+ *   - The attacker or target is missing required data
+ *   - The active map can't be resolved
+ *   - The map's lighting is irrelevant (ambient bright + no nearby
+ *     darkness) → fast-path skip
+ *
+ * The caller folds the returned modifier into `combineAttackModifiers`
+ * via `applyAdvantage(out, 'attack', mod.advantage)` and pushes
+ * `mod.note` onto the modifiers' notes list so the chat card
+ * surfaces "disadvantage from heavy obscurement" the same way it
+ * already labels Bless / Bane / Poisoned reasons.
+ */
+export interface VisionRollModifier {
+  advantage: 'advantage' | 'disadvantage' | 'normal';
+  note: string | null;
+}
+
+function sensesForToken(
+  token: Token | null | undefined,
+  characters: Record<string, unknown>,
+): { darkvision: number; blindsight: number; truesight: number; tremorsense: number } {
+  const empty = { darkvision: 0, blindsight: 0, truesight: 0, tremorsense: 0 };
+  if (!token) return empty;
+  let fromChar = empty;
+  const char = token.characterId ? (characters[token.characterId] as { senses?: unknown } | undefined) : undefined;
+  if (char?.senses) {
+    const raw = typeof char.senses === 'string' ? safeParse(char.senses) : (char.senses as Record<string, unknown>);
+    if (raw && typeof raw === 'object') {
+      fromChar = {
+        darkvision: Number(raw.darkvision ?? 0) || 0,
+        blindsight: Number(raw.blindsight ?? 0) || 0,
+        truesight: Number(raw.truesight ?? 0) || 0,
+        tremorsense: Number(raw.tremorsense ?? 0) || 0,
+      };
+    }
+  }
+  const ov = (token as Token & { visionOverrides?: Partial<typeof empty> }).visionOverrides;
+  if (!ov) return fromChar;
+  return {
+    darkvision: ov.darkvision !== undefined ? ov.darkvision : fromChar.darkvision,
+    blindsight: ov.blindsight !== undefined ? ov.blindsight : fromChar.blindsight,
+    truesight: ov.truesight !== undefined ? ov.truesight : fromChar.truesight,
+    tremorsense: ov.tremorsense !== undefined ? ov.tremorsense : fromChar.tremorsense,
+  };
+}
+
+function safeParse(s: string): Record<string, unknown> | null {
+  try { return JSON.parse(s); } catch { return null; }
+}
+
+export function computeVisionAttackModifier(
+  attacker: Token | null | undefined,
+  target: Token | null | undefined,
+  options: {
+    ambient: AmbientLight;
+    ambientOpacity: number | undefined;
+    /** Every token on the map — we filter to light-emitters internally. */
+    allTokens: Token[];
+    gridSize: number;
+    /** Character store snapshot keyed by character id. */
+    characters: Record<string, unknown>;
+  },
+): VisionRollModifier {
+  if (!attacker || !target) return { advantage: 'normal', note: null };
+  const lightTokens = options.allTokens.filter((t) => t.hasLight && t.visible);
+  const aSenses = sensesForToken(attacker, options.characters);
+  const tSenses = sensesForToken(target, options.characters);
+  return visionAttackModifier(
+    { x: attacker.x, y: attacker.y, senses: aSenses },
+    { x: target.x, y: target.y, senses: tSenses },
+    options.ambient,
+    options.ambientOpacity,
+    lightTokens,
+    options.gridSize,
+  );
 }
 
 /**
