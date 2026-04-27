@@ -4,6 +4,7 @@ import { useMapStore } from '../../stores/useMapStore';
 import { useSessionStore } from '../../stores/useSessionStore';
 import { emitUpdateSettings, emitUpdateMapLighting } from '../../socket/emitters';
 import type { AmbientLight } from '@dnd-vtt/shared';
+import { lightingScenariosByGroup } from '@dnd-vtt/shared';
 import { CreatureLibrary } from './CreatureLibrary';
 import { SceneManager } from './SceneManager';
 import { EncounterBuilder } from './EncounterBuilder';
@@ -517,6 +518,12 @@ function AmbientLightControl({
     ? Math.round(opacity * 100)
     : tier === 'dark' ? 85 : tier === 'dim' ? 45 : 0;
 
+  // 5e RAW scenario presets (PHB p.183 + DMG p.243). One-click puts
+  // the map's ambient on the right tier + opacity for "Twilight",
+  // "Moonlit Night", "Torch-Lit Corridor", etc. — no more guessing
+  // whether dim or custom-0.45 matches "underground at night".
+  const scenarioGroups = lightingScenariosByGroup();
+
   return (
     <FieldGroup
       label="Ambient Light"
@@ -559,7 +566,7 @@ function AmbientLightControl({
         })}
       </div>
       {tier === 'custom' && (
-        <div style={{ marginTop: 2 }}>
+        <div style={{ marginTop: 2, marginBottom: 8 }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, color: theme.text.muted, marginBottom: 4 }}>
             <span>Opacity</span>
             <span>{sliderVal}%</span>
@@ -577,6 +584,52 @@ function AmbientLightControl({
           />
         </div>
       )}
+
+      <div style={{ marginTop: 4 }}>
+        <div style={{ fontSize: 9, fontWeight: 700, color: theme.text.muted, letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 4 }}>
+          Scenario presets <span style={{ color: theme.text.muted, fontWeight: 400, textTransform: 'none', letterSpacing: 0, opacity: 0.7 }}>· PHB 183 / DMG 243</span>
+        </div>
+        {(['outdoor', 'indoor', 'underground', 'magical'] as const).map((group) => (
+          <div key={group} style={{ marginBottom: 6 }}>
+            <div style={{ fontSize: 8, fontWeight: 600, color: theme.text.muted, letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: 2 }}>
+              {group}
+            </div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 3 }}>
+              {scenarioGroups[group].map((s) => {
+                const isActive = tier === s.tier && (
+                  s.tier !== 'custom' || Math.abs((opacity ?? 0) - (s.opacity ?? 0)) < 0.02
+                );
+                return (
+                  <button
+                    key={s.id}
+                    onClick={() => emitUpdateMapLighting(mapId, {
+                      ambientLight: s.tier,
+                      ambientOpacity: s.tier === 'custom' ? s.opacity : null,
+                    })}
+                    title={`${s.hint} (${s.ref})`}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: 3,
+                      padding: '3px 6px',
+                      fontSize: 9,
+                      borderRadius: theme.radius.sm,
+                      cursor: 'pointer',
+                      background: isActive
+                        ? `linear-gradient(180deg, rgba(232,196,85,0.16), ${theme.gold.bg})`
+                        : theme.bg.deep,
+                      color: isActive ? theme.gold.bright : theme.text.secondary,
+                      border: `1px solid ${isActive ? theme.gold.border : theme.border.default}`,
+                      fontFamily: theme.font.body,
+                    }}
+                  >
+                    <span aria-hidden style={{ fontSize: 10 }}>{s.icon}</span>
+                    <span>{s.label}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        ))}
+      </div>
     </FieldGroup>
   );
 }

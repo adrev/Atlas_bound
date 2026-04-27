@@ -70,6 +70,10 @@ export type { AnimationType, SpellAnimationConfig } from './constants/spell-anim
 export { LIGHT_SOURCE_PRESETS, findLightPresetForName } from './constants/light-sources.js';
 export type { LightSourcePreset } from './constants/light-sources.js';
 export {
+  LIGHTING_SCENARIOS, findLightingScenario, lightingScenariosByGroup,
+} from './constants/lighting-scenarios.js';
+export type { LightingScenario } from './constants/lighting-scenarios.js';
+export {
   lightTierAt, effectiveVisionTier, canSeeTarget, visionAttackModifier, perceptionPenalty,
 } from './utils/vision-tier.js';
 export type { LightTier, TokenSenses } from './utils/vision-tier.js';
