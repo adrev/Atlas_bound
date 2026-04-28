@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import type { Character, Spell } from '@dnd-vtt/shared';
+import { useAuthStore } from './useAuthStore';
 
 export interface HotbarSlot {
   type: 'spell' | 'ability' | 'item';
@@ -81,9 +82,21 @@ export const useCharacterStore = create<CharacterState & CharacterActions>(
         const result: Partial<CharacterState> = {
           allCharacters: { ...state.allCharacters, [char.id]: char },
         };
-        // Set as myCharacter if it's already ours, OR if we don't have one yet
-        // (handles auto-loading on session rejoin)
-        if (state.myCharacter?.id === char.id || !state.myCharacter) {
+        // Refresh in place if it's already pinned as ours.
+        if (state.myCharacter?.id === char.id) {
+          result.myCharacter = char;
+          return result;
+        }
+        // Otherwise auto-pin only when (a) we don't have a myCharacter
+        // yet and (b) THIS character actually belongs to us. The old
+        // logic auto-pinned the FIRST character to sync — which on a
+        // DM's screen is whichever NPC the server happened to send
+        // first, leaving the chat input mis-attributed to (say)
+        // "Shadow of Death" when the DM opens the campaign with their
+        // own PC. NPCs use userId='npc' so they're filtered out by the
+        // ownership check; another player's PC fails the same gate.
+        const authUserId = useAuthStore.getState().user?.id;
+        if (!state.myCharacter && authUserId && char.userId === authUserId) {
           result.myCharacter = char;
         }
         return result;

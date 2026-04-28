@@ -63,6 +63,12 @@ import { FeedbackModal } from '../feedback/FeedbackModal';
 const ProfileModal = lazy(() =>
   import('../auth/ProfileModal').then((m) => ({ default: m.ProfileModal })),
 );
+// CharacterSheetFull is a sizable component (stat blocks, spell book,
+// inventory, notes, BG tab). Lazy-loaded so the lobby's initial bundle
+// doesn't pay for it until a user actually clicks a hero.
+const CharacterSheetFull = lazy(() =>
+  import('../character/CharacterSheetFull').then((m) => ({ default: m.CharacterSheetFull })),
+);
 
 /**
  * Public Discord invite URL for the project's community server. The
@@ -365,6 +371,30 @@ export function SessionLobby() {
   const [outgoing, setOutgoing] = useState<PendingFriend[]>([]);
   const [addFriendOpen, setAddFriendOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
+
+  // Character sheet from lobby: holds the FULL character object (not
+  // the lobby-side MyCharacter slice — the sheet needs every field).
+  // null = no sheet open. Fetched fresh on open from /api/characters/:id
+  // so edits made in a previous session are reflected.
+  const [openCharacter, setOpenCharacter] = useState<unknown | null>(null);
+  const [openCharacterLoading, setOpenCharacterLoading] = useState(false);
+
+  const openHeroSheet = async (charId: string) => {
+    setOpenCharacterLoading(true);
+    try {
+      const res = await fetch(`/api/characters/${charId}`, { credentials: 'include' });
+      if (res.ok) {
+        const character = await res.json();
+        setOpenCharacter(character);
+      } else {
+        setError('Could not load that hero — try again in a moment.');
+      }
+    } catch {
+      setError('Network error loading hero.');
+    } finally {
+      setOpenCharacterLoading(false);
+    }
+  };
 
   // Chronicle entries from /api/chronicle/mine — the LLM-generated
   // session recaps published across all of the user's campaigns.
@@ -777,7 +807,8 @@ export function SessionLobby() {
               <button
                 key={c.id}
                 className={`char-card${c.activeCampaignId ? ' active' : ''}`}
-                onClick={() => showSoon('Character sheet from lobby')}
+                disabled={openCharacterLoading}
+                onClick={() => openHeroSheet(c.id)}
                 title={`${c.name}${c.race ? ` — ${c.race}` : ''}${c.class ? ` ${c.class}` : ''}`}
               >
                 <div className="pp" style={{ background: heroTint(c.id) }}>
@@ -1409,6 +1440,40 @@ export function SessionLobby() {
         <ProfileModal open={profileOpen} onClose={() => setProfileOpen(false)} />
       </Suspense>
 
+      {/* Character sheet from the Heroes rail. Reuses the in-session
+          CharacterSheetFull component — most of it works fine outside
+          a session (display, edits via REST, notes). Things that emit
+          socket events (broadcast damage, party-wide messages) silently
+          no-op without a session, which is correct: there's no party
+          to broadcast to from the lobby. Edits to HP / spell prep /
+          inventory still persist via REST and show up next time the
+          DM loads the campaign. */}
+      {openCharacter !== null && (
+        <div style={lobbySheetOverlayStyle} onMouseDown={(e) => { if (e.target === e.currentTarget) setOpenCharacter(null); }}>
+          <div style={lobbySheetContainerStyle}>
+            <button
+              type="button"
+              onClick={() => setOpenCharacter(null)}
+              aria-label="Close"
+              style={lobbySheetCloseStyle}
+            >
+              <X size={16} />
+            </button>
+            <Suspense fallback={
+              <div style={{ padding: 32, textAlign: 'center', color: '#a89271', fontStyle: 'italic' }}>
+                Unfurling the sheet…
+              </div>
+            }>
+              <CharacterSheetFull
+                /* eslint-disable-next-line @typescript-eslint/no-explicit-any */
+                character={openCharacter as any}
+                onClose={() => setOpenCharacter(null)}
+              />
+            </Suspense>
+          </div>
+        </div>
+      )}
+
       {/* Feedback (existing component) */}
       <FeedbackModal open={feedbackOpen} onClose={() => setFeedbackOpen(false)} />
     </div>
@@ -1621,6 +1686,33 @@ function AddFriendModal({
     </div>
   );
 }
+
+// ────────────────────────────────────────────────────────────────
+// Inline styles for the lobby-side character sheet overlay. Lives
+// outside .kbrt-lobby because CharacterSheetFull brings its own
+// theme — we just want a plain dark scrim + roomy container so the
+// existing in-session sheet styling renders identically here.
+// ────────────────────────────────────────────────────────────────
+const lobbySheetOverlayStyle: React.CSSProperties = {
+  position: 'fixed', inset: 0, background: 'rgba(4, 2, 1, .85)',
+  backdropFilter: 'blur(4px)', zIndex: 1100,
+  display: 'flex', alignItems: 'center', justifyContent: 'center',
+  padding: 24,
+};
+const lobbySheetContainerStyle: React.CSSProperties = {
+  position: 'relative',
+  width: '95%', maxWidth: 1100, maxHeight: '92vh',
+  overflow: 'auto',
+  background: '#140e07', border: '1px solid rgba(199,150,50,.55)',
+  borderRadius: 6, boxShadow: '0 30px 80px rgba(0,0,0,.8)',
+};
+const lobbySheetCloseStyle: React.CSSProperties = {
+  position: 'absolute', top: 12, right: 12, zIndex: 10,
+  display: 'flex', alignItems: 'center', justifyContent: 'center',
+  width: 32, height: 32, borderRadius: '50%',
+  background: '#1e1509', border: '1px solid rgba(199,150,50,.55)',
+  color: '#a89271', cursor: 'pointer',
+};
 
 // ────────────────────────────────────────────────────────────────
 // CSS — scoped under .kbrt-lobby so the design system doesn't leak
