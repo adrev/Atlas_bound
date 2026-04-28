@@ -663,6 +663,50 @@ export async function initDatabase(): Promise<void> {
     ALTER TABLE tidings
       ADD COLUMN IF NOT EXISTS linked_feedback_ids TEXT[];
 
+    -- ── Chronicle (session recaps) ────────────────────────────────
+    -- One row per "play session" recap. Distinct from the sessions
+    -- table (which is a campaign). A campaign accumulates multiple
+    -- chronicle entries over time, one per real-life play meeting.
+    -- The lifecycle:
+    --   pending    → row created, transcript captured, not yet sent
+    --   generating → Vertex AI call in flight
+    --   draft      → recap generated, awaiting DM review
+    --   published  → DM approved; visible to players in lobby rail
+    --   failed     → generation errored; DM can retry or skip
+    CREATE TABLE IF NOT EXISTS chronicle_entries (
+      id TEXT PRIMARY KEY,
+      campaign_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+      sequence_number INTEGER NOT NULL,         -- 1, 2, 3... within a campaign
+      raw_transcript TEXT NOT NULL DEFAULT '',  -- what we sent to the LLM
+      -- LLM-generated content
+      recap_short TEXT,                          -- 2-4 sentences for lobby rail
+      recap_full TEXT,                           -- longer version for "Read more"
+      key_entities TEXT[],                       -- italicized nouns
+      where_left_off TEXT,                       -- one-liner for Resume CTA
+      -- DM editable overrides; UI shows these instead when present
+      dm_recap_short TEXT,
+      dm_recap_full TEXT,
+      -- Lifecycle
+      status TEXT NOT NULL DEFAULT 'pending',
+      -- Timing
+      session_started_at TEXT,
+      session_ended_at TEXT,
+      duration_ms INTEGER,
+      -- LLM metadata
+      model_used TEXT,
+      generation_started_at TEXT,
+      generation_finished_at TEXT,
+      generation_error TEXT,
+      -- Audit
+      triggered_by TEXT REFERENCES auth_users(id) ON DELETE SET NULL,
+      published_at TEXT,
+      created_at TEXT NOT NULL DEFAULT (NOW()::text),
+      updated_at TEXT NOT NULL DEFAULT (NOW()::text)
+    );
+    CREATE INDEX IF NOT EXISTS idx_chronicle_campaign ON chronicle_entries(campaign_id, sequence_number DESC);
+    CREATE INDEX IF NOT EXISTS idx_chronicle_published ON chronicle_entries(published_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_chronicle_status ON chronicle_entries(status);
+
     -- ── Companions / friends ───────────────────────────────────────
     -- One row per friendship regardless of who initiated. We canon-
     -- icalize the pair so user_a_id < user_b_id (lexicographic) so a

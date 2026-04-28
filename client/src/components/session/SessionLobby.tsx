@@ -161,6 +161,22 @@ interface UserSearchHit {
   friendshipStatus: 'pending' | 'accepted' | 'blocked' | null;
 }
 
+/** Chronicle entry shape from /api/chronicle/mine. The server already
+ *  picks `effectiveRecap*` (DM edit if present, else auto-generated),
+ *  so the lobby just renders that. keyEntities are nouns we wrap in
+ *  <em> tags inside the recap text. */
+interface ChronicleEntry {
+  id: string;
+  campaignId: string;
+  campaignName: string | null;
+  sequenceNumber: number;
+  effectiveRecapShort: string;
+  effectiveRecapFull: string;
+  keyEntities: string[];
+  publishedAt: string | null;
+  durationMs: number | null;
+}
+
 // ────────────────────────────────────────────────────────────────
 // Helpers
 // ────────────────────────────────────────────────────────────────
@@ -198,6 +214,35 @@ function heroTint(seed: string): string {
 }
 
 /**
+ * Wrap each occurrence of a `keyEntities` term in <em>, leaving the
+ * rest of the text untouched. Used to render Chronicle recaps with
+ * the design's italicized-noun look without baking the emphasis
+ * into the LLM output (separates content from presentation).
+ *
+ * Matching is case-sensitive whole-word — entities like "Liraya"
+ * shouldn't accidentally match "literally". Order entities longest-
+ * first so "Briar Hollow" is wrapped before "Briar" alone.
+ */
+function renderRecapWithEntities(text: string, entities: string[], key: string | number): React.ReactNode {
+  if (!entities || entities.length === 0) return text;
+  const sorted = [...entities].sort((a, b) => b.length - a.length);
+  // Build a single regex that matches any entity as a whole word.
+  const escaped = sorted.map((e) => e.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&'));
+  const regex = new RegExp(`\\b(${escaped.join('|')})\\b`, 'g');
+  const parts: React.ReactNode[] = [];
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+  let i = 0;
+  while ((match = regex.exec(text)) !== null) {
+    if (match.index > lastIndex) parts.push(text.slice(lastIndex, match.index));
+    parts.push(<em key={`${key}-em-${i++}`}>{match[1]}</em>);
+    lastIndex = regex.lastIndex;
+  }
+  if (lastIndex < text.length) parts.push(text.slice(lastIndex));
+  return parts;
+}
+
+/**
  * Render a tiding body with a single emphasis style: `*word*` becomes
  * `<em>word</em>`. The design's right-rail leans hard on this lead-noun
  * emphasis ("*Patch 0.7* — …"), so we let admins author it inline
@@ -217,6 +262,17 @@ function renderTidingText(body: string, key: string | number): React.ReactNode {
   }
   if (lastIndex < body.length) parts.push(body.slice(lastIndex));
   return parts;
+}
+
+/** Format a duration in ms as "2h 18m" or "47m". Used by the
+ *  Chronicle row to surface session length next to the meta line. */
+function formatDuration(ms: number | null | undefined): string {
+  if (!ms || ms <= 0) return '';
+  const totalMin = Math.round(ms / 60_000);
+  const h = Math.floor(totalMin / 60);
+  const m = totalMin % 60;
+  if (h <= 0) return `${m}m`;
+  return `${h}h ${m.toString().padStart(2, '0')}m`;
 }
 
 /** "Just now / 2h ago / 3 days ago" — only used for the lobby tiles
@@ -309,6 +365,12 @@ export function SessionLobby() {
   const [outgoing, setOutgoing] = useState<PendingFriend[]>([]);
   const [addFriendOpen, setAddFriendOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
+
+  // Chronicle entries from /api/chronicle/mine — the LLM-generated
+  // session recaps published across all of the user's campaigns.
+  // Refetched on mount; stays empty until the user has played a
+  // session that ended in a DM-published recap.
+  const [chronicle, setChronicle] = useState<ChronicleEntry[]>([]);
 
   // ── Data fetch ────────────────────────────────────────────────
   const fetchMyGames = async () => {
@@ -424,12 +486,28 @@ export function SessionLobby() {
     }
   };
 
+  // Pull recent published chronicle entries across every campaign the
+  // user belongs to. The endpoint already filters to status='published'
+  // and orders by published_at DESC.
+  const fetchChronicle = async () => {
+    try {
+      const res = await fetch('/api/chronicle/mine', { credentials: 'include' });
+      if (res.ok) {
+        const data = await res.json();
+        setChronicle(Array.isArray(data.entries) ? data.entries : []);
+      }
+    } catch {
+      /* best-effort — empty rail is the worst case */
+    }
+  };
+
   useEffect(() => {
     if (authUser) {
       fetchMyGames();
       fetchMyCharacters();
       fetchTidings();
       fetchFriends();
+      fetchChronicle();
     }
   }, [authUser]);
 
@@ -887,7 +965,7 @@ export function SessionLobby() {
             </div>
           )}
 
-          {/* CHRONICLE — empty state until the LLM recap pipeline ships */}
+          {/* CHRONICLE — narrative timeline of published session recaps */}
           <div className="section-head">
             <h2>
               <ScrollText size={14} />
@@ -895,13 +973,41 @@ export function SessionLobby() {
             </h2>
             <div className="rule" />
           </div>
-          <div className="chron-empty">
-            <ScrollText size={20} />
-            <p>
-              Your chronicle is empty. After your next session ends, the Loremasters will draft a recap here so you
-              never forget where you left off.
-            </p>
-          </div>
+          {chronicle.length === 0 ? (
+            <div className="chron-empty">
+              <ScrollText size={20} />
+              <p>
+                Your chronicle is empty. When a DM ends a session and forges a recap, the tale will appear here.
+              </p>
+            </div>
+          ) : (
+            <div className="chronicle">
+              {chronicle.slice(0, 6).map((c) => (
+                <div className="chron-row" key={c.id}>
+                  <div className="chron-time">
+                    <div className="chron-day">{formatRelative(c.publishedAt) || '—'}</div>
+                    <div className="chron-clock">
+                      {c.publishedAt ? new Date(c.publishedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}
+                    </div>
+                  </div>
+                  <div className="chron-dot" />
+                  <div className="chron-card">
+                    <div className="chron-meta">
+                      <span className="chron-game">{c.campaignName ?? 'Campaign'}</span>
+                      <span className="chron-sep">·</span>
+                      <span>
+                        Session {c.sequenceNumber}
+                        {c.durationMs ? ` · ${formatDuration(c.durationMs)}` : ''}
+                      </span>
+                    </div>
+                    <p className="chron-text">
+                      {renderRecapWithEntities(c.effectiveRecapShort, c.keyEntities, c.id)}
+                    </p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
 
           <p className="quill" style={{ margin: '36px 0 24px' }}>
             KBRT.AI — Your adventure awaits.

@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef, lazy, Suspense } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { Copy, PanelRightClose, PanelRightOpen, X, LogOut, Home, UserCog, ChevronDown, Menu, Settings, Volume2, VolumeX, Shield, Lightbulb, Megaphone } from 'lucide-react';
+import { Copy, PanelRightClose, PanelRightOpen, X, LogOut, Home, UserCog, ChevronDown, Menu, Settings, Volume2, VolumeX, Shield, Lightbulb, Megaphone, ScrollText } from 'lucide-react';
 import { TweaksPanel } from '../../kbrt/TweaksPanel';
 import { useSocket } from '../../hooks/useSocket';
 import { useIsMobile } from '../../hooks/useIsMobile';
@@ -25,6 +25,7 @@ import { TRACKS } from '../audio/tracks';
 import { useAudioStore } from '../../stores/useAudioStore';
 import { FirstJoinTour } from '../onboarding/FirstJoinTour';
 import { FeedbackModal } from '../feedback/FeedbackModal';
+import { ChronicleModal } from '../chronicle/ChronicleModal';
 // Sidebar is large (DM panels, scene manager, creature library). Lazy-loaded
 // so the initial session bundle stays under the 500 kB warning threshold.
 const Sidebar = lazy(() => import('./Sidebar').then((m) => ({ default: m.Sidebar })));
@@ -415,6 +416,7 @@ export function AppShell() {
       <ToastHost />
       <DialogHost />
       <FeedbackModal open={showFeedbackModal} onClose={() => setShowFeedbackModal(false)} />
+      <ChronicleModal />
       <Suspense fallback={null}>
         <HandoutModal />
       </Suspense>
@@ -660,6 +662,20 @@ export function AppShell() {
                     <Lightbulb size={14} />
                     Send Feedback
                   </button>
+                  {isDM && (
+                    <button
+                      style={styles.dropdownItem}
+                      onClick={() => {
+                        setShowUserMenu(false);
+                        // Open the ChronicleModal mounted globally below.
+                        window.dispatchEvent(new CustomEvent('open-chronicle-forge'));
+                      }}
+                      title="Generate a recap of this session for the lobby Chronicle"
+                    >
+                      <ScrollText size={14} />
+                      Forge Chronicle
+                    </button>
+                  )}
                   {authUser.isAdmin && (
                     <button
                       style={styles.dropdownItem}

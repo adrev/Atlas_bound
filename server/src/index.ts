@@ -22,6 +22,7 @@ import errorsRouter from './routes/errors.js';
 import feedbackRouter from './routes/feedback.js';
 import tidingsRouter from './routes/tidings.js';
 import friendsRouter from './routes/friends.js';
+import chronicleRouter from './routes/chronicle.js';
 import { seedCompendium, isCompendiumSeeded } from './services/Open5eService.js';
 import { seedEquipment, isEquipmentSeeded } from './services/seedEquipment.js';
 import { backfillTokenSnaps } from './services/backfillTokenSnaps.js';
@@ -298,6 +299,10 @@ app.use('/api', requireAuth, tidingsRouter);
 // request/accept/decline/block/unfriend endpoints. All routes auth-
 // required; presence is derived on read from in-memory roomState.
 app.use('/api', requireAuth, friendsRouter);
+
+// Chronicle — LLM-powered session recaps via Vertex AI Gemini.
+// DM-gated for write paths; readers see only published rows.
+app.use('/api', requireAuth, chronicleRouter);
 
 // Upload endpoints (authenticated, magic-byte validated, rate-limited).
 // Without a per-user cap any logged-in account could repeatedly store
