@@ -58,6 +58,20 @@ import { createSession, joinSession } from '../../services/api';
 import { useSessionStore } from '../../stores/useSessionStore';
 import { useAuthStore } from '../../stores/useAuthStore';
 import { FeedbackModal } from '../feedback/FeedbackModal';
+import { PREBUILT_MAPS } from '../../data/prebuiltMaps';
+
+/**
+ * Prebuilt maps don't store URLs in the DB (server schema comment
+ * says "client-derived"). The image lives at a GCS path keyed by the
+ * prebuilt's slug — but the slug isn't on the row, only the name.
+ * This lookup builds a name → thumbnailFile URL map once at module
+ * load so the lobby can resolve the image without a schema change.
+ */
+const PREBUILT_MAP_THUMB_BY_NAME: Record<string, string> = (() => {
+  const out: Record<string, string> = {};
+  for (const m of PREBUILT_MAPS) out[m.name] = m.thumbnailFile;
+  return out;
+})();
 // Profile modal is large (avatar uploader, password change). Lazy-load
 // so it only joins the bundle when a user opens the Account quick action.
 const ProfileModal = lazy(() =>
@@ -213,6 +227,24 @@ function bannerGradient(seed: string): string {
   for (let i = 0; i < seed.length; i++) h = (h * 31 + seed.charCodeAt(i)) >>> 0;
   const [a, b] = BIOME_GRADIENTS[h % BIOME_GRADIENTS.length];
   return `linear-gradient(135deg, ${a}, ${b})`;
+}
+
+/**
+ * Resolve the best banner image URL for a campaign tile. Order:
+ *   1. Server-provided bannerUrl — populated when the campaign has a
+ *      custom-uploaded current map (thumbnail_url, falling back to
+ *      image_url).
+ *   2. Prebuilt-map GCS thumbnail — derived from currentMapName when
+ *      the row has no image_url (prebuilt maps deliberately store null
+ *      and the client derives the URL).
+ *   3. null — caller falls back to the deterministic biome gradient.
+ */
+function resolveBannerUrl(g: { bannerUrl?: string | null; currentMapName?: string | null }): string | null {
+  if (g.bannerUrl) return g.bannerUrl;
+  if (g.currentMapName && PREBUILT_MAP_THUMB_BY_NAME[g.currentMapName]) {
+    return PREBUILT_MAP_THUMB_BY_NAME[g.currentMapName];
+  }
+  return null;
 }
 
 /** Per-character avatar tint — same hashing trick. The design uses
@@ -890,10 +922,14 @@ export function SessionLobby() {
                    render its thumbnail as the card's right-side art.
                    Otherwise the CSS fallback (forest gradient) shows
                    through. The .map-thumb element handles its own
-                   gradient mask so the title text stays legible. */
-                style={resumeGame?.bannerUrl
-                  ? { backgroundImage: `linear-gradient(90deg, var(--bg-panel) 0%, transparent 30%), url("${resumeGame.bannerUrl}")` }
-                  : undefined}
+                   gradient mask so the title text stays legible.
+                   Same prebuilt-vs-custom resolution as the tiles. */
+                style={(() => {
+                  const url = resumeGame ? resolveBannerUrl(resumeGame) : null;
+                  return url
+                    ? { backgroundImage: `linear-gradient(90deg, var(--bg-panel) 0%, transparent 30%), url("${url}")` }
+                    : undefined;
+                })()}
               />
               <p className="label">
                 {resumeGame ? 'Last session · ready when you are' : 'No active campaign yet'}
@@ -968,24 +1004,28 @@ export function SessionLobby() {
             <div className="games-grid">
               {filteredGames.map((g) => (
                 <div key={g.id} className="game-tile" onClick={() => enterGame(g.roomCode)} role="button" tabIndex={0}>
-                  <div
-                    className="banner"
-                    /* When the campaign has a current_map_id we render the
-                       map's thumbnail as the tile background. Quoted in
-                       the URL form so filenames containing parens / spaces
-                       don't break the CSS rule. Falls back to a deter-
-                       ministic biome-tinted gradient when no map has been
-                       loaded yet. */
-                    style={
-                      g.bannerUrl
-                        ? { backgroundImage: `url("${g.bannerUrl}")`, backgroundSize: 'cover', backgroundPosition: 'center' }
-                        : { background: bannerGradient(g.id) }
-                    }
-                    title={g.currentMapName ?? undefined}
-                  >
-                    <span className={`role-pill ${g.role}`}>{g.role === 'dm' ? 'DM' : 'PLAYER'}</span>
-                    {g.isLive && <span className="live-dot">Live</span>}
-                  </div>
+                  {(() => {
+                    const url = resolveBannerUrl(g);
+                    return (
+                      <div
+                        className="banner"
+                        /* Server bannerUrl is preferred (custom upload).
+                           Prebuilt maps fall through to a name → GCS
+                           thumbnail lookup. Otherwise we render the
+                           biome-tinted gradient. URL is quoted so map
+                           filenames with parens/spaces don't break CSS. */
+                        style={
+                          url
+                            ? { backgroundImage: `url("${url}")`, backgroundSize: 'cover', backgroundPosition: 'center' }
+                            : { background: bannerGradient(g.id) }
+                        }
+                        title={g.currentMapName ?? undefined}
+                      >
+                        <span className={`role-pill ${g.role}`}>{g.role === 'dm' ? 'DM' : 'PLAYER'}</span>
+                        {g.isLive && <span className="live-dot">Live</span>}
+                      </div>
+                    );
+                  })()}
                   <div className="body">
                     <p className="name">{g.name}</p>
                     <div className="meta">
