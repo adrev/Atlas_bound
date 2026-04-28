@@ -663,6 +663,29 @@ export async function initDatabase(): Promise<void> {
     ALTER TABLE tidings
       ADD COLUMN IF NOT EXISTS linked_feedback_ids TEXT[];
 
+    -- ── Companions / friends ───────────────────────────────────────
+    -- One row per friendship regardless of who initiated. We canon-
+    -- icalize the pair so user_a_id < user_b_id (lexicographic) so a
+    -- single UNIQUE constraint catches duplicates from either side.
+    -- requested_by records who actually sent the request (drives
+    -- the Pending Requests UI: it shows incoming, not outgoing).
+    -- blocked_by records who blocked when status=blocked; the
+    -- non-blocker should not see the friendship at all.
+    CREATE TABLE IF NOT EXISTS friendships (
+      id TEXT PRIMARY KEY,
+      user_a_id TEXT NOT NULL REFERENCES auth_users(id) ON DELETE CASCADE,
+      user_b_id TEXT NOT NULL REFERENCES auth_users(id) ON DELETE CASCADE,
+      requested_by TEXT NOT NULL REFERENCES auth_users(id) ON DELETE CASCADE,
+      status TEXT NOT NULL DEFAULT 'pending',  -- 'pending' | 'accepted' | 'blocked'
+      blocked_by TEXT REFERENCES auth_users(id) ON DELETE SET NULL,
+      created_at TEXT NOT NULL DEFAULT (NOW()::text),
+      updated_at TEXT NOT NULL DEFAULT (NOW()::text),
+      UNIQUE (user_a_id, user_b_id),
+      CHECK (user_a_id < user_b_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_friendships_a ON friendships(user_a_id, status);
+    CREATE INDEX IF NOT EXISTS idx_friendships_b ON friendships(user_b_id, status);
+
     -- Track whether a tiding has already been announced to Discord so
     -- republishing the same row (status edits, expiration tweaks)
     -- doesn't re-spam the channel. Stamped with the message URL the

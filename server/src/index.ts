@@ -21,6 +21,7 @@ import encountersRouter from './routes/encounters.js';
 import errorsRouter from './routes/errors.js';
 import feedbackRouter from './routes/feedback.js';
 import tidingsRouter from './routes/tidings.js';
+import friendsRouter from './routes/friends.js';
 import { seedCompendium, isCompendiumSeeded } from './services/Open5eService.js';
 import { seedEquipment, isEquipmentSeeded } from './services/seedEquipment.js';
 import { backfillTokenSnaps } from './services/backfillTokenSnaps.js';
@@ -292,6 +293,11 @@ app.use('/api', requireAuth, feedbackRouter);
 // lobby right rail and behind the bell badge. Admin endpoints inside
 // the router layer requireAdmin on top of requireAuth.
 app.use('/api', requireAuth, tidingsRouter);
+
+// Friends / Companions — the lobby's right-rail friend list, with
+// request/accept/decline/block/unfriend endpoints. All routes auth-
+// required; presence is derived on read from in-memory roomState.
+app.use('/api', requireAuth, friendsRouter);
 
 // Upload endpoints (authenticated, magic-byte validated, rate-limited).
 // Without a per-user cap any logged-in account could repeatedly store

@@ -30,7 +30,7 @@
  * CSS is mostly verbatim from the prototype; class names are namespaced
  * to avoid collisions with existing inline-styled components.
  */
-import { useEffect, useMemo, useState } from 'react';
+import { lazy, Suspense, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   Bell,
@@ -45,12 +45,34 @@ import {
   Settings,
   Lightbulb,
   Shield,
+  UserPlus,
+  Check,
+  UserX,
+  Search,
+  MessageCircle,
+  UserCog,
+  ExternalLink,
   Megaphone,
 } from 'lucide-react';
 import { createSession, joinSession } from '../../services/api';
 import { useSessionStore } from '../../stores/useSessionStore';
 import { useAuthStore } from '../../stores/useAuthStore';
 import { FeedbackModal } from '../feedback/FeedbackModal';
+// Profile modal is large (avatar uploader, password change). Lazy-load
+// so it only joins the bundle when a user opens the Account quick action.
+const ProfileModal = lazy(() =>
+  import('../auth/ProfileModal').then((m) => ({ default: m.ProfileModal })),
+);
+
+/**
+ * Public Discord invite URL for the project's community server. The
+ * Quick Actions Discord button only renders when this is non-empty.
+ * Hard-coded rather than env-wired because it's public info and
+ * rarely changes — flip the constant when the user creates a vanity
+ * invite for the server. Empty string for now so the button stays
+ * hidden until there's a real link.
+ */
+const DISCORD_INVITE_URL = '';
 
 // ────────────────────────────────────────────────────────────────
 // Types — shapes returned by existing endpoints. Optional fields
@@ -105,6 +127,38 @@ interface Tiding {
   versionTag: string | null;
   publishedAt: string;
   pinned: boolean;
+}
+
+/** Lobby-side shape for a friend (companions) row. Matches the server
+ *  response from GET /api/friends. Each row carries the friendship's
+ *  metadata + the OTHER user's profile + their derived presence. */
+interface Friend {
+  friendshipId: string;
+  userId: string;
+  displayName: string;
+  avatarUrl: string | null;
+  status: 'pending' | 'accepted' | 'blocked';
+  requestedBy: string;
+  requestedByMe: boolean;
+  blockedByMe: boolean;
+  presence: {
+    status: 'in-game' | 'offline';
+    sessionId: string | null;
+    sessionName: string | null;
+    roomCode: string | null;
+  };
+  createdAt: string;
+}
+
+interface PendingFriend extends Friend {
+  status: 'pending';
+}
+
+interface UserSearchHit {
+  id: string;
+  displayName: string;
+  avatarUrl: string | null;
+  friendshipStatus: 'pending' | 'accepted' | 'blocked' | null;
 }
 
 // ────────────────────────────────────────────────────────────────
@@ -244,6 +298,18 @@ export function SessionLobby() {
   const [tidings, setTidings] = useState<Tiding[]>([]);
   const [unreadTidings, setUnreadTidings] = useState(0);
 
+  // Companions (friends). Three slots:
+  //   - friends: accepted rows, hydrated with presence
+  //   - incoming: pending requests TO me
+  //   - outgoing: pending requests FROM me (shown in the Add modal)
+  // Re-fetched on every mount + after any mutation so the rail
+  // reflects accept/decline/unfriend immediately.
+  const [friends, setFriends] = useState<Friend[]>([]);
+  const [incoming, setIncoming] = useState<PendingFriend[]>([]);
+  const [outgoing, setOutgoing] = useState<PendingFriend[]>([]);
+  const [addFriendOpen, setAddFriendOpen] = useState(false);
+  const [profileOpen, setProfileOpen] = useState(false);
+
   // ── Data fetch ────────────────────────────────────────────────
   const fetchMyGames = async () => {
     setMyGamesLoading(true);
@@ -302,11 +368,68 @@ export function SessionLobby() {
     }
   };
 
+  // ── Companions data ──────────────────────────────────────────
+  const fetchFriends = async () => {
+    try {
+      const [fRes, pRes] = await Promise.all([
+        fetch('/api/friends', { credentials: 'include' }),
+        fetch('/api/friends/pending', { credentials: 'include' }),
+      ]);
+      if (fRes.ok) {
+        const data = await fRes.json();
+        setFriends(Array.isArray(data.friends) ? data.friends : []);
+      }
+      if (pRes.ok) {
+        const data = await pRes.json();
+        setIncoming(Array.isArray(data.incoming) ? data.incoming : []);
+        setOutgoing(Array.isArray(data.outgoing) ? data.outgoing : []);
+      }
+    } catch {
+      /* best-effort — empty rail is the worst case */
+    }
+  };
+
+  /** POST /api/friends/:id/<verb> — used by accept/decline/cancel/block.
+   *  On success, refetch so presence + counts stay aligned with the
+   *  server (the request can flip to accepted, which moves the row
+   *  from `incoming` to `friends`). */
+  const friendAction = async (
+    friendshipId: string,
+    verb: 'accept' | 'decline' | 'cancel' | 'block',
+  ) => {
+    try {
+      const res = await fetch(`/api/friends/${friendshipId}/${verb}`, {
+        method: 'POST', credentials: 'include',
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setError(data.error ?? `Couldn't ${verb} that companion (${res.status})`);
+        return;
+      }
+      await fetchFriends();
+    } catch {
+      setError('Network error — try again in a moment.');
+    }
+  };
+
+  const unfriend = async (friendshipId: string) => {
+    try {
+      const res = await fetch(`/api/friends/${friendshipId}`, {
+        method: 'DELETE', credentials: 'include',
+      });
+      if (!res.ok) return;
+      await fetchFriends();
+    } catch {
+      /* swallow */
+    }
+  };
+
   useEffect(() => {
     if (authUser) {
       fetchMyGames();
       fetchMyCharacters();
       fetchTidings();
+      fetchFriends();
     }
   }, [authUser]);
 
@@ -596,9 +719,20 @@ export function SessionLobby() {
               </button>
             ))
           )}
-          <button className="add-char" onClick={() => showSoon('Hero forge')}>
-            + Forge New Hero
-          </button>
+          {/* Until the in-app character creator ships, send the user
+              to D&D Beyond's builder. The existing /api/dndbeyond
+              import path lets them pull the finished character back
+              into Atlas Bound when they're done. Opens in a new tab
+              so the lobby state isn't lost. */}
+          <a
+            className="add-char"
+            href="https://www.dndbeyond.com/characters/builder"
+            target="_blank"
+            rel="noopener noreferrer"
+            title="Open the D&D Beyond character builder in a new tab; import the finished sheet via the Heroes panel inside a session."
+          >
+            + Forge New Hero on D&amp;D Beyond
+          </a>
         </aside>
 
         {/* ===== CENTER STAGE ===== */}
@@ -822,35 +956,143 @@ export function SessionLobby() {
 
           <h3 className="rr-head">
             Companions
-            <span className="rr-count">— soon —</span>
+            {friends.length > 0 && (
+              <span className="rr-count">
+                {friends.filter((f) => f.presence.status !== 'offline').length} ONLINE
+              </span>
+            )}
             <span className="rr-rule" />
+            <button
+              className="rr-action"
+              title="Add a companion by display name or email"
+              onClick={() => setAddFriendOpen(true)}
+            >
+              <UserPlus size={11} style={{ marginRight: 2 }} />
+              Add
+            </button>
           </h3>
-          <p className="rr-empty">
-            The friend system is being forged. Once it lands, your party members and tablemates will appear here with
-            presence dots and an Invite button.
-          </p>
+
+          {/* Incoming requests pile up at the top so the user sees
+              them first. Outgoing pending requests live in the Add
+              modal where they're more contextually useful. */}
+          {incoming.length > 0 && (
+            <div className="friend-requests">
+              {incoming.map((req) => (
+                <div className="friend-row request" key={req.friendshipId}>
+                  <div className="av" style={{ background: heroTint(req.userId) }}>
+                    {req.avatarUrl ? <img src={req.avatarUrl} alt="" /> : <span>{initial(req.displayName)}</span>}
+                  </div>
+                  <div className="info">
+                    <p className="n">{req.displayName}</p>
+                    <p className="s">wants to be your companion</p>
+                  </div>
+                  <button
+                    className="friend-btn accept"
+                    title="Accept"
+                    onClick={() => friendAction(req.friendshipId, 'accept')}
+                  >
+                    <Check size={12} />
+                  </button>
+                  <button
+                    className="friend-btn decline"
+                    title="Decline"
+                    onClick={() => friendAction(req.friendshipId, 'decline')}
+                  >
+                    <UserX size={12} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {friends.length === 0 ? (
+            <p className="rr-empty">
+              No companions yet. Click <strong>Add</strong> above to send a request by display name or email.
+            </p>
+          ) : (
+            friends.map((f) => (
+              <div className="friend-row" key={f.friendshipId}>
+                <div className="av" style={{ background: heroTint(f.userId) }}>
+                  {f.avatarUrl ? <img src={f.avatarUrl} alt="" /> : <span>{initial(f.displayName)}</span>}
+                  <span className={`pres ${f.presence.status === 'in-game' ? 'in-game' : 'offline'}`} />
+                </div>
+                <div className="info">
+                  <p className="n">{f.displayName}</p>
+                  <p className="s">
+                    {f.presence.status === 'in-game'
+                      ? f.presence.sessionName
+                        ? `In ${f.presence.sessionName}`
+                        : 'In a campaign'
+                      : 'Offline'}
+                  </p>
+                </div>
+                {f.presence.status === 'in-game' && f.presence.roomCode && (
+                  <button
+                    className="friend-btn invite"
+                    title={`Join ${f.presence.sessionName ?? 'their campaign'}`}
+                    onClick={() => f.presence.roomCode && enterGame(f.presence.roomCode)}
+                  >
+                    <ChevronRight size={12} />
+                  </button>
+                )}
+                <button
+                  className="friend-btn unfriend"
+                  title="Unfriend"
+                  onClick={() => unfriend(f.friendshipId)}
+                >
+                  <UserX size={12} />
+                </button>
+              </div>
+            ))
+          )}
 
           <h3 className="rr-head" style={{ marginTop: 24 }}>
             Quick Actions
             <span className="rr-rule" />
           </h3>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-            <button className="btn ghost qa-btn" onClick={() => showSoon('Compendium')}>
-              <BookOpen size={13} />
-              Open Compendium
+            {/* Wired actions only — the Compendium / Map Library / Settings
+                stubs that used to live here didn't navigate anywhere
+                meaningful from the lobby (those views currently live
+                inside an active session). They've been replaced with
+                actions that actually do something at lobby-level. */}
+            <button className="btn ghost qa-btn" onClick={() => setProfileOpen(true)}>
+              <UserCog size={13} />
+              Account &amp; Profile
             </button>
-            <button className="btn ghost qa-btn" onClick={() => showSoon('Map Library')}>
-              <MapIcon size={13} />
-              Map Library
-            </button>
-            <button className="btn ghost qa-btn" onClick={() => showSoon('Settings')}>
-              <Settings size={13} />
-              Settings
+            <button
+              className="btn ghost qa-btn"
+              onClick={() => {
+                markTidingsRead();
+                const rail = document.querySelector('.kbrt-lobby .right-rail');
+                if (rail) rail.scrollTo({ top: 0, behavior: 'smooth' });
+              }}
+            >
+              <Megaphone size={13} />
+              What&rsquo;s New
             </button>
             <button className="btn ghost qa-btn" onClick={() => setFeedbackOpen(true)}>
               <Lightbulb size={13} />
               Send Feedback
             </button>
+            {DISCORD_INVITE_URL && (
+              <a
+                className="btn ghost qa-btn"
+                href={DISCORD_INVITE_URL}
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                <MessageCircle size={13} />
+                Discord Server
+                <ExternalLink size={10} style={{ opacity: 0.6, marginLeft: 'auto' }} />
+              </a>
+            )}
+            {authUser?.isAdmin && (
+              <button className="btn ghost qa-btn" onClick={() => navigate('/admin/feedback')}>
+                <Shield size={13} />
+                Admin Panel
+              </button>
+            )}
           </div>
         </aside>
       </div>
@@ -1047,8 +1289,229 @@ export function SessionLobby() {
         </div>
       )}
 
+      {/* Add Friend modal — name/email search → send request */}
+      {addFriendOpen && (
+        <AddFriendModal
+          onClose={() => setAddFriendOpen(false)}
+          outgoing={outgoing}
+          onChange={fetchFriends}
+        />
+      )}
+
+      {/* Account / Profile modal — lazy-loaded on first open */}
+      <Suspense fallback={null}>
+        <ProfileModal open={profileOpen} onClose={() => setProfileOpen(false)} />
+      </Suspense>
+
       {/* Feedback (existing component) */}
       <FeedbackModal open={feedbackOpen} onClose={() => setFeedbackOpen(false)} />
+    </div>
+  );
+}
+
+// ────────────────────────────────────────────────────────────────
+// Add Friend modal — searches users, surfaces existing friendship
+// state inline, sends a request, and shows the caller's outgoing
+// pending list so they can cancel a sent request without leaving
+// the modal. Search is debounced 200 ms.
+// ────────────────────────────────────────────────────────────────
+function AddFriendModal({
+  onClose,
+  outgoing,
+  onChange,
+}: {
+  onClose: () => void;
+  outgoing: PendingFriend[];
+  onChange: () => Promise<void> | void;
+}) {
+  const [query, setQuery] = useState('');
+  const [results, setResults] = useState<UserSearchHit[]>([]);
+  const [searching, setSearching] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [sending, setSending] = useState<string | null>(null);
+
+  // Debounce the search input. The endpoint requires q.length ≥ 2;
+  // anything shorter clears results immediately to avoid showing
+  // stale hits from a longer prior query.
+  useEffect(() => {
+    const trimmed = query.trim();
+    if (trimmed.length < 2) {
+      setResults([]);
+      return;
+    }
+    setSearching(true);
+    const timer = setTimeout(async () => {
+      try {
+        const res = await fetch(
+          `/api/friends/search?q=${encodeURIComponent(trimmed)}`,
+          { credentials: 'include' },
+        );
+        if (res.ok) {
+          const data = await res.json();
+          setResults(Array.isArray(data.users) ? data.users : []);
+        }
+      } catch {
+        /* ignore */
+      } finally {
+        setSearching(false);
+      }
+    }, 200);
+    return () => clearTimeout(timer);
+  }, [query]);
+
+  const sendRequest = async (target: { id?: string; raw?: string }) => {
+    const key = target.id ?? target.raw ?? '';
+    setSending(key);
+    setError(null);
+    try {
+      const res = await fetch('/api/friends/request', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(target.id ? { targetUserId: target.id } : { target: target.raw }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setError(data.error ?? `Couldn't send request (${res.status})`);
+        return;
+      }
+      await onChange();
+      // If we typed a raw target string and it succeeded, clear the
+      // input so the user can type the next one without backspacing.
+      if (target.raw) setQuery('');
+    } finally {
+      setSending(null);
+    }
+  };
+
+  const cancelRequest = async (friendshipId: string) => {
+    try {
+      const res = await fetch(`/api/friends/${friendshipId}/cancel`, {
+        method: 'POST', credentials: 'include',
+      });
+      if (res.ok) await onChange();
+    } catch {
+      /* swallow */
+    }
+  };
+
+  return (
+    <div className="scrim open" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="modal" style={{ width: 480 }}>
+        <div className="modal-head">
+          <UserPlus size={20} color="var(--accent)" />
+          <h3>Add Companion</h3>
+          <button className="icon-btn" onClick={onClose} aria-label="Close">
+            <X size={14} />
+          </button>
+        </div>
+        <div className="modal-body">
+          <p className="modal-tag">Find a fellow traveler by display name or email.</p>
+
+          <div className="field">
+            <label>Search</label>
+            <div style={{ position: 'relative' }}>
+              <Search size={14} style={{
+                position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)',
+                color: 'var(--text-muted)', pointerEvents: 'none',
+              }} />
+              <input
+                className="input"
+                placeholder="Display name or email"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                style={{ paddingLeft: 34 }}
+                autoFocus
+              />
+            </div>
+            {searching && <div className="search-meta">Searching the realms…</div>}
+            {!searching && query.trim().length >= 2 && results.length === 0 && (
+              <div className="search-meta">
+                No traveler found.{' '}
+                <button
+                  type="button"
+                  className="link-btn"
+                  onClick={() => sendRequest({ raw: query.trim() })}
+                  disabled={sending !== null}
+                >
+                  Send to &ldquo;{query.trim()}&rdquo; anyway
+                </button>
+              </div>
+            )}
+          </div>
+
+          {results.length > 0 && (
+            <div className="search-results">
+              {results.map((u) => (
+                <div className="search-row" key={u.id}>
+                  <div className="av small" style={{ background: heroTint(u.id) }}>
+                    {u.avatarUrl ? <img src={u.avatarUrl} alt="" /> : <span>{initial(u.displayName)}</span>}
+                  </div>
+                  <div className="info">
+                    <p className="n">{u.displayName}</p>
+                    {u.friendshipStatus && (
+                      <p className="s">
+                        {u.friendshipStatus === 'accepted'
+                          ? 'Already a companion'
+                          : u.friendshipStatus === 'pending'
+                          ? 'Request pending'
+                          : 'Blocked'}
+                      </p>
+                    )}
+                  </div>
+                  <button
+                    className="btn primary search-btn"
+                    onClick={() => sendRequest({ id: u.id })}
+                    disabled={u.friendshipStatus !== null || sending === u.id}
+                  >
+                    {sending === u.id ? '…' : u.friendshipStatus === 'pending' ? 'Pending' : u.friendshipStatus === 'accepted' ? 'Friends' : 'Send Request'}
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {outgoing.length > 0 && (
+            <div className="outgoing-section">
+              <div className="outgoing-head">Pending requests you sent</div>
+              {outgoing.map((req) => (
+                <div className="search-row" key={req.friendshipId}>
+                  <div className="av small" style={{ background: heroTint(req.userId) }}>
+                    {req.avatarUrl ? <img src={req.avatarUrl} alt="" /> : <span>{initial(req.displayName)}</span>}
+                  </div>
+                  <div className="info">
+                    <p className="n">{req.displayName}</p>
+                    <p className="s">awaiting their reply</p>
+                  </div>
+                  <button
+                    className="btn ghost search-btn"
+                    onClick={() => cancelRequest(req.friendshipId)}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {error && (
+            <div style={{
+              marginTop: 12,
+              padding: 10,
+              background: 'rgba(201,66,58,.18)',
+              border: '1px solid var(--blood-400)',
+              borderRadius: 3,
+              color: 'var(--blood-400)',
+              fontSize: 12,
+            }}>
+              {error}
+            </div>
+          )}
+        </div>
+        <div className="modal-foot">
+          <button className="btn ghost" onClick={onClose}>Done</button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -1273,6 +1736,7 @@ const LOBBY_CSS = `
   text-transform: uppercase; flex-shrink:0;
 }
 .kbrt-lobby .rail .add-char {
+  display: block; box-sizing: border-box; text-align: center; text-decoration: none;
   width:100%; padding:10px; border:1px dashed var(--border-line-strong); background:transparent;
   color: var(--text-muted); font-family: var(--font-display); font-size:10px; letter-spacing:2px;
   text-transform: uppercase; cursor:pointer; border-radius:3px; transition: all .15s;
@@ -1495,6 +1959,96 @@ const LOBBY_CSS = `
   font-family: var(--font-script); font-style: italic; color: var(--text-muted);
   font-size:12px; line-height:1.6; margin: 0 0 24px;
   border:1px dashed var(--border-line); border-radius:3px; padding:12px;
+}
+.kbrt-lobby .rr-empty strong { color: var(--accent); font-weight: 600; }
+
+/* Companions / friends rows */
+.kbrt-lobby .friend-requests { margin-bottom: 14px; }
+.kbrt-lobby .friend-row {
+  display: flex; align-items: center; gap: 10px; padding: 6px 0;
+  border-bottom: 1px dashed transparent;
+}
+.kbrt-lobby .friend-row + .friend-row { border-top: 1px dashed var(--border-line); }
+.kbrt-lobby .friend-row.request {
+  background: rgba(224,180,79,.06); border:1px solid var(--border-line); border-radius: 3px;
+  padding: 8px 10px; margin-bottom: 6px;
+}
+.kbrt-lobby .friend-row .av {
+  width: 32px; height: 32px; border-radius: 50%; flex: 0 0 32px;
+  display: grid; place-items: center;
+  font-family: var(--font-display); font-weight: 700; color: var(--accent);
+  position: relative; box-shadow: 0 0 0 2px var(--bg-panel-deep);
+  font-size: 12px; overflow: hidden;
+}
+.kbrt-lobby .friend-row .av img { width: 100%; height: 100%; object-fit: cover; }
+.kbrt-lobby .friend-row .av .pres {
+  position: absolute; bottom: -1px; right: -1px; width: 10px; height: 10px;
+  border-radius: 50%; border: 2px solid var(--bg-panel);
+}
+.kbrt-lobby .friend-row .pres.in-game { background: var(--accent); box-shadow: 0 0 4px var(--accent); }
+.kbrt-lobby .friend-row .pres.online { background: var(--success); }
+.kbrt-lobby .friend-row .pres.offline { background: var(--text-muted); }
+.kbrt-lobby .friend-row .info { flex: 1; min-width: 0; }
+.kbrt-lobby .friend-row .info .n {
+  font-family: var(--font-display); font-size: 12px; color: var(--text-primary);
+  letter-spacing: .5px; margin: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.kbrt-lobby .friend-row .info .s {
+  font-family: var(--font-body); font-style: italic; color: var(--text-muted);
+  font-size: 10px; margin: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.kbrt-lobby .friend-btn {
+  background: transparent; border: 1px solid var(--border-line); border-radius: 3px;
+  color: var(--text-muted); cursor: pointer;
+  width: 26px; height: 26px; display: grid; place-items: center;
+  transition: all .15s;
+}
+.kbrt-lobby .friend-btn:hover { color: var(--accent); border-color: var(--accent); background: rgba(224,180,79,.06); }
+.kbrt-lobby .friend-btn.accept { color: var(--success); border-color: rgba(122,162,102,.4); }
+.kbrt-lobby .friend-btn.accept:hover { background: rgba(122,162,102,.12); border-color: var(--success); }
+.kbrt-lobby .friend-btn.decline { color: var(--blood-400); border-color: rgba(201,66,58,.35); }
+.kbrt-lobby .friend-btn.decline:hover { background: rgba(201,66,58,.12); border-color: var(--blood-400); }
+.kbrt-lobby .friend-btn.invite { color: var(--accent); border-color: var(--border-line); }
+.kbrt-lobby .friend-btn.unfriend { opacity: 0; transition: opacity .15s, color .15s, border-color .15s; }
+.kbrt-lobby .friend-row:hover .friend-btn.unfriend { opacity: 1; }
+.kbrt-lobby .friend-btn.unfriend:hover { color: var(--blood-400); border-color: var(--blood-400); }
+
+/* Add Friend modal — search results + outgoing pending list */
+.kbrt-lobby .search-meta {
+  font-family: var(--font-body); font-style: italic; color: var(--text-muted);
+  font-size: 12px; margin-top: 8px;
+}
+.kbrt-lobby .link-btn {
+  background: transparent; border: none; padding: 0;
+  color: var(--accent); font-family: var(--font-body); font-style: italic;
+  font-size: 12px; cursor: pointer; text-decoration: underline;
+}
+.kbrt-lobby .link-btn:disabled { opacity: .5; cursor: not-allowed; }
+.kbrt-lobby .search-results {
+  margin-top: 12px; max-height: 240px; overflow-y: auto;
+  border: 1px solid var(--border-line); border-radius: 3px;
+}
+.kbrt-lobby .search-row {
+  display: flex; align-items: center; gap: 10px; padding: 8px 12px;
+  border-bottom: 1px solid var(--border-line);
+}
+.kbrt-lobby .search-row:last-child { border-bottom: none; }
+.kbrt-lobby .search-row .av.small { width: 28px; height: 28px; flex: 0 0 28px; font-size: 11px; }
+.kbrt-lobby .search-row .av.small img { width: 100%; height: 100%; object-fit: cover; }
+.kbrt-lobby .search-row .info { flex: 1; min-width: 0; }
+.kbrt-lobby .search-row .info .n {
+  font-family: var(--font-display); font-size: 12px; color: var(--text-primary);
+  letter-spacing: .5px; margin: 0;
+}
+.kbrt-lobby .search-row .info .s {
+  font-family: var(--font-body); font-style: italic; color: var(--text-muted);
+  font-size: 10px; margin: 2px 0 0;
+}
+.kbrt-lobby .search-btn { padding: 4px 10px; font-size: 9px; }
+.kbrt-lobby .outgoing-section { margin-top: 18px; }
+.kbrt-lobby .outgoing-head {
+  font-family: var(--font-display); font-size: 9px; letter-spacing: 2px;
+  color: var(--text-muted); text-transform: uppercase; margin-bottom: 6px;
 }
 
 /* News (Tidings) */
