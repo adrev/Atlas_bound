@@ -178,10 +178,201 @@ async function runChronicleGeneration(entryId: string): Promise<void> {
   );
 }
 
+// ── Transcript auto-build ───────────────────────────────────────
+
+/**
+ * Pull the chat history for a campaign and format it into a single
+ * transcript string the Chronicler can summarise. Whispers are
+ * excluded (private), hidden DM messages are excluded too. The
+ * cutoff is the latest *published* chronicle's published_at — every
+ * recap covers only the new ground since the last one. For the very
+ * first recap on a campaign, we pull everything.
+ *
+ * Format is plain prose-ish — each message on its own line with a
+ * minimal prefix that signals who spoke and in what mode. The LLM
+ * doesn't need a structured format; readable is enough.
+ *
+ *   <Liraya>: I creep along the briar wall, eyeing the sentry.
+ *   [OOC] Andrew: paus a sec, snack break
+ *   [Roll] Liraya rolled 17 on Stealth (DC 15)
+ *   [System] Bren took 7 damage from the goblin scimitar
+ *
+ * Cap at MAX_TRANSCRIPT_LINES so a wildly long campaign doesn't
+ * blow past Vertex's input ceiling. Truncate from the head (oldest
+ * first); the recap should focus on what happened most recently.
+ */
+const MAX_TRANSCRIPT_LINES = 800;
+
+interface ChatRow {
+  id: string;
+  type: string;
+  content: string;
+  character_name: string | null;
+  display_name: string;
+  roll_data: string | null;
+  attack_result: string | null;
+  hidden: number;
+  created_at: string;
+}
+
+interface TranscriptPreview {
+  transcript: string;
+  messageCount: number;
+  truncated: boolean;
+  oldestAt: string | null;
+  newestAt: string | null;
+  /** ISO timestamp the cutoff used; null if there's no prior chronicle. */
+  sinceAt: string | null;
+}
+
+async function buildTranscriptFromChat(campaignId: string): Promise<TranscriptPreview> {
+  // Cutoff = the most recent published chronicle's published_at (or
+  // session_ended_at if that's later). For the first recap this is null
+  // and we pull everything.
+  const { rows: prevRows } = await pool.query<{ session_ended_at: string | null; published_at: string | null }>(
+    `SELECT session_ended_at, published_at
+       FROM chronicle_entries
+      WHERE campaign_id = $1 AND status = 'published'
+      ORDER BY published_at DESC
+      LIMIT 1`,
+    [campaignId],
+  );
+  const prev = prevRows[0];
+  const sinceAt = prev
+    ? (prev.session_ended_at && prev.published_at
+        ? (new Date(prev.session_ended_at).getTime() > new Date(prev.published_at).getTime()
+            ? prev.session_ended_at
+            : prev.published_at)
+        : (prev.session_ended_at ?? prev.published_at))
+    : null;
+
+  // Pull chat ordered oldest-first so the transcript reads
+  // chronologically. Whispers + hidden are excluded.
+  const params: unknown[] = [campaignId];
+  let where = `WHERE session_id = $1
+                 AND hidden = 0
+                 AND type <> 'whisper'`;
+  if (sinceAt) {
+    params.push(sinceAt);
+    where += ` AND created_at::timestamp > $2::timestamp`;
+  }
+  const { rows } = await pool.query<ChatRow>(
+    `SELECT id, type, content, character_name, display_name,
+            roll_data, attack_result, hidden, created_at
+       FROM chat_messages
+      ${where}
+      ORDER BY created_at ASC`,
+    params,
+  );
+
+  const truncated = rows.length > MAX_TRANSCRIPT_LINES;
+  const kept = truncated ? rows.slice(-MAX_TRANSCRIPT_LINES) : rows;
+
+  const lines: string[] = [];
+  if (truncated) {
+    lines.push(`[…${rows.length - MAX_TRANSCRIPT_LINES} earlier messages trimmed; kept the most recent ${MAX_TRANSCRIPT_LINES}…]`);
+  }
+
+  for (const r of kept) {
+    const speaker = r.character_name || r.display_name || 'Unknown';
+    const rawContent = (r.content ?? '').trim();
+    if (r.type === 'ic') {
+      // In-character speech / actions.
+      if (rawContent) lines.push(`<${speaker}>: ${rawContent}`);
+    } else if (r.type === 'ooc') {
+      if (rawContent) lines.push(`[OOC] ${speaker}: ${rawContent}`);
+    } else if (r.type === 'roll') {
+      // Try to extract a friendly summary from roll_data — fall back
+      // to the message's own text if the JSON is missing or shaped
+      // differently than expected.
+      const summary = summariseRoll(r.roll_data, rawContent);
+      lines.push(`[Roll] ${speaker} ${summary}`);
+    } else if (r.type === 'system') {
+      if (rawContent) lines.push(`[System] ${rawContent}`);
+    }
+
+    // Attack & spell result blobs add structured combat colour. Only
+    // include a short one-liner — full damage breakdowns would balloon
+    // the transcript past usefulness.
+    const attackLine = summariseAttackResult(r.attack_result, speaker);
+    if (attackLine) lines.push(`[Attack] ${attackLine}`);
+  }
+
+  return {
+    transcript: lines.join('\n'),
+    messageCount: rows.length,
+    truncated,
+    oldestAt: rows[0]?.created_at ?? null,
+    newestAt: rows[rows.length - 1]?.created_at ?? null,
+    sinceAt,
+  };
+}
+
+function summariseRoll(rollDataJson: string | null, fallback: string): string {
+  if (!rollDataJson) return fallback || 'rolled (details unknown)';
+  try {
+    const data = JSON.parse(rollDataJson) as {
+      label?: string;
+      total?: number;
+      result?: number;
+      roll?: number;
+      target?: { name?: string };
+      dc?: number;
+      success?: boolean;
+    };
+    const label = data.label ?? 'something';
+    const value = data.total ?? data.result ?? data.roll;
+    const dc = data.dc ? ` vs DC ${data.dc}` : '';
+    const outcome = typeof data.success === 'boolean' ? (data.success ? ' ✓' : ' ✗') : '';
+    if (value !== undefined) return `rolled ${value} on ${label}${dc}${outcome}`;
+    return `rolled ${label}${dc}${outcome}`;
+  } catch {
+    return fallback || 'rolled (unparseable)';
+  }
+}
+
+function summariseAttackResult(json: string | null, attacker: string): string | null {
+  if (!json) return null;
+  try {
+    const data = JSON.parse(json) as {
+      target?: { name?: string };
+      hit?: boolean;
+      damage?: { total?: number };
+      weapon?: { name?: string };
+    };
+    const target = data.target?.name ?? 'an enemy';
+    const weapon = data.weapon?.name ? ` with ${data.weapon.name}` : '';
+    if (data.hit === false) return `${attacker} missed ${target}${weapon}`;
+    const dmg = data.damage?.total !== undefined ? ` for ${data.damage.total} damage` : '';
+    return `${attacker} hit ${target}${weapon}${dmg}`;
+  } catch {
+    return null;
+  }
+}
+
+// ── GET /api/sessions/:id/chronicle/transcript-preview ──────────
+
+/**
+ * Auto-build the transcript so the DM doesn't have to paste. The
+ * Forge Chronicle modal hits this on open and pre-fills the textarea
+ * with the result. The DM can then trim / edit before clicking
+ * Forge — better UX than us silently sending whatever we found.
+ */
+router.get('/sessions/:id/chronicle/transcript-preview', async (req: Request, res: Response) => {
+  const userId = getAuthUserId(req);
+  const campaignId = String(req.params.id);
+  await assertSessionDM(campaignId, userId);
+  const preview = await buildTranscriptFromChat(campaignId);
+  res.json(preview);
+});
+
 // ── POST /api/sessions/:id/chronicle/generate ───────────────────
 
 const generateBodySchema = z.object({
-  transcript: z.string().min(20).max(50_000),
+  /** When omitted, the server auto-builds the transcript from the
+   *  campaign's chat history since the last published chronicle.
+   *  Provide explicitly to override (e.g. DM curated their own log). */
+  transcript: z.string().min(20).max(50_000).optional(),
   sessionStartedAt: z.string().datetime().optional(),
   sessionEndedAt: z.string().datetime().optional(),
 });
@@ -200,6 +391,24 @@ router.post('/sessions/:id/chronicle/generate', async (req: Request, res: Respon
   }
   const data = parsed.data;
 
+  // Resolve the transcript: explicit body wins, otherwise auto-build
+  // from chat. We do the auto-build here (not in the bg generator) so
+  // the DM gets a fast 400 if there's literally nothing to summarise.
+  let transcript = data.transcript;
+  let autoBuiltSinceAt: string | null = null;
+  if (!transcript) {
+    const preview = await buildTranscriptFromChat(campaignId);
+    if (!preview.transcript || preview.transcript.length < 20) {
+      res.status(400).json({
+        error: 'Nothing to chronicle yet',
+        hint: 'No new in-character chat, rolls, or system events since the last published chronicle. Type some session notes into the transcript field, or play a session first.',
+      });
+      return;
+    }
+    transcript = preview.transcript;
+    autoBuiltSinceAt = preview.sinceAt;
+  }
+
   // Sequence number = (max existing for this campaign) + 1. Counted
   // server-side so concurrent triggers don't collide.
   const { rows: seqRows } = await pool.query<{ next_seq: number }>(
@@ -210,11 +419,15 @@ router.post('/sessions/:id/chronicle/generate', async (req: Request, res: Respon
   );
   const sequenceNumber = seqRows[0]?.next_seq ?? 1;
 
-  // Compute duration if both timestamps were provided.
+  // Compute duration if both timestamps were provided. Default
+  // session_started_at to autoBuiltSinceAt when the DM didn't supply
+  // a value but we could derive it from the prior chronicle's window.
   let durationMs: number | null = null;
-  if (data.sessionStartedAt && data.sessionEndedAt) {
-    const start = new Date(data.sessionStartedAt).getTime();
-    const end = new Date(data.sessionEndedAt).getTime();
+  const sessionStartedAt = data.sessionStartedAt ?? autoBuiltSinceAt ?? null;
+  const sessionEndedAt = data.sessionEndedAt ?? null;
+  if (sessionStartedAt && sessionEndedAt) {
+    const start = new Date(sessionStartedAt).getTime();
+    const end = new Date(sessionEndedAt).getTime();
     if (!isNaN(start) && !isNaN(end) && end > start) durationMs = end - start;
   }
 
@@ -226,8 +439,8 @@ router.post('/sessions/:id/chronicle/generate', async (req: Request, res: Respon
        triggered_by, status
      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'pending')`,
     [
-      id, campaignId, sequenceNumber, data.transcript,
-      data.sessionStartedAt ?? null, data.sessionEndedAt ?? null, durationMs,
+      id, campaignId, sequenceNumber, transcript,
+      sessionStartedAt, sessionEndedAt, durationMs,
       userId,
     ],
   );

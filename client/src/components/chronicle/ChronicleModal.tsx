@@ -15,7 +15,7 @@ import { ScrollText, X, Sparkles, Send, RotateCw } from 'lucide-react';
 import { useSessionStore } from '../../stores/useSessionStore';
 import { showToast } from '../ui/Toast';
 
-type Phase = 'compose' | 'generating' | 'review' | 'failed';
+type Phase = 'loading' | 'compose' | 'generating' | 'review' | 'failed';
 
 interface ChronicleEntry {
   id: string;
@@ -42,6 +42,10 @@ export function ChronicleModal() {
   const [open, setOpen] = useState(false);
   const [phase, setPhase] = useState<Phase>('compose');
   const [transcript, setTranscript] = useState('');
+  /** True when the textarea was prefilled by the auto-build endpoint
+   *  rather than typed by the DM. Surfaces a small "auto-filled from
+   *  N messages" caption so the DM knows where the text came from. */
+  const [autoFilled, setAutoFilled] = useState<{ count: number; truncated: boolean } | null>(null);
   const [entry, setEntry] = useState<ChronicleEntry | null>(null);
   const [draftShort, setDraftShort] = useState('');
   const [draftFull, setDraftFull] = useState('');
@@ -55,17 +59,46 @@ export function ChronicleModal() {
   // dispatches `open-chronicle-forge` to launch the modal — keeps
   // this component decoupled from the toolbar's render tree.
   useEffect(() => {
-    const handler = () => {
+    const handler = async () => {
       setOpen(true);
-      setPhase('compose');
       setEntry(null);
       setError(null);
-      // Don't clear the transcript — DMs may have typed and clicked
-      // close by accident; preserving the draft is a small mercy.
+      setAutoFilled(null);
+      // Auto-fetch the transcript from this session's chat history.
+      // The DM can edit / trim / replace it, but the default is "we
+      // already pulled what happened — just review and forge."
+      // Falls back to compose-with-empty-textarea on error.
+      if (!sessionId) { setPhase('compose'); return; }
+      setPhase('loading');
+      try {
+        const res = await fetch(`/api/sessions/${sessionId}/chronicle/transcript-preview`, {
+          credentials: 'include',
+        });
+        if (res.ok) {
+          const data = await res.json() as {
+            transcript: string;
+            messageCount: number;
+            truncated: boolean;
+          };
+          if (data.transcript && data.transcript.length >= 20) {
+            setTranscript(data.transcript);
+            setAutoFilled({ count: data.messageCount, truncated: data.truncated });
+          } else {
+            // Empty or too-short — likely no chat since the last
+            // published chronicle. Don't wipe a draft the DM may
+            // have typed before; just leave whatever's there.
+            setAutoFilled(null);
+          }
+        }
+      } catch {
+        /* fall through to compose */
+      } finally {
+        setPhase('compose');
+      }
     };
     window.addEventListener('open-chronicle-forge', handler);
     return () => window.removeEventListener('open-chronicle-forge', handler);
-  }, []);
+  }, [sessionId]);
 
   // Cleanup the poll timer if the modal closes mid-generation.
   useEffect(() => {
@@ -232,20 +265,38 @@ export function ChronicleModal() {
         </div>
 
         <div style={styles.body}>
+          {phase === 'loading' && (
+            <div style={styles.generating}>
+              <div style={styles.spinner} />
+              <p style={styles.generatingText}>
+                Gathering this session&rsquo;s log&hellip;
+              </p>
+            </div>
+          )}
+
           {phase === 'compose' && (
             <>
-              <p style={styles.tag}>
-                Paste this session&rsquo;s chat log, your DM notes, or a quick summary. The Chronicler will polish
-                it into a 2-4 sentence recap, list the key characters and places, and draft a &ldquo;where you
-                left off&rdquo; line for the lobby.
-              </p>
+              {autoFilled ? (
+                <p style={styles.tag}>
+                  Auto-filled from <strong>{autoFilled.count}</strong> chat message{autoFilled.count === 1 ? '' : 's'} since
+                  the last published chronicle{autoFilled.truncated ? ' (older lines trimmed to fit)' : ''}.
+                  Edit anything below — when you click Forge, the Chronicler will polish whatever&rsquo;s in the box
+                  into a recap.
+                </p>
+              ) : (
+                <p style={styles.tag}>
+                  Paste this session&rsquo;s chat log, your DM notes, or a quick summary. The Chronicler will polish
+                  it into a 2-4 sentence recap, list the key characters and places, and draft a &ldquo;where you
+                  left off&rdquo; line for the lobby.
+                </p>
+              )}
               <textarea
                 style={styles.textarea}
                 rows={14}
                 value={transcript}
-                onChange={(e) => setTranscript(e.target.value)}
+                onChange={(e) => { setTranscript(e.target.value); setAutoFilled(null); }}
                 placeholder={`The party crossed the moor under heavy fog. Liraya rolled a natural 20 on Persuasion and turned a goblin captive into an ally. Bren took a critical hit and is at 3hp. Session ended mid-combat — three goblins remain at the Briar Hollow.`}
-                autoFocus
+                autoFocus={!autoFilled}
               />
               <div style={styles.charCount}>
                 {transcript.trim().length} chars · need ≥ 20
@@ -333,6 +384,9 @@ export function ChronicleModal() {
         </div>
 
         <div style={styles.foot}>
+          {phase === 'loading' && (
+            <button style={styles.ghostBtn} onClick={close}>Cancel</button>
+          )}
           {phase === 'compose' && (
             <>
               <button style={styles.ghostBtn} onClick={close} disabled={busy}>Cancel</button>
