@@ -253,9 +253,14 @@ router.get('/mine', async (req: Request, res: Response) => {
   const { rows } = await pool.query(`
     SELECT s.id, s.name, s.room_code, sp.role,
            (SELECT COUNT(*) FROM session_players WHERE session_id = s.id) as player_count,
-           s.created_at, s.updated_at
+           s.created_at, s.updated_at,
+           s.current_map_id,
+           m.thumbnail_url AS current_map_thumbnail_url,
+           m.image_url AS current_map_image_url,
+           m.name AS current_map_name
     FROM session_players sp
     JOIN sessions s ON sp.session_id = s.id
+    LEFT JOIN maps m ON m.id = s.current_map_id
     WHERE sp.user_id = $1
     ORDER BY COALESCE(s.updated_at, s.created_at) DESC
   `, [userId]);
@@ -268,6 +273,11 @@ router.get('/mine', async (req: Request, res: Response) => {
     const onlineCount = room
       ? Array.from(room.userSockets.values()).filter((s) => s.size > 0).length
       : 0;
+    // Banner picks the thumbnail when available (480px JPEG, ideal for
+    // an 88-px tile) and falls back to the full image_url for older
+    // rows that predate the thumbnail-generation pipeline. Null when
+    // the campaign has never loaded a map.
+    const bannerUrl = r.current_map_thumbnail_url ?? r.current_map_image_url ?? null;
     return {
       id: r.id,
       name: r.name,
@@ -278,6 +288,8 @@ router.get('/mine', async (req: Request, res: Response) => {
       lastActiveAt: r.updated_at ?? r.created_at,
       onlineCount,
       isLive: onlineCount > 0,
+      bannerUrl,
+      currentMapName: r.current_map_name ?? null,
     };
   });
 

@@ -98,9 +98,15 @@ interface ServerGame {
   /** Number of currently-connected players, also from the presence
    *  service when it lands. Hidden when undefined. */
   onlineCount?: number;
-  /** Banner gradient (or future image URL). When missing, fall back
-   *  to a deterministic biome-tinted gradient based on the campaign id. */
-  bannerUrl?: string;
+  /** Thumbnail URL of the campaign's currently-loaded map. The server
+   *  resolves this via JOIN against the maps table on `current_map_id`
+   *  and prefers `thumbnail_url` (480px) over `image_url` (full-res)
+   *  for the small tile. Null when the campaign has never loaded a
+   *  map — we fall back to a deterministic biome-tinted gradient. */
+  bannerUrl?: string | null;
+  /** Map name — surfaced as the tile's title attribute so hovering
+   *  reveals "Briar Hollow" without cluttering the tile body. */
+  currentMapName?: string | null;
   /** The current user's character in this campaign — Player tiles
    *  surface this in the meta line so they can spot which PC is theirs. */
   characterName?: string;
@@ -878,14 +884,24 @@ export function SessionLobby() {
               aria-disabled={!resumeGame}
               style={resumeGame ? undefined : { opacity: 0.55, cursor: 'default' }}
             >
-              <div className="map-thumb" />
+              <div
+                className="map-thumb"
+                /* When the resumed campaign has a real map loaded,
+                   render its thumbnail as the card's right-side art.
+                   Otherwise the CSS fallback (forest gradient) shows
+                   through. The .map-thumb element handles its own
+                   gradient mask so the title text stays legible. */
+                style={resumeGame?.bannerUrl
+                  ? { backgroundImage: `linear-gradient(90deg, var(--bg-panel) 0%, transparent 30%), url("${resumeGame.bannerUrl}")` }
+                  : undefined}
+              />
               <p className="label">
                 {resumeGame ? 'Last session · ready when you are' : 'No active campaign yet'}
               </p>
               <h3>{resumeGame?.name ?? 'Resume Adventure'}</h3>
               <p className="desc">
                 {resumeGame
-                  ? `Pick up where you left off in ${resumeGame.name}. Your party awaits.`
+                  ? `Pick up where you left off${resumeGame.currentMapName ? ` on ${resumeGame.currentMapName}` : ''}. Your party awaits.`
                   : 'Forge a new campaign or join one with a code to begin.'}
               </p>
               <div className="arr">▸ {resumeGame ? 'Resume Adventure' : 'Begin'}</div>
@@ -954,7 +970,18 @@ export function SessionLobby() {
                 <div key={g.id} className="game-tile" onClick={() => enterGame(g.roomCode)} role="button" tabIndex={0}>
                   <div
                     className="banner"
-                    style={{ background: g.bannerUrl ? `url(${g.bannerUrl})` : bannerGradient(g.id) }}
+                    /* When the campaign has a current_map_id we render the
+                       map's thumbnail as the tile background. Quoted in
+                       the URL form so filenames containing parens / spaces
+                       don't break the CSS rule. Falls back to a deter-
+                       ministic biome-tinted gradient when no map has been
+                       loaded yet. */
+                    style={
+                      g.bannerUrl
+                        ? { backgroundImage: `url("${g.bannerUrl}")`, backgroundSize: 'cover', backgroundPosition: 'center' }
+                        : { background: bannerGradient(g.id) }
+                    }
+                    title={g.currentMapName ?? undefined}
                   >
                     <span className={`role-pill ${g.role}`}>{g.role === 'dm' ? 'DM' : 'PLAYER'}</span>
                     {g.isLive && <span className="live-dot">Live</span>}
