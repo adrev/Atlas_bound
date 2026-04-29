@@ -275,6 +275,13 @@ app.get('/api/health', readinessHandler);
 app.use('/api/compendium', compendiumRouter);
 app.use('/api/errors', errorsRouter);
 
+// Internal Chronicle worker endpoints. MUST be mounted before any
+// app.use('/api', requireAuth, ...) chain — otherwise requireAuth
+// matches the /api prefix first, returns 401, and our router never
+// runs. The router does its own bearer-token check via
+// CHRONICLE_WORKER_TOKEN; nothing user-facing should land here.
+app.use('/api', internalChronicleRouter);
+
 // Protected API routes
 app.use('/api/sessions', requireAuth, sessionsRouter);
 app.use('/api', requireAuth, mapsRouter);
@@ -303,13 +310,10 @@ app.use('/api', requireAuth, friendsRouter);
 
 // Chronicle — LLM-powered session recaps via Vertex AI Gemini.
 // DM-gated for write paths; readers see only published rows.
+// (The matching /api/internal/chronicle/* worker endpoints are
+// mounted earlier — before the requireAuth chain — so the worker's
+// bearer-token check can run without a user session.)
 app.use('/api', requireAuth, chronicleRouter);
-
-// Internal Chronicle worker endpoints. Mounted WITHOUT requireAuth —
-// the router does its own bearer-token check via CHRONICLE_WORKER_TOKEN.
-// Used by the on-prem dgx-worker to claim pending jobs and post
-// results back. Nothing user-facing should land here.
-app.use('/api', internalChronicleRouter);
 
 // Upload endpoints (authenticated, magic-byte validated, rate-limited).
 // Without a per-user cap any logged-in account could repeatedly store
