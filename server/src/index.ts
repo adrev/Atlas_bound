@@ -23,6 +23,7 @@ import feedbackRouter from './routes/feedback.js';
 import tidingsRouter from './routes/tidings.js';
 import friendsRouter from './routes/friends.js';
 import chronicleRouter from './routes/chronicle.js';
+import internalChronicleRouter from './routes/internalChronicle.js';
 import { seedCompendium, isCompendiumSeeded } from './services/Open5eService.js';
 import { seedEquipment, isEquipmentSeeded } from './services/seedEquipment.js';
 import { backfillTokenSnaps } from './services/backfillTokenSnaps.js';
@@ -303,6 +304,12 @@ app.use('/api', requireAuth, friendsRouter);
 // Chronicle — LLM-powered session recaps via Vertex AI Gemini.
 // DM-gated for write paths; readers see only published rows.
 app.use('/api', requireAuth, chronicleRouter);
+
+// Internal Chronicle worker endpoints. Mounted WITHOUT requireAuth —
+// the router does its own bearer-token check via CHRONICLE_WORKER_TOKEN.
+// Used by the on-prem dgx-worker to claim pending jobs and post
+// results back. Nothing user-facing should land here.
+app.use('/api', internalChronicleRouter);
 
 // Upload endpoints (authenticated, magic-byte validated, rate-limited).
 // Without a per-user cap any logged-in account could repeatedly store

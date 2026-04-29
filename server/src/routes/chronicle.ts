@@ -100,12 +100,34 @@ function rowToChronicle(r: ChronicleRow, campaignName?: string) {
 // ── Background generator ────────────────────────────────────────
 
 /**
+ * Which backend processes pending chronicle rows. Two values today:
+ *
+ *   - 'vertex' (default): the route fires Vertex AI inline, in the
+ *     same Cloud Run instance that received the request.
+ *   - 'ollama' (or anything else): the route is a no-op; a separate
+ *     worker — typically the dgx-worker running on-prem — polls
+ *     `/api/internal/chronicle/jobs/next` for pending rows and
+ *     posts the result back via `/api/internal/chronicle/jobs/:id/result`.
+ *     Cloud Run can't reach the DGX over Tailscale, so the polling
+ *     direction is mandatory: DGX → Cloud Run.
+ */
+const CHRONICLER_BACKEND = (process.env.CHRONICLER_BACKEND ?? 'vertex').toLowerCase();
+
+/**
  * Fire the Vertex AI call out-of-band. The caller (POST generate) has
  * already returned 202 to the client; this fills in the row when the
  * model responds. Errors are stamped onto generation_error so the DM
  * can see what happened on the next poll.
+ *
+ * When CHRONICLER_BACKEND is anything other than 'vertex', this is a
+ * no-op — the row stays at status='pending' for the external worker.
  */
 async function runChronicleGeneration(entryId: string): Promise<void> {
+  if (CHRONICLER_BACKEND !== 'vertex') {
+    // External worker takes ownership of the row. Lifecycle stays
+    // identical: pending → generating → draft → published.
+    return;
+  }
   // Re-read the row inside this task — the route already inserted it.
   const { rows } = await pool.query<ChronicleRow & { campaign_name: string; party_names: string[] }>(
     `SELECT c.*, s.name AS campaign_name,

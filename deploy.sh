@@ -121,6 +121,19 @@ emit_env DISCORD_FEEDBACK_WEBHOOK_URL "${DISCORD_FEEDBACK_WEBHOOK_URL:-}"
 # rail still publishes when this is unset.
 emit_env DISCORD_RELEASES_WEBHOOK_URL "${DISCORD_RELEASES_WEBHOOK_URL:-}"
 
+# CHRONICLER_BACKEND: which inference path Chronicle uses.
+#   'vertex' (default) → inline Vertex AI Gemini 2.5 Flash-Lite call
+#   'ollama'           → route is a no-op; the on-prem dgx-worker
+#                        polls /api/internal/chronicle/jobs/claim and
+#                        runs gemma4:26b locally on the GB10
+emit_env CHRONICLER_BACKEND "${CHRONICLER_BACKEND:-vertex}"
+
+# CHRONICLE_WORKER_TOKEN: shared secret used by the on-prem
+# dgx-worker to authenticate against /api/internal/chronicle/*.
+# Must match the value in worker.env on the DGX. Empty = internal
+# endpoints return 503 (failsafe — no anonymous worker access).
+emit_env CHRONICLE_WORKER_TOKEN "${CHRONICLE_WORKER_TOKEN:-}"
+
 gcloud run deploy atlas-bound \
   --image "$IMAGE" \
   --project atlas-bound \

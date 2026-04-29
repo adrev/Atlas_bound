@@ -1,0 +1,24 @@
+[Unit]
+# Atlas Bound Chronicle worker — polls kbrt.ai for pending recap jobs,
+# runs them through Ollama (gemma4:26b by default), posts results back.
+# See dgx-worker/README.md for installation steps.
+Description=Atlas Bound Chronicle Worker (Ollama / Gemma 4)
+After=network-online.target ollama.service
+Wants=network-online.target ollama.service
+
+[Service]
+Type=simple
+User=andrew
+WorkingDirectory=/home/andrew/atlas-chronicle-worker
+EnvironmentFile=/home/andrew/atlas-chronicle-worker/worker.env
+ExecStart=/usr/bin/node /home/andrew/atlas-chronicle-worker/worker.mjs
+Restart=on-failure
+RestartSec=5
+# Don't kill the worker mid-job on stop — let it finish the current
+# Ollama call (which it does on SIGTERM via the loop's stopping flag).
+TimeoutStopSec=120
+StandardOutput=append:/var/log/atlas-chronicle-worker.log
+StandardError=append:/var/log/atlas-chronicle-worker.log
+
+[Install]
+WantedBy=multi-user.target
