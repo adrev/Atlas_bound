@@ -90,4 +90,14 @@ describe('refreshSocketPresence (session:heartbeat)', () => {
     expect(status.ok).toBe(true);
     expect(room.userSockets.get(USER)?.has('sock-B')).toBe(true);
   });
+
+  it('recreates a missing userSockets entry when the socket index still resolves', () => {
+    joinTab('sock-A');
+    const room = getRoom(SESSION)!;
+    room.userSockets.delete(USER);
+
+    const status = refreshSocketPresence('sock-A');
+    expect(status.ok).toBe(true);
+    expect(room.userSockets.get(USER)?.has('sock-A')).toBe(true);
+  });
 });

@@ -453,8 +453,12 @@ export function refreshSocketPresence(
   // Defensive: ensure this socket is still in the user's live-socket set
   // (guards against partial cleanup leaving socketIndex set but the
   // userSockets entry pruned). No-op in the normal case.
-  const sockets = ctx.room.userSockets.get(ctx.player.userId);
-  if (sockets && !sockets.has(socketId)) sockets.add(socketId);
+  let sockets = ctx.room.userSockets.get(ctx.player.userId);
+  if (!sockets) {
+    sockets = new Set<string>();
+    ctx.room.userSockets.set(ctx.player.userId, sockets);
+  }
+  if (!sockets.has(socketId)) sockets.add(socketId);
   return {
     ok: true,
     sessionId: ctx.room.sessionId,
