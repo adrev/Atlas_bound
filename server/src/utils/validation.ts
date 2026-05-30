@@ -791,6 +791,7 @@ export const createSessionSchema = z.object({
   name: z.string().min(1).max(100),
   displayName: z.string().min(1).max(50).optional(),
   visibility: z.enum(['public', 'private']).optional(),
+  startMap: z.enum(['forest', 'dungeon', 'tavern']).optional(),
   /** Only meaningful when visibility === 'private'. Min 4 chars, max 64. */
   password: sessionPassword.optional(),
 });

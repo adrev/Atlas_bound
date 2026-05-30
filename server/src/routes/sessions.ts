@@ -26,6 +26,12 @@ const router = Router();
 const ROOM_CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 const ROOM_CODE_LENGTH = 8;
 
+const STARTING_MAP_PRESETS = {
+  forest: { name: 'Forked Forest Path', gridCols: 30, gridRows: 22 },
+  dungeon: { name: 'Dark Dungeon', gridCols: 30, gridRows: 24 },
+  tavern: { name: 'Tavern Common Room', gridCols: 30, gridRows: 20 },
+} as const;
+
 export function generateRoomCode(): string {
   const bytes = randomBytes(ROOM_CODE_LENGTH);
   let code = '';
@@ -63,7 +69,7 @@ router.post('/', async (req: Request, res: Response) => {
     return;
   }
 
-  const { name, visibility: rawVisibility, password } = parsed.data;
+  const { name, visibility: rawVisibility, password, startMap } = parsed.data;
   const visibility = rawVisibility ?? 'public';
 
   // A private session without a password is allowed (invite-only mode),
@@ -87,19 +93,46 @@ router.post('/', async (req: Request, res: Response) => {
   // link later without a second round-trip. Public sessions just don't
   // display it prominently.
   const inviteCode = generateInviteCode();
+  const startingMap = startMap ? STARTING_MAP_PRESETS[startMap] : null;
+  const startingMapId = startingMap ? uuidv4() : null;
+  const gridSize = DEFAULT_SESSION_SETTINGS.gridSize;
 
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
     await client.query(
-      `INSERT INTO sessions (id, name, room_code, dm_user_id, settings, visibility, password_hash, invite_code)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-      [sessionId, name, roomCode, userId, settings, visibility, passwordHash, inviteCode],
+      `INSERT INTO sessions (
+         id, name, room_code, dm_user_id, settings, visibility, password_hash,
+         invite_code, current_map_id, player_map_id
+       )
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $9)`,
+      [
+        sessionId, name, roomCode, userId, settings, visibility, passwordHash,
+        inviteCode, startingMapId,
+      ],
     );
     await client.query(
       'INSERT INTO session_players (session_id, user_id, role) VALUES ($1, $2, $3)',
       [sessionId, userId, 'dm'],
     );
+    if (startingMap && startingMapId) {
+      await client.query(
+        `INSERT INTO maps (
+           id, session_id, name, image_url, thumbnail_url, width, height,
+           grid_size, grid_type, display_order
+         )
+         VALUES ($1, $2, $3, NULL, NULL, $4, $5, $6, $7, 1)`,
+        [
+          startingMapId,
+          sessionId,
+          startingMap.name,
+          startingMap.gridCols * gridSize,
+          startingMap.gridRows * gridSize,
+          gridSize,
+          DEFAULT_SESSION_SETTINGS.gridType,
+        ],
+      );
+    }
     await client.query('COMMIT');
   } catch (err) {
     await client.query('ROLLBACK');

@@ -17,6 +17,10 @@ describe('createSessionSchema', () => {
     expect(createSessionSchema.safeParse({ name: 'My Game' }).success).toBe(true);
   });
 
+  it('accepts a selected starting map', () => {
+    expect(createSessionSchema.safeParse({ name: 'My Game', startMap: 'forest' }).success).toBe(true);
+  });
+
   it('accepts a private session with password', () => {
     expect(createSessionSchema.safeParse({
       name: 'Secret', visibility: 'private', password: 'abcd',
