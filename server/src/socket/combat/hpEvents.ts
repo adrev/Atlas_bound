@@ -12,6 +12,7 @@ import {
 } from '../../utils/validation.js';
 import { safeHandler } from '../../utils/socketHelpers.js';
 import { tokenConditionChanges } from '../../utils/conditionSources.js';
+import { emitToTokenViewers } from '../../utils/combatBroadcast.js';
 import { v4 as uuidv4 } from 'uuid';
 import pool from '../../db/connection.js';
 import type { SaveBreakdown } from '@dnd-vtt/shared';
@@ -60,7 +61,7 @@ export function registerCombatHp(io: Server, socket: Socket): void {
 
     try {
       const result = await CombatService.applyDamage(ctx.room.sessionId, parsed.data.tokenId, parsed.data.amount);
-      io.to(ctx.room.sessionId).emit('combat:hp-changed', {
+      emitToTokenViewers(io, ctx.room, parsed.data.tokenId, 'combat:hp-changed', {
         tokenId: parsed.data.tokenId,
         hp: result.hp,
         tempHp: result.tempHp,
@@ -72,10 +73,10 @@ export function registerCombatHp(io: Server, socket: Socket): void {
       // HP and the owning player sees themselves alive even after the
       // combatant is at 0.
       if (result.characterId) {
-        io.to(ctx.room.sessionId).emit('character:updated', {
+        emitToTokenViewers(io, ctx.room, parsed.data.tokenId, 'character:updated', {
           characterId: result.characterId,
           changes: { hitPoints: result.hp, tempHitPoints: result.tempHp },
-        });
+        }, { includeOwner: true });
       }
       // 5e: damage while at 0 HP = automatic death-save failure.
       // CombatService.applyDamage increments the failure tally if the
@@ -83,7 +84,7 @@ export function registerCombatHp(io: Server, socket: Socket): void {
       // every client sees the \u2717 land without the player having to
       // re-roll manually.
       if (result.autoDeathSaveFailure) {
-        io.to(ctx.room.sessionId).emit('combat:death-save-updated', {
+        emitToTokenViewers(io, ctx.room, parsed.data.tokenId, 'combat:death-save-updated', {
           tokenId: parsed.data.tokenId,
           deathSaves: result.autoDeathSaveFailure,
           roll: 0,
@@ -97,7 +98,7 @@ export function registerCombatHp(io: Server, socket: Socket): void {
         // has already mutated the token's conditions array in-place),
         // so we don't need to pass the string[] from the result \u2014 the
         // helper reads the room's Condition[]-typed array directly.
-        io.to(ctx.room.sessionId).emit('map:token-updated', {
+        emitToTokenViewers(io, ctx.room, parsed.data.tokenId, 'map:token-updated', {
           tokenId: parsed.data.tokenId,
           changes: tokenConditionChanges(ctx.room, parsed.data.tokenId),
         });
@@ -108,7 +109,7 @@ export function registerCombatHp(io: Server, socket: Socket): void {
         for (const freedId of result.releasedGrappleTokenIds) {
           const freedToken = ctx.room.tokens.get(freedId);
           if (!freedToken) continue;
-          io.to(ctx.room.sessionId).emit('map:token-updated', {
+          emitToTokenViewers(io, ctx.room, freedId, 'map:token-updated', {
             tokenId: freedId,
             changes: tokenConditionChanges(ctx.room, freedId),
           });
@@ -159,7 +160,7 @@ export function registerCombatHp(io: Server, socket: Socket): void {
 
     try {
       const result = await CombatService.applyHeal(ctx.room.sessionId, parsed.data.tokenId, parsed.data.amount);
-      io.to(ctx.room.sessionId).emit('combat:hp-changed', {
+      emitToTokenViewers(io, ctx.room, parsed.data.tokenId, 'combat:hp-changed', {
         tokenId: parsed.data.tokenId,
         hp: result.hp,
         tempHp: result.tempHp,
@@ -167,10 +168,10 @@ export function registerCombatHp(io: Server, socket: Socket): void {
         type: 'heal',
       });
       if (result.characterId) {
-        io.to(ctx.room.sessionId).emit('character:updated', {
+        emitToTokenViewers(io, ctx.room, parsed.data.tokenId, 'character:updated', {
           characterId: result.characterId,
           changes: { hitPoints: result.hp, tempHitPoints: result.tempHp },
-        });
+        }, { includeOwner: true });
       }
     } catch (err) {
       socket.emit('session:error', {
@@ -220,7 +221,7 @@ export function registerCombatHp(io: Server, socket: Socket): void {
       CombatService.removeCondition(ctx.room.sessionId, tokenId, 'unconscious');
     }
 
-    io.to(ctx.room.sessionId).emit('combat:death-save-updated', {
+    emitToTokenViewers(io, ctx.room, tokenId, 'combat:death-save-updated', {
       tokenId,
       deathSaves: combatant.deathSaves,
       roll: result.roll,

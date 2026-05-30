@@ -12,6 +12,7 @@ import {
   combatMobileAttackedSchema,
 } from '../../utils/validation.js';
 import { safeHandler } from '../../utils/socketHelpers.js';
+import { emitToTokenViewers } from '../../utils/combatBroadcast.js';
 
 /**
  * Reaction events: opportunity attacks, counterspell / Shield prompts,
@@ -102,7 +103,7 @@ export function registerCombatReactions(io: Server, socket: Socket): void {
     // If HP changed, broadcast both the combat HP change AND the
     // character row update so the HP bar re-renders everywhere.
     if (result.hpChange) {
-      io.to(ctx.room.sessionId).emit('combat:hp-changed', {
+      emitToTokenViewers(io, ctx.room, result.hpChange.tokenId, 'combat:hp-changed', {
         tokenId: result.hpChange.tokenId,
         hp: result.hpChange.hp,
         tempHp: result.hpChange.tempHp,
@@ -111,10 +112,12 @@ export function registerCombatReactions(io: Server, socket: Socket): void {
       });
     }
     if (result.characterHpUpdated) {
-      io.to(ctx.room.sessionId).emit('character:updated', {
+      // Scope the sheet sync to the same token whose HP changed — DM +
+      // players who can see it, plus the owner wherever they are.
+      emitToTokenViewers(io, ctx.room, result.hpChange?.tokenId ?? '', 'character:updated', {
         characterId: result.characterHpUpdated.characterId,
         changes: { hitPoints: result.characterHpUpdated.hp },
-      });
+      }, { includeOwner: true });
     }
 
     // Broadcast the updated reaction state for the attacker. We use
