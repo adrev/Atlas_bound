@@ -11,6 +11,7 @@ import {
 } from '../../utils/validation.js';
 import { safeHandler } from '../../utils/socketHelpers.js';
 import { tokenConditionChanges } from '../../utils/conditionSources.js';
+import { emitToTokenViewers } from '../../utils/combatBroadcast.js';
 
 /**
  * Condition + damage-side-effect events:
@@ -35,7 +36,7 @@ export function registerCombatConditions(io: Server, socket: Socket): void {
       const conditions = CombatService.addCondition(
         ctx.room.sessionId, parsed.data.tokenId, parsed.data.condition,
       );
-      io.to(ctx.room.sessionId).emit('combat:condition-changed', {
+      emitToTokenViewers(io, ctx.room, parsed.data.tokenId, 'combat:condition-changed', {
         tokenId: parsed.data.tokenId,
         conditions,
       });
@@ -70,7 +71,7 @@ export function registerCombatConditions(io: Server, socket: Socket): void {
       const conditions = CombatService.removeCondition(
         ctx.room.sessionId, parsed.data.tokenId, parsed.data.condition,
       );
-      io.to(ctx.room.sessionId).emit('combat:condition-changed', {
+      emitToTokenViewers(io, ctx.room, parsed.data.tokenId, 'combat:condition-changed', {
         tokenId: parsed.data.tokenId,
         conditions,
       });
@@ -138,14 +139,14 @@ export function registerCombatConditions(io: Server, socket: Socket): void {
     });
 
     // Broadcast the updated conditions array so clients see the badge
-    io.to(ctx.room.sessionId).emit('map:token-updated', {
+    emitToTokenViewers(io, ctx.room, parsed.data.targetTokenId, 'map:token-updated', {
       tokenId: parsed.data.targetTokenId,
       changes: tokenConditionChanges(ctx.room, parsed.data.targetTokenId),
     });
     for (const freed of freedTokenIds) {
       const freedToken = ctx.room.tokens.get(freed);
       if (!freedToken) continue;
-      io.to(ctx.room.sessionId).emit('map:token-updated', {
+      emitToTokenViewers(io, ctx.room, freed, 'map:token-updated', {
         tokenId: freed,
         changes: tokenConditionChanges(ctx.room, freed),
       });
@@ -206,7 +207,7 @@ export function registerCombatConditions(io: Server, socket: Socket): void {
     for (const tokenId of result.affectedTokens) {
       const t = ctx.room.tokens.get(tokenId);
       if (t) {
-        io.to(ctx.room.sessionId).emit('map:token-updated', {
+        emitToTokenViewers(io, ctx.room, tokenId, 'map:token-updated', {
           tokenId, changes: tokenConditionChanges(ctx.room, tokenId),
         });
       }
@@ -217,10 +218,10 @@ export function registerCombatConditions(io: Server, socket: Socket): void {
     if (result.droppedConcentration) {
       const t = ctx.room.tokens.get(parsed.data.tokenId);
       if (t?.characterId) {
-        io.to(ctx.room.sessionId).emit('character:updated', {
+        emitToTokenViewers(io, ctx.room, parsed.data.tokenId, 'character:updated', {
           characterId: t.characterId,
           changes: { concentratingOn: null },
-        });
+        }, { includeOwner: true });
       }
     }
 
@@ -271,7 +272,7 @@ export function registerCombatConditions(io: Server, socket: Socket): void {
     for (const { tokenId } of cleared) {
       const t = ctx.room.tokens.get(tokenId);
       if (t) {
-        io.to(ctx.room.sessionId).emit('map:token-updated', {
+        emitToTokenViewers(io, ctx.room, tokenId, 'map:token-updated', {
           tokenId, changes: tokenConditionChanges(ctx.room, tokenId),
         });
       }

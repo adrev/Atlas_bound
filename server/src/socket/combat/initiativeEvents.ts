@@ -13,6 +13,7 @@ import {
 } from '../../utils/validation.js';
 import { safeHandler } from '../../utils/socketHelpers.js';
 import { tokenConditionChanges } from '../../utils/conditionSources.js';
+import { emitToTokenViewers } from '../../utils/combatBroadcast.js';
 
 /**
  * Initiative + turn-advance events. The end-of-turn / start-of-turn
@@ -166,7 +167,7 @@ export function registerCombatInitiative(io: Server, socket: Socket): void {
       if (endingCombatant && endTickResult.removed.length > 0) {
         const updatedToken = ctx.room.tokens.get(endingCombatant.tokenId);
         if (updatedToken) {
-          io.to(ctx.room.sessionId).emit('map:token-updated', {
+          emitToTokenViewers(io, ctx.room, endingCombatant.tokenId, 'map:token-updated', {
             tokenId: endingCombatant.tokenId,
             changes: tokenConditionChanges(ctx.room, endingCombatant.tokenId),
           });
@@ -191,7 +192,7 @@ export function registerCombatInitiative(io: Server, socket: Socket): void {
           // If either the cleanup OR the start-of-turn expiry tick
           // changed the conditions array, broadcast once.
           if (cleanupChanged || startTickResult.removed.length > 0) {
-            io.to(ctx.room.sessionId).emit('map:token-updated', {
+            emitToTokenViewers(io, ctx.room, startingCombatant.tokenId, 'map:token-updated', {
               tokenId: startingCombatant.tokenId,
               changes: tokenConditionChanges(ctx.room, startingCombatant.tokenId),
             });
