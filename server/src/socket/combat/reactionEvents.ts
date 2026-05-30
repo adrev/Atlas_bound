@@ -165,7 +165,22 @@ export function registerCombatReactions(io: Server, socket: Socket): void {
       if (!isTokenActionable(ctx, casterTokenId)) return;
     }
 
-    io.to(ctx.room.sessionId).emit('combat:spell-cast-attempt', parsed.data);
+    // Scope the cast card to clients who can see the caster token. A
+    // HIDDEN NPC's cast must not leak to players at the socket layer —
+    // and RAW you can't counterspell a caster you can't see anyway, so
+    // withholding the prompt is also correct. `includeOwner` keeps the
+    // caster's own client in the loop (their resolver waits on counter
+    // responses). A token-less DM cast has no token position to leak, so
+    // it stays room-wide — players can still counterspell narrative casts
+    // exactly as before.
+    if (parsed.data.casterTokenId) {
+      emitToTokenViewers(
+        io, ctx.room, parsed.data.casterTokenId,
+        'combat:spell-cast-attempt', parsed.data, { includeOwner: true },
+      );
+    } else {
+      io.to(ctx.room.sessionId).emit('combat:spell-cast-attempt', parsed.data);
+    }
   }));
 
   socket.on('combat:spell-counterspelled', safeHandler(socket, async (data: unknown) => {
@@ -224,7 +239,15 @@ export function registerCombatReactions(io: Server, socket: Socket): void {
       if (!isTokenActionable(ctx, currentCombatant.tokenId)) return;
     }
 
-    io.to(ctx.room.sessionId).emit('combat:attack-hit-attempt', parsed.data);
+    // Scope the Shield prompt to clients who can see the TARGET token —
+    // only the target's owner (+ DM) ever acts on it. Broadcasting
+    // room-wide leaked the attack roll + a hidden target's existence to
+    // every player. The attacker already knows the roll (their own client
+    // emitted this); they learn the result from the shield-cast response.
+    emitToTokenViewers(
+      io, ctx.room, parsed.data.targetTokenId,
+      'combat:attack-hit-attempt', parsed.data, { includeOwner: true },
+    );
   }));
 
   socket.on('combat:shield-cast', safeHandler(socket, async (data: unknown) => {
