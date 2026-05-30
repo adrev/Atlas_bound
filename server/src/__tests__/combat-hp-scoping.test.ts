@@ -104,6 +104,13 @@ describe('emitToTokenViewers — combat HP/condition scoping', () => {
     expect(ch).toContain('player-sock-2');
   });
 
+  it('hides a HIDDEN token condition change from players too (conditionEvents path)', () => {
+    const room = seedRoom([tok('npc', { visible: false, ownerUserId: 'npc' })]);
+    const em: Emission[] = [];
+    emitToTokenViewers(fakeIo(em), room, 'npc', 'combat:condition-changed', { tokenId: 'npc', conditions: ['poisoned'] });
+    expect(channels(em)).toEqual(['dm-sock']);
+  });
+
   it('falls back to DM-only when the token is unknown (never leaks)', () => {
     const room = seedRoom([]);
     const em: Emission[] = [];
