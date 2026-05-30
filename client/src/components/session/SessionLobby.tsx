@@ -1860,7 +1860,7 @@ const LOBBY_CSS = `
   --blood-400:#c9423a; --blood-500:#9d2a23; --wax-red:#7a1f1a;
   --bg-body:var(--ink-900); --bg-panel:#140e07; --bg-panel-raised:#1e1509; --bg-panel-deep:#0c0805;
   --border-line:rgba(199,150,50,.30); --border-line-strong:rgba(199,150,50,.55);
-  --text-primary:#ead6a8; --text-secondary:#a89271; --text-muted:#6b5a3f;
+  --text-primary:#ead6a8; --text-secondary:#a89271; --text-muted:#8a7654;
   --accent:var(--gilt-400); --danger:var(--blood-400); --success:#7aa266; --rune-blue:#6aa9d1;
   --font-display:'Cinzel',serif; --font-body:'Spectral',serif; --font-ui:'Inter',sans-serif; --font-script:'Cormorant Garamond',serif;
   background:
