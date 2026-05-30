@@ -1,0 +1,11 @@
+[
+  {
+    "origin": [
+      "https://dnd.kbrt.ai",
+      "https://atlas-bound-2amlusuv5a-uc.a.run.app"
+    ],
+    "method": ["GET", "HEAD"],
+    "responseHeader": ["Content-Type", "Range"],
+    "maxAgeSeconds": 3600
+  }
+]

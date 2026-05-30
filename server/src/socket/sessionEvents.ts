@@ -167,11 +167,30 @@ export function registerSessionEvents(io: Server, socket: Socket): void {
     //   Players → always the ribbon (player_map_id). No more hydrating
     //               onto a DM's prep/preview map.
     //   DM     → their last preview map if they had one in-memory,
-    //               else the ribbon. DM preview is per-DM, never
-    //               persisted to sessions.current_map_id any more.
-    const hydrationMapId = isDM
+    //               else the ribbon/current DM pointer. DM preview is
+    //               per-DM, never persisted to sessions.current_map_id.
+    let hydrationMapId = isDM
       ? (room.dmViewingMap.get(userId) ?? room.playerMapId ?? room.currentMapId)
       : room.playerMapId;
+
+    // Legacy / freshly-created rooms can have maps but no current pointer
+    // after the preview/ribbon split. Keep this fallback DM-only: it gives
+    // the DM something useful to look at without exposing prep maps to
+    // players or silently moving the player ribbon.
+    if (!hydrationMapId && isDM) {
+      const { rows: fallbackRows } = await pool.query(
+        `SELECT id FROM maps
+         WHERE session_id = $1
+         ORDER BY created_at DESC
+         LIMIT 1`,
+        [session.id],
+      );
+      hydrationMapId = (fallbackRows[0]?.id as string | undefined) ?? null;
+      if (hydrationMapId) {
+        room.currentMapId = hydrationMapId;
+        room.dmViewingMap.set(userId, hydrationMapId);
+      }
+    }
 
     if (hydrationMapId) {
       const { rows: mapRows } = await pool.query('SELECT * FROM maps WHERE id = $1', [hydrationMapId]);

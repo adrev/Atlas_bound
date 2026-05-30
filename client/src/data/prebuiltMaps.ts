@@ -211,29 +211,56 @@ export const PREBUILT_MAPS: PrebuiltMap[] = [
 // Lookups
 // ---------------------------------------------------------------------------
 
+export function normalizePrebuiltMapKey(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[’']/g, '')
+    .replace(/&/g, 'and')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+}
+
+function prebuiltLookupKeys(map: PrebuiltMap): string[] {
+  const withoutLeadingArticle = map.name.replace(/^(the|a|an)\s+/i, '');
+  const keys = new Set<string>([
+    map.name,
+    map.id,
+    normalizePrebuiltMapKey(map.name),
+    normalizePrebuiltMapKey(map.id),
+  ]);
+
+  if (withoutLeadingArticle !== map.name) {
+    keys.add(withoutLeadingArticle);
+    keys.add(normalizePrebuiltMapKey(withoutLeadingArticle));
+  }
+
+  return [...keys];
+}
+
+function buildPrebuiltLookup(selectUrl: (map: PrebuiltMap) => string): Record<string, string> {
+  const entries = PREBUILT_MAPS.flatMap((m) => prebuiltLookupKeys(m).map((key) => [key, selectUrl(m)]));
+  return Object.fromEntries(entries);
+}
+
 /**
- * Map display-name → GCS THUMBNAIL URL (480px JPEG). Used by the Scene
- * Manager sidebar (68×46) and the gallery's "Recent Maps" strip; both
- * downscale heavily so the JPEG is plenty sharp and saves ~3 MB per row.
+ * Map display-name / legacy slug → GCS THUMBNAIL URL (480px JPEG).
+ * Used by the Scene Manager sidebar and recent-map strips. The aliases
+ * keep old session rows such as "Elfsong Tavern" or "elfsong-tavern"
+ * working after titles are renamed.
  *
  * Do NOT use this when actually rendering the map onto the canvas —
  * the canvas needs the full PNG via `PREBUILT_IMAGE_BY_NAME` below or
  * a `m.imageFile` field directly.
  */
-export const PREBUILT_THUMBNAIL: Record<string, string> = Object.fromEntries(
-  PREBUILT_MAPS.map((m) => [m.name, m.thumbnailFile]),
-);
+export const PREBUILT_THUMBNAIL: Record<string, string> = buildPrebuiltLookup((m) => m.thumbnailFile);
 
 /**
- * Map display-name → full-resolution image URL. Used by the socket
- * map-load listener so that prebuilt maps loaded from a session row
- * (which only stores name, not imageUrl) get the right canvas asset.
- * Splitting this out from the thumbnail map keeps the canvas pixel-
- * perfect while letting tiny-thumbnail UIs share the JPEG tier.
+ * Map display-name / legacy slug → full-resolution image URL. Used by
+ * the socket map-load listener so prebuilt maps loaded from a session
+ * row (which only stores name, not imageUrl) get the right canvas asset.
  */
-export const PREBUILT_IMAGE_BY_NAME: Record<string, string> = Object.fromEntries(
-  PREBUILT_MAPS.map((m) => [m.name, m.imageFile]),
-);
+export const PREBUILT_IMAGE_BY_NAME: Record<string, string> = buildPrebuiltLookup((m) => m.imageFile);
 
 /** Map id → full entry, for lookups by stable id. */
 export const PREBUILT_BY_ID: Record<string, PrebuiltMap> = Object.fromEntries(

@@ -60,13 +60,89 @@ load_env_file() {
       value="${value#\'}"
       value="${value%\'}"
     fi
-    export "$key=$value"
+    # Let explicitly exported shell values win over .env so one-off deploys
+    # can target another account/project without editing secret files.
+    if [ -z "${!key+x}" ]; then
+      export "$key=$value"
+    fi
   done < "$file"
 }
 
 load_env_file .env
 
-IMAGE="us-central1-docker.pkg.dev/atlas-bound/cloud-run-source-deploy/atlas-bound:latest"
+# Deployment target. These defaults preserve the existing production layout,
+# but every account/project-specific value can now be overridden from .env or
+# the shell before running the script.
+PROJECT_ID="${GCP_PROJECT_ID:-${GOOGLE_CLOUD_PROJECT:-${GCLOUD_PROJECT:-atlas-bound}}}"
+REGION="${GCP_REGION:-us-central1}"
+SERVICE_NAME="${CLOUD_RUN_SERVICE:-atlas-bound}"
+ARTIFACT_REPOSITORY="${ARTIFACT_REGISTRY_REPOSITORY:-cloud-run-source-deploy}"
+IMAGE_NAME="${CLOUD_RUN_IMAGE_NAME:-$SERVICE_NAME}"
+BASE_URL_VALUE="${BASE_URL:-https://kbrt.ai}"
+CORS_ORIGINS_VALUE="${CORS_ORIGINS:-$BASE_URL_VALUE}"
+CLOUD_SQL_INSTANCE="${CLOUD_SQL_INSTANCE_NAME:-atlas-bound-db}"
+CLOUD_SQL_CONNECTION="${CLOUD_SQL_CONNECTION_NAME:-$PROJECT_ID:$REGION:$CLOUD_SQL_INSTANCE}"
+
+case "$BASE_URL_VALUE" in
+  http://localhost*|http://127.*|http://0.0.0.0*|http://\[::1\]*)
+    echo "Refusing to deploy with local BASE_URL=$BASE_URL_VALUE" >&2
+    echo "Export BASE_URL to the Cloud Run/custom-domain URL before deploying." >&2
+    exit 1
+    ;;
+esac
+
+IMAGE="$REGION-docker.pkg.dev/$PROJECT_ID/$ARTIFACT_REPOSITORY/$IMAGE_NAME:latest"
+
+echo "Deploy target: service=$SERVICE_NAME project=$PROJECT_ID region=$REGION"
+echo "Image: $IMAGE"
+echo "Cloud SQL: $CLOUD_SQL_CONNECTION"
+
+# Refuse accidental secret rotation. Local .env files are convenient, but a
+# stale .env can overwrite the currently working Cloud Run secrets and create a
+# dead revision. Set ALLOW_ENV_SECRET_ROTATION=1 only when intentionally
+# changing these values.
+check_secret_drift() {
+  [ "${ALLOW_ENV_SECRET_ROTATION:-0}" = "1" ] && return 0
+  command -v gcloud >/dev/null 2>&1 || return 0
+
+  local live_json
+  if ! live_json=$(gcloud run services describe "$SERVICE_NAME" \
+    --project "$PROJECT_ID" \
+    --region "$REGION" \
+    --format=json 2>/dev/null); then
+    return 0
+  fi
+
+  local drift
+  drift=$(LIVE_SERVICE_JSON="$live_json" node <<'NODE'
+const service = JSON.parse(process.env.LIVE_SERVICE_JSON || '{}');
+const env = service.spec?.template?.spec?.containers?.[0]?.env || [];
+const live = Object.fromEntries(env.map((entry) => [entry.name, entry.value || '']));
+const keys = [
+  'DISCORD_CLIENT_ID',
+  'DISCORD_CLIENT_SECRET',
+  'GOOGLE_CLIENT_ID',
+  'GOOGLE_CLIENT_SECRET',
+  'PGPASSWORD',
+  'ADMIN_USER_IDS',
+  'DISCORD_FEEDBACK_WEBHOOK_URL',
+  'DISCORD_RELEASES_WEBHOOK_URL',
+  'CHRONICLE_WORKER_TOKEN',
+];
+const changed = keys.filter((key) => live[key] && (process.env[key] || '') !== live[key]);
+process.stdout.write(changed.join('\n'));
+NODE
+)
+
+  if [ -n "$drift" ]; then
+    echo "Refusing deploy: local env differs from the current Cloud Run secret/config values:" >&2
+    echo "$drift" | sed 's/^/  - /' >&2
+    echo "Unset stale local values, update .env from the source of truth, or set ALLOW_ENV_SECRET_ROTATION=1 for an intentional rotation." >&2
+    exit 1
+  fi
+}
+
+check_secret_drift
 
 echo "Building Docker image locally..."
 docker build --platform linux/amd64 -t "$IMAGE" .
@@ -97,14 +173,15 @@ emit_env() {
 
 : > "$ENV_FILE"
 emit_env NODE_ENV               "production"
-emit_env BASE_URL                "https://kbrt.ai"
-emit_env CORS_ORIGINS            "https://kbrt.ai"
+emit_env BASE_URL                "$BASE_URL_VALUE"
+emit_env CORS_ORIGINS            "$CORS_ORIGINS_VALUE"
 emit_env DISCORD_CLIENT_ID       "${DISCORD_CLIENT_ID:-}"
 emit_env DISCORD_CLIENT_SECRET   "${DISCORD_CLIENT_SECRET:-}"
 emit_env GOOGLE_CLIENT_ID        "${GOOGLE_CLIENT_ID:-}"
 emit_env GOOGLE_CLIENT_SECRET    "${GOOGLE_CLIENT_SECRET:-}"
 emit_env PGPASSWORD              "${PGPASSWORD:-}"
-emit_env CLOUD_SQL_CONNECTION_NAME "atlas-bound:us-central1:atlas-bound-db"
+emit_env CLOUD_SQL_CONNECTION_NAME "$CLOUD_SQL_CONNECTION"
+emit_env GCP_PROJECT_ID          "$PROJECT_ID"
 # ADMIN_USER_IDS: comma-separated list of user ids/emails allowed to hit
 # admin-only endpoints (compendium sync/upload). Empty in production refuses
 # admin access — set this before deploying if admin endpoints are needed.
@@ -134,10 +211,10 @@ emit_env CHRONICLER_BACKEND "${CHRONICLER_BACKEND:-vertex}"
 # endpoints return 503 (failsafe — no anonymous worker access).
 emit_env CHRONICLE_WORKER_TOKEN "${CHRONICLE_WORKER_TOKEN:-}"
 
-gcloud run deploy atlas-bound \
+gcloud run deploy "$SERVICE_NAME" \
   --image "$IMAGE" \
-  --project atlas-bound \
-  --region us-central1 \
+  --project "$PROJECT_ID" \
+  --region "$REGION" \
   --allow-unauthenticated \
   --port 8080 \
   --memory 1Gi \
@@ -146,7 +223,7 @@ gcloud run deploy atlas-bound \
   --max-instances 3 \
   --session-affinity \
   --timeout 3600 \
-  --add-cloudsql-instances atlas-bound:us-central1:atlas-bound-db \
+  --add-cloudsql-instances "$CLOUD_SQL_CONNECTION" \
   --env-vars-file "$ENV_FILE"
 
-echo "Deployed! https://kbrt.ai"
+echo "Deployed! $BASE_URL_VALUE"

@@ -169,7 +169,9 @@ function TokenImage({ url, size }: { url: string; size: number }) {
   useEffect(() => {
     urlRef.current = url;
     const img = new window.Image();
-    img.crossOrigin = 'anonymous';
+    if (!url.startsWith('https://storage.googleapis.com/atlas-bound-data/')) {
+      img.crossOrigin = 'anonymous';
+    }
     img.onload = () => {
       if (urlRef.current === url) setImage(img);
     };

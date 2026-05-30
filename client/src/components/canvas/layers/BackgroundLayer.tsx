@@ -16,6 +16,13 @@ interface BackgroundLayerProps {
   height: number;
 }
 
+function shouldUseAnonymousCors(url: string): boolean {
+  // The public GCS art bucket currently cannot be CORS-updated from this
+  // project account. Setting crossOrigin='anonymous' without CORS headers
+  // makes the browser reject the image, leaving only the dark grid.
+  return !url.startsWith('https://storage.googleapis.com/atlas-bound-data/');
+}
+
 function useImage(url: string | null): [HTMLImageElement | null, 'loading' | 'loaded' | 'error'] {
   const [image, setImage] = useState<HTMLImageElement | null>(null);
   const [status, setStatus] = useState<'loading' | 'loaded' | 'error'>('loading');
@@ -31,7 +38,9 @@ function useImage(url: string | null): [HTMLImageElement | null, 'loading' | 'lo
 
     setStatus('loading');
     const img = new window.Image();
-    img.crossOrigin = 'anonymous';
+    if (shouldUseAnonymousCors(url)) {
+      img.crossOrigin = 'anonymous';
+    }
 
     img.onload = () => {
       if (urlRef.current === url) {

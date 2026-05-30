@@ -326,6 +326,14 @@ export function AppShell() {
     }
   };
 
+  // Helper: resolve my token ID for the mobile character tab. These hooks must
+  // stay above all conditional returns so session boot cannot change hook order.
+  const myCharacter = useCharacterStore((s) => s.myCharacter);
+  const tokens = useMapStore((s) => s.tokens);
+  const myTokenId = myCharacter
+    ? Object.values(tokens).find((t) => t.characterId === myCharacter?.id)?.id
+    : undefined;
+
   // Show name prompt if navigating directly to session URL without a name
   if (showNamePrompt) {
     return (
@@ -376,13 +384,6 @@ export function AppShell() {
       </div>
     );
   }
-
-  // Helper: resolve my token ID for the mobile character tab
-  const myCharacter = useCharacterStore((s) => s.myCharacter);
-  const tokens = useMapStore((s) => s.tokens);
-  const myTokenId = myCharacter
-    ? Object.values(tokens).find((t) => t.characterId === myCharacter?.id)?.id
-    : undefined;
 
   // -----------------------------------------------------------------------
   // Shared modals (rendered in both layouts)
