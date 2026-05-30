@@ -191,3 +191,35 @@ describe('token move fan-out scoping (98bd0a6)', () => {
     expect(eventChannels(emissions, 'map:token-added')).toEqual(['player-sock']);
   });
 });
+
+describe('token move ownership rollback (T1.2)', () => {
+  it('rolls a non-owner player move back to the sender and does not broadcast', async () => {
+    // Token owned by the DM; a player who does not own it tries to move it.
+    seedRoom([tok('tNpc', { ownerUserId: 'dm-user', x: 0, y: 0, visible: true })]);
+    const { io, socket, handlers, emissions } = makeHarness('player-sock');
+    registerTokenEvents(io, socket);
+
+    await handlers['map:token-move']!({ tokenId: 'tNpc', x: 140, y: 140 });
+
+    // The only token-moved emission is the authoritative rollback to the
+    // mover's own socket, carrying the OLD coordinates — not the attempted
+    // (140,140). No other socket receives the rejected move.
+    const moved = emissions.filter((e) => e.event === 'map:token-moved');
+    expect(moved.map((e) => e.channelId)).toEqual(['player-sock']);
+    expect(moved[0]!.payload).toMatchObject({ tokenId: 'tNpc', x: 0, y: 0 });
+    expect(moved.some((e) => e.channelId === 'dm-sock')).toBe(false);
+  });
+
+  it('lets the owning player move their own token (broadcast, no rollback)', async () => {
+    seedRoom([tok('tMine', { ownerUserId: 'player-user', x: 0, y: 0, visible: true })]);
+    const { io, socket, handlers, emissions } = makeHarness('player-sock');
+    registerTokenEvents(io, socket);
+
+    await handlers['map:token-move']!({ tokenId: 'tMine', x: 70, y: 70 });
+
+    // Normal broadcast: the new coordinates fan out to everyone on the map.
+    const moved = emissions.filter((e) => e.event === 'map:token-moved');
+    expect(moved.map((e) => e.channelId).sort()).toEqual(['dm-sock', 'player-sock']);
+    expect(moved[0]!.payload).toMatchObject({ x: 70, y: 70 });
+  });
+});

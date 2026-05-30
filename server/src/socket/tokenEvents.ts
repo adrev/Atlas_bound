@@ -43,11 +43,20 @@ export function registerTokenEvents(io: Server, socket: Socket): void {
       token = rowToToken(row);
     }
 
-    if (ctx.room.gameMode === 'combat' && ctx.player.role !== 'dm') {
-      if (token.ownerUserId !== ctx.player.userId) return;
-    }
-    if (ctx.room.gameMode === 'free-roam' && ctx.player.role !== 'dm') {
-      if (token.ownerUserId !== ctx.player.userId) return;
+    // Ownership: a non-DM may only move tokens they own (same rule in
+    // combat and free-roam). A bare `return` here leaves the client that
+    // optimistically moved the token stuck at the wrong spot until the
+    // next /state snapshot — the move looks like it worked. Echo the
+    // authoritative (pre-move) position back to the sender so its canvas
+    // rubber-bands immediately. Note this runs BEFORE the in-memory
+    // position is mutated below, so token.x/token.y are still the old
+    // coordinates.
+    const isOwnerOrDM = ctx.player.role === 'dm' || token.ownerUserId === ctx.player.userId;
+    if (!isOwnerOrDM) {
+      io.to(socket.id).emit('map:token-moved', {
+        tokenId, x: token.x, y: token.y, mapId: token.mapId,
+      });
+      return;
     }
 
     const oldX = token.x;
