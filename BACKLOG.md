@@ -21,9 +21,9 @@ specific file/line.
 
 | Priority | Work | Owner | Next action |
 |---|---|---|---|
-| P0 | Clean dirty working trees before new feature work | Claude for local OAuth/Chronicle WIP; CodeX for its temp worktrees | Claude should commit the OAuth/Chronicle edits to a named branch/PR or stash them; CodeX already removed its temporary review/deploy worktrees |
-| P1 | PR #2 unverified Tier-1 fixes | Claude prepares sliced PRs; CodeX reviews/ships | Do not merge PR #2 wholesale while conflicted. Cherry-pick or recreate T1.1-T1.7 as small PRs with tests/verification notes |
-| P1 | OAuth + Chronicle migration verification | Claude | Finish the local OAuth-origin and Chronicle worker changes as a PR, then verify Discord/Google login and Chronicle worker polling on the personal project |
+| P0 | Clean dirty working trees before new feature work | CodeX/Claude | ✅ Done on main via PR #8 and PR #9. Continue to start new work from clean `origin/main`; local checkouts may run `git clean -fd dev public` only after confirming no real untracked work |
+| P1 | PR #2 unverified Tier-1 fixes | Claude prepares sliced PRs; CodeX reviews/ships | Do not merge PR #2 wholesale while conflicted. T1.2 is done via PR #10; next slice is T1.7, then T1.6 after dedupe |
+| P1 | OAuth + Chronicle migration verification | Claude | OAuth/Chronicle code landed in PR #8; verify Discord/Google login and Chronicle worker polling on the personal project |
 | P1 | Browser websocket QA | Andrew/Claude desktop, coordinated by CodeX | Run the remaining browser-only rows: player ribbon refresh, reconnect/background tabs, kick/ban stale sockets |
 | P2 | Server-side socket/combat QA tests | Claude | Add tests for combat/spell recipients, chat whisper/hidden-roll visibility, and music late-joiner state where feasible |
 | P2 | Production infra hardening | Claude | Secret Manager migration, upload persistence, GCS CORS/old-bucket URL audit |
@@ -40,7 +40,7 @@ Each item below needs a verification pass. "Unit-testable" = I can pin it headle
 | # | Fix | Where | Verify how |
 |---|---|---|---|
 | T1.1 | Scoped `ErrorBoundary` around BattleMap / TokenActionPanel / DiceTray | `client/.../ErrorBoundary.tsx`, AppShell, Sidebar, BottomBar | browser (force a panel throw) |
-| T1.2 | Optimistic token-drag + **server-reject rollback** | `useDragToken.ts`, `server/.../tokenEvents.ts` | unit-testable (rollback emit) + browser |
+| T1.2 | ✅ Optimistic token-drag + **server-reject rollback** | `useDragToken.ts`, `server/.../tokenEvents.ts` | Merged in PR #10 with rollback tests plus hidden/invisible non-owner leak regression coverage; still worth a quick browser drag check |
 | T1.3 | SessionLobby skeleton loaders | `SessionLobby.tsx` | browser |
 | T1.4 | Modal a11y: focus-trap + ESC + ARIA (CharacterSheetFull, DiceTray, LootEditor) | `useFocusTrap.ts` + 3 modals | browser (keyboard nav) |
 | T1.5 | On-blur form validation (ProfileModal, create/join session) | `ProfileModal.tsx`, `SessionLobby.tsx` | browser |
@@ -68,7 +68,7 @@ Each item below needs a verification pass. "Unit-testable" = I can pin it headle
 | # | Item | Status | Note |
 |---|---|---|---|
 | T3.1 | Lucia v3 deprecated → migration plan (Auth.js / Better-Auth / DIY) | ⬜ | no security patches incoming; not urgent |
-| T3.2 | `npm audit fix` — 5 moderate vulns (uuid, express-rate-limit, postcss, brace-expansion) | ⬜ | quick win |
+| T3.2 | `npm audit fix` — 5 moderate vulns (uuid, express-rate-limit, postcss, brace-expansion) | ✅ | Done in PR #8; CI now runs `npm audit --audit-level=moderate` green |
 | T3.3 | Zod-validate env at boot (fail fast on missing OAuth/DB secrets) | ⬜ | `server/src/config.ts` |
 | T3.4 | Version/seq field for tokens + HP → detect concurrent writes | ⬜ | LWW currently silent |
 | T3.5 | Await DB writes in `CombatService.applyDamage` (no fire-and-forget) | ⬜ | divergence risk on transient DB fail |
