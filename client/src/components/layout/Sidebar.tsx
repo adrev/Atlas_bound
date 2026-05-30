@@ -299,7 +299,7 @@ function HeroTab() {
   };
 
   const handleSyncFromDDB = async () => {
-    if (!myCharacter?.dndbeyondId) return;
+    if (!myCharacter?.dndbeyondId || myCharacter.userId !== userId) return;
     setSyncing(true);
     setSyncMessage(null);
     try {
@@ -640,7 +640,7 @@ function HeroTab() {
   );
 
   // ── Bottom action bar ───────────────────────────────────
-  const hasDdbId = !!myCharacter?.dndbeyondId;
+  const hasDdbId = !!myCharacter?.dndbeyondId && myCharacter.userId === userId;
 
   const bottomBar = (
     <div style={{

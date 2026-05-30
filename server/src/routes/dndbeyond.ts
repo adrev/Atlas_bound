@@ -2,7 +2,8 @@ import { Router, type Request, type Response } from 'express';
 import { v4 as uuidv4 } from 'uuid';
 import pool from '../db/connection.js';
 import { parseCharacterJSON } from '../services/DndBeyondService.js';
-import { getAuthUserId, assertCharacterOwnerOrDM } from '../utils/authorization.js';
+import { buildMergeUpdate } from '../services/ddbMerge.js';
+import { getAuthUserId } from '../utils/authorization.js';
 import { dbRowToCharacter } from '../utils/characterMapper.js';
 
 const router = Router();
@@ -252,7 +253,6 @@ router.post('/import', async (req: Request, res: Response) => {
       );
       const existingRow = fullRows[0];
 
-      const { buildMergeUpdate } = await import('../services/ddbMerge.js');
       const { columns, values } = buildMergeUpdate({
         existing: existingRow,
         incoming: character as unknown as Record<string, unknown>,
@@ -301,11 +301,13 @@ router.post('/sync/:characterId', async (req: Request, res: Response) => {
   const userId = getAuthUserId(req);
   const characterId = String(req.params.characterId);
 
-  await assertCharacterOwnerOrDM(characterId, userId);
-
   const { rows: rowArr } = await pool.query('SELECT * FROM characters WHERE id = $1', [characterId]);
   const row = rowArr[0] as Record<string, unknown> | undefined;
   if (!row) { res.status(404).json({ error: 'Character not found' }); return; }
+  if (row.user_id !== userId) {
+    res.status(403).json({ error: 'Only the character owner can sync from D&D Beyond.' });
+    return;
+  }
 
   const ddbId = row.dndbeyond_id as string | null;
   if (!ddbId) { res.status(400).json({ error: 'Character was not imported from D&D Beyond.' }); return; }
@@ -328,40 +330,17 @@ router.post('/sync/:characterId', async (req: Request, res: Response) => {
     return;
   }
 
-  const preservedHitPoints = row.hit_points as number;
-  const preservedTempHp = row.temp_hit_points as number;
-  const preservedDeathSaves = row.death_saves as string;
-  const preservedConcentrating = row.concentrating_on as string | null;
-  const preservedConditions = row.conditions as string;
-  const preservedHitDice = row.hit_dice as string;
-
-  await pool.query(`
-    UPDATE characters SET
-      name=$1,race=$2,class=$3,level=$4,max_hit_points=$5,hit_points=$6,temp_hit_points=$7,
-      armor_class=$8,speed=$9,proficiency_bonus=$10,ability_scores=$11,saving_throws=$12,skills=$13,
-      spell_slots=$14,spells=$15,features=$16,inventory=$17,death_saves=$18,portrait_url=$19,
-      background=$20,characteristics=$21,personality=$22,notes_data=$23,proficiencies_data=$24,senses=$25,
-      defenses=$26,conditions=$27,currency=$28,extras=$29,spellcasting_ability=$30,spell_attack_bonus=$31,
-      spell_save_dc=$32,initiative=$33,hit_dice=$34,concentrating_on=$35,dndbeyond_json=$36,
-      updated_at=NOW()::text
-    WHERE id=$37
-  `, [
-    fresh.name, fresh.race, fresh.class, fresh.level, fresh.maxHitPoints,
-    Math.min(preservedHitPoints, fresh.maxHitPoints), preservedTempHp,
-    fresh.armorClass, fresh.speed, fresh.proficiencyBonus,
-    JSON.stringify(fresh.abilityScores), JSON.stringify(fresh.savingThrows),
-    JSON.stringify(fresh.skills), JSON.stringify(fresh.spellSlots),
-    JSON.stringify(fresh.spells), JSON.stringify(fresh.features),
-    JSON.stringify(fresh.inventory), preservedDeathSaves, fresh.portraitUrl,
-    JSON.stringify(fresh.background), JSON.stringify(fresh.characteristics),
-    JSON.stringify(fresh.personality), JSON.stringify(fresh.notes),
-    JSON.stringify(fresh.proficiencies), JSON.stringify(fresh.senses),
-    JSON.stringify(fresh.defenses), preservedConditions,
-    JSON.stringify(fresh.currency), JSON.stringify(fresh.extras),
-    fresh.spellcastingAbility, fresh.spellAttackBonus, fresh.spellSaveDC,
-    fresh.initiative, preservedHitDice, preservedConcentrating,
-    JSON.stringify(ddbJson), characterId,
-  ]);
+  const { columns, values } = buildMergeUpdate({
+    existing: row,
+    incoming: fresh as unknown as Record<string, unknown>,
+    raw: ddbJson,
+  });
+  const setClause = columns.map((c, i) => `${c} = $${i + 1}`).join(', ');
+  values.push(characterId);
+  await pool.query(
+    `UPDATE characters SET ${setClause}, updated_at = NOW()::text WHERE id = $${values.length}`,
+    values,
+  );
 
   characterCache.delete(ddbId);
 
