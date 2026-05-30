@@ -158,9 +158,9 @@ From a full design/UX review of all surfaces (lobby, in-session shell, canvas, c
 ### Accessibility (experience layer)
 | # | Item | Sev | Note |
 |---|---|---|---|
-| D19 | Lighten `--text-muted` (#6b5a3f, 2.71:1) to WCAG AA ≥ 4.5:1 (~#8a7654) — used for placeholders / helper / timestamps everywhere | 🔴 | one-line token fix |
-| D20 | Global `:focus-visible` ring — only 1 rule app-wide; `button{outline:none}` leaves 295 raw buttons with no keyboard focus | 🔴 | |
-| D21 | `prefers-reduced-motion` support — 0 occurrences (infinite pulse/glow, modal scale-ins, 3D dice) | 🟡 | |
+| D19 | ✅ Lighten `--text-muted` (#6b5a3f, 2.71:1) to WCAG AA ≥ 4.5:1 (~#8a7654) — used for placeholders / helper / timestamps everywhere | 🔴 | Merged in PR #27 |
+| D20 | ✅ Global `:focus-visible` ring — only 1 rule app-wide; `button{outline:none}` leaves 295 raw buttons with no keyboard focus | 🔴 | Merged in PR #27; modal focus-trap slice remains T1.4 |
+| D21 | ✅ `prefers-reduced-motion` support — 0 occurrences (infinite pulse/glow, modal scale-ins, 3D dice) | 🟡 | Merged in PR #27 |
 | D22 | Bump default touch targets toward 44 px (IconButton md=30, Button sm); raise min decorative-font sizes (9–11px uppercase Cinzel) | 🟡 | |
 | D23 | Voice — keep flavor in headings, plain language in labels/instructions ("Speak the room sigil" on a code field) | 🟢 | |
 | D24 | Minor polish folded in: resizable sidebar (fixed 400px), a DM-mode indicator in the shell, AoE-pill vs InitiativeOverlay top-left collision | 🟢 | |
@@ -171,7 +171,7 @@ From a full design/UX review of all surfaces (lobby, in-session shell, canvas, c
 - **B-D1** `TokenActionPanel` caps spells at 12 (`.slice(0,12)` + non-interactive `+N`) — a 13+-spell caster cannot cast their later spells.
 - **B-D2** `FogBrush` / `useFogBrush` is orphaned — never imported/mounted; manual fog painting is effectively unreleased. Wire or cut.
 - **B-D3** "Starting Map" picker in Create-Campaign is wired to nothing (`startMap` state never sent in `handleCreate`).
-- **B-D4** `--text-muted` fails WCAG AA (also D19).
+- **B-D4** ✅ `--text-muted` contrast fixed in PR #27 (also D19).
 
 ## Housekeeping
 
