@@ -23,9 +23,12 @@ beforeEach(() => {
 function makeRes() {
   return {
     statusCode: 200,
+    headers: {} as Record<string, string>,
     body: undefined as any,
     status(n: number) { this.statusCode = n; return this; },
+    setHeader(name: string, value: string) { this.headers[name] = value; return this; },
     json(b: unknown) { this.body = b; return this; },
+    end() { return this; },
   };
 }
 
@@ -167,7 +170,7 @@ describe('GET /api/sessions/:id/state — character shape', () => {
     }] });
 
     const handler = await getStateHandler();
-    const req = { user: { id: 'p1' }, params: { id: sessionId } } as unknown as Request;
+    const req = { user: { id: 'p1' }, params: { id: sessionId }, headers: {} } as unknown as Request;
     const res = makeRes();
     await handler(req, res);
 
