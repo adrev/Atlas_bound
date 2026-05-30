@@ -4,10 +4,38 @@ import { useAudioStore } from '../../stores/useAudioStore';
 import { theme } from '../../styles/theme';
 import { VolumeSlider } from './VolumeSlider';
 
+const POPOVER_WIDTH = 260;
+const POPOVER_HEIGHT = 180; // Approximate fixed height used before first render.
+const VIEWPORT_MARGIN = 8;
+
+type AnchorRect = Pick<DOMRect, 'top' | 'bottom' | 'right'>;
+
+export function computeAudioPopoverPosition(
+  rect: AnchorRect,
+  viewportWidth: number,
+  viewportHeight: number,
+) {
+  const left = Math.min(
+    Math.max(VIEWPORT_MARGIN, rect.right - POPOVER_WIDTH),
+    Math.max(VIEWPORT_MARGIN, viewportWidth - POPOVER_WIDTH - VIEWPORT_MARGIN),
+  );
+
+  const topAbove = rect.top - POPOVER_HEIGHT - VIEWPORT_MARGIN;
+  const topBelow = rect.bottom + VIEWPORT_MARGIN;
+  const top = topAbove >= VIEWPORT_MARGIN
+    ? topAbove
+    : Math.min(
+        Math.max(VIEWPORT_MARGIN, topBelow),
+        Math.max(VIEWPORT_MARGIN, viewportHeight - POPOVER_HEIGHT - VIEWPORT_MARGIN),
+      );
+
+  return { top, left };
+}
+
 /**
  * Floating popover with Master / Music / SFX volume sliders + mute
  * toggles. Shown for ALL users when clicking the speaker icon in
- * BottomBar. Closes on click-outside.
+ * the app chrome. Closes on click-outside.
  *
  * Rendered via React Portal directly on document.body with
  * position: fixed so it escapes any parent z-index stacking context
@@ -27,18 +55,13 @@ export function AudioPopover({ onClose, anchorRef }: {
     toggleMasterMute, toggleMusicMute, toggleSfxMute,
   } = useAudioStore();
 
-  // Compute position from anchor button's bounding rect — popover opens
-  // above the button, right-aligned.
+  // Compute position from anchor button's bounding rect. Prefer opening
+  // above, but fall below top-bar buttons instead of rendering off-screen.
   useLayoutEffect(() => {
     const anchor = anchorRef.current;
     if (!anchor) return;
     const rect = anchor.getBoundingClientRect();
-    const popoverWidth = 260;
-    const popoverHeight = 180; // approximate
-    setPos({
-      top: rect.top - popoverHeight - 8, // 8px gap
-      left: Math.max(8, rect.right - popoverWidth), // right-aligned to anchor, min 8px from left edge
-    });
+    setPos(computeAudioPopoverPosition(rect, window.innerWidth, window.innerHeight));
   }, [anchorRef]);
 
   // Close on click outside
