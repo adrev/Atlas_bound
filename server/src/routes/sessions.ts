@@ -18,6 +18,7 @@ import { getIO } from '../socket/ioInstance.js';
 import { getRoom, removePlayerFromRoom, resolveViewingMapId } from '../utils/roomState.js';
 import { safeParseJSON } from '../utils/safeJson.js';
 import { tokenVisibleToPlayer } from '../utils/tokenVisibility.js';
+import { dbRowToCharacter } from '../utils/characterMapper.js';
 
 const router = Router();
 
@@ -1093,10 +1094,7 @@ router.get('/:id/state', async (req: Request, res: Response) => {
         if (isNPCChar && !showCreatureStats) continue;
         if (isOtherPC && !showPlayersToPlayers) continue;
       }
-      // Full character row — matches what character:synced ships.
-      // Cheaper to ship the whole row and let the client's applyRemoteSync
-      // reconcile than to diff field-by-field.
-      characters[row.id as string] = row;
+      characters[row.id as string] = dbRowToCharacter(row);
     }
   }
 
