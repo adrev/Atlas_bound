@@ -15,7 +15,7 @@ import {
   hashSessionPassword, verifySessionPassword, generateInviteCode,
 } from '../utils/sessionPassword.js';
 import { getIO } from '../socket/ioInstance.js';
-import { getRoom, removePlayerFromRoom } from '../utils/roomState.js';
+import { getRoom, removePlayerFromRoom, resolveViewingMapId } from '../utils/roomState.js';
 import { safeParseJSON } from '../utils/safeJson.js';
 
 const router = Router();
@@ -1133,9 +1133,13 @@ router.get('/:id/events', async (req: Request, res: Response) => {
   // visibility the DM has since hidden.
   const player = room.players.get(userId);
   const isDM = player?.role === 'dm';
+  const viewingMapId = isDM
+    ? resolveViewingMapId(room, userId, 'dm')
+    : room.playerMapId;
   const delta = [];
   for (const e of room.eventLog) {
     if (e.id <= since) continue;
+    if (e.mapId && e.mapId !== viewingMapId) continue;
     if (!isDM && e.tokenId) {
       const tok = room.tokens.get(e.tokenId);
       if (tok && tok.visible === false) continue;

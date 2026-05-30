@@ -6,7 +6,7 @@ import pool from '../db/connection.js';
 import {
   getPlayerBySocketId, resolveViewingMapId, socketsOnMap, checkRateLimit,
 } from '../utils/roomState.js';
-import { broadcastEvent } from '../utils/eventBroadcast.js';
+import { broadcastEventToSockets } from '../utils/eventBroadcast.js';
 import * as OpportunityAttackService from '../services/OpportunityAttackService.js';
 import {
   tokenMoveSchema, tokenAddSchema, tokenRemoveSchema, tokenUpdateSchema,
@@ -97,13 +97,24 @@ export function registerTokenEvents(io: Server, socket: Socket): void {
 
     await pool.query('UPDATE tokens SET x = $1, y = $2 WHERE id = $3', [x, y, tokenId]);
 
-    // Log to the event cursor so a client that missed this frame can
-    // replay it on reconnect. Token id tagged for per-recipient
-    // hidden-token filtering on replay.
-    broadcastEvent(
+    // Scope movement to sockets rendering this map. A DM can move
+    // tokens on a preview map; those coordinates must not be shipped
+    // to players sitting on the ribbon map.
+    const moveRecipients = socketsOnMap(ctx.room, token.mapId)
+      .filter((sid) => {
+        if (token.visible !== false) return true;
+        for (const p of ctx.room.players.values()) {
+          if (p.socketId === sid || ctx.room.userSockets.get(p.userId)?.has(sid)) {
+            return p.role === 'dm';
+          }
+        }
+        return false;
+      });
+    broadcastEventToSockets(
       io, ctx.room, 'map:token-moved',
       { tokenId, x, y, mapId: token.mapId },
-      { tokenId },
+      moveRecipients,
+      { tokenId, mapId: token.mapId },
     );
 
     if (ctx.room.combatState?.active) {
@@ -192,12 +203,11 @@ export function registerTokenEvents(io: Server, socket: Socket): void {
         );
         const charOwner = charRows[0]?.user_id as string | null | undefined;
         if (!charOwner) return;
-        // Accept: caller owns the character, or it's an NPC record
-        // (the 'npc' pseudo-user) that the session legitimately
-        // surfaces from the compendium / encounter builder.
-        if (charOwner !== ctx.player.userId && charOwner !== 'npc') {
-          return;
-        }
+        // Players may only place tokens backed by their own character
+        // rows. NPC/monster placement is DM-owned; allowing
+        // user_id='npc' here lets players create self-owned tokens
+        // linked to shared NPC rows and later mutate shared HP/state.
+        if (charOwner !== ctx.player.userId) return;
       }
     }
 
@@ -320,10 +330,21 @@ export function registerTokenEvents(io: Server, socket: Socket): void {
       JSON.stringify(token.conditions), token.ownerUserId, token.faction,
     ]);
 
-    broadcastEvent(
+    const addRecipients = socketsOnMap(ctx.room, targetMapId)
+      .filter((sid) => {
+        if (token.visible !== false) return true;
+        for (const p of ctx.room.players.values()) {
+          if (p.socketId === sid || ctx.room.userSockets.get(p.userId)?.has(sid)) {
+            return p.role === 'dm';
+          }
+        }
+        return false;
+      });
+    broadcastEventToSockets(
       io, ctx.room, 'map:token-added',
       token as unknown as Record<string, unknown>,
-      { tokenId },
+      addRecipients,
+      { tokenId, mapId: targetMapId },
     );
   }));
 
@@ -368,16 +389,17 @@ export function registerTokenEvents(io: Server, socket: Socket): void {
     if (inMem) ctx.room.tokens.delete(tokenId);
     await pool.query('DELETE FROM tokens WHERE id = $1', [tokenId]);
 
-    // Broadcast removal to the whole room, not just sockets currently on
-    // the token's map. Players on other maps still need the update
-    // so their combat tracker, character portraits, and any cached
-    // token references stop rendering a dead creature as alive.
-    // The `mapId` in the payload lets map-scoped UI decide whether to
+    // Broadcast removal only to sockets rendering this map. The
+    // `mapId` in the payload lets map-scoped UI decide whether to
     // animate the removal or silently drop it.
-    broadcastEvent(
+    const removeRecipients = tokenMapId
+      ? socketsOnMap(ctx.room, tokenMapId)
+      : Array.from(ctx.room.userSockets.values()).flatMap((sids) => Array.from(sids));
+    broadcastEventToSockets(
       io, ctx.room, 'map:token-removed',
       { tokenId, ...(tokenMapId ? { mapId: tokenMapId } : {}) },
-      { tokenId },
+      removeRecipients,
+      { tokenId, mapId: tokenMapId },
     );
   }));
 
@@ -488,6 +510,9 @@ export function registerTokenEvents(io: Server, socket: Socket): void {
       const recipients = socketsOnMap(ctx.room, tokenMapId);
       for (const sid of recipients) {
         const role = socketRole.get(sid) ?? 'player';
+        const canSeeLatest = role === 'dm' || latestToken.visible !== false;
+        const demotedToHidden = changes.visible === false && wasVisible;
+        if (!canSeeLatest && !demotedToHidden) continue;
         if (promotedToVisible && role !== 'dm') {
           io.to(sid).emit('map:token-added', latestToken);
         } else {

@@ -53,6 +53,7 @@ import {
   UserCog,
   ExternalLink,
   Megaphone,
+  RefreshCw,
 } from 'lucide-react';
 import { createSession, joinSession } from '../../services/api';
 import { useSessionStore } from '../../stores/useSessionStore';
@@ -388,6 +389,8 @@ export function SessionLobby() {
   const [myGamesLoading, setMyGamesLoading] = useState(false);
   const [myCharacters, setMyCharacters] = useState<MyCharacter[]>([]);
   const [myCharsLoading, setMyCharsLoading] = useState(false);
+  const [syncingCharacterId, setSyncingCharacterId] = useState<string | null>(null);
+  const [heroSyncMessage, setHeroSyncMessage] = useState<{ text: string; isError: boolean } | null>(null);
 
   // Filter tab state for My Campaigns: All / DMing / Playing
   const [gameFilter, setGameFilter] = useState<'all' | 'dm' | 'player'>('all');
@@ -468,6 +471,44 @@ export function SessionLobby() {
       /* silently fail */
     } finally {
       setMyCharsLoading(false);
+    }
+  };
+
+  const syncHeroFromDDB = async (character: MyCharacter) => {
+    if (!character.dndbeyondId || syncingCharacterId) return;
+    setSyncingCharacterId(character.id);
+    setHeroSyncMessage(null);
+    setError(null);
+    try {
+      const resp = await fetch(`/api/dndbeyond/sync/${character.id}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+      });
+      const body = await resp.json().catch(() => ({}));
+      if (!resp.ok) {
+        throw new Error(body.error || `Sync failed (${resp.status})`);
+      }
+      await fetchMyCharacters();
+      if ((openCharacter as { id?: string } | null)?.id === character.id) {
+        setOpenCharacter(body);
+      }
+      setHeroSyncMessage({
+        text: `${body.name ?? character.name} synced from D&D Beyond${body.level ? ` — now Level ${body.level}` : ''}.`,
+        isError: false,
+      });
+      setTimeout(() => {
+        setHeroSyncMessage((current) => (
+          current?.isError === false ? null : current
+        ));
+      }, 5000);
+    } catch (err) {
+      setHeroSyncMessage({
+        text: err instanceof Error ? err.message : 'Sync from D&D Beyond failed.',
+        isError: true,
+      });
+    } finally {
+      setSyncingCharacterId(null);
     }
   };
 
@@ -836,34 +877,56 @@ export function SessionLobby() {
           </div>
 
           <h3>Heroes</h3>
+          {heroSyncMessage && (
+            <div className={`rail-notice${heroSyncMessage.isError ? ' error' : ''}`}>
+              {heroSyncMessage.text}
+            </div>
+          )}
           {myCharsLoading && myCharacters.length === 0 ? (
             <p className="rail-empty">Loading thy heroes…</p>
           ) : myCharacters.length === 0 ? (
             <p className="rail-empty">No heroes yet. Forge one to begin.</p>
           ) : (
             myCharacters.map((c) => (
-              <button
-                key={c.id}
-                className={`char-card${c.activeCampaignId ? ' active' : ''}`}
-                disabled={openCharacterLoading}
-                onClick={() => openHeroSheet(c.id)}
-                title={`${c.name}${c.race ? ` — ${c.race}` : ''}${c.class ? ` ${c.class}` : ''}`}
-              >
-                <div className="pp" style={{ background: heroTint(c.id) }}>
-                  {c.portraitUrl ? (
-                    <img src={c.portraitUrl} alt="" />
-                  ) : (
-                    <span className="pp-initial">{initial(c.name)}</span>
-                  )}
-                </div>
-                <div className="info">
-                  <p className="n">{c.name}</p>
-                  <p className="s">
-                    {[c.race, c.class].filter(Boolean).join(' ') || 'Unaligned wanderer'}
-                  </p>
-                </div>
-                <span className="lv">LV {c.level ?? '?'}</span>
-              </button>
+              <div key={c.id} className="char-card-row">
+                <button
+                  className={`char-card${c.activeCampaignId ? ' active' : ''}`}
+                  disabled={openCharacterLoading}
+                  onClick={() => openHeroSheet(c.id)}
+                  title={`${c.name}${c.race ? ` — ${c.race}` : ''}${c.class ? ` ${c.class}` : ''}`}
+                >
+                  <div className="pp" style={{ background: heroTint(c.id) }}>
+                    {c.portraitUrl ? (
+                      <img src={c.portraitUrl} alt="" />
+                    ) : (
+                      <span className="pp-initial">{initial(c.name)}</span>
+                    )}
+                  </div>
+                  <div className="info">
+                    <p className="n">{c.name}</p>
+                    <p className="s">
+                      {[c.race, c.class].filter(Boolean).join(' ') || 'Unaligned wanderer'}
+                    </p>
+                  </div>
+                  <span className="lv">LV {c.level ?? '?'}</span>
+                </button>
+                {c.dndbeyondId && (
+                  <button
+                    type="button"
+                    className="char-sync-btn"
+                    disabled={syncingCharacterId !== null}
+                    onClick={() => syncHeroFromDDB(c)}
+                    title={`Sync ${c.name} from D&D Beyond`}
+                    aria-label={`Sync ${c.name} from D&D Beyond`}
+                  >
+                    <RefreshCw
+                      size={13}
+                      style={syncingCharacterId === c.id ? { animation: 'spin 1s linear infinite' } : undefined}
+                    />
+                    <span>{syncingCharacterId === c.id ? 'Syncing' : 'Sync'}</span>
+                  </button>
+                )}
+              </div>
             ))
           )}
           {/* Until the in-app character creator ships, send the user
@@ -1966,6 +2029,17 @@ const LOBBY_CSS = `
   content:''; flex:1; height:1px; background: linear-gradient(90deg, var(--accent), transparent); opacity:.4;
 }
 
+.kbrt-lobby .rail-notice {
+  border:1px solid rgba(122,162,102,.35); background: rgba(122,162,102,.12);
+  color: var(--success); border-radius:3px; padding:8px 9px; margin: -4px 0 10px;
+  font-family: var(--font-body); font-size:11px; line-height:1.35;
+}
+.kbrt-lobby .rail-notice.error {
+  border-color: rgba(201,66,58,.45); background: rgba(201,66,58,.13); color: var(--blood-400);
+}
+.kbrt-lobby .char-card-row {
+  display:flex; align-items:stretch; gap:6px; margin-bottom:8px; width:100%;
+}
 .kbrt-lobby .char-card {
   display:flex; align-items:center; gap:12px; padding:10px;
   border:1px solid var(--border-line); background: var(--bg-panel-raised);
@@ -1973,6 +2047,7 @@ const LOBBY_CSS = `
   margin-bottom:8px; position:relative; width:100%; text-align:left; color: inherit;
   font-family: inherit;
 }
+.kbrt-lobby .char-card-row .char-card { margin-bottom:0; min-width:0; flex:1; }
 .kbrt-lobby .char-card:hover { border-color: var(--accent); transform: translateX(2px); }
 .kbrt-lobby .char-card.active { border-color: var(--accent); background: rgba(224,180,79,.06); }
 .kbrt-lobby .char-card.active::before {
@@ -2000,6 +2075,19 @@ const LOBBY_CSS = `
   letter-spacing:1.5px; border:1px solid var(--border-line); padding:3px 7px; border-radius:2px;
   text-transform: uppercase; flex-shrink:0;
 }
+.kbrt-lobby .char-sync-btn {
+  flex:0 0 58px; display:flex; flex-direction:column; align-items:center; justify-content:center;
+  gap:3px; border:1px solid var(--border-line); background: rgba(224,180,79,.04);
+  color: var(--accent); border-radius:3px; cursor:pointer; transition: all .15s;
+  font-family: var(--font-display); font-size:8px; letter-spacing:1.2px; text-transform: uppercase;
+}
+.kbrt-lobby .char-sync-btn:hover:not(:disabled) {
+  border-color: var(--accent); background: rgba(224,180,79,.10);
+}
+.kbrt-lobby .char-sync-btn:disabled {
+  opacity:.55; cursor:not-allowed;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
 .kbrt-lobby .rail .add-char {
   display: block; box-sizing: border-box; text-align: center; text-decoration: none;
   width:100%; padding:10px; border:1px dashed var(--border-line-strong); background:transparent;

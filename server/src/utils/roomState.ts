@@ -50,6 +50,10 @@ export interface RoomEvent {
   kind: string;
   payload: unknown;
   ts: number;
+  /** Optional map id used to scope replay to the caller's active
+   *  canvas. Prevents DM-preview token events from replaying into a
+   *  player who is on the ribbon map. */
+  mapId?: string | null;
   /** Optional token/character id the event references, used for
    *  per-recipient filtering on replay (e.g. hidden tokens shouldn't
    *  leak to players even if they missed the original event). */
@@ -559,18 +563,26 @@ export function resolveViewingMapId(
  */
 export function socketsOnMap(room: RoomState, mapId: string): string[] {
   const out: string[] = [];
+  const pushSockets = (player: RoomPlayer) => {
+    const liveSockets = room.userSockets.get(player.userId);
+    if (liveSockets && liveSockets.size > 0) {
+      for (const sid of liveSockets) out.push(sid);
+      return;
+    }
+    out.push(player.socketId);
+  };
   for (const player of room.players.values()) {
     if (player.role === 'dm') {
       const preview = room.dmViewingMap.get(player.userId);
       if (preview) {
-        if (preview === mapId) out.push(player.socketId);
+        if (preview === mapId) pushSockets(player);
       } else {
         // No preview — DM is on the ribbon
-        if (room.playerMapId === mapId) out.push(player.socketId);
+        if (room.playerMapId === mapId) pushSockets(player);
       }
     } else {
       // Player
-      if (room.playerMapId === mapId) out.push(player.socketId);
+      if (room.playerMapId === mapId) pushSockets(player);
     }
   }
   return out;
@@ -583,13 +595,21 @@ export function socketsOnMap(room: RoomState, mapId: string): string[] {
  */
 export function dmSocketsOnMap(room: RoomState, mapId: string): string[] {
   const out: string[] = [];
+  const pushSockets = (player: RoomPlayer) => {
+    const liveSockets = room.userSockets.get(player.userId);
+    if (liveSockets && liveSockets.size > 0) {
+      for (const sid of liveSockets) out.push(sid);
+      return;
+    }
+    out.push(player.socketId);
+  };
   for (const player of room.players.values()) {
     if (player.role !== 'dm') continue;
     const preview = room.dmViewingMap.get(player.userId);
     if (preview) {
-      if (preview === mapId) out.push(player.socketId);
+      if (preview === mapId) pushSockets(player);
     } else if (room.playerMapId === mapId) {
-      out.push(player.socketId);
+      pushSockets(player);
     }
   }
   return out;

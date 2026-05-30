@@ -469,10 +469,13 @@ describe('map:token-add authorization (P1.4)', () => {
     role: Role,
     userId: string,
     payloadOwnerUserId: string | null | undefined,
+    claimedCharacterOwner?: string | null,
   ): boolean {
     if (role === 'dm') return true;
     const isOwnToken = !!payloadOwnerUserId && payloadOwnerUserId === userId;
-    return isOwnToken;
+    if (!isOwnToken) return false;
+    if (claimedCharacterOwner && claimedCharacterOwner !== userId) return false;
+    return true;
   }
 
   it('DM can add any token', () => {
@@ -492,5 +495,9 @@ describe('map:token-add authorization (P1.4)', () => {
 
   it('rejects non-DM adding a token owned by someone else', () => {
     expect(canAddToken('player', 'user-A', 'user-B')).toBe(false);
+  });
+
+  it('rejects non-DM adding a self-owned token backed by an NPC character row', () => {
+    expect(canAddToken('player', 'user-A', 'user-A', 'npc')).toBe(false);
   });
 });

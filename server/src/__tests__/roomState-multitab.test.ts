@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import {
   createRoom, getRoom, addPlayerToRoom, removePlayerFromRoom,
   removeSocketFromRoom, getPlayerBySocketId,
+  socketsOnMap, dmSocketsOnMap,
   type RoomPlayer,
 } from '../utils/roomState.js';
 
@@ -88,5 +89,31 @@ describe('addPlayerToRoom + removeSocketFromRoom (multi-tab)', () => {
     removeSocketFromRoom(SESSION, 'sock-B');
     // Primary should fall back to A (the only one left).
     expect(getRoom(SESSION)?.players.get(USER)?.socketId).toBe('sock-A');
+  });
+
+  it('map-scoped broadcasts include every live tab for a player on the ribbon map', () => {
+    joinTab('sock-A');
+    joinTab('sock-B');
+    const room = getRoom(SESSION)!;
+    room.playerMapId = 'map-ribbon';
+
+    expect(socketsOnMap(room, 'map-ribbon').sort()).toEqual(['sock-A', 'sock-B']);
+  });
+
+  it('DM-only map broadcasts include every live DM tab on their preview map', () => {
+    const dmUser = 'dm-user';
+    addPlayerToRoom(SESSION, {
+      userId: dmUser, displayName: 'DM', socketId: 'dm-sock-A',
+      role: 'dm', characterId: null,
+    });
+    addPlayerToRoom(SESSION, {
+      userId: dmUser, displayName: 'DM', socketId: 'dm-sock-B',
+      role: 'dm', characterId: null,
+    });
+    const room = getRoom(SESSION)!;
+    room.playerMapId = 'map-ribbon';
+    room.dmViewingMap.set(dmUser, 'map-preview');
+
+    expect(dmSocketsOnMap(room, 'map-preview').sort()).toEqual(['dm-sock-A', 'dm-sock-B']);
   });
 });

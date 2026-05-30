@@ -83,6 +83,19 @@ describe('event cursor', () => {
     expect(room.eventLog[0].tokenId).toBe('tok-42');
   });
 
+  it('records mapId on map-scoped events (for replay scoping)', () => {
+    const room = getRoom('test-session')!;
+    const io = mockIo();
+    broadcastEvent(
+      io as unknown as Parameters<typeof broadcastEvent>[0],
+      room,
+      'map:token-moved',
+      { x: 0, mapId: 'map-ribbon' },
+      { tokenId: 'tok-42', mapId: 'map-ribbon' },
+    );
+    expect(room.eventLog[0].mapId).toBe('map-ribbon');
+  });
+
   it('does not record tokenId when unset', () => {
     const room = getRoom('test-session')!;
     const io = mockIo();

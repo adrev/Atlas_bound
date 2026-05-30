@@ -28,6 +28,7 @@ import { MAX_EVENT_LOG } from './roomState.js';
  * @param payload   event body — same shape as the prior io.to().emit arg
  * @param opts.tokenId  optional token id reference for visibility filtering
  *                      on replay (so hidden tokens don't leak)
+ * @param opts.mapId    optional map id for map-scoped replay filtering
  * @param opts.includeEventId  inject `_eventId` into the live payload
  *                      so the client's listener updates its cursor
  *                      immediately (default true; pass false for events
@@ -38,7 +39,7 @@ export function broadcastEvent(
   room: RoomState,
   kind: string,
   payload: Record<string, unknown>,
-  opts: { tokenId?: string | null; includeEventId?: boolean } = {},
+  opts: { tokenId?: string | null; mapId?: string | null; includeEventId?: boolean } = {},
 ): void {
   const id = ++room.nextEventId;
   const entry = {
@@ -46,6 +47,7 @@ export function broadcastEvent(
     kind,
     payload,
     ts: Date.now(),
+    mapId: opts.mapId ?? null,
     tokenId: opts.tokenId ?? null,
   };
   room.eventLog.push(entry);
@@ -74,7 +76,7 @@ export function broadcastEventToSockets(
   kind: string,
   payload: Record<string, unknown>,
   socketIds: Iterable<string>,
-  opts: { tokenId?: string | null; includeEventId?: boolean } = {},
+  opts: { tokenId?: string | null; mapId?: string | null; includeEventId?: boolean } = {},
 ): void {
   const id = ++room.nextEventId;
   room.eventLog.push({
@@ -82,6 +84,7 @@ export function broadcastEventToSockets(
     kind,
     payload,
     ts: Date.now(),
+    mapId: opts.mapId ?? null,
     tokenId: opts.tokenId ?? null,
   });
   if (room.eventLog.length > MAX_EVENT_LOG) {
