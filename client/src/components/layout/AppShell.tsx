@@ -11,6 +11,7 @@ import { useCharacterStore } from '../../stores/useCharacterStore';
 import { useCombatStore } from '../../stores/useCombatStore';
 import { disconnectSocket } from '../../socket/client';
 import { BattleMap } from '../canvas/BattleMap';
+import { ErrorBoundary } from '../ErrorBoundary';
 import { MapTransition } from '../canvas/MapTransition';
 import { PreviewModeBanner } from '../dm/PreviewModeBanner';
 import { InitiativeModal } from '../combat/InitiativeModal';
@@ -487,7 +488,9 @@ export function AppShell() {
         <div style={{ flex: 1, overflow: 'hidden', minHeight: 0, position: 'relative' }}>
           {mobileTab === 'map' && (
             <div style={styles.canvasArea}>
-              <BattleMap />
+              <ErrorBoundary variant="inline" label="The battle map">
+                <BattleMap />
+              </ErrorBoundary>
               <MapTransition />
               <PreviewModeBanner />
             </div>
@@ -741,7 +744,9 @@ export function AppShell() {
       <div style={styles.main}>
         {/* Canvas area */}
         <div style={styles.canvasArea}>
-          <BattleMap />
+          <ErrorBoundary variant="inline" label="The battle map">
+            <BattleMap />
+          </ErrorBoundary>
           <MapTransition />
           <PreviewModeBanner />
         </div>
