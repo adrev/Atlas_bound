@@ -17,6 +17,7 @@ import {
 import { getIO } from '../socket/ioInstance.js';
 import { getRoom, removePlayerFromRoom, resolveViewingMapId } from '../utils/roomState.js';
 import { safeParseJSON } from '../utils/safeJson.js';
+import { stateSnapshotEtag } from '../utils/stateEtag.js';
 import { tokenVisibleToPlayer } from '../utils/tokenVisibility.js';
 
 const router = Router();
@@ -990,6 +991,21 @@ router.get('/:id/state', async (req: Request, res: Response) => {
   const viewingMapId = isDM
     ? (room.dmViewingMap.get(userId) ?? room.playerMapId ?? room.currentMapId)
     : room.playerMapId;
+
+  // Conditional GET: if nothing relevant has changed since this client last
+  // pulled, return 304 and skip the token filtering + combat assembly + the
+  // character SQL below. The ETag is keyed on the caller's filtered-view
+  // inputs (see stateSnapshotEtag); a coarse time bucket bounds staleness
+  // for the legacy unwrapped-broadcast paths.
+  const etag = stateSnapshotEtag({
+    userId, isDM, viewingMapId, nextEventId: room.nextEventId, now: Date.now(),
+  });
+  res.setHeader('ETag', etag);
+  if (req.headers['if-none-match'] === etag) {
+    res.status(304).end();
+    return;
+  }
+
   const allTokens = Array.from(room.tokens.values())
     .filter((t) => t.mapId === viewingMapId);
   const visibleTokens = isDM
