@@ -17,6 +17,20 @@ specific file/line.
 
 ---
 
+## PM triage — current priority split
+
+| Priority | Work | Owner | Next action |
+|---|---|---|---|
+| P0 | Clean dirty working trees before new feature work | Claude for local OAuth/Chronicle WIP; CodeX for its temp worktrees | Claude should commit the OAuth/Chronicle edits to a named branch/PR or stash them; CodeX already removed its temporary review/deploy worktrees |
+| P1 | PR #2 unverified Tier-1 fixes | Claude prepares sliced PRs; CodeX reviews/ships | Do not merge PR #2 wholesale while conflicted. Cherry-pick or recreate T1.1-T1.7 as small PRs with tests/verification notes |
+| P1 | OAuth + Chronicle migration verification | Claude | Finish the local OAuth-origin and Chronicle worker changes as a PR, then verify Discord/Google login and Chronicle worker polling on the personal project |
+| P1 | Browser websocket QA | Andrew/Claude desktop, coordinated by CodeX | Run the remaining browser-only rows: player ribbon refresh, reconnect/background tabs, kick/ban stale sockets |
+| P2 | Server-side socket/combat QA tests | Claude | Add tests for combat/spell recipients, chat whisper/hidden-roll visibility, and music late-joiner state where feasible |
+| P2 | Production infra hardening | Claude | Secret Manager migration, upload persistence, GCS CORS/old-bucket URL audit |
+| P3 | Performance/code quality backlog | CodeX/Claude by claim | TokenLayer selectors, dice bundle deferral, list caching, large refactors after P1 stabilizes |
+
+---
+
 ## ⚠️ READ FIRST — Tier-1 fixes that are written but UNVERIFIED
 
 **PR #2 (`claude/clever-hopper-85609c`) carries ~7 UX/reliability fixes that passed `tsc` but were never deployed or manually tested.** They predate the two-agent workflow. PR #2 also has **merge conflicts with `main`** (AppShell hook-order fix in `6d1768f`; `deploy.sh`; possibly `customContent.ts` / `sessions.ts` which CodeX has since touched). Decision needed from PM: resolve + merge PR #2, or cherry-pick the still-relevant pieces.
@@ -44,9 +58,9 @@ Each item below needs a verification pass. "Unit-testable" = I can pin it headle
 | T2.1 | `TokenLayer` granular Zustand selectors (stop full re-render on any token change) | ⬜ | combat-jank source; client perf |
 | T2.2 | Off-canvas culling for Konva grid/background layers | ⬜ | large maps |
 | T2.3 | Defer Three.js dice-box bundle until first roll | ⬜ | initial-paint win |
-| T2.4 | Reduce `/state` poll churn when nothing changed | 🔶 | partially addressed by heartbeat (#3, merged) + PR #2 ETag; re-measure |
+| T2.4 | Reduce `/state` poll churn when nothing changed | 🔶 | heartbeat churn fixed in #3; PR #2 ETag idea still needs dedupe/re-measure |
 | T2.5 | Collapse `assertCharacterOwnerOrDM` 4 sequential queries → one CTE | ⬜ | per-edit latency |
-| T2.6 | Batch token-move broadcasts (one frame, N moves) | 🔶 | CodeX scoped fanout in `98bd0a6`; batching still open |
+| T2.6 | Batch token-move broadcasts (one frame, N moves) | 🔶 | fan-out scoping/visibility centralized in #7; batching still open |
 | T2.7 | `Cache-Control` on list endpoints (`/sessions/mine`, `/characters`, `/custom/*`) | ⬜ | quick win |
 
 ## Tier 3 — reliability / security
@@ -88,11 +102,12 @@ Each item below needs a verification pass. "Unit-testable" = I can pin it headle
 ## Websocket QA — remaining matrix rows
 
 ✅ Automated & merged: token-move hidden/map-scope/multi-tab fanout (#4).
-🔵 In PR #5: ping / fog / zone scoping.
+✅ Automated & merged: ping / fog / zone scoping (#5).
+✅ Automated & merged: token add/update visibility transitions (#7).
 
 | Row | Status |
 |---|---|
-| `map:token-update` visibility promote/demote transitions | ⬜ server-testable — next proactive candidate |
+| `map:token-update` visibility promote/demote transitions | ✅ covered by #7 |
 | Player ribbon activation + refresh returns to ribbon | 🔴 browser-only |
 | Reconnect / membership (background-tab return, network reconnect, kick/ban no stale sockets) | 🔴 browser-only |
 | Combat/spell recipient scoping (cast card, counterspell, shield, HP, conditions, death save, OA) | ⬜ partly server-testable |
@@ -100,7 +115,8 @@ Each item below needs a verification pass. "Unit-testable" = I can pin it headle
 
 ## Housekeeping
 
-- `dev/null` and `public/assets` are stray untracked artifacts in the working tree (a `dev/null` redirect mishap + a misplaced `public/`). Not committed; clean up.
+- Current main checkout has uncommitted OAuth/Chronicle work: `DEV_SETUP.md`, `server/.env.example`, `server/src/auth/oauth/{apple,discord,google,origin}.ts`, `server/src/routes/{chronicle,internalChronicle}.ts`, `server/src/services/Chronicler.ts`. This appears intentional and contains no literal secret values in the inspected diff; Claude should either commit it to a named branch/PR or stash it before starting new work.
+- CodeX temporary review/deploy worktrees were removed after PR #3/#4/#5/#7. Keep temporary worktrees short-lived and remove them after merge/deploy.
 
 ---
 
