@@ -346,7 +346,7 @@ export function AppShell() {
           borderRadius: theme.radius.lg, padding: '32px 40px', maxWidth: 400,
           textAlign: 'center',
         }}>
-          <img src="/kbrt-logo.svg" alt="KBRT.AI" style={{ width: 80, height: 80, marginBottom: 8 }} />
+          <img src="/kbrt-logo.svg" alt="Atlas Bound" style={{ width: 80, height: 80, marginBottom: 8 }} />
           <h2 style={{ color: theme.gold.primary, fontFamily: theme.font.display, margin: '0 0 8px' }}>
             Join Session
           </h2>
@@ -456,7 +456,7 @@ export function AppShell() {
         <div style={styles.topBar}>
           <div style={styles.topLeft}>
             <div style={{ ...styles.sigil, width: 32, height: 32 }} aria-hidden>
-              <img src="/kbrt-logo.svg" alt="KBRT" style={styles.sigilImg} />
+              <img src="/kbrt-logo.svg" alt="Atlas Bound" style={styles.sigilImg} />
             </div>
             <button style={styles.codeButton} onClick={handleCopyCode} title="Copy room code">
               <Copy size={12} />
@@ -583,10 +583,10 @@ export function AppShell() {
       <div style={styles.topBar}>
         <div style={styles.topLeft}>
           <div style={styles.sigil} aria-hidden>
-            <img src="/kbrt-logo.svg" alt="KBRT" style={styles.sigilImg} />
+            <img src="/kbrt-logo.svg" alt="Atlas Bound" style={styles.sigilImg} />
           </div>
           <div style={styles.wordmark}>
-            KBRT<span style={styles.wordmarkAccent}>.AI</span>
+            Atlas<span style={styles.wordmarkAccent}> Bound</span>
           </div>
           <div style={styles.topDivider} aria-hidden />
           <button style={styles.codeButton} onClick={handleCopyCode} title="Copy invite link for players">
