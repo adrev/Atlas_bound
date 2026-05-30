@@ -3406,7 +3406,7 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
         {canSeeStats && spells.filter((s: any) => s.level > 0).length > 0 && (
           <Section title={`Spells (${spells.filter((s: any) => s.level > 0).length})`}>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 3 }}>
-              {spells.filter((s: any) => s.level > 0).slice(0, 12).map((spell: any, i: number) => {
+              {spells.filter((s: any) => s.level > 0).map((spell: any, i: number) => {
                 const slot = spellSlots[String(spell.level)] || spellSlots[spell.level as any];
                 const slotsLeft = slot ? slot.max - slot.used : 0;
                 const slotsMax = slot ? slot.max : 0;
@@ -3453,7 +3453,6 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
                   </button>
                 );
               })}
-              {spells.filter((s: any) => s.level > 0).length > 12 && <span style={{ fontSize: 8, color: C.textMuted }}>+{spells.filter((s: any) => s.level > 0).length - 12}</span>}
             </div>
           </Section>
         )}
