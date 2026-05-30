@@ -50,6 +50,7 @@ function TabLoadingFallback() {
 import { Check, Circle } from 'lucide-react';
 import { theme } from '../../styles/theme';
 import { Button, askConfirm } from '../ui';
+import { pickAutoActiveHero } from '../../utils/heroSelection';
 
 type TabId = 'combat' | 'character' | 'compendium' | 'notes' | 'chat' | 'players' | 'dm';
 
@@ -249,13 +250,17 @@ function HeroTab() {
       .then((r) => (r.ok ? r.json() : []))
       .then((data: any[]) => {
         setCharacters(data);
-        // Auto-activate the last-used character (from localStorage) or
-        // the first one in the list if nothing is active yet.
-        if (!useCharacterStore.getState().myCharacter) {
-          const savedId = localStorage.getItem('dnd-vtt-characterId');
-          const target = data.find((c) => c.id === savedId) ?? data[0];
-          if (target) useCharacterStore.getState().setCharacter(target);
-        }
+        // Auto-activate the last-used owned character, but recover if a
+        // stale cross-session myCharacter is present and hidden by the
+        // ownership filter above.
+        const target = pickAutoActiveHero({
+          current: useCharacterStore.getState().myCharacter,
+          candidates: data,
+          savedId: localStorage.getItem('dnd-vtt-characterId'),
+          userId,
+          isDM,
+        });
+        if (target) useCharacterStore.getState().setCharacter(target);
       })
       .catch(() => setCharacters([]))
       .finally(() => setListLoading(false));
