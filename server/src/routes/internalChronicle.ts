@@ -33,12 +33,19 @@
  *     here — DM reviews and publishes through the normal flow.
  */
 import { Router, type Request, type Response, type NextFunction } from 'express';
+import { timingSafeEqual } from 'node:crypto';
 import { z } from 'zod';
 import pool from '../db/connection.js';
 
 const router = Router();
 
 const WORKER_TOKEN = process.env.CHRONICLE_WORKER_TOKEN || '';
+
+function tokenMatches(provided: string): boolean {
+  const expected = Buffer.from(WORKER_TOKEN);
+  const actual = Buffer.from(provided);
+  return expected.length === actual.length && timingSafeEqual(expected, actual);
+}
 
 /**
  * Bearer-token gate. We deliberately do NOT log the failure reason
@@ -56,7 +63,7 @@ function requireWorkerToken(req: Request, res: Response, next: NextFunction): vo
   }
   const header = req.header('authorization') ?? '';
   const m = header.match(/^Bearer\s+(.+)$/i);
-  if (!m || m[1] !== WORKER_TOKEN) {
+  if (!m || !tokenMatches(m[1])) {
     res.status(401).json({ error: 'Unauthorized' });
     return;
   }

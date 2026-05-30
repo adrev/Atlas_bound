@@ -6,23 +6,23 @@ import { findOrCreateOAuthUser, parseCookies } from './discord.js';
 import {
   GOOGLE_CLIENT_ID,
   GOOGLE_CLIENT_SECRET,
-  BASE_URL,
 } from '../../config.js';
+import { getOAuthOrigin } from './origin.js';
 
 const router = Router();
 
-function getGoogle(): Google | null {
+function getGoogle(req: Request): Google | null {
   if (!GOOGLE_CLIENT_ID || !GOOGLE_CLIENT_SECRET) return null;
   return new Google(
     GOOGLE_CLIENT_ID,
     GOOGLE_CLIENT_SECRET,
-    `${BASE_URL}/api/auth/google/callback`,
+    `${getOAuthOrigin(req)}/api/auth/google/callback`,
   );
 }
 
 // GET /api/auth/google - Start Google OAuth flow
 router.get('/google', async (req: Request, res: Response) => {
-  const google = getGoogle();
+  const google = getGoogle(req);
   if (!google) {
     res.status(503).json({ error: 'Google OAuth is not configured' });
     return;
@@ -44,7 +44,7 @@ router.get('/google', async (req: Request, res: Response) => {
 
 // GET /api/auth/google/callback - Google OAuth callback
 router.get('/google/callback', async (req: Request, res: Response) => {
-  const google = getGoogle();
+  const google = getGoogle(req);
   if (!google) {
     res.redirect('/?auth=error&reason=not_configured');
     return;
