@@ -1,7 +1,9 @@
 import type { Server, Socket } from 'socket.io';
 import type { Token, WallSegment, FogPolygon } from '@dnd-vtt/shared';
 import pool from '../db/connection.js';
-import { getPlayerBySocketId, resolveViewingMapId, socketsOnMap } from '../utils/roomState.js';
+import {
+  getPlayerBySocketId, mapRecipientsForToken, resolveViewingMapId, socketsOnMap,
+} from '../utils/roomState.js';
 import { loadDrawingsForMapAsync, filterDrawingsForPlayer } from './drawingEvents.js';
 import { mapLoadSchema, mapPingSchema } from '../utils/validation.js';
 import { safeHandler } from '../utils/socketHelpers.js';
@@ -194,10 +196,16 @@ export function registerMapEvents(io: Server, socket: Socket): void {
     await pool.query('UPDATE tokens SET vision_overrides = $1 WHERE id = $2', [blob, tokenId]);
     token.visionOverrides = cleanOverrides ?? undefined;
 
-    io.to(ctx.room.sessionId).emit('map:token-updated', {
-      tokenId,
-      changes: { visionOverrides: cleanOverrides ?? undefined },
-    });
+    // Hidden-token metadata must follow the same recipient rules as
+    // token move/update. Otherwise a DM changing senses on a hidden NPC
+    // leaks that token id and vision payload to every player socket.
+    for (const sid of mapRecipientsForToken(ctx.room, token.mapId, token.visible !== false)) {
+      io.to(sid).emit('map:token-updated', {
+        tokenId,
+        changes: { visionOverrides: cleanOverrides ?? undefined },
+        mapId: token.mapId,
+      });
+    }
   }));
 
   socket.on('map:ping', safeHandler(socket, async (data) => {

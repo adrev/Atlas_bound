@@ -13,6 +13,7 @@
  * changes to shipped handlers.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import type { Token } from '@dnd-vtt/shared';
 
 const { mockQuery } = vi.hoisted(() => ({ mockQuery: vi.fn() }));
 vi.mock('../db/connection.js', () => ({ default: { query: mockQuery } }));
@@ -50,6 +51,30 @@ function seedRoom(): void {
   room.gameMode = 'free-roam';
   addPlayerToRoom(SESSION, { userId: 'dm-user', displayName: 'DM', socketId: 'dm-sock', role: 'dm', characterId: null });
   addPlayerToRoom(SESSION, { userId: 'player-user', displayName: 'Pip', socketId: 'player-sock', role: 'player', characterId: null });
+}
+
+function token(id: string, overrides: Partial<Token> = {}): Token {
+  return {
+    id,
+    mapId: 'map-1',
+    characterId: null,
+    name: id,
+    x: 0,
+    y: 0,
+    size: 1,
+    imageUrl: null,
+    color: '#000000',
+    layer: 'token',
+    visible: true,
+    hasLight: false,
+    lightRadius: 0,
+    lightDimRadius: 0,
+    lightColor: '#ffffff',
+    conditions: [],
+    ownerUserId: null,
+    createdAt: new Date().toISOString(),
+    ...overrides,
+  };
 }
 
 function channelsFor(emissions: Emission[], event: string): string[] {
@@ -144,5 +169,35 @@ describe('map:zone scoping (DM-only data)', () => {
     const channels = channelsFor(emissions, 'map:zones-updated');
     expect(channels).toContain('dm-sock');
     expect(channels).not.toContain('player-sock');
+  });
+});
+
+describe('token:update-vision-overrides scoping', () => {
+  it('does not leak hidden-token vision changes to players', async () => {
+    seedRoom();
+    getAllRooms().get(SESSION)!.tokens.set('hidden-npc', token('hidden-npc', { visible: false }));
+    const { io, socket, handlers, emissions } = makeHarness('dm-sock', 'dm-user');
+    registerMapEvents(io, socket);
+
+    await handlers['token:update-vision-overrides']!({
+      tokenId: 'hidden-npc',
+      visionOverrides: { darkvision: 60 },
+    });
+
+    expect(channelsFor(emissions, 'map:token-updated')).toEqual(['dm-sock']);
+  });
+
+  it('delivers visible-token vision changes to every socket on the map', async () => {
+    seedRoom();
+    getAllRooms().get(SESSION)!.tokens.set('visible-npc', token('visible-npc', { visible: true }));
+    const { io, socket, handlers, emissions } = makeHarness('dm-sock', 'dm-user');
+    registerMapEvents(io, socket);
+
+    await handlers['token:update-vision-overrides']!({
+      tokenId: 'visible-npc',
+      visionOverrides: { darkvision: 60 },
+    });
+
+    expect(channelsFor(emissions, 'map:token-updated')).toEqual(['dm-sock', 'player-sock']);
   });
 });
