@@ -15,6 +15,34 @@ function slugify(name: string): string {
   return 'custom-' + name.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '').slice(0, 80) + '-' + uuidv4().slice(0, 6);
 }
 
+// Map Postgres error codes to user-actionable HTTP responses; log the
+// underlying error so a generic 500 doesn't blind us during debugging.
+function handleDbError(err: unknown, res: Response, defaultMsg: string): void {
+  const pgErr = err as { code?: string; constraint?: string; message?: string; detail?: string };
+  console.error(`[customContent] ${defaultMsg}:`, {
+    code: pgErr?.code,
+    constraint: pgErr?.constraint,
+    message: pgErr?.message,
+    detail: pgErr?.detail,
+  });
+  switch (pgErr?.code) {
+    case '23505': // unique_violation
+      res.status(409).json({ error: 'A record with these details already exists' });
+      return;
+    case '23503': // foreign_key_violation
+      res.status(400).json({ error: 'Referenced session or resource does not exist' });
+      return;
+    case '23502': // not_null_violation
+      res.status(400).json({ error: 'A required field is missing' });
+      return;
+    case '22P02': // invalid_text_representation
+      res.status(400).json({ error: 'Invalid input format' });
+      return;
+    default:
+      res.status(500).json({ error: defaultMsg });
+  }
+}
+
 // ============================================================
 // Custom Monsters
 // ============================================================
@@ -22,7 +50,7 @@ function slugify(name: string): string {
 router.post('/monsters', async (req: Request, res: Response) => {
   const userId = getAuthUserId(req);
   const parsed = createCustomMonsterSchema.safeParse(req.body);
-  if (!parsed.success) { res.status(400).json({ error: parsed.error.errors }); return; }
+  if (!parsed.success) { res.status(400).json({ error: parsed.error.issues }); return; }
   const { sessionId, name, size, type, alignment, armorClass, hitPoints, hitDice,
     speed, abilityScores, challengeRating, crNumeric, actions, specialAbilities,
     legendaryActions, description, imageUrl, senses, languages, damageResistances,
@@ -49,8 +77,8 @@ router.post('/monsters', async (req: Request, res: Response) => {
       imageUrl ?? null,
     ]);
     res.json({ slug, name, source: 'Custom' });
-  } catch (_err) {
-    res.status(500).json({ error: 'Failed to create monster' });
+  } catch (err) {
+    handleDbError(err, res, 'Failed to create monster');
   }
 });
 
@@ -78,7 +106,7 @@ router.put('/monsters/:slug', async (req: Request, res: Response) => {
   await assertSessionDM(existingRows[0].session_id, userId);
 
   const parsed = updateCustomMonsterSchema.safeParse(req.body);
-  if (!parsed.success) { res.status(400).json({ error: parsed.error.errors }); return; }
+  if (!parsed.success) { res.status(400).json({ error: parsed.error.issues }); return; }
   const { name, size, type, alignment, armorClass, hitPoints, hitDice,
     speed, abilityScores, challengeRating, crNumeric, actions, specialAbilities,
     legendaryActions, description, senses, languages, damageResistances,
@@ -145,7 +173,7 @@ function mapMonsterRow(row: Record<string, unknown>) {
 router.post('/spells', async (req: Request, res: Response) => {
   const userId = getAuthUserId(req);
   const parsed = createCustomSpellSchema.safeParse(req.body);
-  if (!parsed.success) { res.status(400).json({ error: parsed.error.errors }); return; }
+  if (!parsed.success) { res.status(400).json({ error: parsed.error.issues }); return; }
   const { sessionId, name, level, school, castingTime, range, components, duration,
     description, concentration, ritual, classes, imageUrl, higherLevels, damage,
     damageType, savingThrow, attackType, aoeType, aoeSize, halfOnSave, pushDistance,
@@ -171,8 +199,8 @@ router.post('/spells', async (req: Request, res: Response) => {
       appliesCondition ?? null, animationType ?? null, animationColor ?? null,
     ]);
     res.json({ slug, name, source: 'Custom' });
-  } catch (_err) {
-    res.status(500).json({ error: 'Failed to create spell' });
+  } catch (err) {
+    handleDbError(err, res, 'Failed to create spell');
   }
 });
 
@@ -200,7 +228,7 @@ router.put('/spells/:slug', async (req: Request, res: Response) => {
   await assertSessionDM(existingRows[0].session_id, userId);
 
   const parsed = updateCustomSpellSchema.safeParse(req.body);
-  if (!parsed.success) { res.status(400).json({ error: parsed.error.errors }); return; }
+  if (!parsed.success) { res.status(400).json({ error: parsed.error.issues }); return; }
   const { name, level, school, castingTime, range, components, duration,
     description, higherLevels, concentration, ritual, classes, imageUrl } = parsed.data;
 
@@ -258,7 +286,7 @@ function mapSpellRow(row: Record<string, unknown>) {
 router.post('/items', async (req: Request, res: Response) => {
   const userId = getAuthUserId(req);
   const parsed = createCustomItemSchema.safeParse(req.body);
-  if (!parsed.success) { res.status(400).json({ error: parsed.error.errors }); return; }
+  if (!parsed.success) { res.status(400).json({ error: parsed.error.issues }); return; }
   const { sessionId, name, type, rarity, requiresAttunement, description,
     weight, valueGp, damage, damageType, properties, imageUrl, range, ac,
     acType, magicBonus } = parsed.data;
@@ -278,8 +306,8 @@ router.post('/items', async (req: Request, res: Response) => {
       range ?? '', ac ?? 0, acType ?? '', magicBonus ?? 0,
     ]);
     res.json({ id, name, source: 'Custom' });
-  } catch (_err) {
-    res.status(500).json({ error: 'Failed to create item' });
+  } catch (err) {
+    handleDbError(err, res, 'Failed to create item');
   }
 });
 
@@ -307,7 +335,7 @@ router.put('/items/:id', async (req: Request, res: Response) => {
   await assertSessionDM(existingRows[0].session_id, userId);
 
   const parsed = updateCustomItemSchema.safeParse(req.body);
-  if (!parsed.success) { res.status(400).json({ error: parsed.error.errors }); return; }
+  if (!parsed.success) { res.status(400).json({ error: parsed.error.issues }); return; }
   const { name, type, rarity, description, weight, valueGp, damage, damageType, properties,
     requiresAttunement, imageUrl, range, ac, acType, magicBonus } = parsed.data;
 

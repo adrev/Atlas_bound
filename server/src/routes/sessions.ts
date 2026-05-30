@@ -614,10 +614,25 @@ router.patch('/:id', async (req: Request, res: Response) => {
 // ---- Bans -----------------------------------------------------------------
 
 // GET /api/sessions/:id/bans  (member-only)
+// Capped at `limit` per request (default 100, max 500) with `offset` for
+// pagination. Realistic sessions have a handful of bans, but the cap keeps
+// a pathological case from blowing past response-size limits.
 router.get('/:id/bans', async (req: Request, res: Response) => {
   const userId = getAuthUserId(req);
   const sessionId = String(req.params.id);
   await assertSessionMember(sessionId, userId);
+
+  const rawLimit = Number.parseInt(String(req.query.limit ?? '100'), 10);
+  const limit = Number.isFinite(rawLimit) ? Math.min(Math.max(rawLimit, 1), 500) : 100;
+  const rawOffset = Number.parseInt(String(req.query.offset ?? '0'), 10);
+  const offset = Number.isFinite(rawOffset) ? Math.max(rawOffset, 0) : 0;
+
+  const { rows: countRows } = await pool.query(
+    'SELECT COUNT(*)::int AS total FROM session_bans WHERE session_id = $1',
+    [sessionId],
+  );
+  const total = countRows[0]?.total ?? 0;
+
   const { rows } = await pool.query(`
     SELECT b.user_id, b.banned_by, b.banned_at, b.reason,
            u.display_name, u.avatar_url,
@@ -627,7 +642,10 @@ router.get('/:id/bans', async (req: Request, res: Response) => {
     LEFT JOIN users bu ON bu.id = b.banned_by
     WHERE b.session_id = $1
     ORDER BY b.banned_at DESC
-  `, [sessionId]);
+    LIMIT $2 OFFSET $3
+  `, [sessionId, limit, offset]);
+
+  res.setHeader('X-Total-Count', String(total));
   res.json(rows.map(r => ({
     userId: r.user_id,
     displayName: r.display_name,
@@ -989,6 +1007,25 @@ router.get('/:id/state', async (req: Request, res: Response) => {
   const viewingMapId = isDM
     ? (room.dmViewingMap.get(userId) ?? room.playerMapId ?? room.currentMapId)
     : room.playerMapId;
+
+  // Conditional GET — if nothing relevant has changed since the client
+  // last saw a snapshot, return 304 and skip the expensive character
+  // SQL + filtering below. The ETag basis covers everything that varies
+  // the response body (excluding `serverTime`, which we want to
+  // intentionally exclude so clock-skew-only changes don't bust cache).
+  //
+  // The 1-minute bucket is a guardrail: if a broadcast slips through
+  // unwrapped (see the comment above this route) the cursor doesn't
+  // advance, so without the bucket we'd serve stale 304s forever. With
+  // it, the worst case is a 60 s lag before the poll fetches fresh state
+  // — still bounded, still self-healing.
+  const minuteBucket = Math.floor(Date.now() / 60_000);
+  const etag = `W/"v1-${userId}-${isDM ? 'dm' : 'pl'}-${viewingMapId ?? 'none'}-${room.nextEventId}-${minuteBucket}"`;
+  if (req.headers['if-none-match'] === etag) {
+    res.status(304).end();
+    return;
+  }
+  res.setHeader('ETag', etag);
   const allTokens = Array.from(room.tokens.values())
     .filter((t) => t.mapId === viewingMapId);
   const visibleTokens = isDM

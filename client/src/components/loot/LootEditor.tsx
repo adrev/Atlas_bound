@@ -5,6 +5,7 @@ import { useMapStore } from '../../stores/useMapStore';
 import { emitTokenAdd, emitSystemMessage, emitCharacterUpdate } from '../../socket/emitters';
 import { getItemIconUrl, getItemImageUrl, getCreatureIconUrl, getCreatureImageUrl } from '../../utils/compendiumIcons';
 import { showInfo } from '../ui';
+import { useFocusTrap } from '../../hooks/useFocusTrap';
 
 const RARITY_COLORS: Record<string, string> = {
   common: '#9d9d9d', uncommon: '#1eff00', rare: '#0070dd',
@@ -50,6 +51,10 @@ interface LootEditorProps {
 }
 
 export function LootEditor({ characterId, tokenName, onClose, canEdit = true }: LootEditorProps) {
+  // ESC + focus-trap. No-ops if there's no `onClose` (then the editor
+  // is embedded inline rather than as a modal).
+  const safeOnClose = useCallback(() => { onClose?.(); }, [onClose]);
+  const dialogRef = useFocusTrap<HTMLDivElement>(!!onClose, safeOnClose);
   const [loot, setLoot] = useState<LootEntry[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
@@ -361,10 +366,17 @@ export function LootEditor({ characterId, tokenName, onClose, canEdit = true }: 
   return (
     <div style={S.overlay}>
       {/* Backdrop */}
-      <div onClick={onClose} style={S.backdrop} />
+      <div onClick={onClose} style={S.backdrop} aria-hidden="true" />
 
       {/* Slide-in panel */}
-      <div style={S.panel}>
+      <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label={tokenName ? `Edit loot: ${tokenName}` : 'Edit loot'}
+        tabIndex={-1}
+        style={{ ...S.panel, outline: 'none' }}
+      >
         {/* Header */}
         <div style={S.header}>
           <div style={S.headerIcon}>
@@ -380,7 +392,7 @@ export function LootEditor({ characterId, tokenName, onClose, canEdit = true }: 
           </div>
           <div style={S.lootCount}>{loot.reduce((s, e) => s + e.quantity, 0)} items</div>
           {onClose && (
-            <button onClick={onClose} style={S.closeBtn}>&times;</button>
+            <button onClick={onClose} aria-label="Close loot editor" style={S.closeBtn}>&times;</button>
           )}
         </div>
 

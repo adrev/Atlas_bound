@@ -1,6 +1,7 @@
 import { useCallback } from 'react';
 import { QuickActions } from '../quickactions/QuickActions';
 import { DiceTray } from '../dice/DiceTray';
+import { ErrorBoundary } from '../ErrorBoundary';
 import { useCharacterStore } from '../../stores/useCharacterStore';
 import { useSessionStore } from '../../stores/useSessionStore';
 import { emitCharacterUpdate } from '../../socket/emitters';
@@ -55,7 +56,9 @@ export function BottomBar() {
       )}
       <div aria-hidden style={styles.divider} />
       <div style={styles.diceSection}>
-        <DiceTray />
+        <ErrorBoundary label="Dice tray">
+          <DiceTray />
+        </ErrorBoundary>
       </div>
     </div>
   );

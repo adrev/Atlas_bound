@@ -6,6 +6,7 @@ import { useDicePresetStore } from '../../stores/useDicePresetStore';
 import { useSessionStore } from '../../stores/useSessionStore';
 import { useCharacterStore } from '../../stores/useCharacterStore';
 import { theme } from '../../styles/theme';
+import { useFocusTrap } from '../../hooks/useFocusTrap';
 
 /**
  * Dice Tray — rune-slab redesign.
@@ -303,13 +304,25 @@ function AdvancedDiceModal(props: AdvancedDiceModalProps) {
     customNotation, setCustomNotation, handleCustomRoll,
     advantage, setAdvantage, lastResult, rollHistory, onClose,
   } = props;
+  const dialogRef = useFocusTrap<HTMLDivElement>(true, onClose);
 
   return (
-    <div onClick={onClose} style={modalStyles.overlay}>
-      <div onClick={(e) => e.stopPropagation()} style={modalStyles.panel}>
+    <div
+      onClick={onClose}
+      style={modalStyles.overlay}
+    >
+      <div
+        ref={dialogRef}
+        onClick={(e) => e.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
+        aria-label="Advanced dice options"
+        tabIndex={-1}
+        style={{ ...modalStyles.panel, outline: 'none' }}
+      >
         <div style={modalStyles.header}>
           <span style={modalStyles.title}>Advanced Dice</span>
-          <button onClick={onClose} style={modalStyles.closeBtn} title="Close">
+          <button onClick={onClose} aria-label="Close advanced dice" style={modalStyles.closeBtn} title="Close">
             <X size={16} />
           </button>
         </div>
@@ -424,13 +437,22 @@ function PresetFormModal({
 }) {
   const [label, setLabel] = useState('');
   const [notation, setNotation] = useState('');
+  const dialogRef = useFocusTrap<HTMLDivElement>(true, onClose);
 
   return (
     <div onClick={onClose} style={modalStyles.overlay}>
-      <div onClick={(e) => e.stopPropagation()} style={modalStyles.panel}>
+      <div
+        ref={dialogRef}
+        onClick={(e) => e.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
+        aria-label="Add dice preset"
+        tabIndex={-1}
+        style={{ ...modalStyles.panel, outline: 'none' }}
+      >
         <div style={modalStyles.header}>
           <span style={modalStyles.title}>Add Preset</span>
-          <button onClick={onClose} style={modalStyles.closeBtn} title="Close">
+          <button onClick={onClose} aria-label="Close add preset" style={modalStyles.closeBtn} title="Close">
             <X size={16} />
           </button>
         </div>

@@ -381,13 +381,23 @@ export function SessionLobby() {
   const [joinRequiresPassword, setJoinRequiresPassword] = useState(false);
   const [joinHeroId, setJoinHeroId] = useState<string>('');
 
+  // ── Per-field "touched" state so inline errors only appear after the
+  //    user has actually interacted with the field — typing then
+  //    tabbing away should be the trigger, not the mount.
+  const [createNameTouched, setCreateNameTouched] = useState(false);
+  const [createPasswordTouched, setCreatePasswordTouched] = useState(false);
+  const [joinCodeTouched, setJoinCodeTouched] = useState(false);
+
   // Fetch state
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [myGames, setMyGames] = useState<ServerGame[]>([]);
-  const [myGamesLoading, setMyGamesLoading] = useState(false);
+  // Initial flag is `true`: the fetch fires on mount, so without this
+  // the first render briefly shows "No campaigns" before the skeleton
+  // appears — a visible blink that reads as broken.
+  const [myGamesLoading, setMyGamesLoading] = useState(true);
   const [myCharacters, setMyCharacters] = useState<MyCharacter[]>([]);
-  const [myCharsLoading, setMyCharsLoading] = useState(false);
+  const [myCharsLoading, setMyCharsLoading] = useState(true);
 
   // Filter tab state for My Campaigns: All / DMing / Playing
   const [gameFilter, setGameFilter] = useState<'all' | 'dm' | 'player'>('all');
@@ -610,6 +620,30 @@ export function SessionLobby() {
     return myGames;
   }, [myGames, gameFilter]);
 
+  // ── Inline field validation. Errors only surface AFTER the field
+  //    has been touched (blur) or after a failed submit — typing a few
+  //    characters of a name shouldn't immediately scream at the user.
+  //    Each `*Error` is null when valid or untouched, a string when
+  //    invalid and ready to display.
+  const createNameRaw = createName.trim();
+  const createNameError: string | null = createNameTouched
+    ? (createNameRaw.length === 0 ? 'Campaign name is required'
+      : createNameRaw.length < 2 ? 'Name must be at least 2 characters'
+      : createNameRaw.length > 60 ? 'Name must be 60 characters or fewer'
+      : null)
+    : null;
+  const createPasswordError: string | null = (createVisibility === 'private' && createPasswordTouched)
+    ? (createPassword.length === 0 ? 'Password is required for private campaigns'
+      : createPassword.length < 4 ? 'Password must be at least 4 characters'
+      : null)
+    : null;
+  const joinCodeRaw = joinCode.trim();
+  const joinCodeError: string | null = joinCodeTouched
+    ? (joinCodeRaw.length === 0 ? 'Enter a room code'
+      : !/^[A-Z0-9]{3,10}$/.test(joinCodeRaw) ? 'Room codes are 3–10 letters and digits'
+      : null)
+    : null;
+
   const resumeGame = useMemo(() => {
     // Surface the most-recently-active campaign as the Resume CTA.
     // Prefer something explicitly Live, then fall back to the first
@@ -636,6 +670,8 @@ export function SessionLobby() {
     setCreateVisibility('public');
     setCreatePassword('');
     setStartMap('forest');
+    setCreateNameTouched(false);
+    setCreatePasswordTouched(false);
   };
 
   const resetJoinForm = () => {
@@ -643,6 +679,7 @@ export function SessionLobby() {
     setJoinPassword('');
     setJoinRequiresPassword(false);
     setJoinHeroId('');
+    setJoinCodeTouched(false);
   };
 
   const handleCreate = async () => {
@@ -837,7 +874,17 @@ export function SessionLobby() {
 
           <h3>Heroes</h3>
           {myCharsLoading && myCharacters.length === 0 ? (
-            <p className="rail-empty">Loading thy heroes…</p>
+            <div role="status" aria-busy="true" aria-label="Loading heroes">
+              {[0, 1, 2].map((i) => (
+                <div key={`hero-skel-${i}`} className="char-card-skel" aria-hidden="true">
+                  <div className="pp-skel skel" />
+                  <div className="info-skel">
+                    <div className="line1 skel" />
+                    <div className="line2 skel" />
+                  </div>
+                </div>
+              ))}
+            </div>
           ) : myCharacters.length === 0 ? (
             <p className="rail-empty">No heroes yet. Forge one to begin.</p>
           ) : (
@@ -994,7 +1041,17 @@ export function SessionLobby() {
           </div>
 
           {myGamesLoading && filteredGames.length === 0 ? (
-            <p className="empty-prose">Gathering thy campaigns…</p>
+            <div className="games-grid" role="status" aria-busy="true" aria-label="Loading campaigns">
+              {[0, 1, 2, 3].map((i) => (
+                <div key={`game-skel-${i}`} className="game-tile-skel" aria-hidden="true">
+                  <div className="banner-skel skel" />
+                  <div className="body-skel">
+                    <div className="name-skel skel" />
+                    <div className="meta-skel skel" />
+                  </div>
+                </div>
+              ))}
+            </div>
           ) : filteredGames.length === 0 ? (
             <p className="empty-prose">
               No campaigns {gameFilter === 'dm' ? 'you are running' : gameFilter === 'player' ? 'you are playing in' : 'yet'}.
@@ -1322,8 +1379,20 @@ export function SessionLobby() {
                   placeholder="e.g., The Fall of Candlekeep"
                   value={createName}
                   onChange={(e) => setCreateName(e.target.value)}
+                  onBlur={() => setCreateNameTouched(true)}
+                  aria-invalid={createNameError ? 'true' : undefined}
+                  aria-describedby={createNameError ? 'create-name-error' : undefined}
                   autoFocus
                 />
+                {createNameError && (
+                  <div
+                    id="create-name-error"
+                    role="alert"
+                    style={{ marginTop: 4, color: '#c53131', fontSize: 12 }}
+                  >
+                    {createNameError}
+                  </div>
+                )}
               </div>
               <div className="field">
                 <label>One-line Premise (optional)</label>
@@ -1362,7 +1431,19 @@ export function SessionLobby() {
                     placeholder="At least 4 characters"
                     value={createPassword}
                     onChange={(e) => setCreatePassword(e.target.value)}
+                    onBlur={() => setCreatePasswordTouched(true)}
+                    aria-invalid={createPasswordError ? 'true' : undefined}
+                    aria-describedby={createPasswordError ? 'create-password-error' : undefined}
                   />
+                  {createPasswordError && (
+                    <div
+                      id="create-password-error"
+                      role="alert"
+                      style={{ marginTop: 4, color: '#c53131', fontSize: 12 }}
+                    >
+                      {createPasswordError}
+                    </div>
+                  )}
                 </div>
               )}
               <div className="field" style={{ marginBottom: 0 }}>
@@ -1373,8 +1454,15 @@ export function SessionLobby() {
                       key={m}
                       className={`map-pick ${m}${startMap === m ? ' on' : ''}`}
                       onClick={() => setStartMap(m)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault();
+                          setStartMap(m);
+                        }
+                      }}
                       role="button"
                       tabIndex={0}
+                      aria-pressed={startMap === m}
                     >
                       {m.toUpperCase()}
                     </div>
@@ -1415,9 +1503,21 @@ export function SessionLobby() {
                 maxLength={10}
                 value={joinCode}
                 onChange={(e) => setJoinCode(e.target.value.toUpperCase())}
+                onBlur={() => setJoinCodeTouched(true)}
+                aria-invalid={joinCodeError ? 'true' : undefined}
+                aria-describedby={joinCodeError ? 'join-code-error' : undefined}
                 style={{ fontSize: 22, padding: 18 }}
                 autoFocus
               />
+              {joinCodeError && (
+                <div
+                  id="join-code-error"
+                  role="alert"
+                  style={{ marginTop: 6, color: '#c53131', fontSize: 12 }}
+                >
+                  {joinCodeError}
+                </div>
+              )}
               {joinRequiresPassword && (
                 <div className="field" style={{ marginTop: 14 }}>
                   <label>Password</label>
@@ -2424,4 +2524,51 @@ const LOBBY_CSS = `
 .kbrt-lobby .modal.banned { width:480px; border-color: rgba(201,66,58,.5); }
 .kbrt-lobby .bm-meta { font-family: var(--font-body); color: var(--text-muted); font-size:13px; text-align:center; margin:0 0 8px; }
 .kbrt-lobby .bm-reason { font-family: var(--font-script); font-style:italic; color: var(--text-primary); font-size:14px; text-align:center; margin:8px 0 0; }
+
+/* ===== SKELETON LOADERS =====
+   Shimmer placeholders for Heroes (rail) and My Campaigns (grid). The
+   shapes mirror the real cards so the layout doesn't shift when data
+   arrives; the shimmer is paused for users who prefer reduced motion. */
+.kbrt-lobby .skel {
+  background: linear-gradient(
+    90deg,
+    rgba(199,150,50,0.04) 25%,
+    rgba(199,150,50,0.12) 50%,
+    rgba(199,150,50,0.04) 75%
+  );
+  background-size: 200% 100%;
+  animation: kbrt-shimmer 1.6s linear infinite;
+  border-radius: 3px;
+}
+@keyframes kbrt-shimmer {
+  0%   { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .kbrt-lobby .skel { animation: none; opacity: 0.6; }
+}
+
+.kbrt-lobby .char-card-skel {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px;
+  border: 1px solid var(--border-line);
+  border-radius: 3px;
+  background: var(--bg-panel-raised);
+  margin-bottom: 8px;
+}
+.kbrt-lobby .char-card-skel .pp-skel { width: 36px; height: 36px; border-radius: 50%; flex-shrink: 0; }
+.kbrt-lobby .char-card-skel .info-skel { flex: 1; display: flex; flex-direction: column; gap: 5px; }
+.kbrt-lobby .char-card-skel .info-skel .line1 { height: 11px; width: 70%; }
+.kbrt-lobby .char-card-skel .info-skel .line2 { height: 9px; width: 90%; }
+
+.kbrt-lobby .game-tile-skel {
+  border: 1px solid var(--border-line);
+  border-radius: 3px;
+  background: var(--bg-panel-raised);
+  overflow: hidden;
+}
+.kbrt-lobby .game-tile-skel .banner-skel { height: 100px; border-radius: 0; }
+.kbrt-lobby .game-tile-skel .body-skel { padding: 10px; display: flex; flex-direction: column; gap: 6px; }
+.kbrt-lobby .game-tile-skel .body-skel .name-skel { height: 13px; width: 80%; }
+.kbrt-lobby .game-tile-skel .body-skel .meta-skel { height: 9px; width: 50%; }
 `;

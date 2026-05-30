@@ -26,6 +26,10 @@ let snapshotTimer: ReturnType<typeof setTimeout> | null = null;
 let lastSnapshotAt = 0;
 const MIN_INTERVAL_MS = 80;
 
+// ETag from the last 200 response. Sent as If-None-Match on the next
+// request so unchanged polls return 304 and we skip the full reconcile.
+let lastEtag: string | null = null;
+
 /**
  * Schedule an authoritative state resync from the server. Safe to
  * call from anywhere — event listeners, UI handlers, imperative
@@ -77,11 +81,20 @@ export async function pullStateSnapshot(): Promise<{ ok: boolean; applied: boole
   if (!sessionId) return { ok: false, applied: false };
 
   try {
+    const headers: Record<string, string> = {};
+    if (lastEtag) headers['If-None-Match'] = lastEtag;
     const resp = await fetch(
       `/api/sessions/${sessionId}/state`,
-      { credentials: 'include' },
+      { credentials: 'include', headers },
     );
+
+    // Server says nothing changed since our last poll — keep our cached
+    // state, save a JSON parse + full reconcile pass.
+    if (resp.status === 304) return { ok: true, applied: false };
+
     if (!resp.ok) return { ok: false, applied: false };
+    const newEtag = resp.headers.get('ETag');
+    if (newEtag) lastEtag = newEtag;
 
     const snap = (await resp.json()) as {
       tokens: Token[];

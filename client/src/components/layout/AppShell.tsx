@@ -10,6 +10,7 @@ import { useMapStore } from '../../stores/useMapStore';
 import { useCharacterStore } from '../../stores/useCharacterStore';
 import { useCombatStore } from '../../stores/useCombatStore';
 import { disconnectSocket } from '../../socket/client';
+import { ErrorBoundary } from '../ErrorBoundary';
 import { BattleMap } from '../canvas/BattleMap';
 import { MapTransition } from '../canvas/MapTransition';
 import { PreviewModeBanner } from '../dm/PreviewModeBanner';
@@ -486,7 +487,9 @@ export function AppShell() {
         <div style={{ flex: 1, overflow: 'hidden', minHeight: 0, position: 'relative' }}>
           {mobileTab === 'map' && (
             <div style={styles.canvasArea}>
-              <BattleMap />
+              <ErrorBoundary label="Battle map">
+                <BattleMap />
+              </ErrorBoundary>
               <MapTransition />
               <PreviewModeBanner />
             </div>
@@ -494,7 +497,9 @@ export function AppShell() {
           {mobileTab === 'character' && (
             <div style={styles.mobilePanel}>
               {myTokenId ? (
-                <TokenActionPanel embedded embeddedTokenId={myTokenId} />
+                <ErrorBoundary label="Character panel">
+                  <TokenActionPanel embedded embeddedTokenId={myTokenId} />
+                </ErrorBoundary>
               ) : myCharacter ? (
                 <div style={styles.mobileCharEmpty}>
                   <p style={{ color: theme.text.secondary, fontSize: 14, margin: 0 }}>
@@ -517,7 +522,9 @@ export function AppShell() {
           )}
           {mobileTab === 'dice' && (
             <div style={styles.mobileDicePanel}>
-              <DiceTray />
+              <ErrorBoundary label="Dice tray">
+                <DiceTray />
+              </ErrorBoundary>
             </div>
           )}
         </div>
@@ -740,7 +747,9 @@ export function AppShell() {
       <div style={styles.main}>
         {/* Canvas area */}
         <div style={styles.canvasArea}>
-          <BattleMap />
+          <ErrorBoundary label="Battle map">
+            <BattleMap />
+          </ErrorBoundary>
           <MapTransition />
           <PreviewModeBanner />
         </div>

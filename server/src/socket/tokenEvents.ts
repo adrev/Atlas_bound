@@ -42,11 +42,18 @@ export function registerTokenEvents(io: Server, socket: Socket): void {
       token = rowToToken(row);
     }
 
-    if (ctx.room.gameMode === 'combat' && ctx.player.role !== 'dm') {
-      if (token.ownerUserId !== ctx.player.userId) return;
-    }
-    if (ctx.room.gameMode === 'free-roam' && ctx.player.role !== 'dm') {
-      if (token.ownerUserId !== ctx.player.userId) return;
+    // ── Ownership / auth check ──────────────────────────────────────
+    // Non-DM players can only move tokens they own. A silent return
+    // here (the original behaviour) leaves the client stuck with an
+    // optimistically-moved token until the next 15 s snapshot — the
+    // user thinks the move worked. Echo the authoritative position
+    // back so the client rubber-bands instantly.
+    const isOwnerOrDM = ctx.player.role === 'dm' || token.ownerUserId === ctx.player.userId;
+    if (!isOwnerOrDM) {
+      io.to(socket.id).emit('map:token-moved', {
+        tokenId, x: token.x, y: token.y, mapId: token.mapId,
+      });
+      return;
     }
 
     const oldX = token.x;

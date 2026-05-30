@@ -14,6 +14,7 @@ import { useMapStore } from '../../stores/useMapStore';
 import { useChatStore } from '../../stores/useChatStore';
 import { InitiativeTracker } from '../combat/InitiativeTracker';
 import { TokenActionPanel } from '../canvas/TokenActionPanel';
+import { ErrorBoundary } from '../ErrorBoundary';
 import { CharacterImport } from '../character/CharacterImport';
 import { useCharacterStore } from '../../stores/useCharacterStore';
 import { emitTokenAdd, emitCharacterUpdate, emitViewing } from '../../socket/emitters';
@@ -481,7 +482,9 @@ function HeroTab() {
   } else {
     body = (
       <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
-        <TokenActionPanel embedded embeddedTokenId={myTokenId} />
+        <ErrorBoundary label="Character panel">
+          <TokenActionPanel embedded embeddedTokenId={myTokenId} />
+        </ErrorBoundary>
       </div>
     );
   }

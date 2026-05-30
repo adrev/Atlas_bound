@@ -28,6 +28,7 @@ import { useCharacterStore } from '../../stores/useCharacterStore';
 import { performLongRest, performShortRest } from '../../utils/rest';
 import { isPrepareClass, maxPreparedSpells, countPreparedSpells } from '../../utils/prepared-spells';
 import { InfoTooltip } from '../ui/InfoTooltip';
+import { useFocusTrap } from '../../hooks/useFocusTrap';
 import { lookupWeaponProperty } from '../../utils/rules-text';
 import { theme } from '../../styles/theme';
 import { HPBar, askConfirm, showInfo } from '../ui';
@@ -615,16 +616,14 @@ export function CharacterSheetFull({ character, onClose, initialTab }: { charact
     if (e.target === e.currentTarget) onClose();
   }, [onClose]);
 
-  /* Close on Escape */
-  const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
-    if (e.key === 'Escape') onClose();
-  }, [onClose]);
+  // Focus-trap + Escape + restore-on-close. Replaces the prior manual
+  // onKeyDown handler (which only fired when the wrapper div itself
+  // had focus — easy to miss once focus moves to an inner input).
+  const dialogRef = useFocusTrap<HTMLDivElement>(true, onClose);
 
   return (
     <div
       onClick={handleBackdropClick}
-      onKeyDown={handleKeyDown}
-      tabIndex={-1}
       style={{
         position: 'fixed', inset: 0, zIndex: 9999,
         background: 'rgba(0,0,0,0.75)', display: 'flex',
@@ -639,17 +638,26 @@ export function CharacterSheetFull({ character, onClose, initialTab }: { charact
           vertically rather than clipping content — narrow windows
           (laptop, embedded iframe) get a scrollable sheet instead
           of cut-off columns. */}
-      <div style={{
-        width: '95vw', maxWidth: 1100, height: '95vh', maxHeight: '95vh',
-        background: C.bgDeep, borderRadius: 8,
-        border: `1px solid ${C.border}`,
-        boxShadow: '0 8px 40px rgba(0,0,0,0.6)',
-        display: 'flex', flexDirection: 'column',
-        overflow: 'hidden', position: 'relative',
-      }}>
+      <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label={`Character sheet: ${character.name}`}
+        tabIndex={-1}
+        style={{
+          width: '95vw', maxWidth: 1100, height: '95vh', maxHeight: '95vh',
+          background: C.bgDeep, borderRadius: 8,
+          border: `1px solid ${C.border}`,
+          boxShadow: '0 8px 40px rgba(0,0,0,0.6)',
+          display: 'flex', flexDirection: 'column',
+          overflow: 'hidden', position: 'relative',
+          outline: 'none',
+        }}
+      >
         {/* Close button */}
         <button
           onClick={onClose}
+          aria-label="Close character sheet"
           style={{
             position: 'absolute', top: 8, right: 12, zIndex: 10,
             background: 'transparent', border: 'none',
@@ -2337,15 +2345,15 @@ function InventoryTab({
                   // Rewrite to the GCS CDN URL for production compatibility.
                   if (url.startsWith('/uploads/items/')) {
                     const filename = url.replace('/uploads/items/', '');
-                    return `https://storage.googleapis.com/atlas-bound-data/items/${filename}`;
+                    return `https://storage.googleapis.com/atlas-bound-data-personal/items/${filename}`;
                   }
                   if (url.startsWith('/uploads/spells/')) {
                     const filename = url.replace('/uploads/spells/', '');
-                    return `https://storage.googleapis.com/atlas-bound-data/spells/${filename}`;
+                    return `https://storage.googleapis.com/atlas-bound-data-personal/spells/${filename}`;
                   }
                   // Bare filename without path prefix
                   if (!url.startsWith('http') && !url.startsWith('/') && !url.startsWith('data:')) {
-                    return `https://storage.googleapis.com/atlas-bound-data/items/${url}`;
+                    return `https://storage.googleapis.com/atlas-bound-data-personal/items/${url}`;
                   }
                   return url;
                 })()}
