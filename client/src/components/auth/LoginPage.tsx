@@ -43,7 +43,7 @@ export function LoginPage() {
         <div style={styles.header}>
           <img
             src="/kbrt-logo.svg"
-            alt="KBRT.AI"
+            alt="Atlas Bound"
             style={{ width: 220, height: 220, marginBottom: 4 }}
           />
           <div style={styles.divider} />
@@ -144,7 +144,7 @@ export function LoginPage() {
         </div>
 
         <p style={styles.footer}>
-          KBRT.AI · Your adventure awaits.
+          Atlas Bound · Your adventure awaits.
         </p>
       </div>
     </div>

@@ -765,9 +765,9 @@ export function SessionLobby() {
       {/* ============ TOP BAR ============ */}
       <div className="topbar">
         <div className="brand">
-          <div className="crest">K</div>
+          <div className="crest">A</div>
           <div className="wordmark">
-            KBRT<em>.AI</em>
+            Atlas<em> Bound</em>
           </div>
         </div>
         <div className="nav">
@@ -1172,7 +1172,7 @@ export function SessionLobby() {
           )}
 
           <p className="quill" style={{ margin: '36px 0 24px' }}>
-            KBRT.AI — Your adventure awaits.
+            Atlas Bound — Your adventure awaits.
           </p>
         </main>
 
