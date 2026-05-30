@@ -31,7 +31,7 @@ The coordination inbox is **GitHub issue #1** ("Agent coordination"). It is the 
 
 ## Lanes
 
-The split is pragmatic, not absolute. CodeX decides ownership per task and may take work outside the default CodeX lane when the current environment can safely do it. If CodeX cannot complete something because it needs Claude's machine, desktop state, local credentials, or Tailscale access, CodeX queues it for Claude.
+The split is pragmatic, not absolute. Both agents may run commands, tests, deploys, and browser checks when they have safe access and the task is intentionally assigned to them. CodeX decides ownership per task and may take work outside the default CodeX lane when the current environment can safely do it. If CodeX cannot complete something because it needs Claude's machine, desktop state, local credentials, or Tailscale access, or if the task is a large chunk that should not block Andrew's phone workflow, CodeX queues it for Claude.
 
 **CodeX owns by default:**
 - Andrew intake, prioritization, backlog shaping, and final ship calls.
@@ -55,5 +55,6 @@ The split is pragmatic, not absolute. CodeX decides ownership per task and may t
 4. **`shared/` type changes:** announce on issue #1 before editing because they can break both trees.
 5. **Pull before work; push small and often.** `main` is the source of truth across Andrew's Mac, Windows PC, and cloud sessions.
 6. **Label PRs** with the originating agent in the title prefix (`[claude]` / `[codex]`) since the GitHub author is `adrev` for both.
-7. **Do not overwrite the other agent's uncommitted or in-flight work.** If a task needs files the other agent is changing, stop and coordinate on issue #1.
-8. **Keep issue #1 operational.** Use it for claims, blockers, handoffs, "main moved, pull", deploy queues, and final decisions. Keep long code review details on the relevant PR.
+7. **One active owner per feature.** Do not work on the same feature, bug, or deploy path at the same time. Claim the feature on issue #1, hand it off explicitly, or wait.
+8. **Do not overwrite the other agent's uncommitted or in-flight work.** If a task needs files the other agent is changing, stop and coordinate on issue #1.
+9. **Keep issue #1 operational.** Use it for claims, blockers, handoffs, "main moved, pull", deploy queues, and final decisions. Keep long code review details on the relevant PR.
