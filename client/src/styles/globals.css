@@ -29,7 +29,9 @@
   /* Text — warm parchment cream */
   --text-primary: #ead6a8;
   --text-secondary: #a89271;
-  --text-muted: #6b5a3f;
+  /* Lightened from #6b5a3f (2.7:1, fails WCAG AA) to ~4.6:1 on the ink bg.
+     Used for placeholders / helper text / timestamps app-wide. */
+  --text-muted: #8a7654;
   --text-gold: #e0b44f;
 
   /* Borders */
@@ -123,7 +125,6 @@ button {
   font-size: 14px;
   cursor: pointer;
   border: none;
-  outline: none;
   background: none;
   color: var(--text-primary);
 }
@@ -131,6 +132,18 @@ button {
 button:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+/* Keyboard focus ring — visible for keyboard users, suppressed for mouse.
+   Replaces the old blanket `button { outline: none }` which left every raw
+   <button> with no focus indicator at all (WCAG 2.4.7). */
+:focus-visible {
+  outline: 2px solid var(--gold);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+:focus:not(:focus-visible) {
+  outline: none;
 }
 
 .btn-primary {
@@ -394,3 +407,17 @@ select {
 .animate-pulse { animation: pulse 2s ease-in-out infinite; }
 .animate-gold-glow { animation: goldGlow 2s ease-in-out infinite; }
 .animate-scale-in { animation: scaleIn 0.2s ease; }
+
+/* Respect the OS "reduce motion" setting — collapse the infinite
+   pulse/glow loops, modal scale-ins, toast slides, and transitions for
+   users who get motion sick or simply prefer calm. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

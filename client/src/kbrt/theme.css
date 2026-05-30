@@ -32,7 +32,7 @@
   --border-line-strong: rgba(199, 150, 50, 0.55);
   --text-primary: #ead6a8;
   --text-secondary: #a89271;
-  --text-muted: #6b5a3f;
+  --text-muted: #8a7654;
   --accent: var(--gilt-400);
   --accent-hover: var(--gilt-300);
   --danger: var(--blood-400);
@@ -81,7 +81,7 @@
   --gold-bright: #f2d27a;
   --gold-bg: rgba(224, 180, 79, 0.12);
   --gold-border: rgba(224, 180, 79, 0.35);
-  --text-muted: #6b5a3f;
+  --text-muted: #8a7654;
   --text-gold: #e0b44f;
   --border: rgba(199, 150, 50, 0.3);
   --border-light: rgba(199, 150, 50, 0.55);
