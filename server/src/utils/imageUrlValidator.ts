@@ -10,7 +10,7 @@ import { z } from 'zod';
  *   - content injection from arbitrary external hosts
  */
 const ALLOWED_HOSTS = [
-  'storage.googleapis.com',        // our GCS bucket (atlas-bound-data)
+  'storage.googleapis.com',        // our GCS bucket (atlas-bound-data-personal)
   'cdn.discordapp.com',            // Discord avatars
   'lh3.googleusercontent.com',     // Google avatars
   'www.dndbeyond.com',             // D&D Beyond character portraits

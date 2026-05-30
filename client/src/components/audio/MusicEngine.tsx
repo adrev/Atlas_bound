@@ -77,7 +77,7 @@ export function MusicEngine() {
     if (!audioRef.current) {
       const audio = new Audio();
       audio.loop = false;
-      // crossOrigin not needed — GCS bucket has CORS configured for kbrt.ai
+      // crossOrigin not needed — GCS bucket has CORS configured for dnd.kbrt.ai
       audio.addEventListener('ended', stableHandleEnded);
       audio.addEventListener('error', stableHandleError);
       audioRef.current = audio;

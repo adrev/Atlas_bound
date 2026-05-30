@@ -66,7 +66,7 @@ load_env_file() {
 
 load_env_file .env
 
-IMAGE="us-central1-docker.pkg.dev/atlas-bound/cloud-run-source-deploy/atlas-bound:latest"
+IMAGE="us-central1-docker.pkg.dev/atlas-bound-personal/cloud-run-source-deploy/atlas-bound:latest"
 
 echo "Building Docker image locally..."
 docker build --platform linux/amd64 -t "$IMAGE" .
@@ -97,14 +97,14 @@ emit_env() {
 
 : > "$ENV_FILE"
 emit_env NODE_ENV               "production"
-emit_env BASE_URL                "https://kbrt.ai"
-emit_env CORS_ORIGINS            "https://kbrt.ai"
+emit_env BASE_URL                "https://dnd.kbrt.ai"
+emit_env CORS_ORIGINS            "https://dnd.kbrt.ai"
 emit_env DISCORD_CLIENT_ID       "${DISCORD_CLIENT_ID:-}"
 emit_env DISCORD_CLIENT_SECRET   "${DISCORD_CLIENT_SECRET:-}"
 emit_env GOOGLE_CLIENT_ID        "${GOOGLE_CLIENT_ID:-}"
 emit_env GOOGLE_CLIENT_SECRET    "${GOOGLE_CLIENT_SECRET:-}"
 emit_env PGPASSWORD              "${PGPASSWORD:-}"
-emit_env CLOUD_SQL_CONNECTION_NAME "atlas-bound:us-central1:atlas-bound-db"
+emit_env CLOUD_SQL_CONNECTION_NAME "atlas-bound-personal:us-central1:atlas-bound-db"
 # ADMIN_USER_IDS: comma-separated list of user ids/emails allowed to hit
 # admin-only endpoints (compendium sync/upload). Empty in production refuses
 # admin access — set this before deploying if admin endpoints are needed.
@@ -136,7 +136,7 @@ emit_env CHRONICLE_WORKER_TOKEN "${CHRONICLE_WORKER_TOKEN:-}"
 
 gcloud run deploy atlas-bound \
   --image "$IMAGE" \
-  --project atlas-bound \
+  --project atlas-bound-personal \
   --region us-central1 \
   --allow-unauthenticated \
   --port 8080 \
@@ -146,7 +146,7 @@ gcloud run deploy atlas-bound \
   --max-instances 3 \
   --session-affinity \
   --timeout 3600 \
-  --add-cloudsql-instances atlas-bound:us-central1:atlas-bound-db \
+  --add-cloudsql-instances atlas-bound-personal:us-central1:atlas-bound-db \
   --env-vars-file "$ENV_FILE"
 
-echo "Deployed! https://kbrt.ai"
+echo "Deployed! https://dnd.kbrt.ai"

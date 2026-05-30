@@ -18,7 +18,7 @@
  *      output (or { error, hint } on failure)
  *
  * Env vars required:
- *   ATLAS_BASE_URL                 e.g. https://kbrt.ai
+ *   ATLAS_BASE_URL                 e.g. https://dnd.kbrt.ai
  *   CHRONICLE_WORKER_TOKEN         shared secret, must match Cloud Run
  *   OLLAMA_URL                     default http://127.0.0.1:11434
  *   CHRONICLER_OLLAMA_MODEL        default gemma4:26b
@@ -28,7 +28,7 @@
  * `node worker.mjs` for ad-hoc testing.
  */
 
-const ATLAS_BASE_URL = process.env.ATLAS_BASE_URL || 'https://kbrt.ai';
+const ATLAS_BASE_URL = process.env.ATLAS_BASE_URL || 'https://dnd.kbrt.ai';
 const TOKEN = process.env.CHRONICLE_WORKER_TOKEN;
 const OLLAMA_URL = process.env.OLLAMA_URL || 'http://127.0.0.1:11434';
 const MODEL = process.env.CHRONICLER_OLLAMA_MODEL || 'gemma4:26b';

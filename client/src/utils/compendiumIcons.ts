@@ -6,7 +6,7 @@
  * (or fails to load), we fall back to an inline SVG colored initial.
  */
 
-const CDN = 'https://storage.googleapis.com/atlas-bound-data';
+const CDN = 'https://storage.googleapis.com/atlas-bound-data-personal';
 
 const CREATURE_TYPE_COLORS: Record<string, string> = {
   aberration: '#7b2d8b',
@@ -117,7 +117,7 @@ export function getItemIconUrl(name: string, type?: string): string {
 
 /**
  * BG3-style FLUX.2 portraits for Wiki entries — races (9), classes
- * (13), backgrounds (13). All live under the same `gs://atlas-bound-data/`
+ * (13), backgrounds (13). All live under the same `gs://atlas-bound-data-personal/`
  * bucket as the other compendium art, one directory per category.
  * Slug is the lowercase-hyphenated wiki slug (e.g. `half-orc`,
  * `folk-hero`). Fallback is an initial-letter SVG keyed on a

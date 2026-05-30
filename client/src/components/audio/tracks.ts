@@ -3,7 +3,7 @@
    Each theme has multiple tracks that shuffle automatically.
    ────────────────────────────────────────────────────────── */
 
-const CDN = 'https://storage.googleapis.com/atlas-bound-data/music';
+const CDN = 'https://storage.googleapis.com/atlas-bound-data-personal/music';
 
 const ROMAN = ['I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X'];
 

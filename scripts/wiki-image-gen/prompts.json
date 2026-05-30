@@ -1,5 +1,5 @@
 {
-  "_description": "FLUX.2-dev prompts for wiki detail images. BG3-style stylized fantasy art, 512x512. Generated PNGs go to gs://atlas-bound-data/<category>/<slug>.png to match the getXxxImageUrl helpers in client/src/utils/compendiumIcons.ts.",
+  "_description": "FLUX.2-dev prompts for wiki detail images. BG3-style stylized fantasy art, 512x512. Generated PNGs go to gs://atlas-bound-data-personal/<category>/<slug>.png to match the getXxxImageUrl helpers in client/src/utils/compendiumIcons.ts.",
   "_style_suffix": ", Baldur's Gate 3 style stylized fantasy concept art, dark moody lighting, rich colors, rim light, painterly, cinematic, 4k, highly detailed",
   "_negative_inline": "(avoid text, watermarks, signatures, logos, extra limbs, deformed anatomy, blurriness, lowres)",
   "backgrounds": [

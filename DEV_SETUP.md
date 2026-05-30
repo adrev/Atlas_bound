@@ -131,7 +131,7 @@ is identical on both. Set in `server/.env`:
 DATABASE_URL=postgresql://user:pass@HOST:5432/dbname
 ```
 For GCP Cloud SQL access, use the Cloud SQL Auth Proxy:
-- Mac: `brew install --cask google-cloud-sdk` then `gcloud sql connect atlas-bound-db`
+- Mac: `brew install --cask google-cloud-sdk` then `gcloud sql connect atlas-bound-db --project atlas-bound-personal`
 - Windows: Install gcloud from the link above, same command
 
 ### Option B — Local Postgres per machine
@@ -171,9 +171,9 @@ just type `ssh dgx-ts` on Windows too.
 ```
 
 Builds the Docker image, pushes to GCR, deploys to Cloud Run.
-**Requires:** gcloud authenticated as `andrew@seez.co` and project set to
-`atlas-bound`. Works from Mac and Windows (use Git Bash on Windows for
-the shell script, or port it to PowerShell).
+**Requires:** gcloud authenticated as `andrew@kabrit.dk` and project set to
+`atlas-bound-personal`. Works from Mac and Windows (use Git Bash on Windows
+for the shell script, or port it to PowerShell).
 
 ---
 
@@ -211,6 +211,6 @@ dnd-vtt/
 **Run only client:** `npm run dev --workspace=client`
 **Run only server:** `npm run dev --workspace=server`
 **Run a single test file:** `npx vitest run path/to/file.test.ts`
-**Check what's deployed:** `curl https://kbrt.ai/readyz`
-**See current revision:** `gcloud run revisions list --service atlas-bound --region us-central1 --limit 5`
-**Roll back:** `gcloud run services update-traffic atlas-bound --to-revisions=atlas-bound-XXXXX-xxx=100 --region us-central1`
+**Check what's deployed:** `curl https://dnd.kbrt.ai/readyz`
+**See current revision:** `gcloud run revisions list --service atlas-bound --project atlas-bound-personal --region us-central1 --limit 5`
+**Roll back:** `gcloud run services update-traffic atlas-bound --project atlas-bound-personal --to-revisions=atlas-bound-XXXXX-xxx=100 --region us-central1`

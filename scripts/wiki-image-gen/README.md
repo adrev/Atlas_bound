@@ -43,12 +43,12 @@ ssh dgx-ts 'cd ~/image-gen/batch && python3 batch_gen_wiki.py --force'
 
 ## Upload to GCS
 
-The client reads from `https://storage.googleapis.com/atlas-bound-data/<category>/<slug>.png`
+The client reads from `https://storage.googleapis.com/atlas-bound-data-personal/<category>/<slug>.png`
 via the `getXxxImageUrl` helpers in
 `client/src/utils/compendiumIcons.ts`. After the batch finishes:
 
 ```bash
-ssh dgx-ts 'gsutil -m cp -r ~/image-gen/out-wiki-flux2/* gs://atlas-bound-data/'
+ssh dgx-ts 'gsutil -m cp -r ~/image-gen/out-wiki-flux2/* gs://atlas-bound-data-personal/'
 ```
 
 Or mirror to the NAS first if you want a local copy:

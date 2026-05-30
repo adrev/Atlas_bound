@@ -9,7 +9,7 @@ Cloud Run.
 
 Cloud Run can't reach the DGX over Tailscale natively, so the polling
 direction is inverted: the DGX initiates outbound HTTPS to
-`kbrt.ai/api/internal/chronicle/jobs/claim`, processes whatever
+`dnd.kbrt.ai/api/internal/chronicle/jobs/claim`, processes whatever
 work is waiting, and posts results back. No tunnel, no firewall
 holes, no userspace Tailscale inside the container.
 
@@ -41,7 +41,7 @@ sudo chown andrew:andrew /home/andrew/atlas-chronicle-worker
 
 # 4. Drop in the env file
 cat > /home/andrew/atlas-chronicle-worker/worker.env <<'EOF'
-ATLAS_BASE_URL=https://kbrt.ai
+ATLAS_BASE_URL=https://dnd.kbrt.ai
 CHRONICLE_WORKER_TOKEN=<paste-the-shared-secret-here>
 OLLAMA_URL=http://127.0.0.1:11434
 CHRONICLER_OLLAMA_MODEL=gemma4:26b
@@ -64,7 +64,7 @@ sudo tail -f /var/log/atlas-chronicle-worker.log
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `ATLAS_BASE_URL` | `https://kbrt.ai` | Where the worker polls for jobs |
+| `ATLAS_BASE_URL` | `https://dnd.kbrt.ai` | Where the worker polls for jobs |
 | `CHRONICLE_WORKER_TOKEN` | *(required)* | Shared secret — must match the same env var on Cloud Run |
 | `OLLAMA_URL` | `http://127.0.0.1:11434` | Local Ollama daemon |
 | `CHRONICLER_OLLAMA_MODEL` | `gemma4:26b` | Pull a different variant (`e4b`, `31b`) by setting this |

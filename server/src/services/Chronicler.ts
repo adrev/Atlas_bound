@@ -26,7 +26,7 @@ const VERTEX_LOCATION = process.env.VERTEX_LOCATION || 'us-central1';
 
 /** Project id — defaults to the runtime project picked up from the
  *  Cloud Run metadata server, but can be overridden for local dev. */
-const VERTEX_PROJECT_ID = process.env.GCP_PROJECT_ID || 'atlas-bound';
+const VERTEX_PROJECT_ID = process.env.GCP_PROJECT_ID || 'atlas-bound-personal';
 
 /** Model id. Flash-Lite is the cheap tier; flip to "gemini-2.5-flash"
  *  for slightly better prose at ~2× the cost. */

@@ -7,7 +7,7 @@
  *
  * Images are hosted on the shared GCS bucket (same as tokens, music,
  * spells, items). To add a new map:
- *   1. Upload `{id}.png` to `gs://atlas-bound-data/maps/`
+ *   1. Upload `{id}.png` to `gs://atlas-bound-data-personal/maps/`
  *   2. Add an entry below with a clear story anchor in the description
  *   3. Pick a grid size that frames the art well at the default 70px/cell
  */
@@ -33,7 +33,7 @@ export interface PrebuiltMap {
   thumbnailFile: string;
 }
 
-const MAPS_CDN = 'https://storage.googleapis.com/atlas-bound-data/maps';
+const MAPS_CDN = 'https://storage.googleapis.com/atlas-bound-data-personal/maps';
 const MAPS_THUMB_CDN = `${MAPS_CDN}/thumbnails`;
 
 const map = (

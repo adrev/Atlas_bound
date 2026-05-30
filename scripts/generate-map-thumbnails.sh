@@ -9,15 +9,15 @@
 # 3.2 MB total — a 10x reduction.
 #
 # Run this once after uploading new map artwork. The script:
-#   1. Downloads each PNG from gs://atlas-bound-data/maps/ to a temp dir
+#   1. Downloads each PNG from gs://atlas-bound-data-personal/maps/ to a temp dir
 #   2. Generates a 480-pixel-wide JPEG (quality 80) using sips
-#   3. Uploads to gs://atlas-bound-data/maps/thumbnails/{id}.jpg
+#   3. Uploads to gs://atlas-bound-data-personal/maps/thumbnails/{id}.jpg
 #
 # Requires: macOS (sips), gsutil, curl
 
 set -euo pipefail
 
-BUCKET="gs://atlas-bound-data/maps"
+BUCKET="gs://atlas-bound-data-personal/maps"
 THUMBS_PREFIX="${BUCKET}/thumbnails"
 TMP_DIR="$(mktemp -d -t map-thumbs.XXXXXX)"
 trap 'rm -rf "${TMP_DIR}"' EXIT
@@ -48,4 +48,4 @@ echo "→ Uploading ${#SOURCES[@]} thumbnails to ${THUMBS_PREFIX}/"
 gsutil -m -q rsync -d -j jpg "${TMP_DIR}" "${THUMBS_PREFIX}/"
 
 echo "✓ Done. Verify at:"
-echo "  https://storage.googleapis.com/atlas-bound-data/maps/thumbnails/forest-fork.jpg"
+echo "  https://storage.googleapis.com/atlas-bound-data-personal/maps/thumbnails/forest-fork.jpg"
