@@ -14,6 +14,7 @@ import {
 } from '../utils/validation.js';
 import { safeHandler } from '../utils/socketHelpers.js';
 import { rowToToken } from '../utils/tokenMapper.js';
+import { tokenVisibleToPlayer } from '../utils/tokenVisibility.js';
 
 /**
  * All token-lifecycle socket events (add / move / remove / update).
@@ -53,9 +54,12 @@ export function registerTokenEvents(io: Server, socket: Socket): void {
     // coordinates.
     const isOwnerOrDM = ctx.player.role === 'dm' || token.ownerUserId === ctx.player.userId;
     if (!isOwnerOrDM) {
-      io.to(socket.id).emit('map:token-moved', {
-        tokenId, x: token.x, y: token.y, mapId: token.mapId,
-      });
+      const viewerMapId = resolveViewingMapId(ctx.room, ctx.player.userId, ctx.player.role);
+      if (viewerMapId === token.mapId && tokenVisibleToPlayer(token, ctx.player.userId)) {
+        io.to(socket.id).emit('map:token-moved', {
+          tokenId, x: token.x, y: token.y, mapId: token.mapId,
+        });
+      }
       return;
     }
 

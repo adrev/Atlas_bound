@@ -210,6 +210,37 @@ describe('token move ownership rollback (T1.2)', () => {
     expect(moved.some((e) => e.channelId === 'dm-sock')).toBe(false);
   });
 
+  it('does not leak hidden token coordinates through non-owner rollback', async () => {
+    seedRoom([tok('tHiddenNpc', {
+      ownerUserId: 'dm-user',
+      x: 35,
+      y: 35,
+      visible: false,
+    })]);
+    const { io, socket, handlers, emissions } = makeHarness('player-sock');
+    registerTokenEvents(io, socket);
+
+    await handlers['map:token-move']!({ tokenId: 'tHiddenNpc', x: 140, y: 140 });
+
+    expect(emissions.filter((e) => e.event === 'map:token-moved')).toHaveLength(0);
+  });
+
+  it('does not leak invisible non-owner coordinates through rollback', async () => {
+    seedRoom([tok('tInvisibleNpc', {
+      ownerUserId: 'dm-user',
+      x: 35,
+      y: 35,
+      visible: true,
+      conditions: ['invisible'],
+    })]);
+    const { io, socket, handlers, emissions } = makeHarness('player-sock');
+    registerTokenEvents(io, socket);
+
+    await handlers['map:token-move']!({ tokenId: 'tInvisibleNpc', x: 140, y: 140 });
+
+    expect(emissions.filter((e) => e.event === 'map:token-moved')).toHaveLength(0);
+  });
+
   it('lets the owning player move their own token (broadcast, no rollback)', async () => {
     seedRoom([tok('tMine', { ownerUserId: 'player-user', x: 0, y: 0, visible: true })]);
     const { io, socket, handlers, emissions } = makeHarness('player-sock');
