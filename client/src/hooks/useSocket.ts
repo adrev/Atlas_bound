@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { getSocket, disconnectSocket } from '../socket/client';
 import { registerListeners } from '../socket/listeners';
-import { emitJoinSession } from '../socket/emitters';
+import { emitJoinSession, emitHeartbeat } from '../socket/emitters';
 import { pullEventCursor, recordEventId, resetEventCursor } from '../socket/eventCursor';
 import { pullStateSnapshot } from '../socket/stateSnapshot';
 
@@ -55,6 +55,14 @@ export function useSocket(roomCode: string | undefined) {
     // missed `connect` doesn't leave us stuck outside the room.
     socket.io.on('reconnect', rejoin);
 
+    // If the periodic heartbeat finds the server no longer recognizes
+    // this socket (room GC'd, server restart, transport churn), it asks
+    // us to do a real rejoin — the only path that re-hydrates state.
+    const onHeartbeatAck = (ack?: { ok?: boolean; rejoinRequired?: boolean }) => {
+      if (ack?.rejoinRequired) rejoin();
+    };
+    socket.on('session:heartbeat-ack', onHeartbeatAck);
+
     // If we attach after the socket already connected (e.g. listener
     // cleanup + reattach from StrictMode double-render), fire once
     // immediately so we don't wait for the next event.
@@ -94,32 +102,33 @@ export function useSocket(roomCode: string | undefined) {
     window.addEventListener('online', onOnline);
 
     // Periodic keep-alive — three layers of self-heal every 5 s:
-    //   1. rejoin()          → refresh server's RoomPlayer record
+    //   1. heartbeat         → refresh socket→room membership cheaply
+    //                          (NOT a full session:join — see below)
     //   2. pullStateSnapshot → authoritative state reconciliation
     //                          (fixes drift regardless of which
     //                          broadcast path was used server-side)
     //   3. pullEventCursor   → replay any live-animation events we
     //                          missed (chat, spell animations)
     //
-    // Tightened from 15 s → 5 s so even a passive session
-    // (everyone AFK, no events triggering on-demand snapshots)
-    // reconciles well before a human can notice drift. Combined
-    // with the on-demand `triggerSnapshot()` calls wired into every
-    // user action (attack, damage, heal, inventory edit, spell,
-    // token move, combat state change, map / character load), the
-    // client is essentially always at most 150 ms behind the
-    // server's idea of the world.
+    // Previously layer 1 fired a full `session:join` every tick, which
+    // re-ran the entire server hydration path — state-sync, a
+    // `player-joined` broadcast to every other client, map-loaded,
+    // combat sync, chat-history re-send, character sync — several times
+    // a minute per client. That masked drift but was pure churn. Now it
+    // fires a lightweight `session:heartbeat` that only re-asserts
+    // membership; if the server has forgotten this socket it replies
+    // `rejoinRequired` and `onHeartbeatAck` upgrades to a real rejoin.
+    // Drift correction still rides on the snapshot + event cursor below,
+    // which already reconcile state regardless of broadcast path.
     //
-    // Bandwidth at 4 clients × 12 calls/min = 48 /min per session.
-    // Snapshot is ~5-30 KB. Below 5 s we'd want long-polling or
-    // SSE; this is the natural floor for plain HTTP polling.
-    //
-    // Previously 90 s → 30 s → 15 s → 5 s: each tightening traced
-    // to a user-reported sync symptom. 5 s is below the human
-    // notice threshold for "things are out of sync."
+    // When disconnected we skip the heartbeat and let `socket.connect()`
+    // fire the `connect` handler, which does the full rejoin/rehydrate.
     const keepAliveId = window.setInterval(() => {
-      if (!socket.connected) socket.connect();
-      rejoin();
+      if (!socket.connected) {
+        socket.connect();
+      } else {
+        emitHeartbeat(roomCode);
+      }
       void pullStateSnapshot();
       void pullEventCursor(socket);
     }, 5_000);
@@ -131,6 +140,7 @@ export function useSocket(roomCode: string | undefined) {
       }
       socket.off('connect', rejoin);
       socket.io.off('reconnect', rejoin);
+      socket.off('session:heartbeat-ack', onHeartbeatAck);
       socket.offAny(onAnyEvent);
       document.removeEventListener('visibilitychange', onVisibility);
       window.removeEventListener('online', onOnline);

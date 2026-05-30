@@ -19,6 +19,13 @@ export const sessionJoinSchema = z.object({
   roomCode: z.string().min(1).max(20),
 });
 
+// Lightweight keep-alive. Same payload as join, but the handler only
+// refreshes socket→room membership rather than re-running full join
+// hydration. Separate schema so the two can diverge later.
+export const sessionHeartbeatSchema = z.object({
+  roomCode: z.string().min(1).max(20),
+});
+
 export const sessionKickSchema = z.object({
   targetUserId: z.string().uuid(),
 });
