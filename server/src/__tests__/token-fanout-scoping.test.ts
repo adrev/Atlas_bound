@@ -67,8 +67,12 @@ function seedRoom(tokens: Token[]): void {
 }
 
 function movedChannels(emissions: Emission[]): string[] {
+  return eventChannels(emissions, 'map:token-moved');
+}
+
+function eventChannels(emissions: Emission[], event: string): string[] {
   return emissions
-    .filter((e) => e.event === 'map:token-moved')
+    .filter((e) => e.event === event)
     .map((e) => e.channelId)
     .sort();
 }
@@ -130,5 +134,60 @@ describe('token move fan-out scoping (98bd0a6)', () => {
     await handlers['map:token-move']!({ tokenId: 'tVis', x: 70, y: 70 });
 
     expect(movedChannels(emissions)).toEqual(['dm-sock', 'player-sock', 'player-sock-2']);
+  });
+
+  it('hides a hidden token add from player sockets — DM sockets only', async () => {
+    seedRoom([]);
+    const { io, socket, handlers, emissions } = makeHarness('dm-sock');
+    registerTokenEvents(io, socket);
+
+    await handlers['map:token-add']!({
+      mapId: 'map-1',
+      name: 'Hidden Stalker',
+      x: 70,
+      y: 70,
+      size: 1,
+      color: '#000000',
+      layer: 'token',
+      visible: false,
+      hasLight: false,
+      lightRadius: 0,
+      lightDimRadius: 0,
+      lightColor: '#ffffff',
+      conditions: [],
+    });
+
+    expect(eventChannels(emissions, 'map:token-added')).toEqual(['dm-sock']);
+  });
+
+  it('keeps hidden token updates DM-only when visibility does not change', async () => {
+    seedRoom([tok('tHidden', { visible: false })]);
+    const { io, socket, handlers, emissions } = makeHarness('dm-sock');
+    registerTokenEvents(io, socket);
+
+    await handlers['map:token-update']!({ tokenId: 'tHidden', changes: { color: '#111111' } });
+
+    expect(eventChannels(emissions, 'map:token-updated')).toEqual(['dm-sock']);
+  });
+
+  it('sends demote-to-hidden updates to players so clients can remove known tokens', async () => {
+    seedRoom([tok('tVis', { visible: true })]);
+    const { io, socket, handlers, emissions } = makeHarness('dm-sock');
+    registerTokenEvents(io, socket);
+
+    await handlers['map:token-update']!({ tokenId: 'tVis', changes: { visible: false } });
+
+    expect(eventChannels(emissions, 'map:token-updated')).toEqual(['dm-sock', 'player-sock']);
+  });
+
+  it('sends full token payloads to players when a hidden token becomes visible', async () => {
+    seedRoom([tok('tHidden', { visible: false })]);
+    const { io, socket, handlers, emissions } = makeHarness('dm-sock');
+    registerTokenEvents(io, socket);
+
+    await handlers['map:token-update']!({ tokenId: 'tHidden', changes: { visible: true } });
+
+    expect(eventChannels(emissions, 'map:token-updated')).toEqual(['dm-sock']);
+    expect(eventChannels(emissions, 'map:token-added')).toEqual(['player-sock']);
   });
 });
