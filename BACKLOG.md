@@ -22,7 +22,7 @@ specific file/line.
 | Priority | Work | Owner | Next action |
 |---|---|---|---|
 | P0 | Clean dirty working trees before new feature work | CodeX/Claude | ✅ Done on main via PR #8 and PR #9. Continue to start new work from clean `origin/main`; local checkouts may run `git clean -fd dev public` only after confirming no real untracked work |
-| P1 | PR #2 unverified Tier-1 fixes | Claude prepares sliced PRs; CodeX reviews/ships | Do not merge PR #2 wholesale while conflicted. T1.2 is done via PR #10; next slice is T1.7, then T1.6 after dedupe |
+| P1 | PR #2 unverified Tier-1 fixes | Claude prepares sliced PRs; CodeX reviews/ships | Do not merge PR #2 wholesale while conflicted. T1.2 and T1.7 are done; next backend-testable slice is T1.6 after dedupe |
 | P1 | OAuth + Chronicle migration verification | Claude | OAuth/Chronicle code landed in PR #8; verify Discord/Google login and Chronicle worker polling on the personal project |
 | P1 | Browser websocket QA | Andrew/Claude desktop, coordinated by CodeX | Run the remaining browser-only rows: player ribbon refresh, reconnect/background tabs, kick/ban stale sockets |
 | P2 | Server-side socket/combat QA tests | Claude | Add tests for combat/spell recipients, chat whisper/hidden-roll visibility, and music late-joiner state where feasible |
@@ -45,7 +45,7 @@ Each item below needs a verification pass. "Unit-testable" = I can pin it headle
 | T1.4 | Modal a11y: focus-trap + ESC + ARIA (CharacterSheetFull, DiceTray, LootEditor) | `useFocusTrap.ts` + 3 modals | browser (keyboard nav) |
 | T1.5 | On-blur form validation (ProfileModal, create/join session) | `ProfileModal.tsx`, `SessionLobby.tsx` | browser |
 | T1.6 | `/state` ETag (304) + `/bans` pagination | `server/.../sessions.ts`, `stateSnapshot.ts` | 🔶 unit-testable — **CodeX has since changed `/state` & sessions.ts; check for divergence** |
-| T1.7 | `customContent` validation 500→4xx + Zod `.errors`→`.issues` | `server/.../customContent.ts` | 🔶 unit-testable — **may conflict with CodeX edits** |
+| T1.7 | ✅ `customContent` validation 500→4xx + Zod `.errors`→`.issues` | `server/.../customContent.ts` | Merged in PR #11 with `handleDbError()` and SQLSTATE mapping tests |
 
 > The user explicitly flagged: "we locked a ton of bugs, don't know if we tested all of them." T1.1–T1.7 are exactly that set. **These should be addressed (merged + verified) before being trusted in prod.**
 
