@@ -8,6 +8,7 @@ import { UPLOAD_DIR } from '../config.js';
 import { getAuthUserId, assertSessionDM, assertSessionMember } from '../utils/authorization.js';
 import { validateAndSaveUpload } from './uploads.js';
 import { createCustomMonsterSchema, createCustomSpellSchema, createCustomItemSchema, updateCustomMonsterSchema, updateCustomSpellSchema, updateCustomItemSchema } from '../utils/validation.js';
+import { handleDbError } from '../utils/dbError.js';
 
 const router = Router();
 
@@ -22,7 +23,7 @@ function slugify(name: string): string {
 router.post('/monsters', async (req: Request, res: Response) => {
   const userId = getAuthUserId(req);
   const parsed = createCustomMonsterSchema.safeParse(req.body);
-  if (!parsed.success) { res.status(400).json({ error: parsed.error.errors }); return; }
+  if (!parsed.success) { res.status(400).json({ error: parsed.error.issues }); return; }
   const { sessionId, name, size, type, alignment, armorClass, hitPoints, hitDice,
     speed, abilityScores, challengeRating, crNumeric, actions, specialAbilities,
     legendaryActions, description, imageUrl, senses, languages, damageResistances,
@@ -49,8 +50,8 @@ router.post('/monsters', async (req: Request, res: Response) => {
       imageUrl ?? null,
     ]);
     res.json({ slug, name, source: 'Custom' });
-  } catch (_err) {
-    res.status(500).json({ error: 'Failed to create monster' });
+  } catch (err) {
+    handleDbError(err, res, 'Failed to create monster', 'customContent');
   }
 });
 
@@ -78,7 +79,7 @@ router.put('/monsters/:slug', async (req: Request, res: Response) => {
   await assertSessionDM(existingRows[0].session_id, userId);
 
   const parsed = updateCustomMonsterSchema.safeParse(req.body);
-  if (!parsed.success) { res.status(400).json({ error: parsed.error.errors }); return; }
+  if (!parsed.success) { res.status(400).json({ error: parsed.error.issues }); return; }
   const { name, size, type, alignment, armorClass, hitPoints, hitDice,
     speed, abilityScores, challengeRating, crNumeric, actions, specialAbilities,
     legendaryActions, description, senses, languages, damageResistances,
@@ -145,7 +146,7 @@ function mapMonsterRow(row: Record<string, unknown>) {
 router.post('/spells', async (req: Request, res: Response) => {
   const userId = getAuthUserId(req);
   const parsed = createCustomSpellSchema.safeParse(req.body);
-  if (!parsed.success) { res.status(400).json({ error: parsed.error.errors }); return; }
+  if (!parsed.success) { res.status(400).json({ error: parsed.error.issues }); return; }
   const { sessionId, name, level, school, castingTime, range, components, duration,
     description, concentration, ritual, classes, imageUrl, higherLevels, damage,
     damageType, savingThrow, attackType, aoeType, aoeSize, halfOnSave, pushDistance,
@@ -171,8 +172,8 @@ router.post('/spells', async (req: Request, res: Response) => {
       appliesCondition ?? null, animationType ?? null, animationColor ?? null,
     ]);
     res.json({ slug, name, source: 'Custom' });
-  } catch (_err) {
-    res.status(500).json({ error: 'Failed to create spell' });
+  } catch (err) {
+    handleDbError(err, res, 'Failed to create spell', 'customContent');
   }
 });
 
@@ -200,7 +201,7 @@ router.put('/spells/:slug', async (req: Request, res: Response) => {
   await assertSessionDM(existingRows[0].session_id, userId);
 
   const parsed = updateCustomSpellSchema.safeParse(req.body);
-  if (!parsed.success) { res.status(400).json({ error: parsed.error.errors }); return; }
+  if (!parsed.success) { res.status(400).json({ error: parsed.error.issues }); return; }
   const { name, level, school, castingTime, range, components, duration,
     description, higherLevels, concentration, ritual, classes, imageUrl } = parsed.data;
 
@@ -258,7 +259,7 @@ function mapSpellRow(row: Record<string, unknown>) {
 router.post('/items', async (req: Request, res: Response) => {
   const userId = getAuthUserId(req);
   const parsed = createCustomItemSchema.safeParse(req.body);
-  if (!parsed.success) { res.status(400).json({ error: parsed.error.errors }); return; }
+  if (!parsed.success) { res.status(400).json({ error: parsed.error.issues }); return; }
   const { sessionId, name, type, rarity, requiresAttunement, description,
     weight, valueGp, damage, damageType, properties, imageUrl, range, ac,
     acType, magicBonus } = parsed.data;
@@ -278,8 +279,8 @@ router.post('/items', async (req: Request, res: Response) => {
       range ?? '', ac ?? 0, acType ?? '', magicBonus ?? 0,
     ]);
     res.json({ id, name, source: 'Custom' });
-  } catch (_err) {
-    res.status(500).json({ error: 'Failed to create item' });
+  } catch (err) {
+    handleDbError(err, res, 'Failed to create item', 'customContent');
   }
 });
 
@@ -307,7 +308,7 @@ router.put('/items/:id', async (req: Request, res: Response) => {
   await assertSessionDM(existingRows[0].session_id, userId);
 
   const parsed = updateCustomItemSchema.safeParse(req.body);
-  if (!parsed.success) { res.status(400).json({ error: parsed.error.errors }); return; }
+  if (!parsed.success) { res.status(400).json({ error: parsed.error.issues }); return; }
   const { name, type, rarity, description, weight, valueGp, damage, damageType, properties,
     requiresAttunement, imageUrl, range, ac, acType, magicBonus } = parsed.data;
 
