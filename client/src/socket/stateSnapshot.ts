@@ -28,7 +28,12 @@ const MIN_INTERVAL_MS = 80;
 
 // ETag from the last 200 response, sent back as If-None-Match so the server
 // can answer 304 (unchanged) and we skip the JSON parse + full reconcile.
+// Scoped to the session it came from: navigating to a different session must
+// NOT send the previous session's ETag (the server now namespaces the ETag
+// by sessionId, but clearing it client-side also avoids a needless
+// round-trip + keeps the two in lockstep).
 let lastStateEtag: string | null = null;
+let lastStateEtagSessionId: string | null = null;
 
 /**
  * Schedule an authoritative state resync from the server. Safe to
@@ -80,6 +85,13 @@ export async function pullStateSnapshot(): Promise<{ ok: boolean; applied: boole
   const sessionId = useSessionStore.getState().sessionId;
   if (!sessionId) return { ok: false, applied: false };
 
+  // Drop a cached ETag that belongs to a different session — never send
+  // session A's validator while polling session B.
+  if (lastStateEtagSessionId !== sessionId) {
+    lastStateEtag = null;
+    lastStateEtagSessionId = sessionId;
+  }
+
   try {
     const headers: Record<string, string> = {};
     if (lastStateEtag) headers['If-None-Match'] = lastStateEtag;
@@ -94,7 +106,10 @@ export async function pullStateSnapshot(): Promise<{ ok: boolean; applied: boole
 
     if (!resp.ok) return { ok: false, applied: false };
     const newEtag = resp.headers.get('ETag');
-    if (newEtag) lastStateEtag = newEtag;
+    if (newEtag) {
+      lastStateEtag = newEtag;
+      lastStateEtagSessionId = sessionId;
+    }
 
     const snap = (await resp.json()) as {
       tokens: Token[];

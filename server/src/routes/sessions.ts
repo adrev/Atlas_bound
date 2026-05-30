@@ -998,7 +998,7 @@ router.get('/:id/state', async (req: Request, res: Response) => {
   // inputs (see stateSnapshotEtag); a coarse time bucket bounds staleness
   // for the legacy unwrapped-broadcast paths.
   const etag = stateSnapshotEtag({
-    userId, isDM, viewingMapId, nextEventId: room.nextEventId, now: Date.now(),
+    sessionId, userId, isDM, viewingMapId, nextEventId: room.nextEventId, now: Date.now(),
   });
   res.setHeader('ETag', etag);
   if (req.headers['if-none-match'] === etag) {
