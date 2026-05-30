@@ -8,6 +8,45 @@ const { mockQuery } = vi.hoisted(() => ({ mockQuery: vi.fn() }));
 vi.mock('../db/connection.js', () => ({
   default: { query: mockQuery, connect: vi.fn() },
 }));
+vi.mock('../services/DndBeyondService.js', () => ({
+  parseCharacterJSON: vi.fn(() => ({
+    name: 'Levelled Hero',
+    race: 'Human',
+    class: 'Fighter',
+    level: 4,
+    hitPoints: 30,
+    maxHitPoints: 30,
+    tempHitPoints: 0,
+    armorClass: 17,
+    speed: 30,
+    proficiencyBonus: 2,
+    abilityScores: { str: 16, dex: 12, con: 14, int: 10, wis: 10, cha: 10 },
+    savingThrows: ['str', 'con'],
+    skills: {},
+    spellSlots: { '1': { max: 3, used: 0 } },
+    spells: [],
+    features: [{ name: 'Second Wind', usesTotal: 1, usesRemaining: 1 }],
+    inventory: [],
+    deathSaves: { successes: 0, failures: 0 },
+    portraitUrl: null,
+    dndbeyondId: 'ddb-123',
+    background: {},
+    characteristics: {},
+    personality: {},
+    notes: {},
+    proficiencies: {},
+    senses: {},
+    defenses: {},
+    conditions: [],
+    currency: {},
+    extras: [],
+    spellcastingAbility: '',
+    spellAttackBonus: 0,
+    spellSaveDC: 10,
+    initiative: 1,
+    hitDice: [{ dieSize: 10, total: 4, used: 0 }],
+  })),
+}));
 
 beforeEach(() => {
   mockQuery.mockReset();
@@ -128,6 +167,89 @@ describe('proxy-image endpoint', () => {
     mockUpstream(new Response(payload, { status: 200, headers: { 'content-type': 'image/png' } }));
     const res = await callProxy('https://www.dndbeyond.com/ok.png');
     expect(res.status).toBe(200);
+  });
+});
+
+describe('DDB character sync endpoint', () => {
+  const originalFetch = globalThis.fetch;
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  async function callSync(characterId: string, userId = 'owner-1') {
+    const { default: express } = await import('express');
+    const dndbeyondRouter = (await import('../routes/dndbeyond.js')).default;
+    const app = express();
+    app.use(express.json());
+    app.use((req, _res, next) => { (req as any).user = { id: userId }; next(); });
+    app.use('/api/dndbeyond', dndbeyondRouter);
+
+    return new Promise<{ status: number; body: any }>((resolve, reject) => {
+      const server = app.listen(0, async () => {
+        try {
+          const addr = server.address();
+          if (!addr || typeof addr === 'string') throw new Error('no addr');
+          const resp = await originalFetch(
+            `http://127.0.0.1:${addr.port}/api/dndbeyond/sync/${characterId}`,
+            { method: 'POST' },
+          );
+          const text = await resp.text();
+          let body: any;
+          try { body = JSON.parse(text); } catch { body = text; }
+          resolve({ status: resp.status, body });
+        } catch (err) {
+          reject(err);
+        } finally {
+          server.close();
+        }
+      });
+    });
+  }
+
+  const existingRow = {
+    id: 'char-1',
+    user_id: 'owner-1',
+    dndbeyond_id: 'ddb-123',
+    hit_points: 22,
+    hit_dice: JSON.stringify([{ dieSize: 10, total: 3, used: 2 }]),
+    spell_slots: JSON.stringify({ '1': { max: 2, used: 1 } }),
+    features: JSON.stringify([{ name: 'Second Wind', usesTotal: 1, usesRemaining: 0 }]),
+  };
+
+  it('rejects DDB sync attempts from non-owners', async () => {
+    mockQuery.mockResolvedValueOnce({ rows: [{ ...existingRow, user_id: 'other-user' }] });
+
+    const res = await callSync('char-1', 'owner-1');
+
+    expect(res.status).toBe(403);
+    expect(res.body.error).toMatch(/owner/);
+    expect(globalThis.fetch).toBe(originalFetch);
+    expect(mockQuery).toHaveBeenCalledTimes(1);
+  });
+
+  it('uses the DDB merge helper so level-up sync refreshes totals while preserving usage', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }),
+    ) as unknown as typeof fetch;
+    mockQuery
+      .mockResolvedValueOnce({ rows: [existingRow] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [{ ...existingRow, level: 4, hit_dice: '[]' }] });
+
+    const res = await callSync('char-1', 'owner-1');
+
+    expect(res.status).toBe(200);
+    const updateParams = mockQuery.mock.calls[1][1] as unknown[];
+    const updateSql = mockQuery.mock.calls[1][0] as string;
+    expect(updateSql).toContain('hit_dice');
+    expect(updateSql).toContain('spell_slots');
+    expect(updateParams).toContain(JSON.stringify([{ dieSize: 10, total: 4, used: 2 }]));
+    expect(updateParams).toContain(JSON.stringify({ '1': { max: 3, used: 1 } }));
+    expect(updateParams).toContain(JSON.stringify([{ name: 'Second Wind', usesTotal: 1, usesRemaining: 0 }]));
   });
 });
 

@@ -39,6 +39,7 @@ import appleAuth from './auth/oauth/apple.js';
 import { requireAuth } from './auth/middleware.js';
 import { lucia } from './auth/lucia.js';
 import pool from './db/connection.js';
+import { canReadUploadedMapAsset } from './utils/uploadAuth.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -173,8 +174,9 @@ app.use('/uploads', async (req, res, next) => {
     return;
   }
 
-  // Maps: caller must be a member of a session that references the map
-  // file. Two distinct asset namespaces share this prefix:
+  // Maps: DMs can read every map asset in their session; players can
+  // only read the active player-ribbon map asset. Two distinct asset
+  // namespaces share this prefix:
   //   /uploads/maps/{file}                       — full-resolution map
   //   /uploads/maps/thumbnails/{file}            — 480-px JPEG thumbnail
   // Both check the maps table; the thumbnail variant matches against
@@ -185,14 +187,7 @@ app.use('/uploads', async (req, res, next) => {
     const url = `/uploads${reqPath}`;
     const isThumbnail = reqPath.startsWith('/maps/thumbnails/');
     const column = isThumbnail ? 'thumbnail_url' : 'image_url';
-    const { rows } = await pool.query(
-      `SELECT 1 FROM maps m
-       JOIN session_players sp ON sp.session_id = m.session_id
-       WHERE m.${column} = $1 AND sp.user_id = $2
-       LIMIT 1`,
-      [url, user.id],
-    );
-    if (rows.length === 0) {
+    if (!(await canReadUploadedMapAsset(url, user.id, column))) {
       res.status(403).json({ error: 'Forbidden' });
       return;
     }

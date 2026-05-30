@@ -17,6 +17,7 @@ import {
 import { getIO } from '../socket/ioInstance.js';
 import { getRoom, removePlayerFromRoom, resolveViewingMapId } from '../utils/roomState.js';
 import { safeParseJSON } from '../utils/safeJson.js';
+import { tokenVisibleToPlayer } from '../utils/tokenVisibility.js';
 
 const router = Router();
 
@@ -993,15 +994,7 @@ router.get('/:id/state', async (req: Request, res: Response) => {
     .filter((t) => t.mapId === viewingMapId);
   const visibleTokens = isDM
     ? allTokens
-    : allTokens.filter((t) => {
-        if (t.visible === false) return false;
-        const conds = (t.conditions || []) as string[];
-        if (conds.includes('invisible') && !conds.includes('outlined')) {
-          // Same-side (player's own token) stays visible to owner.
-          if (t.ownerUserId !== userId) return false;
-        }
-        return true;
-      });
+    : allTokens.filter((t) => tokenVisibleToPlayer(t, userId));
 
   // Combat — filter combatants with the same hidden-token rule so the
   // initiative tracker snapshot doesn't leak NPC names a player can't
@@ -1012,7 +1005,7 @@ router.get('/:id/state', async (req: Request, res: Response) => {
       ? room.combatState.combatants
       : room.combatState.combatants.filter((c) => {
           const tok = room.tokens.get(c.tokenId);
-          return tok ? tok.visible !== false : false;
+          return tok ? tokenVisibleToPlayer(tok, userId) : false;
         });
     combat = {
       active: true,
@@ -1142,7 +1135,7 @@ router.get('/:id/events', async (req: Request, res: Response) => {
     if (e.mapId && e.mapId !== viewingMapId) continue;
     if (!isDM && e.tokenId) {
       const tok = room.tokens.get(e.tokenId);
-      if (tok && tok.visible === false) continue;
+      if (tok && !tokenVisibleToPlayer(tok, userId)) continue;
     }
     delta.push(e);
   }
