@@ -170,10 +170,20 @@ just type `ssh dgx-ts` on Windows too.
 ./deploy.sh
 ```
 
-Builds the Docker image, pushes to GCR, deploys to Cloud Run.
-**Requires:** gcloud authenticated as `andrew@seez.co` and project set to
-`atlas-bound`. Works from Mac and Windows (use Git Bash on Windows for
-the shell script, or port it to PowerShell).
+Builds the Docker image, pushes to Artifact Registry, deploys to Cloud Run.
+**Requires:** gcloud authenticated to the Google account that owns the target
+project. The script defaults to `atlas-bound` but supports account/project
+overrides from `.env` or the shell:
+
+```bash
+GCP_PROJECT_ID=your-project-id \
+GCP_REGION=us-central1 \
+CLOUD_SQL_CONNECTION_NAME=your-project-id:us-central1:atlas-bound-db \
+./deploy.sh
+```
+
+Works from Mac and Windows (use Git Bash on Windows for the shell script, or
+port it to PowerShell).
 
 ---
 
@@ -212,5 +222,5 @@ dnd-vtt/
 **Run only server:** `npm run dev --workspace=server`
 **Run a single test file:** `npx vitest run path/to/file.test.ts`
 **Check what's deployed:** `curl https://kbrt.ai/readyz`
-**See current revision:** `gcloud run revisions list --service atlas-bound --region us-central1 --limit 5`
-**Roll back:** `gcloud run services update-traffic atlas-bound --to-revisions=atlas-bound-XXXXX-xxx=100 --region us-central1`
+**See current revision:** `gcloud run revisions list --service atlas-bound --region us-central1 --project <project-id> --limit 5`
+**Roll back:** `gcloud run services update-traffic atlas-bound --to-revisions=atlas-bound-XXXXX-xxx=100 --region us-central1 --project <project-id>`

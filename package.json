@@ -24,5 +24,8 @@
   },
   "dependencies": {
     "helmet": "^8.1.0"
+  },
+  "overrides": {
+    "gaxios": "^7.1.4"
   }
 }
