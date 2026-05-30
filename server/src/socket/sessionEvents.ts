@@ -6,9 +6,10 @@ import pool from '../db/connection.js';
 import {
   createRoom, getRoom,
   addPlayerToRoom, removePlayerFromRoom, removeSocketFromRoom, getPlayerBySocketId,
+  refreshSocketPresence,
   type RoomPlayer,
 } from '../utils/roomState.js';
-import { sessionJoinSchema, sessionKickSchema, sessionUpdateSettingsSchema, sessionViewingSchema, musicChangeSchema, musicActionSchema, handoutSchema } from '../utils/validation.js';
+import { sessionJoinSchema, sessionHeartbeatSchema, sessionKickSchema, sessionUpdateSettingsSchema, sessionViewingSchema, musicChangeSchema, musicActionSchema, handoutSchema } from '../utils/validation.js';
 import { safeHandler } from '../utils/socketHelpers.js';
 import { dbRowToCharacter } from '../utils/characterMapper.js';
 import { shouldDeliverChatRow } from '../utils/chatHistoryFilter.js';
@@ -350,6 +351,35 @@ export function registerSessionEvents(io: Server, socket: Socket): void {
         actionResult: safeParseJSON<unknown | null>(m.action_result, null, 'chat_messages.action_result'),
         hidden: (m.hidden as number) === 1, createdAt: m.created_at,
       })));
+  }));
+
+  // Lightweight keep-alive. The client fires this on its periodic tick
+  // instead of a full `session:join`, which used to re-run the entire
+  // hydration path (state-sync, player-joined broadcast, map-loaded,
+  // combat sync, chat history, character sync) every few seconds — pure
+  // churn. The heartbeat only re-asserts socket→room membership and the
+  // Socket.IO room subscription, so broadcasts keep flowing without the
+  // re-hydration storm. If the server no longer recognizes this socket
+  // (room GC'd, server restart, transport churn) we tell the client to
+  // do a real `session:join` so it doesn't silently sit outside the room.
+  socket.on('session:heartbeat', safeHandler(socket, async (data) => {
+    const parsed = sessionHeartbeatSchema.safeParse(data);
+    if (!parsed.success) return;
+    const userId = socket.data.userId as string;
+    if (!userId) {
+      socket.emit('session:heartbeat-ack', { ok: false, rejoinRequired: true });
+      return;
+    }
+    const status = refreshSocketPresence(socket.id);
+    if (!status.ok) {
+      socket.emit('session:heartbeat-ack', { ok: false, rejoinRequired: true });
+      return;
+    }
+    // Re-assert Socket.IO room membership (idempotent) so a socket that
+    // fell out of the room after a transport blip still receives
+    // `io.to(sessionId)` broadcasts — without the full join hydration.
+    socket.join(status.sessionId);
+    socket.emit('session:heartbeat-ack', { ok: true, nextEventId: status.nextEventId });
   }));
 
   socket.on('session:leave', () => { handleDisconnect(io, socket); });

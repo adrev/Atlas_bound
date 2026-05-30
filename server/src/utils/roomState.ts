@@ -425,6 +425,48 @@ export function getPlayerBySocketId(
   return { room, player };
 }
 
+/**
+ * Lightweight keep-alive membership refresh — the server side of
+ * `session:heartbeat`. Unlike `session:join` it does NO hydration
+ * (no state-sync, player-joined broadcast, map-loaded, combat/chat/
+ * character re-send). It just re-asserts that an already-joined socket
+ * is still tracked in the room's indexes.
+ *
+ * Returns `{ ok: true, ... }` if the socket is a known member (presence
+ * intact / re-asserted). Returns `{ ok: false }` if the socket is no
+ * longer a member — room GC'd, server restarted, or the socket never
+ * completed a join — in which case the caller tells the client to do a
+ * full `session:join` rather than silently stay outside the room (the
+ * "reconnected but not rejoined → broadcasts drop" bug the old 5s
+ * full-rejoin was brute-forcing around).
+ *
+ * Idempotent: repeated calls don't change presence or socket counts, so
+ * it can run on a tight interval without churn.
+ */
+export function refreshSocketPresence(
+  socketId: string,
+):
+  | { ok: true; sessionId: string; userId: string; nextEventId: number }
+  | { ok: false } {
+  const ctx = getPlayerBySocketId(socketId);
+  if (!ctx) return { ok: false };
+  // Defensive: ensure this socket is still in the user's live-socket set
+  // (guards against partial cleanup leaving socketIndex set but the
+  // userSockets entry pruned). No-op in the normal case.
+  let sockets = ctx.room.userSockets.get(ctx.player.userId);
+  if (!sockets) {
+    sockets = new Set<string>();
+    ctx.room.userSockets.set(ctx.player.userId, sockets);
+  }
+  if (!sockets.has(socketId)) sockets.add(socketId);
+  return {
+    ok: true,
+    sessionId: ctx.room.sessionId,
+    userId: ctx.player.userId,
+    nextEventId: ctx.room.nextEventId,
+  };
+}
+
 export function getAllRooms(): Map<string, RoomState> {
   return rooms;
 }

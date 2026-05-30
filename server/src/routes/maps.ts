@@ -8,6 +8,7 @@ import { createMapSchema } from '../utils/validation.js';
 import { getAuthUserId, assertSessionDM, assertSessionMember } from '../utils/authorization.js';
 import { safeParseJSON } from '../utils/safeJson.js';
 import { rowToToken } from '../utils/tokenMapper.js';
+import { tokenVisibleToPlayer } from '../utils/tokenVisibility.js';
 
 const router = Router();
 
@@ -268,7 +269,7 @@ router.get('/maps/:id', async (req: Request, res: Response) => {
   // response and discover hidden NPC positions / names.
   const visibleTokens = isDM
     ? allTokens
-    : allTokens.filter(t => t.visible !== false && t.visible !== 0 as unknown);
+    : allTokens.filter(t => tokenVisibleToPlayer(t, userId));
 
   res.json({
     id: map.id,
