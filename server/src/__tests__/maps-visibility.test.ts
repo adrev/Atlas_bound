@@ -194,6 +194,46 @@ describe('GET /maps/:id visibility', () => {
     expect(body.id).toBe('m-active');
   });
 
+  it('filters invisible unoutlined tokens from player REST map payloads', async () => {
+    mockQuery.mockResolvedValueOnce({
+      rows: [{
+        id: 'm-active', session_id: 's1', name: 'Active', image_url: null,
+        width: 10, height: 10, grid_size: 70, grid_type: 'square',
+        grid_offset_x: 0, grid_offset_y: 0,
+        walls: '[]', fog_state: '[]', created_at: 'now',
+      }],
+    });
+    mockQuery.mockResolvedValueOnce({ rows: [{ '?column?': 1 }] });
+    mockQuery.mockResolvedValueOnce({ rows: [{ role: 'player' }] });
+    mockQuery.mockResolvedValueOnce({ rows: [{ player_map_id: 'm-active' }] });
+    mockQuery.mockResolvedValueOnce({
+      rows: [
+        {
+          id: 'hidden-by-condition', map_id: 'm-active', character_id: null,
+          name: 'Invisible Stalker', x: 0, y: 0, size: 1, image_url: null,
+          color: '#fff', layer: 'token', visible: 1, has_light: 0,
+          light_radius: 0, light_dim_radius: 0, light_color: '#fff',
+          conditions: '["invisible"]', owner_user_id: 'npc',
+        },
+        {
+          id: 'visible-token', map_id: 'm-active', character_id: null,
+          name: 'Lantern', x: 0, y: 0, size: 1, image_url: null,
+          color: '#fff', layer: 'token', visible: 1, has_light: 0,
+          light_radius: 0, light_dim_radius: 0, light_color: '#fff',
+          conditions: '[]', owner_user_id: null,
+        },
+      ],
+    });
+
+    const req = { user: { id: 'player-user' }, params: { id: 'm-active' } } as unknown as Request;
+    const res = makeRes();
+    await handler(req, res);
+
+    expect(res.statusCode).toBe(200);
+    const body = res.body as { tokens: Array<{ id: string }> };
+    expect(body.tokens.map((t) => t.id)).toEqual(['visible-token']);
+  });
+
   it('allows a DM to fetch any map in their session', async () => {
     mockQuery.mockResolvedValueOnce({
       rows: [{
