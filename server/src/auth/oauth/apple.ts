@@ -9,12 +9,12 @@ import {
   APPLE_TEAM_ID,
   APPLE_KEY_ID,
   APPLE_PRIVATE_KEY,
-  BASE_URL,
 } from '../../config.js';
+import { getOAuthOrigin } from './origin.js';
 
 const router = Router();
 
-function getApple(): Apple | null {
+function getApple(req: Request): Apple | null {
   if (!APPLE_CLIENT_ID || !APPLE_TEAM_ID || !APPLE_KEY_ID || !APPLE_PRIVATE_KEY) return null;
   // Arctic v3 expects pkcs8PrivateKey as Uint8Array
   const privateKeyBytes = new TextEncoder().encode(APPLE_PRIVATE_KEY);
@@ -23,13 +23,13 @@ function getApple(): Apple | null {
     APPLE_TEAM_ID,
     APPLE_KEY_ID,
     privateKeyBytes,
-    `${BASE_URL}/api/auth/apple/callback`,
+    `${getOAuthOrigin(req)}/api/auth/apple/callback`,
   );
 }
 
 // GET /api/auth/apple - Start Apple OAuth flow
 router.get('/apple', (req: Request, res: Response) => {
-  const apple = getApple();
+  const apple = getApple(req);
   if (!apple) {
     res.status(503).json({ error: 'Apple OAuth is not configured' });
     return;
@@ -52,7 +52,7 @@ router.post(
   '/apple/callback',
   express.urlencoded({ extended: false }),
   async (req: Request, res: Response) => {
-    const apple = getApple();
+    const apple = getApple(req);
     if (!apple) {
       res.redirect('/?auth=error&reason=not_configured');
       return;

@@ -24,9 +24,12 @@ import { VertexAI, SchemaType, type GenerateContentRequest } from '@google-cloud
  *  model is available. us-central1 has every model we care about. */
 const VERTEX_LOCATION = process.env.VERTEX_LOCATION || 'us-central1';
 
-/** Project id — defaults to the runtime project picked up from the
- *  Cloud Run metadata server, but can be overridden for local dev. */
-const VERTEX_PROJECT_ID = process.env.GCP_PROJECT_ID || 'atlas-bound';
+/** Project id. In Cloud Run, the Vertex SDK can discover the runtime
+ *  project from metadata; local dev can override it explicitly. */
+const VERTEX_PROJECT_ID = process.env.GCP_PROJECT_ID
+  || process.env.GOOGLE_CLOUD_PROJECT
+  || process.env.GCLOUD_PROJECT
+  || '';
 
 /** Model id. Flash-Lite is the cheap tier; flip to "gemini-2.5-flash"
  *  for slightly better prose at ~2× the cost. */
@@ -193,7 +196,7 @@ let vertexClient: VertexAI | null = null;
 function getVertexClient(): VertexAI {
   if (!vertexClient) {
     vertexClient = new VertexAI({
-      project: VERTEX_PROJECT_ID,
+      ...(VERTEX_PROJECT_ID ? { project: VERTEX_PROJECT_ID } : {}),
       location: VERTEX_LOCATION,
     });
   }
