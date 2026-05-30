@@ -130,6 +130,59 @@ describe('GET /api/sessions/:id — prep map leak (P1 #1)', () => {
 });
 
 // ---------------------------------------------------------------------------
+// State snapshot must ship client-shaped characters, not raw DB rows
+// ---------------------------------------------------------------------------
+describe('GET /api/sessions/:id/state — character shape', () => {
+  async function getStateHandler() {
+    const mod = await import('../routes/sessions.js');
+    const router = mod.default as any;
+    const layer = router.stack.find(
+      (l: any) => l.route?.path === '/:id/state' && l.route?.methods?.get,
+    );
+    expect(layer).toBeTruthy();
+    return layer.route.stack[0].handle as (req: Request, res: any) => Promise<void>;
+  }
+
+  it('maps character rows to camelCase before clients reconcile state', async () => {
+    const { createRoom, addPlayerToRoom, removePlayerFromRoom } = await import('../utils/roomState.js');
+    const sessionId = 'state-shape-s1';
+    const room = createRoom(sessionId, 'STATE1', 'dm1');
+    room.playerMapId = 'map1';
+    addPlayerToRoom(sessionId, {
+      userId: 'p1', displayName: 'Player', socketId: 'sock-p1',
+      role: 'player', characterId: 'char-1',
+    });
+
+    mockQuery.mockResolvedValueOnce({ rows: [{ '?column?': 1 }] }); // assertSessionMember
+    mockQuery.mockResolvedValueOnce({ rows: [{ settings: '{}' }] });
+    mockQuery.mockResolvedValueOnce({ rows: [{ id: 'char-1' }] }); // caller's own character ids
+    mockQuery.mockResolvedValueOnce({ rows: [{
+      id: 'char-1',
+      user_id: 'p1',
+      name: 'Liraya Voss',
+      hit_points: 11,
+      max_hit_points: 15,
+      armor_class: 13,
+      ability_scores: '{"str":8,"dex":14,"con":12,"int":12,"wis":12,"cha":17}',
+    }] });
+
+    const handler = await getStateHandler();
+    const req = { user: { id: 'p1' }, params: { id: sessionId } } as unknown as Request;
+    const res = makeRes();
+    await handler(req, res);
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body.characters['char-1'].userId).toBe('p1');
+    expect(res.body.characters['char-1'].hitPoints).toBe(11);
+    expect(res.body.characters['char-1'].maxHitPoints).toBe(15);
+    expect(res.body.characters['char-1'].user_id).toBeUndefined();
+    expect(res.body.characters['char-1'].hit_points).toBeUndefined();
+
+    removePlayerFromRoom(sessionId, 'p1');
+  });
+});
+
+// ---------------------------------------------------------------------------
 // P1 #2 — DM cannot link another user's unrelated character into a session
 // ---------------------------------------------------------------------------
 describe('POST /api/sessions/:id/link-character — DM cannot launder (P1 #2)', () => {
@@ -284,4 +337,3 @@ describe('map:token-update — player cannot move NPC via x/y (P1 #3)', () => {
     }
   });
 });
-
