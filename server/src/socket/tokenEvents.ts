@@ -4,7 +4,8 @@ import { snapToGrid } from '@dnd-vtt/shared';
 import { v4 as uuidv4 } from 'uuid';
 import pool from '../db/connection.js';
 import {
-  getPlayerBySocketId, resolveViewingMapId, socketsOnMap, checkRateLimit,
+  checkRateLimit, getPlayerBySocketId, mapRecipientsForToken,
+  resolveViewingMapId, socketRecipientsOnMap, socketsOnMap,
 } from '../utils/roomState.js';
 import { broadcastEventToSockets } from '../utils/eventBroadcast.js';
 import * as OpportunityAttackService from '../services/OpportunityAttackService.js';
@@ -100,16 +101,7 @@ export function registerTokenEvents(io: Server, socket: Socket): void {
     // Scope movement to sockets rendering this map. A DM can move
     // tokens on a preview map; those coordinates must not be shipped
     // to players sitting on the ribbon map.
-    const moveRecipients = socketsOnMap(ctx.room, token.mapId)
-      .filter((sid) => {
-        if (token.visible !== false) return true;
-        for (const p of ctx.room.players.values()) {
-          if (p.socketId === sid || ctx.room.userSockets.get(p.userId)?.has(sid)) {
-            return p.role === 'dm';
-          }
-        }
-        return false;
-      });
+    const moveRecipients = mapRecipientsForToken(ctx.room, token.mapId, token.visible !== false);
     broadcastEventToSockets(
       io, ctx.room, 'map:token-moved',
       { tokenId, x, y, mapId: token.mapId },
@@ -330,16 +322,7 @@ export function registerTokenEvents(io: Server, socket: Socket): void {
       JSON.stringify(token.conditions), token.ownerUserId, token.faction,
     ]);
 
-    const addRecipients = socketsOnMap(ctx.room, targetMapId)
-      .filter((sid) => {
-        if (token.visible !== false) return true;
-        for (const p of ctx.room.players.values()) {
-          if (p.socketId === sid || ctx.room.userSockets.get(p.userId)?.has(sid)) {
-            return p.role === 'dm';
-          }
-        }
-        return false;
-      });
+    const addRecipients = mapRecipientsForToken(ctx.room, targetMapId, token.visible !== false);
     broadcastEventToSockets(
       io, ctx.room, 'map:token-added',
       token as unknown as Record<string, unknown>,
@@ -493,23 +476,9 @@ export function registerTokenEvents(io: Server, socket: Socket): void {
       changes.visible === true && !wasVisible;
     const latestToken = ctx.room.tokens.get(tokenId) ?? token;
 
-    // Build a fast socketId→role index so the per-recipient branch
-    // below doesn't scan all players for every socket.
-    const socketRole = new Map<string, 'dm' | 'player'>();
-    for (const p of ctx.room.players.values()) socketRole.set(p.socketId, p.role);
-    // userSockets indexes multi-tab sessions: one userId → several
-    // sockets. Fold those in too so a player's extra tab is also
-    // treated as 'player'.
-    for (const [uid, sids] of ctx.room.userSockets.entries()) {
-      const role = ctx.room.players.get(uid)?.role;
-      if (!role) continue;
-      for (const sid of sids) socketRole.set(sid, role);
-    }
-
     if (tokenMapId) {
-      const recipients = socketsOnMap(ctx.room, tokenMapId);
-      for (const sid of recipients) {
-        const role = socketRole.get(sid) ?? 'player';
+      const recipients = socketRecipientsOnMap(ctx.room, tokenMapId);
+      for (const { socketId: sid, role } of recipients) {
         const canSeeLatest = role === 'dm' || latestToken.visible !== false;
         const demotedToHidden = changes.visible === false && wasVisible;
         if (!canSeeLatest && !demotedToHidden) continue;

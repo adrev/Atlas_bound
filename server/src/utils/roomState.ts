@@ -425,6 +425,48 @@ export function getPlayerBySocketId(
   return { room, player };
 }
 
+/**
+ * Lightweight keep-alive membership refresh — the server side of
+ * `session:heartbeat`. Unlike `session:join` it does NO hydration
+ * (no state-sync, player-joined broadcast, map-loaded, combat/chat/
+ * character re-send). It just re-asserts that an already-joined socket
+ * is still tracked in the room's indexes.
+ *
+ * Returns `{ ok: true, ... }` if the socket is a known member (presence
+ * intact / re-asserted). Returns `{ ok: false }` if the socket is no
+ * longer a member — room GC'd, server restarted, or the socket never
+ * completed a join — in which case the caller tells the client to do a
+ * full `session:join` rather than silently stay outside the room (the
+ * "reconnected but not rejoined → broadcasts drop" bug the old 5s
+ * full-rejoin was brute-forcing around).
+ *
+ * Idempotent: repeated calls don't change presence or socket counts, so
+ * it can run on a tight interval without churn.
+ */
+export function refreshSocketPresence(
+  socketId: string,
+):
+  | { ok: true; sessionId: string; userId: string; nextEventId: number }
+  | { ok: false } {
+  const ctx = getPlayerBySocketId(socketId);
+  if (!ctx) return { ok: false };
+  // Defensive: ensure this socket is still in the user's live-socket set
+  // (guards against partial cleanup leaving socketIndex set but the
+  // userSockets entry pruned). No-op in the normal case.
+  let sockets = ctx.room.userSockets.get(ctx.player.userId);
+  if (!sockets) {
+    sockets = new Set<string>();
+    ctx.room.userSockets.set(ctx.player.userId, sockets);
+  }
+  if (!sockets.has(socketId)) sockets.add(socketId);
+  return {
+    ok: true,
+    sessionId: ctx.room.sessionId,
+    userId: ctx.player.userId,
+    nextEventId: ctx.room.nextEventId,
+  };
+}
+
 export function getAllRooms(): Map<string, RoomState> {
   return rooms;
 }
@@ -561,15 +603,23 @@ export function resolveViewingMapId(
  * Used by broadcast helpers to filter token/wall/fog/drawing updates
  * so they only reach sockets that actually see that map.
  */
-export function socketsOnMap(room: RoomState, mapId: string): string[] {
-  const out: string[] = [];
+export interface MapSocketRecipient {
+  socketId: string;
+  userId: string;
+  role: 'dm' | 'player';
+}
+
+export function socketRecipientsOnMap(room: RoomState, mapId: string): MapSocketRecipient[] {
+  const out: MapSocketRecipient[] = [];
   const pushSockets = (player: RoomPlayer) => {
     const liveSockets = room.userSockets.get(player.userId);
     if (liveSockets && liveSockets.size > 0) {
-      for (const sid of liveSockets) out.push(sid);
+      for (const sid of liveSockets) {
+        out.push({ socketId: sid, userId: player.userId, role: player.role });
+      }
       return;
     }
-    out.push(player.socketId);
+    out.push({ socketId: player.socketId, userId: player.userId, role: player.role });
   };
   for (const player of room.players.values()) {
     if (player.role === 'dm') {
@@ -588,29 +638,27 @@ export function socketsOnMap(room: RoomState, mapId: string): string[] {
   return out;
 }
 
+export function socketsOnMap(room: RoomState, mapId: string): string[] {
+  return socketRecipientsOnMap(room, mapId).map((recipient) => recipient.socketId);
+}
+
 /**
  * DM-only variant of `socketsOnMap`. Use for broadcasts that leak DM
  * planning data (encounter zones, prep notes, hidden tokens) so
  * players never even receive the payload.
  */
 export function dmSocketsOnMap(room: RoomState, mapId: string): string[] {
-  const out: string[] = [];
-  const pushSockets = (player: RoomPlayer) => {
-    const liveSockets = room.userSockets.get(player.userId);
-    if (liveSockets && liveSockets.size > 0) {
-      for (const sid of liveSockets) out.push(sid);
-      return;
-    }
-    out.push(player.socketId);
-  };
-  for (const player of room.players.values()) {
-    if (player.role !== 'dm') continue;
-    const preview = room.dmViewingMap.get(player.userId);
-    if (preview) {
-      if (preview === mapId) pushSockets(player);
-    } else if (room.playerMapId === mapId) {
-      pushSockets(player);
-    }
-  }
-  return out;
+  return socketRecipientsOnMap(room, mapId)
+    .filter((recipient) => recipient.role === 'dm')
+    .map((recipient) => recipient.socketId);
+}
+
+/**
+ * Token visibility is enforced before fan-out. Hidden tokens can exist
+ * on maps players are rendering, but only DMs should receive their
+ * add/move/update payloads unless a visibility transition needs a
+ * player-side removal diff.
+ */
+export function mapRecipientsForToken(room: RoomState, mapId: string, visible: boolean): string[] {
+  return visible ? socketsOnMap(room, mapId) : dmSocketsOnMap(room, mapId);
 }

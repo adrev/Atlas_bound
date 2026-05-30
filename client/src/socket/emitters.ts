@@ -19,6 +19,14 @@ export function emitJoinSession(roomCode: string) {
   getSocket().emit('session:join', { roomCode });
 }
 
+// Lightweight keep-alive — refreshes socket→room membership without the
+// full join hydration. The server replies `session:heartbeat-ack`; if it
+// no longer recognizes the socket it sets `rejoinRequired` and the client
+// falls back to a full `emitJoinSession`.
+export function emitHeartbeat(roomCode: string) {
+  getSocket().emit('session:heartbeat', { roomCode });
+}
+
 export function emitLeaveSession() {
   getSocket().emit('session:leave', {});
 }
