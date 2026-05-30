@@ -121,6 +121,10 @@ export function BattleMap() {
   // Read combat state via getState() to avoid re-render loops from array/object deps
   const [isMyTurn, setIsMyTurn] = useState(false);
   const [targetingSpell, setTargetingSpellLocal] = useState<unknown>(null);
+  const emptyMapTitle = isDM ? 'No map loaded' : 'Waiting for map';
+  const emptyMapBody = isDM
+    ? 'Load a map from DM Tools to get started'
+    : 'The DM controls the active scene. If a map is already active, this should resolve after reconnecting.';
 
   useEffect(() => {
     const unsubCombat = useCombatStore.subscribe((s) => {
@@ -586,7 +590,7 @@ export function BattleMap() {
             <Text
               x={dimensions.width / 2 - 100}
               y={dimensions.height / 2 - 20}
-              text="No map loaded"
+              text={emptyMapTitle}
               fontSize={18}
               fill={theme.text.muted}
               width={200}
@@ -595,7 +599,7 @@ export function BattleMap() {
             <Text
               x={dimensions.width / 2 - 150}
               y={dimensions.height / 2 + 10}
-              text="Load a map from DM Tools to get started"
+              text={emptyMapBody}
               fontSize={13}
               fill={theme.text.muted}
               width={300}
