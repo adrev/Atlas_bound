@@ -4,7 +4,8 @@ import type { Drawing, DrawingGeometry } from '@dnd-vtt/shared';
 import { useMapStore } from '../../stores/useMapStore';
 import { useSessionStore } from '../../stores/useSessionStore';
 import { useEffectStore } from '../../stores/useEffectStore';
-import { emitDrawingCreate } from '../../socket/emitters';
+import { useDrawStore } from '../../stores/useDrawStore';
+import { emitDrawingCreate, emitDrawingDelete } from '../../socket/emitters';
 import { showToast } from '../ui';
 import { theme } from '../../styles/theme';
 
@@ -90,6 +91,8 @@ export function AoePalette() {
   const selectedTokenId = useMapStore((s) => s.selectedTokenId);
   const tokens = useMapStore((s) => s.tokens);
   const addAnimation = useEffectStore((s) => s.addAnimation);
+  const drawings = useDrawStore((s) => s.drawings);
+  const removeDrawing = useDrawStore((s) => s.removeDrawing);
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
 
@@ -105,6 +108,22 @@ export function AoePalette() {
   }, [open]);
 
   if (!isDM || !currentMap) return null;
+
+  const aoeDrawings = Object.values(drawings).filter((drawing) => drawing.kind.startsWith('aoe-'));
+
+  const clearAoeTemplates = () => {
+    if (aoeDrawings.length === 0) return;
+    for (const drawing of aoeDrawings) {
+      removeDrawing(drawing.id);
+      emitDrawingDelete(drawing.id);
+    }
+    showToast({
+      emoji: '🧹',
+      message: `Cleared ${aoeDrawings.length} AoE template${aoeDrawings.length === 1 ? '' : 's'}.`,
+      variant: 'success',
+      duration: 2000,
+    });
+  };
 
   const placePreset = (preset: Preset) => {
     const selected = selectedTokenId ? tokens[selectedTokenId] : null;
@@ -229,6 +248,21 @@ export function AoePalette() {
       </button>
       {open && (
         <div style={styles.grid}>
+          <div style={styles.paletteHeader}>
+            <span style={styles.paletteHint}>AoEs persist as shared map templates.</span>
+            <button
+              type="button"
+              onClick={clearAoeTemplates}
+              disabled={aoeDrawings.length === 0}
+              style={{
+                ...styles.clearButton,
+                opacity: aoeDrawings.length === 0 ? 0.45 : 1,
+                cursor: aoeDrawings.length === 0 ? 'not-allowed' : 'pointer',
+              }}
+            >
+              Clear AoEs{aoeDrawings.length > 0 ? ` (${aoeDrawings.length})` : ''}
+            </button>
+          </div>
           {byElement.map(({ element, presets }) => (
             <div key={element} style={styles.group}>
               <div style={{ ...styles.groupLabel, color: ELEMENT_COLORS[element] }}>
@@ -285,6 +319,32 @@ const styles: Record<string, React.CSSProperties> = {
     border: `1px solid ${theme.gold.border}`,
     borderRadius: theme.radius.md,
     boxShadow: '0 10px 30px rgba(0,0,0,0.55)',
+  },
+  paletteHeader: {
+    gridColumn: '1 / -1',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+    paddingBottom: 6,
+    borderBottom: `1px solid ${theme.border.default}`,
+  },
+  paletteHint: {
+    fontSize: 10,
+    color: theme.text.muted,
+    letterSpacing: '0.03em',
+  },
+  clearButton: {
+    border: `1px solid ${theme.gold.border}`,
+    borderRadius: theme.radius.sm,
+    background: 'rgba(212, 168, 67, 0.12)',
+    color: theme.gold.primary,
+    padding: '4px 8px',
+    fontSize: 10,
+    fontWeight: 700,
+    letterSpacing: '0.06em',
+    textTransform: 'uppercase',
+    transition: `all ${theme.motion.fast}`,
   },
   group: {
     display: 'flex', flexDirection: 'column', gap: 3,
