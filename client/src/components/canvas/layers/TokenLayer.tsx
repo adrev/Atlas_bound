@@ -188,6 +188,7 @@ function TokenImage({ url, size }: { url: string; size: number }) {
   // Draw the image cropped to a circle using a Shape with custom sceneFunc
   return (
     <Shape
+      listening={false}
       sceneFunc={(ctx) => {
         // Draw circular clip
         ctx.beginPath();

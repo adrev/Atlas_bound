@@ -73,11 +73,11 @@ export function BackgroundLayer({ imageUrl, width, height }: BackgroundLayerProp
   return (
     <>
       {/* Dark background fill */}
-      <Rect x={0} y={0} width={width} height={height} fill={theme.bg.base} />
+      <Rect x={0} y={0} width={width} height={height} fill={theme.bg.base} listening={false} />
 
       {/* Map image */}
       {image && status === 'loaded' && (
-        <KonvaImage image={image} x={0} y={0} width={width} height={height} />
+        <KonvaImage image={image} x={0} y={0} width={width} height={height} listening={false} />
       )}
     </>
   );
