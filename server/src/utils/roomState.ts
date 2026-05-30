@@ -603,15 +603,23 @@ export function resolveViewingMapId(
  * Used by broadcast helpers to filter token/wall/fog/drawing updates
  * so they only reach sockets that actually see that map.
  */
-export function socketsOnMap(room: RoomState, mapId: string): string[] {
-  const out: string[] = [];
+export interface MapSocketRecipient {
+  socketId: string;
+  userId: string;
+  role: 'dm' | 'player';
+}
+
+export function socketRecipientsOnMap(room: RoomState, mapId: string): MapSocketRecipient[] {
+  const out: MapSocketRecipient[] = [];
   const pushSockets = (player: RoomPlayer) => {
     const liveSockets = room.userSockets.get(player.userId);
     if (liveSockets && liveSockets.size > 0) {
-      for (const sid of liveSockets) out.push(sid);
+      for (const sid of liveSockets) {
+        out.push({ socketId: sid, userId: player.userId, role: player.role });
+      }
       return;
     }
-    out.push(player.socketId);
+    out.push({ socketId: player.socketId, userId: player.userId, role: player.role });
   };
   for (const player of room.players.values()) {
     if (player.role === 'dm') {
@@ -630,29 +638,27 @@ export function socketsOnMap(room: RoomState, mapId: string): string[] {
   return out;
 }
 
+export function socketsOnMap(room: RoomState, mapId: string): string[] {
+  return socketRecipientsOnMap(room, mapId).map((recipient) => recipient.socketId);
+}
+
 /**
  * DM-only variant of `socketsOnMap`. Use for broadcasts that leak DM
  * planning data (encounter zones, prep notes, hidden tokens) so
  * players never even receive the payload.
  */
 export function dmSocketsOnMap(room: RoomState, mapId: string): string[] {
-  const out: string[] = [];
-  const pushSockets = (player: RoomPlayer) => {
-    const liveSockets = room.userSockets.get(player.userId);
-    if (liveSockets && liveSockets.size > 0) {
-      for (const sid of liveSockets) out.push(sid);
-      return;
-    }
-    out.push(player.socketId);
-  };
-  for (const player of room.players.values()) {
-    if (player.role !== 'dm') continue;
-    const preview = room.dmViewingMap.get(player.userId);
-    if (preview) {
-      if (preview === mapId) pushSockets(player);
-    } else if (room.playerMapId === mapId) {
-      pushSockets(player);
-    }
-  }
-  return out;
+  return socketRecipientsOnMap(room, mapId)
+    .filter((recipient) => recipient.role === 'dm')
+    .map((recipient) => recipient.socketId);
+}
+
+/**
+ * Token visibility is enforced before fan-out. Hidden tokens can exist
+ * on maps players are rendering, but only DMs should receive their
+ * add/move/update payloads unless a visibility transition needs a
+ * player-side removal diff.
+ */
+export function mapRecipientsForToken(room: RoomState, mapId: string, visible: boolean): string[] {
+  return visible ? socketsOnMap(room, mapId) : dmSocketsOnMap(room, mapId);
 }
