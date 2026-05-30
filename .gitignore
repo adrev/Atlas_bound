@@ -18,6 +18,13 @@ server/data/*.db-wal
 .DS_Store
 *.log
 
+# Stray build/script artifacts written to the repo root instead of client/.
+# Root-anchored so they never touch the real client/public/ assets. The
+# canonical asset copy lives in client/public/assets; a misrun script (and
+# a `dev/null` git-hook write) drop partial copies here and show as dirty.
+/public/
+/dev/
+
 # Claude temp
 .claude/
 scripts/__pycache__/
