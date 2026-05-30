@@ -699,6 +699,7 @@ export function SessionLobby() {
         name: createName.trim(),
         displayName: authUser.displayName,
         visibility: createVisibility,
+        startMap,
         password: createVisibility === 'private' && createPassword ? createPassword : undefined,
       });
       setDisplayName(authUser.displayName);

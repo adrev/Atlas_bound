@@ -1037,6 +1037,16 @@ describe('createSessionSchema', () => {
     expect(result.success).toBe(true);
   });
 
+  it('accepts valid starting map presets', () => {
+    const result = createSessionSchema.safeParse({ name: 'My Campaign', startMap: 'tavern' });
+    expect(result.success).toBe(true);
+  });
+
+  it('rejects unknown starting map presets', () => {
+    const result = createSessionSchema.safeParse({ name: 'My Campaign', startMap: 'castle' });
+    expect(result.success).toBe(false);
+  });
+
   it('rejects empty name', () => {
     const result = createSessionSchema.safeParse({ name: '' });
     expect(result.success).toBe(false);

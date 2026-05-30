@@ -19,6 +19,7 @@ export interface CreateSessionOptions {
   name: string;
   displayName: string;
   visibility?: 'public' | 'private';
+  startMap?: 'forest' | 'dungeon' | 'tavern';
   /** Required only for private sessions. Omit for invite-only private. */
   password?: string;
 }
