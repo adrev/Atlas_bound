@@ -22,7 +22,7 @@ specific file/line.
 | Priority | Work | Owner | Next action |
 |---|---|---|---|
 | P0 | Clean dirty working trees before new feature work | CodeX/Claude | ✅ Done on main via PR #8 and PR #9. Continue to start new work from clean `origin/main`; local checkouts may run `git clean -fd dev public` only after confirming no real untracked work |
-| P1 | PR #2 unverified Tier-1 fixes | Claude prepares sliced PRs; CodeX reviews/ships | Do not merge PR #2 wholesale while conflicted. T1.2 and T1.7 are done; next backend-testable slice is T1.6 after dedupe |
+| P1 | PR #2 unverified Tier-1 fixes | Claude prepares sliced PRs; CodeX reviews/ships | **Never merge PR #2 wholesale — slices only.** T1.2 ✅ #10, T1.7 ✅ #11, T1.6 ✅ #14; remaining T1.1/T1.3/T1.4/T1.5 are browser-verify |
 | P1 | OAuth + Chronicle migration verification | Claude | OAuth/Chronicle code landed in PR #8; verify Discord/Google login and Chronicle worker polling on the personal project |
 | P1 | Browser websocket QA | Andrew/Claude desktop, coordinated by CodeX | Run the remaining browser-only rows: player ribbon refresh, reconnect/background tabs, kick/ban stale sockets |
 | P2 | Server-side socket/combat QA tests | Claude | Add tests for combat/spell recipients, chat whisper/hidden-roll visibility, and music late-joiner state where feasible |
@@ -33,7 +33,7 @@ specific file/line.
 
 ## ⚠️ READ FIRST — Tier-1 fixes that are written but UNVERIFIED
 
-**PR #2 (`claude/clever-hopper-85609c`) carries ~7 UX/reliability fixes that passed `tsc` but were never deployed or manually tested.** They predate the two-agent workflow. PR #2 also has **merge conflicts with `main`** (AppShell hook-order fix in `6d1768f`; `deploy.sh`; possibly `customContent.ts` / `sessions.ts` which CodeX has since touched). Decision needed from PM: resolve + merge PR #2, or cherry-pick the still-relevant pieces.
+**PR #2 (`claude/clever-hopper-85609c`) carries ~7 UX/reliability fixes that passed `tsc` but were never deployed or manually tested.** They predate the two-agent workflow and PR #2 conflicts with `main`. **PR #2 is never merged wholesale** — it stays as source material only until closed as superseded. Each still-relevant slice is extracted/rebuilt as a focused PR off clean `origin/main` (done: T1.2 #10, T1.7 #11, T1.6 #14; remaining T1.1/T1.3/T1.4/T1.5 are browser-verify).
 
 Each item below needs a verification pass. "Unit-testable" = I can pin it headless; "browser" = needs Andrew's desktop.
 
@@ -44,7 +44,7 @@ Each item below needs a verification pass. "Unit-testable" = I can pin it headle
 | T1.3 | SessionLobby skeleton loaders | `SessionLobby.tsx` | browser |
 | T1.4 | Modal a11y: focus-trap + ESC + ARIA (CharacterSheetFull, DiceTray, LootEditor) | `useFocusTrap.ts` + 3 modals | browser (keyboard nav) |
 | T1.5 | On-blur form validation (ProfileModal, create/join session) | `ProfileModal.tsx`, `SessionLobby.tsx` | browser |
-| T1.6 | `/state` ETag (304) + `/bans` pagination | `server/.../sessions.ts`, `stateSnapshot.ts` | 🔶 unit-testable — **CodeX has since changed `/state` & sessions.ts; check for divergence** |
+| T1.6 | ✅ `/state` ETag (304); `/bans` pagination accepted as won't-do | `server/.../sessions.ts`, `stateSnapshot.ts` | Merged in PR #14 with session-scoped ETags and regression tests |
 | T1.7 | ✅ `customContent` validation 500→4xx + Zod `.errors`→`.issues` | `server/.../customContent.ts` | Merged in PR #11 with `handleDbError()` and SQLSTATE mapping tests |
 
 > The user explicitly flagged: "we locked a ton of bugs, don't know if we tested all of them." T1.1–T1.7 are exactly that set. **These should be addressed (merged + verified) before being trusted in prod.**
@@ -58,7 +58,7 @@ Each item below needs a verification pass. "Unit-testable" = I can pin it headle
 | T2.1 | `TokenLayer` granular Zustand selectors (stop full re-render on any token change) | ⬜ | combat-jank source; client perf |
 | T2.2 | Off-canvas culling for Konva grid/background layers | ⬜ | large maps |
 | T2.3 | Defer Three.js dice-box bundle until first roll | ⬜ | initial-paint win |
-| T2.4 | Reduce `/state` poll churn when nothing changed | 🔶 | heartbeat churn fixed in #3; PR #2 ETag idea still needs dedupe/re-measure |
+| T2.4 | Reduce `/state` poll churn when nothing changed | ✅ | heartbeat churn fixed in #3; `/state` ETag merged in #14 |
 | T2.5 | Collapse `assertCharacterOwnerOrDM` 4 sequential queries → one CTE | ⬜ | per-edit latency |
 | T2.6 | Batch token-move broadcasts (one frame, N moves) | 🔶 | fan-out scoping/visibility centralized in #7; batching still open |
 | T2.7 | `Cache-Control` on list endpoints (`/sessions/mine`, `/characters`, `/custom/*`) | ⬜ | quick win |
@@ -110,7 +110,7 @@ Each item below needs a verification pass. "Unit-testable" = I can pin it headle
 | `map:token-update` visibility promote/demote transitions | ✅ covered by #7 |
 | Player ribbon activation + refresh returns to ribbon | 🔴 browser-only |
 | Reconnect / membership (background-tab return, network reconnect, kick/ban no stale sockets) | 🔴 browser-only |
-| Combat/spell recipient scoping (cast card, counterspell, shield, HP, conditions, death save, OA) | ⬜ partly server-testable |
+| Combat/spell recipient scoping (cast card, counterspell, shield, HP, conditions, death save, OA) | 🔶 HP/conditions/death-save/reaction token visibility covered in #23; cast/counterspell/shield/OA still need QA |
 | Music late-joiner sync; chat whisper/hidden-roll visibility | ⬜ partly server-testable |
 
 ## Design / UX backlog (experience improvements — Claude's lane)
@@ -120,7 +120,7 @@ From a full design/UX review of all surfaces (lobby, in-session shell, canvas, c
 ### Brand & first impression
 | # | Item | Sev | Note |
 |---|---|---|---|
-| D1 | Unify the brand name across all UI — internally "Atlas Bound", every user-facing string says "KBRT.AI" (logo, wordmark, crest "K", footers) | 🔴 | pick one, apply everywhere |
+| D1 | ✅ Unify the brand name across all UI — product is "Atlas Bound", KBRT.AI remains parent/domain | 🔴 | Merged in PR #21 |
 | D2 | State the purpose on login/landing — no tagline/value prop; `subtitle` style exists unused; no logged-out page | 🔴 | "collaborative D&D virtual tabletop" + optional hero |
 
 ### Onboarding & lobby
@@ -168,14 +168,14 @@ From a full design/UX review of all surfaces (lobby, in-session shell, canvas, c
 > Already addressed in the **unmerged Tier-1 PR #2**: modal focus-trapping (`useFocusTrap` + ARIA on CharacterSheet/DiceTray/LootEditor) and on-blur validation. Merging/verifying those slices closes part of D20/a11y — they overlap, don't redo.
 
 ### Functional bugs surfaced by the design pass → CodeX's QA lane
-- **B-D1** `TokenActionPanel` caps spells at 12 (`.slice(0,12)` + non-interactive `+N`) — a 13+-spell caster cannot cast their later spells.
+- **B-D1** ✅ `TokenActionPanel` spell cap fixed in PR #17 — 13+ leveled spells are selectable.
 - **B-D2** `FogBrush` / `useFogBrush` is orphaned — never imported/mounted; manual fog painting is effectively unreleased. Wire or cut.
-- **B-D3** "Starting Map" picker in Create-Campaign is wired to nothing (`startMap` state never sent in `handleCreate`).
+- **B-D3** ✅ "Starting Map" picker fixed in PR #18 — selected preset creates and sets the starting map.
 - **B-D4** ✅ `--text-muted` contrast fixed in PR #27 (also D19).
 
 ## Housekeeping
 
-- Current main checkout has uncommitted OAuth/Chronicle work: `DEV_SETUP.md`, `server/.env.example`, `server/src/auth/oauth/{apple,discord,google,origin}.ts`, `server/src/routes/{chronicle,internalChronicle}.ts`, `server/src/services/Chronicler.ts`. This appears intentional and contains no literal secret values in the inspected diff; Claude should either commit it to a named branch/PR or stash it before starting new work.
+- Earlier dirty OAuth/Chronicle checkout note is superseded: this Mac checkout is clean as of the stabilization pass. Claude should still run `git status --short --branch` before starting local work.
 - CodeX temporary review/deploy worktrees were removed after PR #3/#4/#5/#7. Keep temporary worktrees short-lived and remove them after merge/deploy.
 
 ---
