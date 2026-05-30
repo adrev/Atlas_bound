@@ -6,18 +6,22 @@ import { lucia } from '../lucia.js';
 import {
   DISCORD_CLIENT_ID,
   DISCORD_CLIENT_SECRET,
-  BASE_URL,
 } from '../../config.js';
+import { getOAuthOrigin } from './origin.js';
 
 const router = Router();
 
-function getDiscord(): Discord | null {
+function getDiscord(req: Request): Discord | null {
   if (!DISCORD_CLIENT_ID || !DISCORD_CLIENT_SECRET) return null;
-  return new Discord(DISCORD_CLIENT_ID, DISCORD_CLIENT_SECRET, `${BASE_URL}/api/auth/discord/callback`);
+  return new Discord(
+    DISCORD_CLIENT_ID,
+    DISCORD_CLIENT_SECRET,
+    `${getOAuthOrigin(req)}/api/auth/discord/callback`,
+  );
 }
 
 router.get('/discord', (req: Request, res: Response) => {
-  const discord = getDiscord();
+  const discord = getDiscord(req);
   if (!discord) { res.status(503).json({ error: 'Discord OAuth is not configured' }); return; }
   const state = uuidv4();
   const url = discord.createAuthorizationURL(state, null, ['identify', 'email']);
@@ -28,7 +32,7 @@ router.get('/discord', (req: Request, res: Response) => {
 });
 
 router.get('/discord/callback', async (req: Request, res: Response) => {
-  const discord = getDiscord();
+  const discord = getDiscord(req);
   if (!discord) { res.redirect('/?auth=error&reason=not_configured'); return; }
   const code = req.query.code as string | undefined;
   const state = req.query.state as string | undefined;

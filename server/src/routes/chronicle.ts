@@ -106,7 +106,7 @@ function rowToChronicle(r: ChronicleRow, campaignName?: string) {
  *     same Cloud Run instance that received the request.
  *   - 'ollama' (or anything else): the route is a no-op; a separate
  *     worker — typically the dgx-worker running on-prem — polls
- *     `/api/internal/chronicle/jobs/next` for pending rows and
+ *     `/api/internal/chronicle/jobs/claim` for pending rows and
  *     posts the result back via `/api/internal/chronicle/jobs/:id/result`.
  *     Cloud Run can't reach the DGX over Tailscale, so the polling
  *     direction is mandatory: DGX → Cloud Run.
