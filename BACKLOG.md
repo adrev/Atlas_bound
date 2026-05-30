@@ -113,6 +113,66 @@ Each item below needs a verification pass. "Unit-testable" = I can pin it headle
 | Combat/spell recipient scoping (cast card, counterspell, shield, HP, conditions, death save, OA) | ⬜ partly server-testable |
 | Music late-joiner sync; chat whisper/hidden-roll visibility | ⬜ partly server-testable |
 
+## Design / UX backlog (experience improvements — Claude's lane)
+
+From a full design/UX review of all surfaces (lobby, in-session shell, canvas, combat/character panels, design-system + a11y), 2026-05. **Division of labour:** the D-series below are *make-it-better* tasks (Claude); functional *it's-broken* bugs the pass surfaced are listed at the end for CodeX's QA lane. **Awaiting CodeX (PM) review/agreement before work starts.**
+
+### Brand & first impression
+| # | Item | Sev | Note |
+|---|---|---|---|
+| D1 | Unify the brand name across all UI — internally "Atlas Bound", every user-facing string says "KBRT.AI" (logo, wordmark, crest "K", footers) | 🔴 | pick one, apply everywhere |
+| D2 | State the purpose on login/landing — no tagline/value prop; `subtitle` style exists unused; no logged-out page | 🔴 | "collaborative D&D virtual tabletop" + optional hero |
+
+### Onboarding & lobby
+| # | Item | Sev | Note |
+|---|---|---|---|
+| D3 | Fix the new-hero loop — the only zero-hero CTA bounces to D&D Beyond and expects a manual import "inside a session" the user doesn't have yet | 🔴 | in-app character path |
+| D4 | De-noise the lobby for new users — three equal-weight columns, unearned vanity stats ("Lv", invented titles), "Played: —" reads broken | 🟡 | dim/collapse empty side-rails; drop vanity stats |
+| D5 | DM onboarding track — FirstJoinTour is player-only; never covers load-map → spawn → fog → start-combat | 🟡 | add a DM tour track |
+| D6 | Actionable empty states — Chronicle/Tidings dead-end with no next action | 🟢 | give each empty state a CTA |
+
+### Canvas & tool discoverability
+| # | Item | Sev | Note |
+|---|---|---|---|
+| D7 | Persistent on-canvas tool rail (Select / Measure / Draw / Walls / Fog / AoE) with an active-tool indicator — tools scattered across 4 surfaces; Measure/Walls/Zones are right-click-only | 🔴 | one canonical home; context menus become shortcuts |
+| D8 | Unmissable active-mode indicator + explicit exit — draw mode silently swallows token clicks ("my tokens froze") | 🔴 | HUD banner / edge tint |
+| D9 | Marquee select + on-canvas zoom / fit-to-map / reset — left-drag is pan-only; no zoom buttons | 🟡 | |
+| D10 | Mobile: surface core DM actions in the bottom bar — combat/creatures/maps buried two taps deep in a drawer | 🟡 | |
+
+### Combat & character panels
+| # | Item | Sev | Note |
+|---|---|---|---|
+| D11 | Restructure TokenActionPanel into prioritized collapsible chunks; bring the sheet's DC/range spell rows down (panel shows 9px pills w/ info hidden in tooltips) | 🔴 | the in-combat workhorse |
+| D12 | Mirror "End Turn" into the action panel during your turn — today it's in the sidebar tracker while attack/cast is a canvas popup (eye ping-pong) | 🟡 | |
+| D13 | Standardize reaction modals — shared queue/manager, visible countdown on ALL (Shield is 1.4 s with none), z-index tokens | 🟡 | |
+| D14 | Persistent inline ADV / NORM / DIS toggle on the dice tray — today buried behind the Advanced modal with no active-state | 🟡 | |
+| D15 | Emphasize AC — under-weighted vs HP in both sheet and token panel | 🟢 | dedicated shield box |
+
+### Design system & consistency
+| # | Item | Sev | Note |
+|---|---|---|---|
+| D16 | Collapse to ONE token source — three parallel palettes (globals.css, kbrt/theme.css, lobby's hardcoded copy); lobby ignores theme switching; ~614 raw hex literals. Add an ESLint rule banning raw hex/px in inline `style` | 🔴 | |
+| D17 | Adopt shared primitives in high-traffic components — Button in 19/108 files (295 raw `<button>`), Modal in 3 (~34 bespoke overlays), 9 files hand-build toasts; migrate DiceTray / CharacterSheetFull first | 🟡 | |
+| D18 | Disambiguate accent semantics — red = headers AND danger AND attack; purple = whisper AND hidden-roll AND counterspell | 🟢 | reserve red for danger |
+
+### Accessibility (experience layer)
+| # | Item | Sev | Note |
+|---|---|---|---|
+| D19 | Lighten `--text-muted` (#6b5a3f, 2.71:1) to WCAG AA ≥ 4.5:1 (~#8a7654) — used for placeholders / helper / timestamps everywhere | 🔴 | one-line token fix |
+| D20 | Global `:focus-visible` ring — only 1 rule app-wide; `button{outline:none}` leaves 295 raw buttons with no keyboard focus | 🔴 | |
+| D21 | `prefers-reduced-motion` support — 0 occurrences (infinite pulse/glow, modal scale-ins, 3D dice) | 🟡 | |
+| D22 | Bump default touch targets toward 44 px (IconButton md=30, Button sm); raise min decorative-font sizes (9–11px uppercase Cinzel) | 🟡 | |
+| D23 | Voice — keep flavor in headings, plain language in labels/instructions ("Speak the room sigil" on a code field) | 🟢 | |
+| D24 | Minor polish folded in: resizable sidebar (fixed 400px), a DM-mode indicator in the shell, AoE-pill vs InitiativeOverlay top-left collision | 🟢 | |
+
+> Already addressed in the **unmerged Tier-1 PR #2**: modal focus-trapping (`useFocusTrap` + ARIA on CharacterSheet/DiceTray/LootEditor) and on-blur validation. Merging/verifying those slices closes part of D20/a11y — they overlap, don't redo.
+
+### Functional bugs surfaced by the design pass → CodeX's QA lane
+- **B-D1** `TokenActionPanel` caps spells at 12 (`.slice(0,12)` + non-interactive `+N`) — a 13+-spell caster cannot cast their later spells.
+- **B-D2** `FogBrush` / `useFogBrush` is orphaned — never imported/mounted; manual fog painting is effectively unreleased. Wire or cut.
+- **B-D3** "Starting Map" picker in Create-Campaign is wired to nothing (`startMap` state never sent in `handleCreate`).
+- **B-D4** `--text-muted` fails WCAG AA (also D19).
+
 ## Housekeeping
 
 - Current main checkout has uncommitted OAuth/Chronicle work: `DEV_SETUP.md`, `server/.env.example`, `server/src/auth/oauth/{apple,discord,google,origin}.ts`, `server/src/routes/{chronicle,internalChronicle}.ts`, `server/src/services/Chronicler.ts`. This appears intentional and contains no literal secret values in the inspected diff; Claude should either commit it to a named branch/PR or stash it before starting new work.
