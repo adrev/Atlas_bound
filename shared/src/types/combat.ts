@@ -15,6 +15,8 @@ export interface Combatant {
   isNPC: boolean;
   conditions: Condition[];
   deathSaves: DeathSaves;
+  /** Combat round in which this combatant last rolled a death save. */
+  deathSaveRolledRound?: number;
   portraitUrl: string | null;
   /** 5e exhaustion level 0–6. Propagated from the character row at combat start. */
   exhaustionLevel?: number;

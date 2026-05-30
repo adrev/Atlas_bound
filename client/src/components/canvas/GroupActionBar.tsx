@@ -35,7 +35,7 @@ import type { AbilityName } from '@dnd-vtt/shared';
 const CONDITIONS = [
   'Blinded', 'Charmed', 'Deafened', 'Frightened', 'Grappled',
   'Incapacitated', 'Invisible', 'Paralyzed', 'Petrified', 'Poisoned',
-  'Prone', 'Restrained', 'Stunned', 'Unconscious',
+  'Prone', 'Restrained', 'Stunned', 'Unconscious', 'Stable',
 ] as const;
 
 const SAVE_ABILITIES: AbilityName[] = ['str', 'dex', 'con', 'int', 'wis', 'cha'];

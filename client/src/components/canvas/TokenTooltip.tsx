@@ -32,7 +32,7 @@ const CONDITION_COLORS: Record<string, string> = {
   frightened: '#9b59b6', grappled: '#e67e22', incapacitated: '#7f8c8d',
   invisible: '#3498db', paralyzed: '#f1c40f', petrified: '#bdc3c7',
   poisoned: '#27ae60', prone: '#e74c3c', restrained: '#c0392b',
-  stunned: '#f39c12', unconscious: '#2c3e50', exhaustion: '#8e44ad',
+  stunned: '#f39c12', unconscious: '#2c3e50', stable: '#27ae60', exhaustion: '#8e44ad',
 };
 
 function parse<T>(val: unknown, fallback: T): T {

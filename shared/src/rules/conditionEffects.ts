@@ -236,6 +236,11 @@ export const CONDITION_EFFECTS: Record<Condition, ConditionEffect> = {
     dropsHeldItems: true,
     notes: ['Incapacitated', 'Auto-fail STR + DEX saves', 'Melee within 5 ft auto-crits', 'Drops held items; falls prone'],
   },
+  stable: {
+    name: 'stable',
+    color: '#27ae60',
+    notes: ['No longer rolls death saves', 'HP stays at 0 and remains unconscious until healed'],
+  },
   exhaustion: {
     name: 'exhaustion',
     color: '#566573',
@@ -487,11 +492,6 @@ export const PSEUDO_CONDITION_EFFECTS: Record<string, ConditionEffect> = {
     name: 'marked',
     color: '#c0392b',
     notes: ['Caster\'s weapon attacks against this target deal +1d6', 'Caster has adv on Perception / Survival checks to find target'],
-  },
-  stable: {
-    name: 'stable',
-    color: '#27ae60',
-    notes: ['No longer rolls death saves; HP stays at 0'],
   },
   reckless: {
     name: 'reckless',

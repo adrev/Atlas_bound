@@ -5,6 +5,7 @@ import {
   type ChatCommandContext,
 } from '../ChatCommands.js';
 import * as ConditionService from '../ConditionService.js';
+import * as CombatService from '../CombatService.js';
 import pool from '../../db/connection.js';
 import type { Token } from '@dnd-vtt/shared';
 import type { PlayerContext } from '../../utils/roomState.js';
@@ -217,6 +218,23 @@ async function handleStabilize(c: ChatCommandContext): Promise<boolean> {
     whisperToCaller(c.io, c.ctx, '!stabilize: no owned PC token.');
     return true;
   }
+  const targetCombatant = c.ctx.room.combatState?.combatants.find((combatant) => combatant.tokenId === target.id);
+  const targetHpFromCombat = targetCombatant?.hp;
+  if (targetHpFromCombat !== undefined && targetHpFromCombat > 0) {
+    whisperToCaller(c.io, c.ctx, `!stabilize: ${target.name} is not at 0 HP.`);
+    return true;
+  }
+  if (targetHpFromCombat === undefined) {
+    const targetRows = await pool.query(
+      'SELECT hit_points FROM characters WHERE id = $1',
+      [target.characterId],
+    );
+    const targetHp = Number((targetRows.rows[0] as Record<string, unknown> | undefined)?.hit_points) || 0;
+    if (targetHp > 0) {
+      whisperToCaller(c.io, c.ctx, `!stabilize: ${target.name} is not at 0 HP.`);
+      return true;
+    }
+  }
   const { rows } = await pool.query(
     'SELECT ability_scores, skills, proficiency_bonus FROM characters WHERE id = $1',
     [caller.characterId],
@@ -241,14 +259,23 @@ async function handleStabilize(c: ChatCommandContext): Promise<boolean> {
   lines.push(`🩹 ${caller.name} tries to Stabilize ${target.name}`);
   lines.push(`   Medicine (WIS${hasProf ? ' + prof' : ''}): d20=${d20}${sign}${bonus}=${total} vs DC ${dc} → ${success ? 'SUCCESS' : 'FAIL'}`);
   if (success) {
-    ConditionService.applyConditionWithMeta(c.ctx.room.sessionId, target.id, {
-      name: 'stable',
-      source: `${caller.name} (!stabilize)`,
-      appliedRound: c.ctx.room.combatState?.roundNumber ?? 0,
-    });
+    if (targetCombatant) {
+      CombatService.markStable(c.ctx.room.sessionId, target.id);
+    } else {
+      ConditionService.applyConditionWithMeta(c.ctx.room.sessionId, target.id, {
+        name: 'unconscious',
+        source: `${caller.name} (!stabilize)`,
+        appliedRound: c.ctx.room.combatState?.roundNumber ?? 0,
+      });
+      ConditionService.applyConditionWithMeta(c.ctx.room.sessionId, target.id, {
+        name: 'stable',
+        source: `${caller.name} (!stabilize)`,
+        appliedRound: c.ctx.room.combatState?.roundNumber ?? 0,
+      });
+    }
     // Reset death saves on the target if present.
     await pool.query(
-      'UPDATE characters SET death_saves = $1 WHERE id = $2',
+      'UPDATE characters SET hit_points = 0, death_saves = $1 WHERE id = $2',
       [JSON.stringify({ successes: 0, failures: 0 }), target.characterId],
     ).catch((e) => console.warn('[!stabilize] death-save reset failed:', e));
     c.io.to(c.ctx.room.sessionId).emit('map:token-updated', {

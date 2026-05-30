@@ -331,30 +331,8 @@ export function registerCombatReactions(io: Server, socket: Socket): void {
       aoeDirection: spellEvent.aoeDirection,
     });
 
-    // Bug fix: casting a spell in melee range of a hostile provokes an
-    // opportunity attack (same mechanism as movement-triggered OA).
-    // We don't filter by component type here \u2014 the DM can rule
-    // per-spell in chat. Future work: respect War Caster / Subtle Spell
-    // / component-less spells via a per-spell "triggers OA" flag.
-    if (ctx.room.combatState?.active) {
-      const opportunities = OpportunityAttackService.detectSpellCastingOA(
-        ctx.room.sessionId, spellEvent.casterId,
-      );
-      for (const opp of opportunities) {
-        const targetOwnerId = opp.attackerOwnerUserId;
-        const sentToSocketIds = new Set<string>();
-        for (const player of ctx.room.players.values()) {
-          const isRecipientDM = player.role === 'dm';
-          const isAttackerOwner = targetOwnerId && player.userId === targetOwnerId;
-          let shouldSend = false;
-          if (targetOwnerId) { if (isAttackerOwner || isRecipientDM) shouldSend = true; }
-          else { if (isRecipientDM) shouldSend = true; }
-          if (shouldSend && !sentToSocketIds.has(player.socketId)) {
-            io.to(player.socketId).emit('combat:oa-opportunity', opp);
-            sentToSocketIds.add(player.socketId);
-          }
-        }
-      }
-    }
+    // Core 5e: casting a spell while adjacent does not itself
+    // provoke an opportunity attack. Keep spellcasting OAs out of the
+    // default flow unless we add an explicit house-rule session toggle.
   }));
 }

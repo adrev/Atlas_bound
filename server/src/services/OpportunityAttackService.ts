@@ -11,7 +11,7 @@ export interface OAOpportunity {
 }
 
 const CONDITIONS_THAT_PREVENT_OA = new Set([
-  'incapacitated', 'paralyzed', 'stunned', 'unconscious', 'petrified', 'prone', 'grappled',
+  'incapacitated', 'paralyzed', 'stunned', 'unconscious', 'petrified',
 ]);
 
 /**

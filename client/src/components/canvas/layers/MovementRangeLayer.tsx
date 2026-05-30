@@ -58,15 +58,12 @@ export function MovementRangeLayer() {
     [pathPoints]
   );
 
-  // Distance calculation: count cells in path (approximating diagonals)
+  // Distance calculation: default 5e grid rule, diagonal squares cost 5 ft.
   const pathDistanceFeet = useMemo(() => {
     if (movementPath.length < 2) return 0;
     let totalCost = 0;
     for (let i = 1; i < movementPath.length; i++) {
-      const dc = Math.abs(movementPath[i].col - movementPath[i - 1].col);
-      const dr = Math.abs(movementPath[i].row - movementPath[i - 1].row);
-      const isDiagonal = dc !== 0 && dr !== 0;
-      totalCost += isDiagonal ? 1.5 : 1;
+      totalCost += 1;
     }
     return Math.round(totalCost * feetPerCell);
   }, [movementPath]);

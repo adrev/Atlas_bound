@@ -256,6 +256,13 @@ export const CONDITIONS: Record<string, RuleEntry> = {
       'is within 5 ft of the creature.',
     accent: '#2c3e50',
   },
+  stable: {
+    title: 'Stable',
+    body:
+      '• A Stable creature is at 0 HP but no longer makes death saving throws.\n' +
+      '• The creature remains Unconscious until it regains HP or the DM resolves natural recovery.',
+    accent: C.green,
+  },
   exhaustion: {
     title: 'Exhaustion',
     body:

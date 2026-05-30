@@ -70,9 +70,9 @@ export function gridDistance(
 ): number {
   const dx = Math.abs(x1 - x2) / gridSize;
   const dy = Math.abs(y1 - y2) / gridSize;
-  // D&D 5e uses the "every other diagonal costs 10ft" optional rule
-  // For simplicity, use standard Euclidean rounded to nearest 5ft
-  const cells = Math.sqrt(dx * dx + dy * dy);
+  // Default 5e grid play counts a diagonal square as one square. Keep
+  // this Chebyshev metric aligned with drag spending and movement range.
+  const cells = Math.max(dx, dy);
   return Math.round(cells) * feetPerCell;
 }
 
@@ -110,8 +110,7 @@ export function getReachableCells(
     for (const [dx, dy] of directions) {
       const nc = current.col + dx;
       const nr = current.row + dy;
-      const isDiagonal = dx !== 0 && dy !== 0;
-      const moveCost = isDiagonal ? 1.5 : 1;
+      const moveCost = 1;
       const newCost = current.cost + moveCost;
 
       const key = `${nc},${nr}`;
@@ -148,6 +147,7 @@ export function findPath(
     Math.max(Math.abs(c - endCol), Math.abs(r - endRow));
 
   const openSet = new Map<string, { col: number; row: number; g: number; f: number }>();
+  const closedSet = new Set<string>();
   const cameFrom = new Map<string, string>();
   const start = { col: startCol, row: startRow, g: 0, f: heuristic(startCol, startRow) };
   openSet.set(key(startCol, startRow), start);
@@ -177,17 +177,18 @@ export function findPath(
     }
 
     openSet.delete(ck);
+    closedSet.add(ck);
 
     for (const [dx, dy] of directions) {
       const nc = current.col + dx;
       const nr = current.row + dy;
       const nk = key(nc, nr);
-      const isDiagonal = dx !== 0 && dy !== 0;
-      const cost = isDiagonal ? 1.414 : 1;
+      const cost = 1;
 
       if (
         nc < 0 || nc >= gridWidth ||
         nr < 0 || nr >= gridHeight ||
+        closedSet.has(nk) ||
         blockedCells.has(nk)
       ) continue;
 

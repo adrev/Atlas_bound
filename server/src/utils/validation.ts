@@ -336,7 +336,7 @@ export const combatConditionSchema = z.object({
   condition: z.enum([
     'blinded', 'charmed', 'deafened', 'frightened', 'grappled',
     'incapacitated', 'invisible', 'paralyzed', 'petrified', 'poisoned',
-    'prone', 'restrained', 'stunned', 'unconscious', 'exhaustion',
+    'prone', 'restrained', 'stunned', 'unconscious', 'stable', 'exhaustion',
   ]),
 });
 

@@ -28,6 +28,7 @@ const CONDITION_VISUALS: Record<string, { color: string; opacity: number; effect
   charmed:        { color: '#e91e63', opacity: 0.3,  effect: 'glow' },
   blinded:        { color: '#2c3e50', opacity: 0.4,  effect: 'overlay' },
   deafened:       { color: '#7f8c8d', opacity: 0.2,  effect: 'tint' },
+  stable:         { color: '#27ae60', opacity: 0.2,  effect: 'glow' },
   concentration:  { color: '#3498db', opacity: 0.2,  effect: 'glow' },
   blessed:        { color: '#f1c40f', opacity: 0.25, effect: 'glow' },
   hexed:          { color: '#8e44ad', opacity: 0.3,  effect: 'glow' },
@@ -739,7 +740,7 @@ function MovementPreview() {
   const curCx = dragPreview.currentX;
   const curCy = dragPreview.currentY;
 
-  // Distance in feet — Chebyshev with diagonals = 5 ft (5e variant).
+  // Distance in feet — default 5e grid play: diagonals count as 5 ft.
   const dxPx = dragPreview.currentX - dragPreview.startX;
   const dyPx = dragPreview.currentY - dragPreview.startY;
   const cellsX = Math.round(Math.abs(dxPx) / gridSize);

@@ -910,6 +910,7 @@ export function nextTurn(sessionId: string): {
 
     const tokenConds = (token.conditions || []) as string[];
     const isExplicitlyDead = tokenConds.includes('dead');
+    const isStable = tokenConds.includes('stable');
     const isDown = candidate.hp <= 0;
     const hasDeathSaves = candidate.deathSaves && (candidate.deathSaves.successes > 0 || candidate.deathSaves.failures > 0);
     const isPlayerCharacter = !candidate.isNPC;
@@ -920,11 +921,14 @@ export function nextTurn(sessionId: string): {
     // NPCs at 0 HP are simply dead and skipped.
     if (isDown && !isPlayerCharacter) { skippedTokenIds.push(candidate.tokenId); continue; }
 
-    // Dead PCs (3 death-save failures) stay in initiative but don't
-    // act. Stabilized PCs heal back to ≥1 HP so `isDown` is false and
-    // this branch doesn't trigger.
+    // Dead PCs (3 death-save failures) and stable PCs stay in initiative
+    // but do not act. A stable PC remains unconscious at 0 HP until
+    // healed, so they should not keep receiving death-save turns.
     if (isDown && isPlayerCharacter && hasDeathSaves &&
         candidate.deathSaves.failures >= 3) {
+      skippedTokenIds.push(candidate.tokenId); continue;
+    }
+    if (isDown && isPlayerCharacter && isStable) {
       skippedTokenIds.push(candidate.tokenId); continue;
     }
 
@@ -1021,11 +1025,74 @@ export interface HpChangeResult {
    */
   autoAppliedConditions?: string[];
   /**
+   * Populated when HP changes clear or otherwise mutate token
+   * conditions. Caller should broadcast `map:token-updated`.
+   */
+  autoRemovedConditions?: string[];
+  /**
    * TokenIds whose grapple auto-released because the grappler just
    * went unconscious. Empty when nothing was freed. Caller should
    * broadcast `map:token-updated` for each.
    */
   releasedGrappleTokenIds?: string[];
+}
+
+function setTokenConditions(
+  room: RoomState,
+  tokenId: string,
+  updater: (conditions: string[]) => string[],
+): { changed: boolean; conditions: string[]; removed: string[]; added: string[] } {
+  const token = room.tokens.get(tokenId);
+  if (!token) return { changed: false, conditions: [], removed: [], added: [] };
+
+  const before = ((token.conditions || []) as string[]).map((c) => String(c));
+  const after = [...new Set(updater([...before]).map((c) => String(c).toLowerCase()))];
+  const beforeSet = new Set(before.map((c) => c.toLowerCase()));
+  const afterSet = new Set(after);
+  const removed = before.filter((c) => !afterSet.has(c.toLowerCase()));
+  const added = after.filter((c) => !beforeSet.has(c));
+  const changed = removed.length > 0 || added.length > 0 || before.length !== after.length;
+  if (!changed) return { changed: false, conditions: before, removed: [], added: [] };
+
+  token.conditions = after as Condition[];
+  const combatant = room.combatState?.combatants.find((c) => c.tokenId === tokenId);
+  if (combatant) combatant.conditions = after as Condition[];
+  pool.query(
+    'UPDATE tokens SET conditions = $1 WHERE id = $2',
+    [JSON.stringify(after), tokenId],
+  ).catch((e) => console.warn('[CombatService] token conditions persist failed:', e));
+
+  return { changed: true, conditions: after, removed, added };
+}
+
+export function markStable(sessionId: string, tokenId: string): { conditions: string[]; added: string[] } {
+  const room = getRoom(sessionId);
+  if (!room?.combatState) throw new Error('No active combat');
+  const combatant = room.combatState.combatants.find((c) => c.tokenId === tokenId);
+  if (!combatant) throw new Error('Combatant not found');
+
+  combatant.hp = 0;
+  combatant.deathSaves = { successes: 0, failures: 0 };
+  const result = setTokenConditions(room, tokenId, (conditions) => {
+    const next = conditions.filter((c) => c.toLowerCase() !== 'dead');
+    if (!next.some((c) => c.toLowerCase() === 'unconscious')) next.push('unconscious');
+    if (!next.some((c) => c.toLowerCase() === 'stable')) next.push('stable');
+    return next;
+  });
+  if (combatant.characterId) {
+    pool.query(
+      'UPDATE characters SET hit_points = 0, death_saves = $1 WHERE id = $2',
+      [JSON.stringify(combatant.deathSaves), combatant.characterId],
+    ).catch((e) => console.warn('[CombatService] stable character persist failed:', e));
+  }
+  persistCombatState(room.combatState);
+
+  return { conditions: result.conditions, added: result.added };
+}
+
+export function persistSessionCombatState(sessionId: string): void {
+  const room = getRoom(sessionId);
+  if (room?.combatState) persistCombatState(room.combatState);
 }
 
 export async function applyDamage(sessionId: string, tokenId: string, amount: number): Promise<HpChangeResult> {
@@ -1048,6 +1115,14 @@ export async function applyDamage(sessionId: string, tokenId: string, amount: nu
   }
   combatant.hp = Math.max(0, combatant.hp - remaining);
 
+  let autoRemovedConditions: string[] | undefined;
+  if (amount > 0) {
+    const conditionResult = setTokenConditions(room, tokenId, (conditions) => (
+      conditions.filter((c) => c.toLowerCase() !== 'stable')
+    ));
+    if (conditionResult.removed.length > 0) autoRemovedConditions = conditionResult.removed;
+  }
+
   let autoDeathSaveFailure: { successes: number; failures: number } | undefined;
   if (wasAlreadyDown && combatant.hp === 0 && amount > 0) {
     combatant.deathSaves = combatant.deathSaves ?? { successes: 0, failures: 0 };
@@ -1065,21 +1140,13 @@ export async function applyDamage(sessionId: string, tokenId: string, amount: nu
   if (!wasAlreadyDown && combatant.hp === 0 && !combatant.isNPC) {
     const token = room.tokens.get(tokenId);
     if (token) {
-      const conds = (token.conditions as string[]) || [];
-      if (!conds.includes('unconscious')) {
-        conds.push('unconscious');
-        token.conditions = conds as never;
-        autoAppliedConditions = [...conds];
-        // Persist to DB — fire-and-forget; missing the write won't
-        // rollback the damage application.
-        pool.query(
-          'UPDATE tokens SET conditions = $1 WHERE id = $2',
-          [JSON.stringify(conds), tokenId],
-        ).catch((e) => console.warn('[applyDamage] unconscious persist failed:', e));
-        // Mirror onto the combatant row so the tracker reflects it
-        // without waiting for a map:token-updated round-trip.
-        combatant.conditions = conds as never;
-      }
+      const conditionResult = setTokenConditions(room, tokenId, (conditions) => {
+        if (!conditions.some((c) => c.toLowerCase() === 'unconscious')) {
+          conditions.push('unconscious');
+        }
+        return conditions;
+      });
+      if (conditionResult.changed) autoAppliedConditions = conditionResult.conditions;
       // Drop any concentration the character was holding. Matches the
       // applyConditionWithMeta rule for incapacitating conditions.
       if (combatant.characterId) {
@@ -1096,8 +1163,10 @@ export async function applyDamage(sessionId: string, tokenId: string, amount: nu
   }
 
   if (combatant.characterId) {
-    await pool.query('UPDATE characters SET hit_points = $1, temp_hit_points = $2 WHERE id = $3',
-      [combatant.hp, combatant.tempHp, combatant.characterId]);
+    await pool.query(
+      'UPDATE characters SET hit_points = $1, temp_hit_points = $2, death_saves = $3 WHERE id = $4',
+      [combatant.hp, combatant.tempHp, JSON.stringify(combatant.deathSaves ?? { successes: 0, failures: 0 }), combatant.characterId],
+    );
   }
   persistCombatState(room.combatState);
   return {
@@ -1107,6 +1176,7 @@ export async function applyDamage(sessionId: string, tokenId: string, amount: nu
     characterId: combatant.characterId ?? null,
     autoDeathSaveFailure,
     autoAppliedConditions,
+    autoRemovedConditions,
     releasedGrappleTokenIds,
   };
 }
@@ -1118,13 +1188,29 @@ export async function applyHeal(sessionId: string, tokenId: string, amount: numb
   if (!combatant) throw new Error('Combatant not found');
 
   combatant.hp = Math.min(combatant.maxHp, combatant.hp + amount);
-  if (combatant.hp > 0) combatant.deathSaves = { successes: 0, failures: 0 };
+  let autoRemovedConditions: string[] | undefined;
+  if (combatant.hp > 0) {
+    combatant.deathSaves = { successes: 0, failures: 0 };
+    const conditionResult = setTokenConditions(room, tokenId, (conditions) => (
+      conditions.filter((c) => !['unconscious', 'stable'].includes(c.toLowerCase()))
+    ));
+    if (conditionResult.removed.length > 0) autoRemovedConditions = conditionResult.removed;
+  }
 
   if (combatant.characterId) {
-    await pool.query('UPDATE characters SET hit_points = $1 WHERE id = $2', [combatant.hp, combatant.characterId]);
+    await pool.query(
+      'UPDATE characters SET hit_points = $1, death_saves = $2 WHERE id = $3',
+      [combatant.hp, JSON.stringify(combatant.deathSaves ?? { successes: 0, failures: 0 }), combatant.characterId],
+    );
   }
   persistCombatState(room.combatState);
-  return { hp: combatant.hp, tempHp: combatant.tempHp, change: amount, characterId: combatant.characterId ?? null };
+  return {
+    hp: combatant.hp,
+    tempHp: combatant.tempHp,
+    change: amount,
+    characterId: combatant.characterId ?? null,
+    autoRemovedConditions,
+  };
 }
 
 export function addCondition(sessionId: string, tokenId: string, condition: Condition): Condition[] {

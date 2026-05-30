@@ -164,6 +164,7 @@ export type Condition =
   | 'restrained'
   | 'stunned'
   | 'unconscious'
+  | 'stable'
   | 'exhaustion';
 
 export interface PrebuiltMap {

@@ -78,6 +78,12 @@ export function registerCombatHp(io: Server, socket: Socket): void {
           changes: { hitPoints: result.hp, tempHitPoints: result.tempHp },
         }, { includeOwner: true });
       }
+      if (result.autoRemovedConditions && result.autoRemovedConditions.length > 0) {
+        emitToTokenViewers(io, ctx.room, parsed.data.tokenId, 'map:token-updated', {
+          tokenId: parsed.data.tokenId,
+          changes: tokenConditionChanges(ctx.room, parsed.data.tokenId),
+        });
+      }
       // 5e: damage while at 0 HP = automatic death-save failure.
       // CombatService.applyDamage increments the failure tally if the
       // combatant was already down; fan out the updated tracker so
@@ -93,7 +99,7 @@ export function registerCombatHp(io: Server, socket: Socket): void {
       // PC dropped to 0 HP \u2192 unconscious auto-applied. Broadcast the
       // token's new condition list so every client's badge tray
       // reflects the new state.
-      if (result.autoAppliedConditions) {
+      if (result.autoAppliedConditions || (result.autoRemovedConditions && result.autoRemovedConditions.length > 0)) {
         // Pulls fresh conditions from the live token (CombatService
         // has already mutated the token's conditions array in-place),
         // so we don't need to pass the string[] from the result \u2014 the
@@ -198,13 +204,30 @@ export function registerCombatHp(io: Server, socket: Socket): void {
     // counters outside the intended game state.
     if (combatant.hp > 0) return;
 
+    const isDM = ctx.player.role === 'dm';
+    const combatState = ctx.room.combatState;
+    if (!combatState?.active) return;
+    const currentCombatant = combatState.combatants[combatState.currentTurnIndex];
+    if (!isDM && currentCombatant?.tokenId !== tokenId) return;
+    if (!isDM && combatant.deathSaveRolledRound === combatState.roundNumber) return;
+    const token = ctx.room.tokens.get(tokenId);
+    const tokenConditions = ((token?.conditions || []) as string[]).map((c) => c.toLowerCase());
+    if (tokenConditions.includes('stable')) return;
+
     const result = DiceService.rollDeathSave();
+    combatant.deathSaveRolledRound = combatState.roundNumber;
 
     // Apply death save result
     if (result.isCritSuccess) {
       // Nat 20: regain 1 HP
-      await CombatService.applyHeal(ctx.room.sessionId, tokenId, 1);
+      const healResult = await CombatService.applyHeal(ctx.room.sessionId, tokenId, 1);
       combatant.deathSaves = { successes: 0, failures: 0 };
+      if (healResult.autoRemovedConditions && healResult.autoRemovedConditions.length > 0) {
+        emitToTokenViewers(io, ctx.room, tokenId, 'map:token-updated', {
+          tokenId,
+          changes: tokenConditionChanges(ctx.room, tokenId),
+        });
+      }
     } else if (result.isCritFail) {
       // Nat 1: two failures
       combatant.deathSaves.failures = Math.min(3, combatant.deathSaves.failures + 2);
@@ -214,12 +237,16 @@ export function registerCombatHp(io: Server, socket: Socket): void {
       combatant.deathSaves.failures = Math.min(3, combatant.deathSaves.failures + 1);
     }
 
-    // Stabilize on 3 successes
+    // Stabilize on 3 successes. Core 5e leaves the creature at 0 HP
+    // and unconscious; it only stops future death-save rolls.
     if (combatant.deathSaves.successes >= 3) {
-      combatant.deathSaves = { successes: 0, failures: 0 };
-      // Remove unconscious condition
-      CombatService.removeCondition(ctx.room.sessionId, tokenId, 'unconscious');
+      CombatService.markStable(ctx.room.sessionId, tokenId);
+      emitToTokenViewers(io, ctx.room, tokenId, 'map:token-updated', {
+        tokenId,
+        changes: tokenConditionChanges(ctx.room, tokenId),
+      });
     }
+    CombatService.persistSessionCombatState(ctx.room.sessionId);
 
     emitToTokenViewers(io, ctx.room, tokenId, 'combat:death-save-updated', {
       tokenId,
@@ -231,7 +258,9 @@ export function registerCombatHp(io: Server, socket: Socket): void {
     // chat shows every death-save roll with its counter, not just
     // the dramatic outcomes. DC 10 is implied for death saves.
     const dead = combatant.deathSaves.failures >= 3;
-    const stabilized = combatant.hp > 0; // nat 20 heals → hp becomes 1
+    const stabilized = ((ctx.room.tokens.get(tokenId)?.conditions || []) as string[])
+      .map((c) => c.toLowerCase())
+      .includes('stable');
     const deathSaveBreakdown: SaveBreakdown = {
       roller: {
         name: combatant.name,
@@ -260,7 +289,9 @@ export function registerCombatHp(io: Server, socket: Socket): void {
       : result.isCritFail
         ? `\u2620\uFE0F ${combatant.name} rolled a NAT 1 on their death save — counts as 2 failures.`
         : result.isSuccess
-          ? `\u2713 ${combatant.name} succeeded a death save (d20=${result.roll}).`
+          ? stabilized
+            ? `\u2713 ${combatant.name} is stable at 0 HP and remains unconscious.`
+            : `\u2713 ${combatant.name} succeeded a death save (d20=${result.roll}).`
           : `\u2717 ${combatant.name} failed a death save (d20=${result.roll}).`;
     const msgId = uuidv4();
     const createdAt = new Date().toISOString();

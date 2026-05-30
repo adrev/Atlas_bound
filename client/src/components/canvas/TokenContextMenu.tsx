@@ -174,7 +174,7 @@ export function TokenContextMenu() {
         {subMenu === 'conditions' && (
           <div style={{ padding: '8px 12px', borderBottom: `1px solid ${C.border}` }}>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 3 }}>
-              {['blinded', 'charmed', 'deafened', 'frightened', 'grappled', 'incapacitated', 'invisible', 'paralyzed', 'petrified', 'poisoned', 'prone', 'restrained', 'stunned', 'unconscious'].map(cond => {
+              {['blinded', 'charmed', 'deafened', 'frightened', 'grappled', 'incapacitated', 'invisible', 'paralyzed', 'petrified', 'poisoned', 'prone', 'restrained', 'stunned', 'unconscious', 'stable'].map(cond => {
                 const active = (token.conditions || []).includes(cond as any);
                 return (
                   <button key={cond} onClick={() => {

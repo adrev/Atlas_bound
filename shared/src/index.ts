@@ -63,6 +63,21 @@ export {
 export type { Advantage, ConditionEffect, AttackModifierResult, SaveModifierResult, EffectiveStat, Ability } from './rules/conditionEffects.js';
 export { RACE_TRAITS, traitsForRace } from './rules/raceFeatures.js';
 export type { RaceTraits, SaveAdvantageFlag, InnateRacialSpell } from './rules/raceFeatures.js';
+export {
+  RULE_MODES,
+  RULES_MATRIX_VERSION,
+  RULES_MATRIX,
+  rulesByMode,
+  rulesByPriority,
+} from './rules5e/index.js';
+export type {
+  RuleMode,
+  RuleCategory,
+  RuleCoverageStatus,
+  RuleAuthority,
+  RulePriority,
+  RulesMatrixEntry,
+} from './rules5e/index.js';
 export { SPELL_CONDITIONS, SPELL_BUFFS } from './constants/spell-conditions.js';
 export type { ConditionInfo } from './constants/conditions.js';
 export { SPELL_ANIMATIONS, getSpellAnimation } from './constants/spell-animations.js';

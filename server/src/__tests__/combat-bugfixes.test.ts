@@ -179,6 +179,110 @@ describe('CombatService.nextTurn — skips downed combatants', () => {
     expect(result.currentCombatant.tokenId).toBe('tC');
     expect(result.skippedTokenIds).toContain('tPC');
   });
+
+  it('skips a stable PC at 0 HP instead of giving another death-save turn', () => {
+    const sessionId = 's-pc-stable';
+    const tA = makeToken('tA');
+    const tPC = makeToken('tPC', {
+      ownerUserId: 'player-1',
+      conditions: ['unconscious', 'stable'],
+    });
+    const tC = makeToken('tC');
+    const combatants = [
+      makeCombatant('tA'),
+      makeCombatant('tPC', {
+        hp: 0, isNPC: false,
+        deathSaves: { successes: 0, failures: 0 },
+      }),
+      makeCombatant('tC'),
+    ];
+    seedRoom(sessionId, [tA, tPC, tC], combatants);
+
+    const result = CombatService.nextTurn(sessionId);
+    expect(result.currentCombatant.tokenId).toBe('tC');
+    expect(result.skippedTokenIds).toContain('tPC');
+  });
+});
+
+describe('CombatService death-save state helpers', () => {
+  it('marks a downed PC stable while keeping them unconscious at 0 HP', () => {
+    const sessionId = 's-stabilize';
+    const token = makeToken('tPC', {
+      ownerUserId: 'player-1',
+      characterId: 'char-1',
+      conditions: ['unconscious'],
+    });
+    const combatant = makeCombatant('tPC', {
+      characterId: 'char-1',
+      hp: 0,
+      isNPC: false,
+      conditions: ['unconscious'],
+      deathSaves: { successes: 2, failures: 1 },
+    });
+    seedRoom(sessionId, [token], [combatant]);
+
+    CombatService.markStable(sessionId, 'tPC');
+
+    expect(combatant.hp).toBe(0);
+    expect(combatant.deathSaves).toEqual({ successes: 0, failures: 0 });
+    expect(token.conditions).toContain('unconscious');
+    expect(token.conditions).toContain('stable');
+    expect(combatant.conditions).toContain('unconscious');
+    expect(combatant.conditions).toContain('stable');
+  });
+
+  it('healing a stable unconscious PC above 0 clears both conditions', async () => {
+    const sessionId = 's-heal-stable';
+    const token = makeToken('tPC', {
+      ownerUserId: 'player-1',
+      characterId: 'char-1',
+      conditions: ['unconscious', 'stable'],
+    });
+    const combatant = makeCombatant('tPC', {
+      characterId: 'char-1',
+      hp: 0,
+      maxHp: 20,
+      isNPC: false,
+      conditions: ['unconscious', 'stable'],
+      deathSaves: { successes: 1, failures: 1 },
+    });
+    seedRoom(sessionId, [token], [combatant]);
+
+    const result = await CombatService.applyHeal(sessionId, 'tPC', 5);
+
+    expect(result.hp).toBe(5);
+    expect(result.autoRemovedConditions).toEqual(['unconscious', 'stable']);
+    expect(combatant.deathSaves).toEqual({ successes: 0, failures: 0 });
+    expect(token.conditions).not.toContain('unconscious');
+    expect(token.conditions).not.toContain('stable');
+    expect(combatant.conditions).toEqual([]);
+  });
+
+  it('damaging a stable PC removes stable and records a death-save failure', async () => {
+    const sessionId = 's-damage-stable';
+    const token = makeToken('tPC', {
+      ownerUserId: 'player-1',
+      characterId: 'char-1',
+      conditions: ['unconscious', 'stable'],
+    });
+    const combatant = makeCombatant('tPC', {
+      characterId: 'char-1',
+      hp: 0,
+      maxHp: 20,
+      isNPC: false,
+      conditions: ['unconscious', 'stable'],
+      deathSaves: { successes: 0, failures: 0 },
+    });
+    seedRoom(sessionId, [token], [combatant]);
+
+    const result = await CombatService.applyDamage(sessionId, 'tPC', 3);
+
+    expect(result.hp).toBe(0);
+    expect(result.autoRemovedConditions).toEqual(['stable']);
+    expect(result.autoDeathSaveFailure).toEqual({ successes: 0, failures: 1 });
+    expect(token.conditions).toEqual(['unconscious']);
+    expect(combatant.conditions).toEqual(['unconscious']);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -306,6 +410,48 @@ describe('Opportunity attacks honor token faction', () => {
       sessionId, 'tMover', 0, 0, GRID * 5, 0,
     );
     expect(ops).toEqual([]);
+  });
+
+  it('prone attackers can still make opportunity attacks', () => {
+    const sessionId = 's-oa-prone-attacker';
+    const mover = makeToken('tMover', {
+      x: 0, y: 0, faction: 'friendly',
+    });
+    const enemy = makeToken('tEnemy', {
+      x: GRID, y: 0, faction: 'hostile',
+      conditions: ['prone' as unknown as Condition],
+    });
+    seedRoom(sessionId, [mover, enemy], [
+      makeCombatant('tMover', { isNPC: false }),
+      makeCombatant('tEnemy'),
+    ]);
+
+    const ops = OAService.detectOpportunityAttacks(
+      sessionId, 'tMover', 0, 0, GRID * 5, 0,
+    );
+    expect(ops.length).toBe(1);
+    expect(ops[0].attackerTokenId).toBe('tEnemy');
+  });
+
+  it('grappled attackers can still make opportunity attacks', () => {
+    const sessionId = 's-oa-grappled-attacker';
+    const mover = makeToken('tMover', {
+      x: 0, y: 0, faction: 'friendly',
+    });
+    const enemy = makeToken('tEnemy', {
+      x: GRID, y: 0, faction: 'hostile',
+      conditions: ['grappled' as unknown as Condition],
+    });
+    seedRoom(sessionId, [mover, enemy], [
+      makeCombatant('tMover', { isNPC: false }),
+      makeCombatant('tEnemy'),
+    ]);
+
+    const ops = OAService.detectOpportunityAttacks(
+      sessionId, 'tMover', 0, 0, GRID * 5, 0,
+    );
+    expect(ops.length).toBe(1);
+    expect(ops[0].attackerTokenId).toBe('tEnemy');
   });
 
   it('hostile casting spell near friendly provokes OA', () => {
