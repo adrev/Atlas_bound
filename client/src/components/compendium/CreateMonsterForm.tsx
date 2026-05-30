@@ -240,6 +240,10 @@ export function CreateMonsterForm({ sessionId, onCreated, onCancel }: CreateMons
     add: () => void,
     label: string,
   ) {
+    const addLabel = label === 'Special Abilities'
+      ? 'Special Ability'
+      : label.replace(/s$/, '');
+
     return (
       <div>
         <div style={sectionHeading}>{label}</div>
@@ -267,7 +271,7 @@ export function CreateMonsterForm({ sessionId, onCreated, onCancel }: CreateMons
           </div>
         ))}
         <Button variant="ghost" size="sm" onClick={add} style={{ fontSize: 11, marginTop: 2 }}>
-          + Add {label.replace(/s$/, '')}
+          + Add {addLabel}
         </Button>
       </div>
     );
