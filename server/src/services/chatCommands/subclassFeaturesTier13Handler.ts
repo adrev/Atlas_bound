@@ -9,6 +9,7 @@ import pool from '../../db/connection.js';
 import type { Token, ActionBreakdown } from '@dnd-vtt/shared';
 import type { PlayerContext } from '../../utils/roomState.js';
 import { tokenConditionChanges } from '../../utils/conditionSources.js';
+import { formatSaveTotal, loadTargetSaveMod, rollTargetSave, type RolledSave, type SaveAbility } from './saveRoll.js';
 
 /**
  * Tier 13 — Cleric / Paladin Channel-Divinity subclass features:
@@ -59,32 +60,6 @@ function abilityMod(scores: Record<string, number> | undefined, ability: string)
   return Math.floor((raw - 10) / 2);
 }
 
-async function loadTargetSaveMod(
-  target: Token,
-  ability: 'str' | 'dex' | 'con' | 'int' | 'wis' | 'cha',
-): Promise<{ mod: number; displayName: string }> {
-  if (!target.characterId) return { mod: 0, displayName: target.name };
-  try {
-    const { rows } = await pool.query(
-      'SELECT ability_scores, saving_throws, proficiency_bonus, name FROM characters WHERE id = $1',
-      [target.characterId],
-    );
-    const row = rows[0] as Record<string, unknown> | undefined;
-    const scores = typeof row?.ability_scores === 'string'
-      ? JSON.parse(row.ability_scores as string)
-      : (row?.ability_scores ?? {});
-    const prof = Number(row?.proficiency_bonus) || 2;
-    const saves = typeof row?.saving_throws === 'string'
-      ? JSON.parse(row.saving_throws as string)
-      : (row?.saving_throws ?? []);
-    const mod = abilityMod(scores as Record<string, number>, ability) +
-      (Array.isArray(saves) && saves.includes(ability) ? prof : 0);
-    return { mod, displayName: (row?.name as string) || target.name };
-  } catch {
-    return { mod: 0, displayName: target.name };
-  }
-}
-
 interface CasterMeta {
   caller: Token;
   row: Record<string, unknown> | undefined;
@@ -122,6 +97,20 @@ async function loadCaster(c: ChatCommandContext, cmd: string): Promise<CasterMet
     callerName: (row?.name as string) || caller.name,
     spellSaveDc,
   };
+}
+
+function saveNotesLabel(saveResult: RolledSave): string {
+  return saveResult.notes.length > 0 ? ` [${saveResult.notes.join(', ')}]` : '';
+}
+
+function actionSaveEffect(
+  saveResult: RolledSave,
+  ability: SaveAbility,
+  dc: number,
+  successText: string,
+  failText: string,
+): string {
+  return `${saveResult.saved ? 'SAVED' : 'FAILED'}: ${ability.toUpperCase()} ${formatSaveTotal(saveResult)} vs DC ${dc} — ${saveResult.saved ? successText : failText}${saveNotesLabel(saveResult)}`;
 }
 
 // ────── Forge Cleric: Blessing of the Forge (L1) ─────
@@ -426,24 +415,23 @@ async function handleNaturesWrath(c: ChatCommandContext): Promise<boolean> {
     whisperToCaller(c.io, c.ctx, `!natureswrath: ${callerName} isn't an Ancients Paladin.`);
     return true;
   }
-  // STR or DEX save (target picks best). We roll STR on their behalf.
+  // STR or DEX save (target picks best). Pick the better base save,
+  // then run the actual roll through the shared modifier helper.
   const { mod: strMod } = await loadTargetSaveMod(target, 'str');
   const { mod: dexMod, displayName } = await loadTargetSaveMod(target, 'dex');
-  const bestAbility = strMod >= dexMod ? 'STR' : 'DEX';
+  const bestAbility: SaveAbility = strMod >= dexMod ? 'str' : 'dex';
+  const bestAbilityLabel = bestAbility.toUpperCase();
   const bestMod = Math.max(strMod, dexMod);
-  const d20 = Math.floor(Math.random() * 20) + 1;
-  const tot = d20 + bestMod;
-  const saved = tot >= spellSaveDc;
-  const sign = bestMod >= 0 ? '+' : '';
+  const saveResult = await rollTargetSave(c, target, bestAbility, spellSaveDc, 'restrained');
   const currentRound = c.ctx.room.combatState?.roundNumber ?? 0;
-  if (!saved) {
+  if (!saveResult.saved) {
     ConditionService.applyConditionWithMeta(c.ctx.room.sessionId, target.id, {
       name: 'restrained',
       source: `${callerName} (Nature's Wrath)`,
       casterTokenId: caller.id,
       appliedRound: currentRound,
       expiresAfterRound: currentRound + 10,
-      saveAtEndOfTurn: { ability: bestAbility.toLowerCase() as 'str' | 'dex', dc: spellSaveDc },
+      saveAtEndOfTurn: { ability: bestAbility, dc: spellSaveDc },
     });
     c.io.to(c.ctx.room.sessionId).emit('map:token-updated', {
       tokenId: target.id,
@@ -453,30 +441,28 @@ async function handleNaturesWrath(c: ChatCommandContext): Promise<boolean> {
   const nwBreakdown: ActionBreakdown = {
     actor: { name: callerName, tokenId: caller.id },
     action: {
-      name: `Nature's Wrath (${bestAbility} DC ${spellSaveDc})`,
+      name: `Nature's Wrath (${bestAbilityLabel} DC ${spellSaveDc})`,
       category: 'class-feature',
       icon: '🌿',
       cost: 'Channel Divinity',
     },
-    effect: `${displayName} ${bestAbility} save d20=${d20}${sign}${bestMod}=${tot} vs DC ${spellSaveDc} → ${saved ? 'SAVED' : 'RESTRAINED by spectral vines'}.`,
+    effect: `${displayName} ${bestAbilityLabel} save ${formatSaveTotal(saveResult)} vs DC ${spellSaveDc} → ${saveResult.saved ? 'SAVED' : 'RESTRAINED by spectral vines'}${saveNotesLabel(saveResult)}.`,
     targets: [{
       name: displayName,
       tokenId: target.id,
-      effect: saved
-        ? `SAVED (${tot} ≥ ${spellSaveDc})`
-        : `FAILED (${tot} < ${spellSaveDc}) — restrained (save at end of turn)`,
-      ...(!saved ? { conditionsApplied: ['restrained'] } : {}),
+      effect: actionSaveEffect(saveResult, bestAbility, spellSaveDc, 'no effect', 'restrained (save at end of turn)'),
+      ...(!saveResult.saved ? { conditionsApplied: ['restrained'] } : {}),
     }],
     notes: [
       `Ancients Paladin (CD)`,
-      `Target picks best: STR mod ${strMod}, DEX mod ${dexMod} → ${bestAbility} (${bestMod})`,
-      `Save roll: d20=${d20} ${sign}${bestMod} = ${tot}`,
+      `Target picks best: STR mod ${strMod}, DEX mod ${dexMod} → ${bestAbilityLabel} (${bestMod})`,
+      `Save roll: ${formatSaveTotal(saveResult)}`,
       `Duration: until save at end of turn`,
     ],
   };
   broadcastSystem(
     c.io, c.ctx,
-    `🌿 **Nature's Wrath** (CD, ${bestAbility} DC ${spellSaveDc}) — ${callerName} → ${displayName}: d20=${d20}${sign}${bestMod}=${tot} → ${saved ? 'SAVED' : 'RESTRAINED by spectral vines (save at end of turn)'}`,
+    `🌿 **Nature's Wrath** (CD, ${bestAbilityLabel} DC ${spellSaveDc}) — ${callerName} → ${displayName}: ${formatSaveTotal(saveResult)} → ${saveResult.saved ? 'SAVED' : 'RESTRAINED by spectral vines (save at end of turn)'}${saveNotesLabel(saveResult)}`,
     { actionResult: nwBreakdown },
   );
   return true;
@@ -512,12 +498,8 @@ async function handleConqueringPresence(c: ChatCommandContext): Promise<boolean>
       cpTargets.push({ name, effect: 'Token not found' });
       continue;
     }
-    const { mod, displayName } = await loadTargetSaveMod(target, 'wis');
-    const d20 = Math.floor(Math.random() * 20) + 1;
-    const tot = d20 + mod;
-    const saved = tot >= spellSaveDc;
-    const sign = mod >= 0 ? '+' : '';
-    if (!saved) {
+    const saveResult = await rollTargetSave(c, target, 'wis', spellSaveDc, 'frightened');
+    if (!saveResult.saved) {
       anyFailed = true;
       ConditionService.applyConditionWithMeta(c.ctx.room.sessionId, target.id, {
         name: 'frightened',
@@ -532,14 +514,12 @@ async function handleConqueringPresence(c: ChatCommandContext): Promise<boolean>
         changes: tokenConditionChanges(c.ctx.room, target.id),
       });
     }
-    lines.push(`  • ${displayName}: WIS d20=${d20}${sign}${mod}=${tot} → ${saved ? 'SAVED' : 'FRIGHTENED (save at end of turn, 1 min)'}`);
+    lines.push(`  • ${saveResult.displayName}: WIS ${formatSaveTotal(saveResult)} → ${saveResult.saved ? 'SAVED' : 'FRIGHTENED (save at end of turn, 1 min)'}${saveNotesLabel(saveResult)}`);
     cpTargets.push({
-      name: displayName,
+      name: saveResult.displayName,
       tokenId: target.id,
-      effect: saved
-        ? `SAVED: WIS d20=${d20}${sign}${mod}=${tot} vs DC ${spellSaveDc}`
-        : `FAILED: WIS d20=${d20}${sign}${mod}=${tot} vs DC ${spellSaveDc} — frightened`,
-      ...(saved ? {} : { conditionsApplied: ['frightened'] }),
+      effect: actionSaveEffect(saveResult, 'wis', spellSaveDc, 'no effect', 'frightened'),
+      ...(saveResult.saved ? {} : { conditionsApplied: ['frightened'] }),
     });
   }
   const cpBreakdown: ActionBreakdown = {
@@ -593,12 +573,8 @@ async function handleChampionChallenge(c: ChatCommandContext): Promise<boolean> 
       ccTargets.push({ name, effect: 'Token not found' });
       continue;
     }
-    const { mod, displayName } = await loadTargetSaveMod(target, 'wis');
-    const d20 = Math.floor(Math.random() * 20) + 1;
-    const tot = d20 + mod;
-    const saved = tot >= spellSaveDc;
-    const sign = mod >= 0 ? '+' : '';
-    if (!saved) {
+    const saveResult = await rollTargetSave(c, target, 'wis', spellSaveDc, 'challenged');
+    if (!saveResult.saved) {
       anyFailed = true;
       ConditionService.applyConditionWithMeta(c.ctx.room.sessionId, target.id, {
         name: 'challenged',
@@ -613,14 +589,12 @@ async function handleChampionChallenge(c: ChatCommandContext): Promise<boolean> 
         changes: tokenConditionChanges(c.ctx.room, target.id),
       });
     }
-    lines.push(`  • ${displayName}: WIS d20=${d20}${sign}${mod}=${tot} → ${saved ? 'SAVED' : "CHALLENGED (can't willingly move > 30 ft from caster)"}`);
+    lines.push(`  • ${saveResult.displayName}: WIS ${formatSaveTotal(saveResult)} → ${saveResult.saved ? 'SAVED' : "CHALLENGED (can't willingly move > 30 ft from caster)"}${saveNotesLabel(saveResult)}`);
     ccTargets.push({
-      name: displayName,
+      name: saveResult.displayName,
       tokenId: target.id,
-      effect: saved
-        ? `SAVED: WIS d20=${d20}${sign}${mod}=${tot} vs DC ${spellSaveDc}`
-        : `FAILED: WIS d20=${d20}${sign}${mod}=${tot} vs DC ${spellSaveDc} — challenged`,
-      ...(saved ? {} : { conditionsApplied: ['challenged'] }),
+      effect: actionSaveEffect(saveResult, 'wis', spellSaveDc, 'no effect', 'challenged'),
+      ...(saveResult.saved ? {} : { conditionsApplied: ['challenged'] }),
     });
   }
   const ccBreakdown: ActionBreakdown = {
@@ -674,12 +648,8 @@ async function handleDreadfulAspect(c: ChatCommandContext): Promise<boolean> {
       daTargets.push({ name, effect: 'Token not found' });
       continue;
     }
-    const { mod, displayName } = await loadTargetSaveMod(target, 'wis');
-    const d20 = Math.floor(Math.random() * 20) + 1;
-    const tot = d20 + mod;
-    const saved = tot >= spellSaveDc;
-    const sign = mod >= 0 ? '+' : '';
-    if (!saved) {
+    const saveResult = await rollTargetSave(c, target, 'wis', spellSaveDc, 'frightened');
+    if (!saveResult.saved) {
       anyFailed = true;
       ConditionService.applyConditionWithMeta(c.ctx.room.sessionId, target.id, {
         name: 'frightened',
@@ -693,14 +663,12 @@ async function handleDreadfulAspect(c: ChatCommandContext): Promise<boolean> {
         changes: tokenConditionChanges(c.ctx.room, target.id),
       });
     }
-    lines.push(`  • ${displayName}: WIS d20=${d20}${sign}${mod}=${tot} → ${saved ? 'SAVED' : 'FRIGHTENED (1 min, no save mid-duration while in line of sight)'}`);
+    lines.push(`  • ${saveResult.displayName}: WIS ${formatSaveTotal(saveResult)} → ${saveResult.saved ? 'SAVED' : 'FRIGHTENED (1 min, no save mid-duration while in line of sight)'}${saveNotesLabel(saveResult)}`);
     daTargets.push({
-      name: displayName,
+      name: saveResult.displayName,
       tokenId: target.id,
-      effect: saved
-        ? `SAVED: WIS d20=${d20}${sign}${mod}=${tot} vs DC ${spellSaveDc}`
-        : `FAILED: WIS d20=${d20}${sign}${mod}=${tot} vs DC ${spellSaveDc} — frightened`,
-      ...(saved ? {} : { conditionsApplied: ['frightened'] }),
+      effect: actionSaveEffect(saveResult, 'wis', spellSaveDc, 'no effect', 'frightened'),
+      ...(saveResult.saved ? {} : { conditionsApplied: ['frightened'] }),
     });
   }
   const daBreakdown: ActionBreakdown = {
@@ -767,12 +735,8 @@ async function handleRebukeViolent(c: ChatCommandContext): Promise<boolean> {
       economy,
     });
   }
-  const { mod, displayName } = await loadTargetSaveMod(attacker, 'wis');
-  const d20 = Math.floor(Math.random() * 20) + 1;
-  const tot = d20 + mod;
-  const saved = tot >= spellSaveDc;
-  const radiant = saved ? Math.floor(dmgDealt / 2) : dmgDealt;
-  const sign = mod >= 0 ? '+' : '';
+  const saveResult = await rollTargetSave(c, attacker, 'wis', spellSaveDc, 'radiant');
+  const radiant = saveResult.saved ? Math.floor(dmgDealt / 2) : dmgDealt;
   const rebukeBreakdown: ActionBreakdown = {
     actor: { name: callerName, tokenId: caller.id },
     action: {
@@ -781,11 +745,11 @@ async function handleRebukeViolent(c: ChatCommandContext): Promise<boolean> {
       icon: '✨',
       cost: 'Reaction + Channel Divinity',
     },
-    effect: `${displayName} WIS save d20=${d20}${sign}${mod}=${tot} vs DC ${spellSaveDc} → ${saved ? 'SAVED (half damage)' : 'FAILED'}. Takes **${radiant}** radiant damage.`,
+    effect: `${saveResult.displayName} WIS save ${formatSaveTotal(saveResult)} vs DC ${spellSaveDc} → ${saveResult.saved ? 'SAVED (half damage)' : 'FAILED'}. Takes **${radiant}** radiant damage.${saveNotesLabel(saveResult)}`,
     targets: [{
-      name: displayName,
+      name: saveResult.displayName,
       tokenId: attacker.id,
-      effect: saved
+      effect: saveResult.saved
         ? `SAVED (half): ${radiant} radiant damage`
         : `FAILED: ${radiant} radiant damage`,
       damage: { amount: radiant, damageType: 'radiant' },
@@ -793,13 +757,14 @@ async function handleRebukeViolent(c: ChatCommandContext): Promise<boolean> {
     notes: [
       `Redemption Paladin (CD reaction)`,
       `Damage dealt by attacker: ${dmgDealt}`,
-      `WIS save roll: d20=${d20} ${sign}${mod} = ${tot} vs DC ${spellSaveDc}`,
-      `Radiant damage: ${saved ? `half (${radiant})` : `full (${radiant})`}`,
+      `WIS save roll: ${formatSaveTotal(saveResult)} vs DC ${spellSaveDc}`,
+      `Radiant damage: ${saveResult.saved ? `half (${radiant})` : `full (${radiant})`}`,
+      ...saveResult.notes,
     ],
   };
   broadcastSystem(
     c.io, c.ctx,
-    `✨ **Rebuke the Violent** (CD reaction, WIS DC ${spellSaveDc}) — ${callerName} punishes ${displayName}: d20=${d20}${sign}${mod}=${tot} → ${saved ? 'SAVED (half)' : 'FAILED'}, takes **${radiant} radiant** damage.`,
+    `✨ **Rebuke the Violent** (CD reaction, WIS DC ${spellSaveDc}) — ${callerName} punishes ${saveResult.displayName}: ${formatSaveTotal(saveResult)} → ${saveResult.saved ? 'SAVED (half)' : 'FAILED'}, takes **${radiant} radiant** damage.${saveNotesLabel(saveResult)}`,
     { actionResult: rebukeBreakdown },
   );
   return true;
