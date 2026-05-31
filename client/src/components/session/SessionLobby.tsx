@@ -884,7 +884,11 @@ export function SessionLobby() {
             </div>
           )}
           {myCharsLoading && myCharacters.length === 0 ? (
-            <p className="rail-empty">Loading thy heroes…</p>
+            <div className="skel-list" role="status" aria-label="Loading your heroes">
+              <div className="skel skel-hero" />
+              <div className="skel skel-hero" />
+              <div className="skel skel-hero" />
+            </div>
           ) : myCharacters.length === 0 ? (
             <p className="rail-empty">No heroes yet. Forge one to begin.</p>
           ) : (
@@ -1058,7 +1062,11 @@ export function SessionLobby() {
           </div>
 
           {myGamesLoading && filteredGames.length === 0 ? (
-            <p className="empty-prose">Gathering thy campaigns…</p>
+            <div className="games-grid" role="status" aria-label="Loading your campaigns">
+              <div className="skel skel-tile" />
+              <div className="skel skel-tile" />
+              <div className="skel skel-tile" />
+            </div>
           ) : filteredGames.length === 0 ? (
             <p className="empty-prose">
               No campaigns {gameFilter === 'dm' ? 'you are running' : gameFilter === 'player' ? 'you are playing in' : 'yet'}.
@@ -2097,6 +2105,15 @@ const LOBBY_CSS = `
 }
 .kbrt-lobby .rail .add-char:hover { color: var(--accent); border-color: var(--accent); background: rgba(224,180,79,.04); }
 .kbrt-lobby .rail-empty { font-family: var(--font-script); font-style:italic; color: var(--text-muted); font-size:13px; margin:0 0 12px; text-align:center; }
+/* Skeleton loaders — shimmer placeholders shown while heroes/campaigns
+   fetch, instead of a bare "Loading…" line. The shimmer is auto-disabled
+   for prefers-reduced-motion via the global reset in globals.css. */
+.kbrt-lobby .skel-list { margin:0 0 12px; }
+.kbrt-lobby .skel { position:relative; overflow:hidden; background:rgba(199,150,50,.07); border:1px solid var(--border-line); border-radius:8px; }
+.kbrt-lobby .skel::after { content:''; position:absolute; inset:0; transform:translateX(-100%); background:linear-gradient(90deg, transparent, rgba(224,180,79,.10), transparent); animation:kbrtShimmer 1.4s ease-in-out infinite; }
+@keyframes kbrtShimmer { 100% { transform:translateX(100%); } }
+.kbrt-lobby .skel-hero { height:52px; margin:0 0 8px; }
+.kbrt-lobby .skel-tile { height:150px; }
 
 /* ===== STAGE ===== */
 .kbrt-lobby .stage {
