@@ -223,10 +223,10 @@ export const RULES_MATRIX: RulesMatrixEntry[] = [
     priority: 'P2',
     paths: ['client/src/utils/rest.ts', 'server/src/services/chatCommands/restHandlers.ts'],
     notes: [
-      'DM !rest commands apply server-owned character updates so offline players and secondary tabs do not drift.',
-      'Player quick-action rest buttons still use the client helper path.',
+      'DM !rest commands and player rest buttons both request server-owned character updates.',
+      'Manual short-rest Hit Dice spending still uses direct character updates from the sheet dialog.',
     ],
-    nextSteps: ['Move player rest buttons to a server rest request event with the same update service.'],
+    nextSteps: ['Move manual Hit Dice spending and remaining resource spend/refund flows into server-owned actions.'],
   },
   {
     id: 'content.monster-actions',

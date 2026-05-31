@@ -5,6 +5,8 @@ import { getPlayerBySocketId, playerIsDM } from '../utils/roomState.js';
 import { broadcastEvent } from '../utils/eventBroadcast.js';
 import { dbRowToCharacter } from '../utils/characterMapper.js';
 import { safeHandler } from '../utils/socketHelpers.js';
+import { broadcastSystem } from '../services/ChatCommands.js';
+import { computeRest, persistRestUpdates, syncRestToCombatants } from '../services/RestService.js';
 
 const characterUpdateSchema = z.object({
   characterId: z.string().min(1),
@@ -20,6 +22,11 @@ const characterUpdateSchema = z.object({
 
 const characterSyncRequestSchema = z.object({
   characterId: z.string().min(1),
+});
+
+const characterRestSchema = z.object({
+  characterId: z.string().min(1),
+  kind: z.enum(['short', 'long']),
 });
 
 const FIELD_TO_COLUMN: Record<string, { col: string; json: boolean }> = {
@@ -59,6 +66,27 @@ const FIELD_TO_COLUMN: Record<string, { col: string; json: boolean }> = {
   concentratingOn: { col: 'concentrating_on', json: false },
   exhaustionLevel: { col: 'exhaustion_level', json: false },
 };
+
+async function characterIsInSession(characterId: string, sessionId: string): Promise<boolean> {
+  const { rows } = await pool.query(
+    `SELECT 1
+       FROM session_players
+      WHERE session_id = $1 AND character_id = $2
+      LIMIT 1`,
+    [sessionId, characterId],
+  );
+  if (rows.length > 0) return true;
+
+  const tokenCheck = await pool.query(
+    `SELECT 1
+       FROM tokens t
+       JOIN maps m ON m.id = t.map_id
+      WHERE t.character_id = $1 AND m.session_id = $2
+      LIMIT 1`,
+    [characterId, sessionId],
+  );
+  return tokenCheck.rows.length > 0;
+}
 
 export function registerCharacterEvents(io: Server, socket: Socket): void {
 
@@ -165,6 +193,62 @@ export function registerCharacterEvents(io: Server, socket: Socket): void {
       io, ctx.room, 'character:updated',
       { characterId, changes },
     );
+  }));
+
+  socket.on('character:rest', safeHandler(socket, async (data) => {
+    const parsed = characterRestSchema.safeParse(data);
+    if (!parsed.success) return;
+
+    const ctx = getPlayerBySocketId(socket.id);
+    if (!ctx) return;
+
+    const { characterId, kind } = parsed.data;
+    const { rows } = await pool.query('SELECT * FROM characters WHERE id = $1', [characterId]);
+    if (rows.length === 0) return;
+
+    const row = rows[0] as Record<string, unknown>;
+    const charUserId = String(row.user_id ?? '');
+    const isDM = playerIsDM(ctx);
+    const inSession = await characterIsInSession(characterId, ctx.room.sessionId);
+    if (!inSession) return;
+    if (!isDM && charUserId !== ctx.player.userId) return;
+    if (!isDM && charUserId === 'npc') return;
+
+    const result = computeRest(row, kind);
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      await persistRestUpdates(client, result.characterId, result.updates);
+      await client.query('COMMIT');
+    } catch (err) {
+      await client.query('ROLLBACK');
+      throw err;
+    } finally {
+      client.release();
+    }
+
+    const hasUpdates = Object.keys(result.updates).length > 0;
+    if (hasUpdates) {
+      syncRestToCombatants(ctx.room, result.characterId, result.updates);
+      broadcastEvent(io, ctx.room, 'character:updated', {
+        characterId: result.characterId,
+        changes: result.updates,
+      });
+    }
+
+    socket.emit('character:rested', {
+      characterId: result.characterId,
+      kind,
+      changes: result.changes,
+      updates: result.updates,
+    });
+    if (hasUpdates) {
+      broadcastSystem(
+        io,
+        ctx,
+        `🛌 ${result.name} finishes a ${kind === 'long' ? 'Long' : 'Short'} Rest\n   ${result.changes.join(' • ')}`,
+      );
+    }
   }));
 
   socket.on('character:sync-request', safeHandler(socket, async (data) => {

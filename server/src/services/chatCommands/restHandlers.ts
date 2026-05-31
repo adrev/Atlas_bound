@@ -6,56 +6,7 @@ import {
 } from '../ChatCommands.js';
 import pool from '../../db/connection.js';
 import { broadcastEvent } from '../../utils/eventBroadcast.js';
-import { computeRest, type RestKind } from '../RestService.js';
-import type { PoolClient } from 'pg';
-
-const REST_FIELD_TO_COLUMN: Record<string, { column: string; json: boolean }> = {
-  hitPoints: { column: 'hit_points', json: false },
-  tempHitPoints: { column: 'temp_hit_points', json: false },
-  spellSlots: { column: 'spell_slots', json: true },
-  features: { column: 'features', json: true },
-  hitDice: { column: 'hit_dice', json: true },
-  deathSaves: { column: 'death_saves', json: true },
-  concentratingOn: { column: 'concentrating_on', json: false },
-  exhaustionLevel: { column: 'exhaustion_level', json: false },
-};
-
-async function persistRestUpdates(
-  client: PoolClient,
-  characterId: string,
-  updates: Record<string, unknown>,
-): Promise<void> {
-  const setClauses: string[] = [];
-  const params: unknown[] = [];
-  let idx = 1;
-
-  for (const [key, value] of Object.entries(updates)) {
-    const field = REST_FIELD_TO_COLUMN[key];
-    if (!field) continue;
-    setClauses.push(`${field.column} = $${idx++}`);
-    params.push(field.json ? JSON.stringify(value) : value);
-  }
-
-  if (setClauses.length === 0) return;
-  setClauses.push('updated_at = NOW()::text');
-  params.push(characterId);
-  await client.query(`UPDATE characters SET ${setClauses.join(', ')} WHERE id = $${idx}`, params);
-}
-
-function syncCombatantRest(c: ChatCommandContext, characterId: string, updates: Record<string, unknown>): void {
-  const combatants = c.ctx.room.combatState?.combatants ?? [];
-  for (const combatant of combatants) {
-    if (combatant.characterId !== characterId) continue;
-    if (typeof updates.hitPoints === 'number') combatant.hp = updates.hitPoints;
-    if (typeof updates.tempHitPoints === 'number') combatant.tempHp = updates.tempHitPoints;
-    if (updates.deathSaves && typeof updates.deathSaves === 'object') {
-      combatant.deathSaves = updates.deathSaves as { successes: number; failures: number };
-    }
-    if (typeof updates.exhaustionLevel === 'number') {
-      combatant.exhaustionLevel = updates.exhaustionLevel;
-    }
-  }
-}
+import { computeRest, persistRestUpdates, syncRestToCombatants, type RestKind } from '../RestService.js';
 
 /**
  * !rest <short|long> [target]
@@ -133,7 +84,7 @@ async function handleRest(c: ChatCommandContext): Promise<boolean> {
 
   for (const result of results) {
     if (Object.keys(result.updates).length === 0) continue;
-    syncCombatantRest(c, result.characterId, result.updates);
+    syncRestToCombatants(c.ctx.room, result.characterId, result.updates);
     broadcastEvent(c.io, c.ctx.room, 'character:updated', {
       characterId: result.characterId,
       changes: result.updates,

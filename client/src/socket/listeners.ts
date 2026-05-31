@@ -546,6 +546,17 @@ export function registerListeners(socket: Socket): () => void {
     triggerSnapshot('character:synced');
   });
 
+  socket.on('character:rested', (payload: { kind: 'short' | 'long'; changes: string[] }) => {
+    import('../components/ui/Toast').then(({ showToast }) => {
+      showToast({
+        message: `${payload.kind === 'long' ? 'Long' : 'Short'} Rest — ${payload.changes.join(' • ')}`,
+        variant: 'success',
+        duration: payload.kind === 'long' ? 5000 : 4000,
+      });
+    });
+    triggerSnapshot('character:rested');
+  });
+
   // --- Chat ---
   socket.on('chat:new-message', (message) => {
     const chat = useChatStore.getState();
@@ -695,6 +706,7 @@ export function registerListeners(socket: Socket): () => void {
     socket.off('combat:ready-check-complete');
     socket.off('character:updated');
     socket.off('character:synced');
+    socket.off('character:rested');
     socket.off('chat:new-message');
     socket.off('chat:roll-result');
     socket.off('chat:history');

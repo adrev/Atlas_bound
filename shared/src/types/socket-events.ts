@@ -240,11 +240,18 @@ export interface ServerDrawingEvents {
 // --- Character Events ---
 export interface ClientCharacterEvents {
   'character:update': { characterId: string; changes: Record<string, unknown> };
+  'character:rest': { characterId: string; kind: 'short' | 'long' };
   'character:sync-request': { characterId: string };
 }
 
 export interface ServerCharacterEvents {
   'character:updated': { characterId: string; changes: Record<string, unknown> };
+  'character:rested': {
+    characterId: string;
+    kind: 'short' | 'long';
+    changes: string[];
+    updates: Record<string, unknown>;
+  };
   'character:synced': { character: Record<string, unknown> };
 }
 
