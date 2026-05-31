@@ -261,6 +261,21 @@ describe('Tier 21 — Hypnotic Pattern', () => {
     });
     expect(target.conditions).not.toContain('charmed');
   });
+
+  it('applies gnome magic-save advantage before charm lands', async () => {
+    const target = makeToken('tGnome', 'Glim', { characterId: 'char-gnome' });
+    const s = makeScenario({ inCombat: true, otherTokens: [target] });
+    routeCharacterQueries({
+      'char-caller': { class: 'Wizard', level: 7, name: 'Vex', spell_save_dc: 16 },
+      'char-gnome': { ability_scores: { wis: 10 }, proficiency_bonus: 2, saving_throws: [], name: 'Glim', race: 'Forest Gnome' },
+    });
+    const { io, emissions } = makeFakeIo();
+    await withRandomSeed([0.01, 0.99], async () => {
+      await tryHandleChatCommand(io, s.ctx, '!hypnoticpattern Glim');
+    });
+    expect(target.conditions).not.toContain('charmed');
+    expect(lastSystemLine(emissions)).toContain('Forest Gnome: advantage on save vs magic');
+  });
 });
 
 describe('Tier 21 — Dominate (person/monster/beast)', () => {
@@ -298,7 +313,7 @@ describe('Tier 21 — Dominate (person/monster/beast)', () => {
 });
 
 describe('Tier 21 — Feeblemind', () => {
-  it('announces the spell broadcast (save resolves at cast site)', async () => {
+  it('applies feebleminded on a failed INT save and rolls 4d6 psychic', async () => {
     const target = makeToken('tMage', 'Mage', { characterId: 'char-mage' });
     const s = makeScenario({ inCombat: true, otherTokens: [target] });
     routeCharacterQueries({
@@ -306,10 +321,28 @@ describe('Tier 21 — Feeblemind', () => {
       'char-mage': { ability_scores: { int: 8 }, proficiency_bonus: 2, saving_throws: [], name: 'Mage' },
     });
     const { io, emissions } = makeFakeIo();
-    await withRandomSeed([0.01], async () => {
+    await withRandomSeed([0.01, 0.5, 0.5, 0.5, 0.5], async () => {
       await tryHandleChatCommand(io, s.ctx, '!feeblemind Mage');
     });
+    expect(target.conditions).toContain('feebleminded');
     expect(lastSystemLine(emissions)).toMatch(/Feeblemind/i);
+    expect(lastSystemLine(emissions)).toContain('Takes 16 psychic [4,4,4,4]');
+  });
+});
+
+describe('Tier 21 — Polymorph', () => {
+  it('marks the target polymorphed on a failed WIS save', async () => {
+    const target = makeToken('tWolf', 'Wolf', { characterId: 'char-wolf' });
+    const s = makeScenario({ inCombat: true, otherTokens: [target] });
+    routeCharacterQueries({
+      'char-caller': { class: 'Wizard', level: 7, name: 'Vex', spell_save_dc: 16 },
+      'char-wolf': { ability_scores: { wis: 8 }, proficiency_bonus: 2, saving_throws: [], name: 'Wolf' },
+    });
+    const { io } = makeFakeIo();
+    await withRandomSeed([0.01], async () => {
+      await tryHandleChatCommand(io, s.ctx, '!polymorph Wolf 1');
+    });
+    expect(target.conditions).toContain('polymorphed');
   });
 });
 
@@ -344,6 +377,22 @@ describe('Tier 21 — Cloud Kill', () => {
       await tryHandleChatCommand(io, s.ctx, '!cloudkill Enemy');
     });
     expect(lastSystemLine(emissions)).toMatch(/Cloudkill/i);
+  });
+
+  it('applies dwarf poison-save advantage before poison damage', async () => {
+    const target = makeToken('tDwarf', 'Borin', { characterId: 'char-dwarf' });
+    const s = makeScenario({ inCombat: true, otherTokens: [target] });
+    routeCharacterQueries({
+      'char-caller': { class: 'Wizard', level: 9, name: 'Vex', spell_save_dc: 17 },
+      'char-dwarf': { ability_scores: { con: 10 }, proficiency_bonus: 2, saving_throws: [], name: 'Borin', race: 'Hill Dwarf' },
+    });
+    const { io, emissions } = makeFakeIo();
+    await withRandomSeed([0.5, 0.5, 0.5, 0.5, 0.5, 0.01, 0.99], async () => {
+      await tryHandleChatCommand(io, s.ctx, '!cloudkill Borin');
+    });
+    const line = lastSystemLine(emissions) ?? '';
+    expect(line).toContain('Borin: CON d20=[1,20] adv keep 20+0=20 → SAVED');
+    expect(line).toContain('Hill Dwarf: advantage on save vs poison');
   });
 });
 
@@ -403,6 +452,8 @@ describe('Tier 21 — Power Word Stun', () => {
     expect(target.conditions).toContain('stunned');
     const lastUpdate = tokenUpdates(emissions).filter((u) => u.tokenId === 'tEnemy').pop()!;
     expect((lastUpdate.changes.conditionSources as Record<string, string>).stunned).toBe('tCaller');
+    expect(s.room.conditionMeta.get('tEnemy')?.get('stunned')?.saveAtEndOfTurn?.ability).toBe('con');
+    expect(lastSystemLine(emissions)).toContain('CON DC 18');
   });
 
   it('no effect when HP > 150', async () => {

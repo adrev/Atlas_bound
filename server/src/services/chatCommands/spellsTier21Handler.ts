@@ -9,6 +9,7 @@ import pool from '../../db/connection.js';
 import type { Token, SpellCastBreakdown, SpellTargetOutcome } from '@dnd-vtt/shared';
 import type { PlayerContext } from '../../utils/roomState.js';
 import { tokenConditionChanges } from '../../utils/conditionSources.js';
+import { formatSaveTotal, rollTargetSave, type RolledSave, type SaveAbility } from './saveRoll.js';
 
 /**
  * Tier 21 — additional commonly-cast spells beyond Tiers 12/16/17.
@@ -94,32 +95,6 @@ async function loadCaster(c: ChatCommandContext, cmd: string): Promise<CasterSta
   };
 }
 
-async function loadTargetSaveMod(
-  target: Token,
-  ability: 'str' | 'dex' | 'con' | 'int' | 'wis' | 'cha',
-): Promise<{ mod: number; displayName: string }> {
-  if (!target.characterId) return { mod: 0, displayName: target.name };
-  try {
-    const { rows } = await pool.query(
-      'SELECT ability_scores, saving_throws, proficiency_bonus, name FROM characters WHERE id = $1',
-      [target.characterId],
-    );
-    const row = rows[0] as Record<string, unknown> | undefined;
-    const scores = typeof row?.ability_scores === 'string'
-      ? JSON.parse(row.ability_scores as string)
-      : (row?.ability_scores ?? {});
-    const prof = Number(row?.proficiency_bonus) || 2;
-    const saves = typeof row?.saving_throws === 'string'
-      ? JSON.parse(row.saving_throws as string)
-      : (row?.saving_throws ?? []);
-    const mod = abilityMod(scores as Record<string, number>, ability) +
-      (Array.isArray(saves) && saves.includes(ability) ? prof : 0);
-    return { mod, displayName: (row?.name as string) || target.name };
-  } catch {
-    return { mod: 0, displayName: target.name };
-  }
-}
-
 function parseSlotLevel(parts: string[], fallback: number, min = 1): number {
   const first = parseInt(parts[0], 10);
   if (Number.isFinite(first) && first >= min && first <= 9) return first;
@@ -148,18 +123,45 @@ function roll(diceCount: number, sides: number): { rolls: number[]; sum: number 
   return { rolls, sum };
 }
 
+function saveNotesLabel(saveResult: RolledSave): string {
+  return saveResult.notes.length > 0 ? ` [${saveResult.notes.join(', ')}]` : '';
+}
+
+function spellSaveDetails(
+  saveResult: RolledSave,
+  ability: SaveAbility,
+  dc: number,
+): NonNullable<SpellTargetOutcome['save']> {
+  return {
+    d20: saveResult.d20,
+    d20Rolls: saveResult.d20Rolls,
+    advantage: saveResult.advantage,
+    ability,
+    modifiers: saveResult.modifiers,
+    total: saveResult.total,
+    dc,
+    saved: saveResult.saved,
+    autoFailed: saveResult.autoFailed,
+  };
+}
+
 async function saveOrCharm(
   c: ChatCommandContext,
   spellName: string,
   icon: string,
   targets: string[],
   condName: string,
-  save: 'str' | 'dex' | 'con' | 'int' | 'wis' | 'cha',
+  save: SaveAbility,
   dc: number,
   callerName: string,
   casterId: string,
   durationRounds: number,
-  extras: { saveAtEndOfTurn?: boolean; endsOnDamage?: boolean; level?: number } = {},
+  extras: {
+    saveAtEndOfTurn?: boolean;
+    endsOnDamage?: boolean;
+    level?: number;
+    savingAgainst?: string | readonly string[];
+  } = {},
 ): Promise<void> {
   const lines: string[] = [];
   lines.push(`${icon} **${spellName}** (${save.toUpperCase()} DC ${dc}) — ${callerName}:`);
@@ -168,12 +170,8 @@ async function saveOrCharm(
   for (const name of targets) {
     const target = resolveTargetByName(c.ctx, name);
     if (!target) { lines.push(`  • ${name}: not found`); continue; }
-    const { mod, displayName } = await loadTargetSaveMod(target, save);
-    const d20 = Math.floor(Math.random() * 20) + 1;
-    const tot = d20 + mod;
-    const saved = tot >= dc;
-    const sign = mod >= 0 ? '+' : '';
-    if (!saved) {
+    const saveResult = await rollTargetSave(c, target, save, dc, extras.savingAgainst ?? condName);
+    if (!saveResult.saved) {
       ConditionService.applyConditionWithMeta(c.ctx.room.sessionId, target.id, {
         name: condName,
         source: `${callerName} (${spellName})`,
@@ -188,23 +186,14 @@ async function saveOrCharm(
         changes: tokenConditionChanges(c.ctx.room, target.id),
       });
     }
-    lines.push(`  • ${displayName}: ${save.toUpperCase()} d20=${d20}${sign}${mod}=${tot} → ${saved ? 'SAVED' : condName.toUpperCase()}`);
+    lines.push(`  • ${saveResult.displayName}: ${save.toUpperCase()} ${formatSaveTotal(saveResult)} → ${saveResult.saved ? 'SAVED' : condName.toUpperCase()}${saveNotesLabel(saveResult)}`);
     outcomes.push({
-      name: displayName,
+      name: saveResult.displayName,
       tokenId: target.id,
       kind: 'save',
-      save: {
-        d20,
-        advantage: 'normal',
-        ability: save,
-        modifiers: mod !== 0
-          ? [{ label: `${save.toUpperCase()} save mod`, value: mod, source: 'ability' }]
-          : [],
-        total: tot,
-        dc,
-        saved,
-      },
-      conditionsApplied: saved ? undefined : [condName],
+      save: spellSaveDetails(saveResult, save, dc),
+      conditionsApplied: saveResult.saved ? undefined : [condName],
+      notes: saveResult.notes.length > 0 ? saveResult.notes : undefined,
     });
   }
   const breakdown: SpellCastBreakdown = {
@@ -236,7 +225,7 @@ async function handleHypnoticPattern(c: ChatCommandContext): Promise<boolean> {
   await saveOrCharm(
     c, 'Hypnotic Pattern', '🎶', parts,
     'charmed', 'wis', loaded.spellSaveDc, loaded.callerName, loaded.caller.id,
-    10, { endsOnDamage: true, level: 3 },
+    10, { endsOnDamage: true, level: 3, savingAgainst: ['magic', 'charmed'] },
   );
   return true;
 }
@@ -263,13 +252,9 @@ function dominateHandler(
     }
     const loaded = await loadCaster(c, cmd);
     if (!loaded) return true;
-    const { mod, displayName } = await loadTargetSaveMod(target, 'wis');
-    const d20 = Math.floor(Math.random() * 20) + 1;
-    const tot = d20 + mod;
-    const saved = tot >= loaded.spellSaveDc;
-    const sign = mod >= 0 ? '+' : '';
+    const saveResult = await rollTargetSave(c, target, 'wis', loaded.spellSaveDc, ['magic', 'charmed']);
     const currentRound = c.ctx.room.combatState?.roundNumber ?? 0;
-    if (!saved) {
+    if (!saveResult.saved) {
       ConditionService.applyConditionWithMeta(c.ctx.room.sessionId, target.id, {
         name: 'charmed',
         source: `${loaded.callerName} (${label} L${slot})`,
@@ -286,7 +271,7 @@ function dominateHandler(
     }
     broadcastSystem(
       c.io, c.ctx,
-      `🧠 **${label} (L${slot}, WIS DC ${loaded.spellSaveDc})** — ${loaded.callerName} → ${displayName}: d20=${d20}${sign}${mod}=${tot} → ${saved ? 'SAVED — no effect' : 'DOMINATED (concentration, saves at end of turn / on damage)'}`,
+      `🧠 **${label} (L${slot}, WIS DC ${loaded.spellSaveDc})** — ${loaded.callerName} → ${saveResult.displayName}: ${formatSaveTotal(saveResult)} → ${saveResult.saved ? 'SAVED — no effect' : 'DOMINATED (concentration, saves at end of turn / on damage)'}${saveNotesLabel(saveResult)}`,
     );
     return true;
   };
@@ -315,28 +300,35 @@ async function handlePolymorph(c: ChatCommandContext): Promise<boolean> {
   }
   const loaded = await loadCaster(c, 'polymorph');
   if (!loaded) return true;
-  const { mod, displayName } = await loadTargetSaveMod(target, 'wis');
-  const d20 = Math.floor(Math.random() * 20) + 1;
-  const tot = d20 + mod;
-  const saved = tot >= loaded.spellSaveDc;
-  const sign = mod >= 0 ? '+' : '';
+  const saveResult = await rollTargetSave(c, target, 'wis', loaded.spellSaveDc, 'magic');
+  const currentRound = c.ctx.room.combatState?.roundNumber ?? 0;
+  if (!saveResult.saved) {
+    ConditionService.applyConditionWithMeta(c.ctx.room.sessionId, target.id, {
+      name: 'polymorphed',
+      source: `${loaded.callerName} (Polymorph)`,
+      casterTokenId: loaded.caller.id,
+      appliedRound: currentRound,
+      expiresAfterRound: currentRound + 600,
+    });
+    c.io.to(c.ctx.room.sessionId).emit('map:token-updated', {
+      tokenId: target.id,
+      changes: tokenConditionChanges(c.ctx.room, target.id),
+    });
+  }
   const polyBreakdown: SpellCastBreakdown = {
     caster: { name: loaded.callerName, tokenId: loaded.caller.id },
     spell: { name: 'Polymorph', level: 4, kind: 'save', saveAbility: 'wis', saveDc: loaded.spellSaveDc },
     notes: [`Into CR ≤ ${cr} beast (concentration, 1 hr, reverts on 0 HP)`],
     targets: [{
-      name: displayName, tokenId: target.id, kind: 'save',
-      save: {
-        d20, advantage: 'normal', ability: 'wis',
-        modifiers: mod !== 0 ? [{ label: 'WIS save mod', value: mod, source: 'ability' }] : [],
-        total: tot, dc: loaded.spellSaveDc, saved,
-      },
-      conditionsApplied: saved ? undefined : ['polymorphed'],
+      name: saveResult.displayName, tokenId: target.id, kind: 'save',
+      save: spellSaveDetails(saveResult, 'wis', loaded.spellSaveDc),
+      conditionsApplied: saveResult.saved ? undefined : ['polymorphed'],
+      notes: saveResult.notes.length > 0 ? saveResult.notes : undefined,
     }],
   };
   broadcastSystem(
     c.io, c.ctx,
-    `🦉 **Polymorph** (L4, WIS DC ${loaded.spellSaveDc}) — ${loaded.callerName} → ${displayName}: d20=${d20}${sign}${mod}=${tot} → ${saved ? 'SAVED — no effect' : `POLYMORPHED into CR ≤ ${cr} beast (concentration, 1 hr, reverts on 0 HP)`}`,
+    `🦉 **Polymorph** (L4, WIS DC ${loaded.spellSaveDc}) — ${loaded.callerName} → ${saveResult.displayName}: ${formatSaveTotal(saveResult)} → ${saveResult.saved ? 'SAVED — no effect' : `POLYMORPHED into CR ≤ ${cr} beast (concentration, 1 hr, reverts on 0 HP)`}${saveNotesLabel(saveResult)}`,
     { spellResult: polyBreakdown },
   );
   return true;
@@ -356,28 +348,35 @@ async function handleTruePolymorph(c: ChatCommandContext): Promise<boolean> {
   }
   const loaded = await loadCaster(c, 'truepolymorph');
   if (!loaded) return true;
-  const { mod, displayName } = await loadTargetSaveMod(target, 'wis');
-  const d20 = Math.floor(Math.random() * 20) + 1;
-  const tot = d20 + mod;
-  const saved = tot >= loaded.spellSaveDc;
-  const sign = mod >= 0 ? '+' : '';
+  const saveResult = await rollTargetSave(c, target, 'wis', loaded.spellSaveDc, 'magic');
+  const currentRound = c.ctx.room.combatState?.roundNumber ?? 0;
+  if (!saveResult.saved) {
+    ConditionService.applyConditionWithMeta(c.ctx.room.sessionId, target.id, {
+      name: 'true-polymorphed',
+      source: `${loaded.callerName} (True Polymorph)`,
+      casterTokenId: loaded.caller.id,
+      appliedRound: currentRound,
+      expiresAfterRound: currentRound + 600,
+    });
+    c.io.to(c.ctx.room.sessionId).emit('map:token-updated', {
+      tokenId: target.id,
+      changes: tokenConditionChanges(c.ctx.room, target.id),
+    });
+  }
   const tpBreakdown: SpellCastBreakdown = {
     caster: { name: loaded.callerName, tokenId: loaded.caller.id },
     spell: { name: 'True Polymorph', level: 9, kind: 'save', saveAbility: 'wis', saveDc: loaded.spellSaveDc },
     notes: ['Any creature/object. Concentration 1 hr → permanent.'],
     targets: [{
-      name: displayName, tokenId: target.id, kind: 'save',
-      save: {
-        d20, advantage: 'normal', ability: 'wis',
-        modifiers: mod !== 0 ? [{ label: 'WIS save mod', value: mod, source: 'ability' }] : [],
-        total: tot, dc: loaded.spellSaveDc, saved,
-      },
-      conditionsApplied: saved ? undefined : ['true-polymorphed'],
+      name: saveResult.displayName, tokenId: target.id, kind: 'save',
+      save: spellSaveDetails(saveResult, 'wis', loaded.spellSaveDc),
+      conditionsApplied: saveResult.saved ? undefined : ['true-polymorphed'],
+      notes: saveResult.notes.length > 0 ? saveResult.notes : undefined,
     }],
   };
   broadcastSystem(
     c.io, c.ctx,
-    `✨ **True Polymorph** (L9, WIS DC ${loaded.spellSaveDc}) — ${loaded.callerName} → ${displayName}: d20=${d20}${sign}${mod}=${tot} → ${saved ? 'SAVED — no effect' : 'TRANSFORMED into any creature or object (concentration, 1 hr → permanent)'}`,
+    `✨ **True Polymorph** (L9, WIS DC ${loaded.spellSaveDc}) — ${loaded.callerName} → ${saveResult.displayName}: ${formatSaveTotal(saveResult)} → ${saveResult.saved ? 'SAVED — no effect' : 'TRANSFORMED into any creature or object (concentration, 1 hr → permanent)'}${saveNotesLabel(saveResult)}`,
     { spellResult: tpBreakdown },
   );
   return true;
@@ -399,38 +398,44 @@ async function handleFeeblemind(c: ChatCommandContext): Promise<boolean> {
   }
   const loaded = await loadCaster(c, 'feeblemind');
   if (!loaded) return true;
-  const { mod, displayName } = await loadTargetSaveMod(target, 'int');
-  const d20 = Math.floor(Math.random() * 20) + 1;
-  const tot = d20 + mod;
-  const saved = tot >= loaded.spellSaveDc;
-  const psychicRoll = roll(4, 8);
-  const sign = mod >= 0 ? '+' : '';
+  const saveResult = await rollTargetSave(c, target, 'int', loaded.spellSaveDc, 'magic');
+  const psychicRoll = roll(4, 6);
+  const currentRound = c.ctx.room.combatState?.roundNumber ?? 0;
+  if (!saveResult.saved) {
+    ConditionService.applyConditionWithMeta(c.ctx.room.sessionId, target.id, {
+      name: 'feebleminded',
+      source: `${loaded.callerName} (Feeblemind)`,
+      casterTokenId: loaded.caller.id,
+      appliedRound: currentRound,
+    });
+    c.io.to(c.ctx.room.sessionId).emit('map:token-updated', {
+      tokenId: target.id,
+      changes: tokenConditionChanges(c.ctx.room, target.id),
+    });
+  }
   const fmBreakdown: SpellCastBreakdown = {
     caster: { name: loaded.callerName, tokenId: loaded.caller.id },
     spell: { name: 'Feeblemind', level: 8, kind: 'save',
       saveAbility: 'int', saveDc: loaded.spellSaveDc, damageType: 'psychic' },
     notes: ['On fail: INT + CHA become 1; INT save end of each 30 days to end.'],
     targets: [{
-      name: displayName, tokenId: target.id, kind: 'save',
-      save: {
-        d20, advantage: 'normal', ability: 'int',
-        modifiers: mod !== 0 ? [{ label: 'INT save mod', value: mod, source: 'ability' }] : [],
-        total: tot, dc: loaded.spellSaveDc, saved,
-      },
+      name: saveResult.displayName, tokenId: target.id, kind: 'save',
+      save: spellSaveDetails(saveResult, 'int', loaded.spellSaveDc),
       damage: {
-        dice: '4d8',
+        dice: '4d6',
         diceRolls: psychicRoll.rolls,
         mainRoll: psychicRoll.sum,
         bonuses: [],
         finalDamage: psychicRoll.sum,
         targetHpBefore: 0, targetHpAfter: 0,
       },
-      conditionsApplied: saved ? undefined : ['feebleminded'],
+      conditionsApplied: saveResult.saved ? undefined : ['feebleminded'],
+      notes: saveResult.notes.length > 0 ? saveResult.notes : undefined,
     }],
   };
   broadcastSystem(
     c.io, c.ctx,
-    `🧠 **Feeblemind** (L8, INT DC ${loaded.spellSaveDc}) — ${loaded.callerName} → ${displayName}: d20=${d20}${sign}${mod}=${tot}. Takes ${psychicRoll.sum} psychic [${psychicRoll.rolls.join(',')}]. ${saved ? 'SAVED — no mental reduction' : 'FAILED — INT + CHA become 1, can\'t cast / speak. INT save at end of each 30 days to end.'}`,
+    `🧠 **Feeblemind** (L8, INT DC ${loaded.spellSaveDc}) — ${loaded.callerName} → ${saveResult.displayName}: ${formatSaveTotal(saveResult)}. Takes ${psychicRoll.sum} psychic [${psychicRoll.rolls.join(',')}]. ${saveResult.saved ? 'SAVED — no mental reduction' : 'FAILED — INT + CHA become 1, can\'t cast / speak. INT save at end of each 30 days to end.'}${saveNotesLabel(saveResult)}`,
     { spellResult: fmBreakdown },
   );
   return true;
@@ -450,7 +455,7 @@ async function handleStinkingCloud(c: ChatCommandContext): Promise<boolean> {
   await saveOrCharm(
     c, 'Stinking Cloud', '💨', parts,
     'incapacitated', 'con', loaded.spellSaveDc, loaded.callerName, loaded.caller.id,
-    10, { saveAtEndOfTurn: true, level: 3 },
+    10, { saveAtEndOfTurn: true, level: 3, savingAgainst: 'poison' },
   );
   return true;
 }
@@ -475,25 +480,18 @@ async function handleCloudkill(c: ChatCommandContext): Promise<boolean> {
     const target = resolveTargetByName(c.ctx, name);
     if (!target) { lines.push(`  • ${name}: not found`); continue; }
     const { rolls, sum } = roll(dice, 8);
-    const { mod, displayName } = await loadTargetSaveMod(target, 'con');
-    const d20 = Math.floor(Math.random() * 20) + 1;
-    const tot = d20 + mod;
-    const saved = tot >= loaded.spellSaveDc;
-    const dmg = saved ? Math.floor(sum / 2) : sum;
-    const sign = mod >= 0 ? '+' : '';
-    lines.push(`  • ${displayName}: CON d20=${d20}${sign}${mod}=${tot} → ${saved ? 'SAVED' : 'FAILED'}, **${dmg} poison** [${rolls.join(',')}]`);
+    const saveResult = await rollTargetSave(c, target, 'con', loaded.spellSaveDc, 'poison');
+    const dmg = saveResult.saved ? Math.floor(sum / 2) : sum;
+    lines.push(`  • ${saveResult.displayName}: CON ${formatSaveTotal(saveResult)} → ${saveResult.saved ? 'SAVED' : 'FAILED'}, **${dmg} poison** [${rolls.join(',')}]${saveNotesLabel(saveResult)}`);
     ckOutcomes.push({
-      name: displayName, tokenId: target.id, kind: 'save',
-      save: {
-        d20, advantage: 'normal', ability: 'con',
-        modifiers: mod !== 0 ? [{ label: 'CON save mod', value: mod, source: 'ability' }] : [],
-        total: tot, dc: loaded.spellSaveDc, saved,
-      },
+      name: saveResult.displayName, tokenId: target.id, kind: 'save',
+      save: spellSaveDetails(saveResult, 'con', loaded.spellSaveDc),
       damage: {
         dice: `${dice}d8`, diceRolls: rolls, mainRoll: sum, bonuses: [],
-        halfDamage: saved || undefined, finalDamage: dmg,
+        halfDamage: saveResult.saved || undefined, finalDamage: dmg,
         targetHpBefore: 0, targetHpAfter: 0,
       },
+      notes: saveResult.notes.length > 0 ? saveResult.notes : undefined,
     });
   }
   const ckBreakdown: SpellCastBreakdown = {
@@ -527,32 +525,25 @@ async function handleMeteorSwarm(c: ChatCommandContext): Promise<boolean> {
     const fire = roll(20, 6);
     const bludgeon = roll(20, 6);
     const raw = fire.sum + bludgeon.sum;
-    const { mod, displayName } = await loadTargetSaveMod(target, 'dex');
-    const d20 = Math.floor(Math.random() * 20) + 1;
-    const tot = d20 + mod;
-    const saved = tot >= loaded.spellSaveDc;
-    const dmg = saved ? Math.floor(raw / 2) : raw;
-    const sign = mod >= 0 ? '+' : '';
-    lines.push(`  • ${displayName}: DEX d20=${d20}${sign}${mod}=${tot} → ${saved ? 'SAVED' : 'FAILED'}, **${dmg}** (${fire.sum} fire + ${bludgeon.sum} bludgeoning)`);
+    const saveResult = await rollTargetSave(c, target, 'dex', loaded.spellSaveDc, 'magic');
+    const dmg = saveResult.saved ? Math.floor(raw / 2) : raw;
+    lines.push(`  • ${saveResult.displayName}: DEX ${formatSaveTotal(saveResult)} → ${saveResult.saved ? 'SAVED' : 'FAILED'}, **${dmg}** (${fire.sum} fire + ${bludgeon.sum} bludgeoning)${saveNotesLabel(saveResult)}`);
     msOutcomes.push({
-      name: displayName, tokenId: target.id, kind: 'save',
-      save: {
-        d20, advantage: 'normal', ability: 'dex',
-        modifiers: mod !== 0 ? [{ label: 'DEX save mod', value: mod, source: 'ability' }] : [],
-        total: tot, dc: loaded.spellSaveDc, saved,
-      },
+      name: saveResult.displayName, tokenId: target.id, kind: 'save',
+      save: spellSaveDetails(saveResult, 'dex', loaded.spellSaveDc),
       damage: {
         dice: '20d6 fire + 20d6 bludgeoning',
         diceRolls: [...fire.rolls, ...bludgeon.rolls],
         mainRoll: raw,
         bonuses: [
-          { label: 'Fire meteor', amount: saved ? Math.floor(fire.sum / 2) : fire.sum, damageType: 'fire' },
-          { label: 'Bludgeoning crater', amount: saved ? Math.floor(bludgeon.sum / 2) : bludgeon.sum, damageType: 'bludgeoning' },
+          { label: 'Fire meteor', amount: saveResult.saved ? Math.floor(fire.sum / 2) : fire.sum, damageType: 'fire' },
+          { label: 'Bludgeoning crater', amount: saveResult.saved ? Math.floor(bludgeon.sum / 2) : bludgeon.sum, damageType: 'bludgeoning' },
         ],
-        halfDamage: saved || undefined,
+        halfDamage: saveResult.saved || undefined,
         finalDamage: dmg,
         targetHpBefore: 0, targetHpAfter: 0,
       },
+      notes: saveResult.notes.length > 0 ? saveResult.notes : undefined,
     });
   }
   const msBreakdown: SpellCastBreakdown = {
@@ -593,7 +584,7 @@ async function handlePowerWordKill(c: ChatCommandContext): Promise<boolean> {
 }
 
 // ═══════════════════════════════════════════════════════════════════
-// Power Word Stun — L8, no save, stunned until saves WIS DC
+// Power Word Stun — L8, no initial save, stunned until CON save succeeds
 // ═══════════════════════════════════════════════════════════════════
 async function handlePowerWordStun(c: ChatCommandContext): Promise<boolean> {
   const targetName = c.rest.trim();
@@ -622,14 +613,14 @@ async function handlePowerWordStun(c: ChatCommandContext): Promise<boolean> {
     casterTokenId: loaded.caller.id,
     appliedRound: currentRound,
     expiresAfterRound: currentRound + 100,
-    saveAtEndOfTurn: { ability: 'cha', dc: loaded.spellSaveDc },
+    saveAtEndOfTurn: { ability: 'con', dc: loaded.spellSaveDc },
   });
   c.io.to(c.ctx.room.sessionId).emit('map:token-updated', {
     tokenId: target.id,
     changes: tokenConditionChanges(c.ctx.room, target.id),
   });
   broadcastSystem(c.io, c.ctx,
-    `🌀 **Power Word Stun** (L8) — ${loaded.callerName} → ${target.name}: HP ${hp} ≤ 150. **STUNNED** — CHA DC ${loaded.spellSaveDc} save at end of each turn to end.`);
+    `🌀 **Power Word Stun** (L8) — ${loaded.callerName} → ${target.name}: HP ${hp} ≤ 150. **STUNNED** — CON DC ${loaded.spellSaveDc} save at end of each turn to end.`);
   return true;
 }
 
@@ -698,14 +689,10 @@ async function handleScrying(c: ChatCommandContext): Promise<boolean> {
   }
   const loaded = await loadCaster(c, 'scrying');
   if (!loaded) return true;
-  const { mod, displayName } = await loadTargetSaveMod(target, 'wis');
-  const d20 = Math.floor(Math.random() * 20) + 1;
-  const tot = d20 + mod;
-  const saved = tot >= loaded.spellSaveDc;
-  const sign = mod >= 0 ? '+' : '';
+  const saveResult = await rollTargetSave(c, target, 'wis', loaded.spellSaveDc, 'magic');
   broadcastSystem(
     c.io, c.ctx,
-    `🔮 **Scrying** (L5, WIS DC ${loaded.spellSaveDc}) — ${loaded.callerName} → ${displayName}: d20=${d20}${sign}${mod}=${tot} → ${saved ? 'SAVED — caster sees blackness' : 'FAILED — invisible sensor appears near target for 10 min'}`,
+    `🔮 **Scrying** (L5, WIS DC ${loaded.spellSaveDc}) — ${loaded.callerName} → ${saveResult.displayName}: ${formatSaveTotal(saveResult)} → ${saveResult.saved ? 'SAVED — caster sees blackness' : 'FAILED — invisible sensor appears near target for 10 min'}${saveNotesLabel(saveResult)}`,
   );
   return true;
 }
@@ -754,12 +741,8 @@ async function handlePlaneShift(c: ChatCommandContext): Promise<boolean> {
     for (const name of targets) {
       const target = resolveTargetByName(c.ctx, name);
       if (!target) { lines.push(`  • ${name}: not found`); continue; }
-      const { mod, displayName } = await loadTargetSaveMod(target, 'cha');
-      const d20 = Math.floor(Math.random() * 20) + 1;
-      const tot = d20 + mod;
-      const saved = tot >= loaded.spellSaveDc;
-      const sign = mod >= 0 ? '+' : '';
-      lines.push(`  • ${displayName}: CHA d20=${d20}${sign}${mod}=${tot} → ${saved ? 'SAVED' : `BANISHED to ${plane}`}`);
+      const saveResult = await rollTargetSave(c, target, 'cha', loaded.spellSaveDc, 'magic');
+      lines.push(`  • ${saveResult.displayName}: CHA ${formatSaveTotal(saveResult)} → ${saveResult.saved ? 'SAVED' : `BANISHED to ${plane}`}${saveNotesLabel(saveResult)}`);
     }
     broadcastSystem(c.io, c.ctx, lines.join('\n'));
   }

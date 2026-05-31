@@ -54,7 +54,7 @@ export async function rollTargetSave(
   target: Token,
   ability: SaveAbility,
   dc: number,
-  savingAgainst: string | null,
+  savingAgainst: string | readonly string[] | null,
 ): Promise<RolledSave> {
   const { mod, displayName, race } = await loadTargetSaveMod(target, ability);
   const conditions = (target.conditions as string[]) || [];
