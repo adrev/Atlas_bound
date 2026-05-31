@@ -1,11 +1,11 @@
-import type { Token, SpellCastBreakdown, SpellTargetOutcome } from '@dnd-vtt/shared';
+import type { DefenseLists, Token, SpellCastBreakdown, SpellTargetOutcome } from '@dnd-vtt/shared';
 import {
   registerChatCommand,
   whisperToCaller,
   broadcastSystem,
   type ChatCommandContext,
 } from '../ChatCommands.js';
-import { computeSaveModifiers } from '@dnd-vtt/shared';
+import { applyDamageWithResist, computeSaveModifiers } from '@dnd-vtt/shared';
 import * as CombatService from '../CombatService.js';
 import { applyDamageSideEffects } from '../damageEffects.js';
 import pool from '../../db/connection.js';
@@ -24,10 +24,8 @@ import type { PlayerContext } from '../../utils/roomState.js';
  *     → each target: DEX save vs DC 15, take 8d6 fire on fail,
  *       half on success.
  *
- * Damage resistance / immunity / vulnerability from the character's
- * defenses field is NOT applied here (yet) — the DM can manually
- * adjust with !heal / !damage follow-ups. We broadcast each save
- * roll + damage applied so the table sees everything.
+ * Damage resistance, immunity, and vulnerability are applied through
+ * the same shared helper used by the client combat resolver.
  */
 
 const ABILITIES = new Set(['str', 'dex', 'con', 'int', 'wis', 'cha']);
@@ -65,26 +63,28 @@ function rollDice(notation: string): { total: number; rolls: number[] } {
 async function loadSaveMod(
   characterId: string,
   ability: Ability,
-): Promise<{ mod: number; name: string; race: string | null }> {
+): Promise<{ mod: number; name: string; race: string | null; defenses: Partial<DefenseLists> }> {
   const { rows } = await pool.query(
-    'SELECT ability_scores, saving_throws, proficiency_bonus, name, race FROM characters WHERE id = $1',
+    'SELECT ability_scores, saving_throws, proficiency_bonus, name, race, defenses FROM characters WHERE id = $1',
     [characterId],
   );
   const row = rows[0] as Record<string, unknown> | undefined;
-  if (!row) return { mod: 0, name: '', race: null };
+  if (!row) return { mod: 0, name: '', race: null, defenses: {} };
   try {
     const scores = typeof row.ability_scores === 'string' ? JSON.parse(row.ability_scores) : (row.ability_scores ?? {});
     const ab = Math.floor((((scores as Record<string, number>)[ability] ?? 10) - 10) / 2);
     const prof = Number(row.proficiency_bonus) || 2;
     const saves = typeof row.saving_throws === 'string' ? JSON.parse(row.saving_throws) : (row.saving_throws ?? []);
     const isProf = Array.isArray(saves) && saves.includes(ability);
+    const defenses = typeof row.defenses === 'string' ? JSON.parse(row.defenses) : (row.defenses ?? {});
     return {
       mod: ab + (isProf ? prof : 0),
       name: (row.name as string) || '',
       race: (row.race as string) ?? null,
+      defenses: defenses as Partial<DefenseLists>,
     };
   } catch {
-    return { mod: 0, name: '', race: null };
+    return { mod: 0, name: '', race: null, defenses: {} };
   }
 }
 
@@ -162,11 +162,13 @@ async function handleSave(c: ChatCommandContext): Promise<boolean> {
     let saveMod = 0;
     let tName = target.name;
     let tRace: string | null = null;
+    let defenses: Partial<DefenseLists> = {};
     if (target.characterId) {
       const info = await loadSaveMod(target.characterId, ability);
       saveMod = info.mod;
       if (info.name) tName = info.name;
       tRace = info.race;
+      defenses = info.defenses;
     }
 
     // Hand the damage type to computeSaveModifiers as the `savingAgainst`
@@ -265,11 +267,14 @@ async function handleSave(c: ChatCommandContext): Promise<boolean> {
     const modSign = totalMod >= 0 ? '+' : '';
     const total = mods.autoFail ? 0 : d20 + totalMod;
     const saved = !mods.autoFail && total >= dc;
-    const dmg = saved ? halfDmg : fullDmg;
+    const rawDmg = saved ? halfDmg : fullDmg;
+    const resisted = applyDamageWithResist(rawDmg, dmgType, defenses, targetConds, true);
+    const dmg = resisted.amount;
     const auraLabel = auraBonus > 0 ? ` (incl. +${auraBonus} Aura of Protection from ${auraSource})` : '';
+    const resistanceLabel = resisted.source ? ` (${rawDmg}→${dmg}, ${resisted.source})` : '';
 
     lines.push(
-      `   • ${tName}: d20=${rollsStr}${mods.autoFail ? '' : `${modSign}${totalMod}=${total}`} vs ${dc}${auraLabel} → ${saved ? 'SAVED (half)' : 'FAILED (full)'} — ${dmg}${typeLabel} dmg`,
+      `   • ${tName}: d20=${rollsStr}${mods.autoFail ? '' : `${modSign}${totalMod}=${total}`} vs ${dc}${auraLabel} → ${saved ? 'SAVED (half)' : 'FAILED (full)'} — ${dmg}${typeLabel} dmg${resistanceLabel}`,
     );
 
     // Collect structured per-target outcome for the breakdown card.
@@ -323,6 +328,7 @@ async function handleSave(c: ChatCommandContext): Promise<boolean> {
         targetHpBefore: 0,
         targetHpAfter: 0,
       } : undefined,
+      notes: resisted.source ? [`Defenses: ${resisted.source}`] : undefined,
     });
 
     // Apply damage. Use CombatService.applyDamage when in combat

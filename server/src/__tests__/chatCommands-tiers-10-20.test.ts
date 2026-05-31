@@ -39,6 +39,7 @@ import '../services/chatCommands/subclassFeaturesTier13Handler.js';
 import '../services/chatCommands/subclassFeaturesTier14Handler.js';
 import '../services/chatCommands/subclassFeaturesTier15Handler.js';
 import '../services/chatCommands/spellsTier16Handler.js';
+import '../services/chatCommands/saveHandler.js';
 import '../services/chatCommands/spellsTier17Handler.js';
 import '../services/chatCommands/featsTier18Handler.js';
 import '../services/chatCommands/racesTier19Handler.js';
@@ -247,6 +248,54 @@ async function withRandomSeed<T>(values: number[], fn: () => Promise<T> | T): Pr
     Math.random = orig;
   }
 }
+
+// ═══════════════════════════════════════════════════════════════════
+// Shared save resolver
+// ═══════════════════════════════════════════════════════════════════
+
+describe('!save shared resolver', () => {
+  it('applies target damage resistance before mutating combat HP', async () => {
+    const targetTok = makeToken('tResist', 'Tiefling', {
+      characterId: 'char-target',
+      ownerUserId: 'player-2',
+    });
+    const targetComb = makeCombatant('tResist', {
+      hp: 50,
+      maxHp: 50,
+      characterId: 'char-target',
+      isNPC: false,
+    });
+    const s = makeScenario({
+      inCombat: true,
+      otherTokens: [targetTok],
+      otherCombatants: [targetComb],
+    });
+    s.ctx.player = { ...s.ctx.player, userId: 'dm-user', displayName: 'DM', role: 'dm' };
+    routeCharacterQueries({
+      'char-target': {
+        name: 'Tiefling',
+        race: 'Tiefling',
+        class: 'Warlock',
+        level: 5,
+        ability_scores: { dex: 10 },
+        saving_throws: [],
+        proficiency_bonus: 3,
+        defenses: { resistances: ['fire'], immunities: [], vulnerabilities: [] },
+      },
+    });
+    const { io, emissions } = makeFakeIo();
+
+    await withRandomSeed([0.99], async () => {
+      const handled = await tryHandleChatCommand(io, s.ctx, '!save dex 30 8d6/fire Tiefling');
+      expect(handled).toBe(true);
+    });
+
+    expect(targetComb.hp).toBe(26);
+    const content = lastBroadcast(emissions) ?? '';
+    expect(content).toContain('48→24');
+    expect(content).toContain('resist fire');
+  });
+});
 
 // ═══════════════════════════════════════════════════════════════════
 // Tier 10 — Celestial, GOO, Berserker, Ancestral, Draconic, Moon, Swash
