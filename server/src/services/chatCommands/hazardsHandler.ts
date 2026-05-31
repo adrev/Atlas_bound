@@ -5,10 +5,10 @@ import {
   type ChatCommandContext,
 } from '../ChatCommands.js';
 import * as ConditionService from '../ConditionService.js';
-import pool from '../../db/connection.js';
 import type { Token, SaveBreakdown, ActionBreakdown } from '@dnd-vtt/shared';
 import type { PlayerContext } from '../../utils/roomState.js';
 import { tokenConditionChanges } from '../../utils/conditionSources.js';
+import { formatSaveTotal, rollTargetSave, type SaveAbility } from './saveRoll.js';
 
 /**
  * Diseases + poisons catalog.
@@ -48,29 +48,8 @@ function roll(count: number, sides: number): { rolls: number[]; sum: number } {
   return { rolls, sum };
 }
 
-async function loadTargetSaveMod(
-  target: Token, ability: 'str' | 'dex' | 'con' | 'int' | 'wis' | 'cha',
-): Promise<{ mod: number; name: string }> {
-  if (!target.characterId) return { mod: 0, name: target.name };
-  try {
-    const { rows } = await pool.query(
-      'SELECT ability_scores, saving_throws, proficiency_bonus, name FROM characters WHERE id = $1',
-      [target.characterId],
-    );
-    const row = rows[0] as Record<string, unknown> | undefined;
-    const scores = (typeof row?.ability_scores === 'string'
-      ? JSON.parse(row.ability_scores as string)
-      : (row?.ability_scores ?? {})) as Record<string, number>;
-    const prof = Number(row?.proficiency_bonus) || 2;
-    const saves = typeof row?.saving_throws === 'string'
-      ? JSON.parse(row.saving_throws as string)
-      : (row?.saving_throws ?? []);
-    const base = Math.floor((((scores?.[ability] ?? 10) - 10) / 2));
-    const mod = base + (Array.isArray(saves) && saves.includes(ability) ? prof : 0);
-    return { mod, name: (row?.name as string) || target.name };
-  } catch {
-    return { mod: 0, name: target.name };
-  }
+function formatSaveNotes(notes: string[]): string {
+  return notes.length > 0 ? ` [${notes.join('; ')}]` : '';
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -79,7 +58,7 @@ async function loadTargetSaveMod(
 
 interface Disease {
   name: string;
-  saveAbility: 'str' | 'dex' | 'con' | 'int' | 'wis' | 'cha';
+  saveAbility: SaveAbility;
   saveDc: number;
   onFail: string;
   cadence: string;
@@ -137,7 +116,7 @@ async function handleDisease(c: ChatCommandContext): Promise<boolean> {
   if (!sub || sub === 'list' || sub === 'ls') {
     const lines: string[] = ['**Disease catalog** (use `!disease <slug> <target>` to apply):'];
     for (const [slug, d] of Object.entries(DISEASES)) {
-      lines.push(`  • \`${slug}\` — ${d.name} (CON DC ${d.saveDc})`);
+      lines.push(`  • \`${slug}\` — ${d.name} (${d.saveAbility.toUpperCase()} DC ${d.saveDc})`);
     }
     whisperToCaller(c.io, c.ctx, lines.join('\n'));
     return true;
@@ -165,16 +144,13 @@ async function handleDisease(c: ChatCommandContext): Promise<boolean> {
     return true;
   }
 
-  const saveMod = await loadTargetSaveMod(target, disease.saveAbility);
-  const d20 = Math.floor(Math.random() * 20) + 1;
-  const total = d20 + saveMod.mod;
-  const saved = total >= disease.saveDc;
-  const sign = saveMod.mod >= 0 ? '+' : '';
+  const saveResult = await rollTargetSave(c, target, disease.saveAbility, disease.saveDc, 'disease');
+  const saved = saveResult.saved;
   const currentRound = c.ctx.room.combatState?.roundNumber ?? 0;
 
   const lines: string[] = [];
-  lines.push(`🦠 **${disease.name}** — ${saveMod.name} ${disease.saveAbility.toUpperCase()} DC ${disease.saveDc}:`);
-  lines.push(`   d20=${d20}${sign}${saveMod.mod}=${total} → ${saved ? 'SAVED — disease does not take hold' : 'FAILED — contracted'}`);
+  lines.push(`🦠 **${disease.name}** — ${saveResult.displayName} ${disease.saveAbility.toUpperCase()} DC ${disease.saveDc}:`);
+  lines.push(`   ${formatSaveTotal(saveResult)} → ${saved ? 'SAVED — disease does not take hold' : 'FAILED — contracted'}${formatSaveNotes(saveResult.notes)}`);
   if (!saved) {
     lines.push(`   Effect: ${disease.onFail}`);
     lines.push(`   Cadence: ${disease.cadence}`);
@@ -192,20 +168,19 @@ async function handleDisease(c: ChatCommandContext): Promise<boolean> {
     }
   }
   const diseaseSave: SaveBreakdown = {
-    roller: { name: saveMod.name, tokenId: target.id, characterId: target.characterId ?? undefined },
+    roller: { name: saveResult.displayName, tokenId: target.id, characterId: target.characterId ?? undefined },
     context: `Disease: ${disease.name}`,
     ability: disease.saveAbility,
-    d20,
-    advantage: 'normal',
-    modifiers: saveMod.mod !== 0
-      ? [{ label: `${disease.saveAbility.toUpperCase()} save mod`, value: saveMod.mod, source: 'ability' }]
-      : [],
-    total,
+    d20: saveResult.d20,
+    d20Rolls: saveResult.d20Rolls,
+    advantage: saveResult.advantage,
+    modifiers: saveResult.modifiers,
+    total: saveResult.total,
     dc: disease.saveDc,
     passed: saved,
     notes: saved
-      ? ['Disease does not take hold']
-      : [`Contracted — ${disease.onFail}`, `Cadence: ${disease.cadence}`, `Cure: ${disease.cured}`],
+      ? ['Disease does not take hold', ...saveResult.notes]
+      : [`Contracted — ${disease.onFail}`, `Cadence: ${disease.cadence}`, `Cure: ${disease.cured}`, ...saveResult.notes],
   };
   broadcastSystem(c.io, c.ctx, lines.join('\n'), { saveResult: diseaseSave });
   return true;
@@ -221,7 +196,7 @@ interface Poison {
   name: string;
   kind: PoisonKind;
   priceGp: number;
-  saveAbility: 'str' | 'dex' | 'con' | 'int' | 'wis' | 'cha';
+  saveAbility: SaveAbility;
   saveDc: number;
   damageDice?: { count: number; die: number };
   damageType?: string;
@@ -362,16 +337,13 @@ async function handlePoison(c: ChatCommandContext): Promise<boolean> {
     return true;
   }
 
-  const saveMod = await loadTargetSaveMod(target, poison.saveAbility);
-  const d20 = Math.floor(Math.random() * 20) + 1;
-  const total = d20 + saveMod.mod;
-  const saved = total >= poison.saveDc;
-  const sign = saveMod.mod >= 0 ? '+' : '';
+  const saveResult = await rollTargetSave(c, target, poison.saveAbility, poison.saveDc, 'poison');
+  const saved = saveResult.saved;
   const currentRound = c.ctx.room.combatState?.roundNumber ?? 0;
 
   const lines: string[] = [];
-  lines.push(`☠ **${poison.name}** (${poison.kind}, ${poison.priceGp} gp) — ${saveMod.name} ${poison.saveAbility.toUpperCase()} DC ${poison.saveDc}:`);
-  lines.push(`   d20=${d20}${sign}${saveMod.mod}=${total} → ${saved ? 'SAVED' : 'FAILED'}`);
+  lines.push(`☠ **${poison.name}** (${poison.kind}, ${poison.priceGp} gp) — ${saveResult.displayName} ${poison.saveAbility.toUpperCase()} DC ${poison.saveDc}:`);
+  lines.push(`   ${formatSaveTotal(saveResult)} → ${saved ? 'SAVED' : 'FAILED'}${formatSaveNotes(saveResult.notes)}`);
 
   let poisonDmg = 0;
   if (poison.damageDice) {
@@ -398,6 +370,19 @@ async function handlePoison(c: ChatCommandContext): Promise<boolean> {
   // Emit both a structured save breakdown AND an action card so chat
   // shows the save math, the damage, and the applied condition all
   // in one scannable unit.
+  const poisonSave: SaveBreakdown = {
+    roller: { name: saveResult.displayName, tokenId: target.id, characterId: target.characterId ?? undefined },
+    context: `Poison: ${poison.name}`,
+    ability: poison.saveAbility,
+    d20: saveResult.d20,
+    d20Rolls: saveResult.d20Rolls,
+    advantage: saveResult.advantage,
+    modifiers: saveResult.modifiers,
+    total: saveResult.total,
+    dc: poison.saveDc,
+    passed: saved,
+    notes: saveResult.notes,
+  };
   const poisonCard: ActionBreakdown = {
     actor: { name: c.ctx.player.displayName },
     action: {
@@ -406,18 +391,18 @@ async function handlePoison(c: ChatCommandContext): Promise<boolean> {
       icon: '\u2620',
       cost: `${poison.kind}, ${poison.priceGp} gp`,
     },
-    effect: `${saveMod.name} ${poison.saveAbility.toUpperCase()} DC ${poison.saveDc} save \u2192 ${saved ? 'SAVED' : 'FAILED'}. ${poison.effect}`,
+    effect: `${saveResult.displayName} ${poison.saveAbility.toUpperCase()} DC ${poison.saveDc} save \u2192 ${saved ? 'SAVED' : 'FAILED'}. ${poison.effect}`,
     targets: [{
-      name: saveMod.name,
+      name: saveResult.displayName,
       tokenId: target.id,
       conditionsApplied: !saved && poison.extraCondition ? [poison.extraCondition] : undefined,
       ...(poisonDmg > 0 && poison.damageType
         ? { damage: { amount: poisonDmg, damageType: poison.damageType } }
         : {}),
     }],
-    notes: [],
+    notes: saveResult.notes,
   };
-  broadcastSystem(c.io, c.ctx, lines.join('\n'), { actionResult: poisonCard });
+  broadcastSystem(c.io, c.ctx, lines.join('\n'), { saveResult: poisonSave, actionResult: poisonCard });
   return true;
 }
 
