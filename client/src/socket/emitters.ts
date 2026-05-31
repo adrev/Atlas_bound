@@ -508,6 +508,11 @@ export function emitCharacterUpdate(
   triggerSnapshot('character:update');
 }
 
+export function emitCharacterRest(characterId: string, kind: 'short' | 'long') {
+  getSocket().emit('character:rest', { characterId, kind });
+  triggerSnapshot('character:rest');
+}
+
 export function emitCharacterSyncRequest(characterId: string) {
   getSocket().emit('character:sync-request', { characterId });
 }

@@ -1,3 +1,6 @@
+import type { PoolClient } from 'pg';
+import type { RoomState } from '../utils/roomState.js';
+
 export type RestKind = 'short' | 'long';
 
 export interface RestResult {
@@ -11,6 +14,17 @@ type SpellSlots = Record<string, { max: number; used: number }>;
 type FeatureUse = { name?: string; usesTotal?: number; usesRemaining?: number; resetOn?: string | null };
 type HitDicePool = { dieSize: number; total: number; used: number };
 type DeathSaves = { successes: number; failures: number };
+
+const REST_FIELD_TO_COLUMN: Record<string, { column: string; json: boolean }> = {
+  hitPoints: { column: 'hit_points', json: false },
+  tempHitPoints: { column: 'temp_hit_points', json: false },
+  spellSlots: { column: 'spell_slots', json: true },
+  features: { column: 'features', json: true },
+  hitDice: { column: 'hit_dice', json: true },
+  deathSaves: { column: 'death_saves', json: true },
+  concentratingOn: { column: 'concentrating_on', json: false },
+  exhaustionLevel: { column: 'exhaustion_level', json: false },
+};
 
 function parseJson<T>(raw: unknown, fallback: T): T {
   if (typeof raw === 'string') {
@@ -170,4 +184,45 @@ function computeShortRest(row: Record<string, unknown>): RestResult {
 
 export function computeRest(row: Record<string, unknown>, kind: RestKind): RestResult {
   return kind === 'long' ? computeLongRest(row) : computeShortRest(row);
+}
+
+export async function persistRestUpdates(
+  client: PoolClient,
+  characterId: string,
+  updates: Record<string, unknown>,
+): Promise<void> {
+  const setClauses: string[] = [];
+  const params: unknown[] = [];
+  let idx = 1;
+
+  for (const [key, value] of Object.entries(updates)) {
+    const field = REST_FIELD_TO_COLUMN[key];
+    if (!field) continue;
+    setClauses.push(`${field.column} = $${idx++}`);
+    params.push(field.json ? JSON.stringify(value) : value);
+  }
+
+  if (setClauses.length === 0) return;
+  setClauses.push('updated_at = NOW()::text');
+  params.push(characterId);
+  await client.query(`UPDATE characters SET ${setClauses.join(', ')} WHERE id = $${idx}`, params);
+}
+
+export function syncRestToCombatants(
+  room: RoomState,
+  characterId: string,
+  updates: Record<string, unknown>,
+): void {
+  const combatants = room.combatState?.combatants ?? [];
+  for (const combatant of combatants) {
+    if (combatant.characterId !== characterId) continue;
+    if (typeof updates.hitPoints === 'number') combatant.hp = updates.hitPoints;
+    if (typeof updates.tempHitPoints === 'number') combatant.tempHp = updates.tempHitPoints;
+    if (updates.deathSaves && typeof updates.deathSaves === 'object') {
+      combatant.deathSaves = updates.deathSaves as { successes: number; failures: number };
+    }
+    if (typeof updates.exhaustionLevel === 'number') {
+      combatant.exhaustionLevel = updates.exhaustionLevel;
+    }
+  }
 }
