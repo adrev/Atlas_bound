@@ -759,6 +759,29 @@ describe('Tier 13 — Conquering Presence', () => {
     expect(e1.conditions).toContain('frightened');
     expect(e2.conditions).toContain('frightened');
   });
+
+  it('applies halfling Brave before frightening', async () => {
+    const e1 = makeToken('tE1', 'Pip', { characterId: 'c-halfling' });
+    const s = makeScenario({ inCombat: true, otherTokens: [e1] });
+    routeCharacterQueries({
+      'char-caller': {
+        class: 'Paladin (Conquest)',
+        level: 3,
+        name: 'Conquer',
+        features: [{ name: 'Conquering Presence' }],
+        ability_scores: { cha: 16 },
+        proficiency_bonus: 2,
+        spell_save_dc: 13,
+      },
+      'c-halfling': { ability_scores: { wis: 10 }, saving_throws: [], proficiency_bonus: 2, name: 'Pip', race: 'Lightfoot Halfling' },
+    });
+    const { io, emissions } = makeFakeIo();
+    await withRandomSeed([0.01, 0.99], async () => {
+      await tryHandleChatCommand(io, s.ctx, '!conquer Pip');
+    });
+    expect(e1.conditions).not.toContain('frightened');
+    expect(lastBroadcast(emissions)).toContain('Lightfoot Halfling: advantage on save vs frightened');
+  });
 });
 
 // ═══════════════════════════════════════════════════════════════════
@@ -1610,6 +1633,19 @@ describe('Tier 13 — Nature\'s Wrath', () => {
     });
     expect(enemy.conditions).toContain('restrained');
   });
+
+  it('respects shared auto-fail save modifiers', async () => {
+    const enemy = makeToken('tE', 'Enemy', { characterId: 'c-e', conditions: ['paralyzed'] });
+    const s = makeScenario({ inCombat: true, otherTokens: [enemy] });
+    routeCharacterQueries({
+      'char-caller': { class: 'Paladin (Ancients)', level: 3, name: 'A', features: [{ name: "Nature's Wrath" }], ability_scores: { cha: 16 }, proficiency_bonus: 2, spell_save_dc: 13 },
+      'c-e': { ability_scores: { str: 20, dex: 20 }, saving_throws: [], proficiency_bonus: 2, name: 'Enemy' },
+    });
+    const { io, emissions } = makeFakeIo();
+    await tryHandleChatCommand(io, s.ctx, '!natureswrath Enemy');
+    expect(enemy.conditions).toContain('restrained');
+    expect(lastBroadcast(emissions)).toContain('auto-fail');
+  });
 });
 
 describe('Tier 13 — Champion Challenge', () => {
@@ -1659,6 +1695,22 @@ describe('Tier 13 — Rebuke the Violent', () => {
     expect(s.callerEconomy.reaction).toBe(true);
     // fail → full dmg 14
     expect(lastBroadcast(emissions)).toMatch(/14 radiant/);
+  });
+
+  it('uses shared save advantage before halving radiant damage', async () => {
+    const enemy = makeToken('tE', 'Foe', { characterId: 'c-e', conditions: ['inspired' as never] });
+    const s = makeScenario({ inCombat: true, otherTokens: [enemy] });
+    routeCharacterQueries({
+      'char-caller': { class: 'Paladin (Redemption)', level: 3, name: 'Red', features: [{ name: 'Rebuke the Violent' }], ability_scores: { cha: 16 }, proficiency_bonus: 2, spell_save_dc: 13 },
+      'c-e': { ability_scores: { wis: 10 }, saving_throws: [], proficiency_bonus: 2, name: 'Foe' },
+    });
+    const { io, emissions } = makeFakeIo();
+    await withRandomSeed([0.01, 0.99], async () => {
+      await tryHandleChatCommand(io, s.ctx, '!rebuke Foe 14');
+    });
+    expect(lastBroadcast(emissions)).toContain('SAVED (half)');
+    expect(lastBroadcast(emissions)).toContain('7 radiant');
+    expect(lastBroadcast(emissions)).toContain('inspired: advantage on WIS save');
   });
 });
 

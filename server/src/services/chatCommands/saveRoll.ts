@@ -23,7 +23,7 @@ function abilityMod(scores: Record<string, number> | undefined, ability: SaveAbi
   return Math.floor((raw - 10) / 2);
 }
 
-async function loadTargetSaveMod(
+export async function loadTargetSaveMod(
   target: Token,
   ability: SaveAbility,
 ): Promise<{ mod: number; displayName: string; race: string | null }> {
