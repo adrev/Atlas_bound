@@ -46,3 +46,30 @@ export const DISCORD_FEEDBACK_WEBHOOK_URL = process.env.DISCORD_FEEDBACK_WEBHOOK
  * announcement is skipped.
  */
 export const DISCORD_RELEASES_WEBHOOK_URL = process.env.DISCORD_RELEASES_WEBHOOK_URL || '';
+
+/**
+ * Boot-time configuration sanity check. Returns human-readable WARNINGS
+ * for likely misconfigurations — it never throws (the hard-required DB
+ * connection is already enforced in db/connection.ts, which exits if
+ * DATABASE_URL / PGPASSWORD are missing). This surfaces silent PRODUCTION
+ * footguns at startup instead of as a confusing runtime failure later:
+ * no OAuth provider, or a localhost BASE_URL that breaks OAuth redirects.
+ */
+export function validateConfig(
+  env: Record<string, string | undefined> = process.env,
+): string[] {
+  const warnings: string[] = [];
+  if (env.NODE_ENV !== 'production') return warnings;
+
+  if (!env.DISCORD_CLIENT_ID && !env.GOOGLE_CLIENT_ID) {
+    warnings.push(
+      'No OAuth provider configured (DISCORD_CLIENT_ID / GOOGLE_CLIENT_ID both unset) — only email/password login will work.',
+    );
+  }
+  if (!env.BASE_URL || env.BASE_URL.includes('localhost')) {
+    warnings.push(
+      `BASE_URL is "${env.BASE_URL ?? '(unset)'}" in production — OAuth redirect callbacks will break. Set it to your public URL.`,
+    );
+  }
+  return warnings;
+}

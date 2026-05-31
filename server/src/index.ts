@@ -7,7 +7,7 @@ import { Server } from 'socket.io';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import type { ClientToServerEvents, ServerToClientEvents } from '@dnd-vtt/shared';
-import { PORT, CORS_ORIGINS, UPLOAD_DIR, IS_PRODUCTION } from './config.js';
+import { PORT, CORS_ORIGINS, UPLOAD_DIR, IS_PRODUCTION, validateConfig } from './config.js';
 import { initDatabase } from './db/schema.js';
 import sessionsRouter from './routes/sessions.js';
 import mapsRouter from './routes/maps.js';
@@ -397,6 +397,12 @@ app.use((err: unknown, _req: express.Request, res: express.Response, _next: expr
   if (status >= 500) console.error('[Server Error]', err);
   res.status(status).json({ error: message });
 });
+
+// Surface likely production misconfigurations at boot (warnings only —
+// never fatal; the hard-required DB connection is enforced in db/connection).
+for (const warning of validateConfig()) {
+  console.warn(`[config] ⚠️  ${warning}`);
+}
 
 // Start listening
 httpServer.listen(PORT, () => {
