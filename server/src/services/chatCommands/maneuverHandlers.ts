@@ -1,4 +1,4 @@
-import type { Token, ActionBreakdown, ActionEconomy } from '@dnd-vtt/shared';
+import { blocksActions, type Token, type ActionBreakdown, type ActionEconomy } from '@dnd-vtt/shared';
 import {
   registerChatCommand,
   whisperToCaller,
@@ -25,6 +25,14 @@ interface SkillRoll {
   total: number;
   skill: 'athletics' | 'acrobatics';
   name: string;
+}
+
+interface InventoryItem {
+  name?: string;
+  type?: string;
+  category?: string;
+  equipped?: boolean;
+  properties?: string[];
 }
 
 async function resolveSkillMod(
@@ -83,6 +91,111 @@ function resolveTargetOrSelf(
 function tokenSizeRank(token: Token): number {
   const size = Number(token.size);
   return Number.isFinite(size) && size > 0 ? size : 1;
+}
+
+function edgeDistance(
+  ax: number,
+  ay: number,
+  aSize: number,
+  bx: number,
+  by: number,
+  bSize: number,
+  gridSize: number,
+): number {
+  const acx = ax + (gridSize * aSize) / 2;
+  const acy = ay + (gridSize * aSize) / 2;
+  const bcx = bx + (gridSize * bSize) / 2;
+  const bcy = by + (gridSize * bSize) / 2;
+  const dx = Math.abs(acx - bcx) - (aSize * gridSize) / 2 - (bSize * gridSize) / 2;
+  const dy = Math.abs(acy - bcy) - (aSize * gridSize) / 2 - (bSize * gridSize) / 2;
+  return Math.max(Math.max(dx, 0), Math.max(dy, 0));
+}
+
+function validateManeuverReach(
+  c: ChatCommandContext,
+  caller: Token,
+  target: Token,
+  command: 'grapple' | 'shove',
+): boolean {
+  if (caller.mapId !== target.mapId) {
+    whisperToCaller(c.io, c.ctx, `!${command}: ${target.name} is not on ${caller.name}'s current map.`);
+    return false;
+  }
+  const gridSize = c.ctx.room.mapGridSizes.get(caller.mapId) ?? 70;
+  const reachCells = c.ctx.room.tokenMeleeReach.get(caller.id) ?? 1;
+  const reachPx = reachCells * gridSize;
+  const distancePx = edgeDistance(
+    caller.x,
+    caller.y,
+    tokenSizeRank(caller),
+    target.x,
+    target.y,
+    tokenSizeRank(target),
+    gridSize,
+  );
+  if (distancePx <= reachPx + 0.5) return true;
+  whisperToCaller(
+    c.io,
+    c.ctx,
+    `!${command}: ${target.name} is out of reach (${Math.ceil(distancePx / gridSize) * 5} ft away; reach ${reachCells * 5} ft).`,
+  );
+  return false;
+}
+
+function validateManeuverActorState(
+  c: ChatCommandContext,
+  caller: Token,
+  command: 'grapple' | 'shove',
+): boolean {
+  const conditions = (caller.conditions ?? []) as string[];
+  const combatant = c.ctx.room.combatState?.combatants.find((entry) => entry.tokenId === caller.id);
+  if (conditions.includes('dead') || blocksActions(conditions) || (combatant && combatant.hp <= 0)) {
+    whisperToCaller(c.io, c.ctx, `!${command}: ${caller.name} cannot do this while incapacitated or downed.`);
+    return false;
+  }
+  return true;
+}
+
+function parseInventory(value: unknown): InventoryItem[] {
+  if (typeof value === 'string') {
+    const parsed = JSON.parse(value) as unknown;
+    return Array.isArray(parsed) ? parsed as InventoryItem[] : [];
+  }
+  return Array.isArray(value) ? value as InventoryItem[] : [];
+}
+
+async function loadInventory(token: Token): Promise<InventoryItem[]> {
+  if (!token.characterId) return [];
+  const { rows } = await pool.query('SELECT inventory FROM characters WHERE id = $1', [token.characterId]);
+  const row = rows[0] as Record<string, unknown> | undefined;
+  if (!row) return [];
+  try {
+    return parseInventory(row.inventory);
+  } catch {
+    return [];
+  }
+}
+
+function lower(value: unknown): string {
+  return typeof value === 'string' ? value.toLowerCase() : '';
+}
+
+function equippedHandItem(item: InventoryItem): boolean {
+  if (item.equipped !== true) return false;
+  const kind = `${lower(item.type)} ${lower(item.category)} ${lower(item.name)}`;
+  return kind.includes('weapon') || kind.includes('shield');
+}
+
+async function validateFreeGrappleHand(c: ChatCommandContext, caller: Token): Promise<boolean> {
+  const inventory = await loadInventory(caller);
+  const occupiedHands = inventory.filter(equippedHandItem).length;
+  if (occupiedHands < 2) return true;
+  whisperToCaller(
+    c.io,
+    c.ctx,
+    `!grapple: ${caller.name} appears to have both hands occupied by equipped weapons/shields. Unequip or free a hand before grappling.`,
+  );
+  return false;
 }
 
 function validateManeuverTargetSize(
@@ -169,7 +282,10 @@ async function handleGrapple(c: ChatCommandContext): Promise<boolean> {
     whisperToCaller(c.io, c.ctx, `!grapple: no target named "${targetName}" (or target is you).`);
     return true;
   }
+  if (!validateManeuverActorState(c, caller, 'grapple')) return true;
+  if (!validateManeuverReach(c, caller, target, 'grapple')) return true;
   if (!validateManeuverTargetSize(c, caller, target, 'grapple')) return true;
+  if (!await validateFreeGrappleHand(c, caller)) return true;
   if (!spendManeuverAction(c, caller, 'grapple')) return true;
 
   const callerAth = await resolveSkillMod(caller, 'athletics');
@@ -252,6 +368,8 @@ async function handleShove(c: ChatCommandContext): Promise<boolean> {
     whisperToCaller(c.io, c.ctx, `!shove: no target named "${targetName}" (or target is you).`);
     return true;
   }
+  if (!validateManeuverActorState(c, caller, 'shove')) return true;
+  if (!validateManeuverReach(c, caller, target, 'shove')) return true;
   if (!validateManeuverTargetSize(c, caller, target, 'shove')) return true;
   if (!spendManeuverAction(c, caller, 'shove')) return true;
 

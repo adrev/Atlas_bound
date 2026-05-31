@@ -185,8 +185,8 @@ export const RULES_MATRIX: RulesMatrixEntry[] = [
     authority: 'chat-command',
     priority: 'P2',
     paths: ['server/src/services/chatCommands/maneuverHandlers.ts'],
-    notes: ['Opposed checks, the one-size-larger target limit, and in-combat Action cost are enforced.'],
-    nextSteps: ['Add reach, free-hand, and incapacitated-target nuance before marking the maneuver helpers fully implemented.'],
+    notes: ['Opposed checks, reach, the one-size-larger target limit, caller incapacitation, grapple free-hand checks, and in-combat Action cost are enforced.'],
+    nextSteps: ['Keep labeled partial until push-direction automation and richer hand/equipment state are modeled.'],
   },
   {
     id: 'action.hide-stealth',
