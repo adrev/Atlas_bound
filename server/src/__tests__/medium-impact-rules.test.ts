@@ -113,6 +113,38 @@ beforeEach(() => {
   for (const id of Array.from(getAllRooms().keys())) getAllRooms().delete(id);
 });
 
+function routeCharacterQueries(charRows: Record<string, Record<string, unknown>>): void {
+  mockQuery.mockImplementation(async (_sql: string, params?: unknown[]) => {
+    const id = params?.[0] as string | undefined;
+    if (id && charRows[id]) return { rows: [charRows[id]] };
+    return { rows: [] };
+  });
+}
+
+async function withRandomSeed<T>(values: number[], fn: () => Promise<T> | T): Promise<T> {
+  const orig = Math.random;
+  let i = 0;
+  Math.random = () => {
+    const v = values[i % values.length];
+    i += 1;
+    return v;
+  };
+  try {
+    return await fn();
+  } finally {
+    Math.random = orig;
+  }
+}
+
+function systemContent(emissions: Array<{ event: string; payload: unknown }>): string {
+  return emissions
+    .filter((e) => e.event === 'chat:new-message')
+    .map((e) => e.payload as { type?: string; content?: string })
+    .filter((p) => p.type === 'system')
+    .map((p) => p.content ?? '')
+    .join('\n');
+}
+
 // ═══════════════════════════════════════════════════════════════════
 // Unarmored Defense — Barb / Monk / Draconic Sorc AC
 // ═══════════════════════════════════════════════════════════════════
@@ -384,27 +416,19 @@ describe('Condition sources on map:token-updated', () => {
     };
     room.actionEconomies.set(caller.id, economy);
 
-    mockQuery.mockImplementation(async (_sql: string, params?: unknown[]) => {
-      const id = params?.[0] as string | undefined;
-      if (id === 'char-foe') {
-        return { rows: [{
-          ability_scores: { wis: 10 }, proficiency_bonus: 2,
-          saving_throws: [], name: 'Foe',
-        }] };
-      }
-      return { rows: [] };
+    routeCharacterQueries({
+      'char-foe': {
+        ability_scores: { wis: 10 }, proficiency_bonus: 2,
+        saving_throws: [], name: 'Foe',
+      },
     });
 
     const { io, emissions } = fakeIo();
     const ctx: PlayerContext = { room, player };
-    // Nat 1 forces save fail regardless of mods.
-    const orig = Math.random;
-    Math.random = () => 0.02;
-    try {
+    // Low roll fails the DC 14 WIS save.
+    await withRandomSeed([0.02], async () => {
       await tryHandleChatCommand(io, ctx, '!holdperson Foe 14');
-    } finally {
-      Math.random = orig;
-    }
+    });
 
     const updates = emissions
       .filter((e) => e.event === 'map:token-updated')
@@ -413,5 +437,115 @@ describe('Condition sources on map:token-updated', () => {
     expect(updates.length).toBeGreaterThan(0);
     const sources = updates[updates.length - 1].changes.conditionSources as Record<string, string>;
     expect(sources.paralyzed).toBe('tPC');
+  });
+});
+
+describe('Legacy save-or-suck spell initial saves', () => {
+  function makeSpellContext(targets: Token[]): { ctx: PlayerContext; io: never; emissions: Array<{ event: string; payload: unknown }> } {
+    const sessionId = 's-spell-saves';
+    const caller = makeToken('tPC', 'PC', {
+      characterId: 'char-pc', ownerUserId: 'user-pc',
+    });
+    const room = seedRoom(sessionId, [caller, ...targets],
+      [makeCombatant('tPC'), ...targets.map((t) => makeCombatant(t.id))],
+    );
+    const player: RoomPlayer = {
+      userId: 'user-pc', displayName: 'PC',
+      socketId: 'sock-pc', role: 'player', characterId: 'char-pc',
+    };
+    room.players.set('user-pc', player);
+    const { io, emissions } = fakeIo();
+    return { ctx: { room, player }, io, emissions };
+  }
+
+  it('does not paralyze a target that saves against Hold Person', async () => {
+    const target = makeToken('tFoe', 'Foe', { characterId: 'char-foe' });
+    const { ctx, io, emissions } = makeSpellContext([target]);
+    routeCharacterQueries({
+      'char-foe': {
+        ability_scores: { wis: 10 },
+        saving_throws: [],
+        proficiency_bonus: 2,
+        name: 'Foe',
+      },
+    });
+
+    await withRandomSeed([0.99], async () => {
+      await tryHandleChatCommand(io, ctx, '!holdperson Foe 14');
+    });
+
+    expect(target.conditions).not.toContain('paralyzed');
+    expect(systemContent(emissions)).toContain('SAVED');
+  });
+
+  it('applies halfling Brave before Fear can frighten', async () => {
+    const target = makeToken('tPip', 'Pip', { characterId: 'char-pip' });
+    const { ctx, io, emissions } = makeSpellContext([target]);
+    routeCharacterQueries({
+      'char-pip': {
+        ability_scores: { wis: 10 },
+        saving_throws: [],
+        proficiency_bonus: 2,
+        name: 'Pip',
+        race: 'Lightfoot Halfling',
+      },
+    });
+
+    await withRandomSeed([0.02, 0.99], async () => {
+      await tryHandleChatCommand(io, ctx, '!fear Pip 14');
+    });
+
+    expect(target.conditions).not.toContain('frightened');
+    const content = systemContent(emissions);
+    expect(content).toContain('SAVED');
+    expect(content).toContain('Lightfoot Halfling: advantage on save vs frightened');
+  });
+
+  it('applies Bane only to targets that fail the initial CHA save', async () => {
+    const failed = makeToken('tFail', 'Fail', { characterId: 'char-fail' });
+    const saved = makeToken('tSave', 'Save', { characterId: 'char-save' });
+    const { ctx, io, emissions } = makeSpellContext([failed, saved]);
+    routeCharacterQueries({
+      'char-fail': {
+        ability_scores: { cha: 10 },
+        saving_throws: [],
+        proficiency_bonus: 2,
+        name: 'Fail',
+      },
+      'char-save': {
+        ability_scores: { cha: 10 },
+        saving_throws: [],
+        proficiency_bonus: 2,
+        name: 'Save',
+      },
+    });
+
+    await withRandomSeed([0.02, 0.99], async () => {
+      await tryHandleChatCommand(io, ctx, '!bane Fail Save 14');
+    });
+
+    expect(failed.conditions).toContain('baned');
+    expect(saved.conditions).not.toContain('baned');
+    expect(systemContent(emissions)).toContain('Baned targets: Fail');
+  });
+
+  it('does not outline a target that saves against Faerie Fire', async () => {
+    const target = makeToken('tSprite', 'Sprite', { characterId: 'char-sprite' });
+    const { ctx, io, emissions } = makeSpellContext([target]);
+    routeCharacterQueries({
+      'char-sprite': {
+        ability_scores: { dex: 10 },
+        saving_throws: [],
+        proficiency_bonus: 2,
+        name: 'Sprite',
+      },
+    });
+
+    await withRandomSeed([0.99], async () => {
+      await tryHandleChatCommand(io, ctx, '!faeriefire Sprite 14');
+    });
+
+    expect(target.conditions).not.toContain('outlined');
+    expect(systemContent(emissions)).toContain('All targets saved');
   });
 });
