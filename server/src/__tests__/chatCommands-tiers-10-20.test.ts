@@ -35,6 +35,7 @@ import { createRoom, getAllRooms, type RoomState, type RoomPlayer, type PlayerCo
 import '../services/chatCommands/subclassFeaturesHandler.js';
 import '../services/chatCommands/subclassFeaturesTier10Handler.js';
 import '../services/chatCommands/subclassFeaturesTier11Handler.js';
+import '../services/chatCommands/miscClassHandlers.js';
 import '../services/chatCommands/spellsTier12Handler.js';
 import '../services/chatCommands/subclassFeaturesTier13Handler.js';
 import '../services/chatCommands/subclassFeaturesTier14Handler.js';
@@ -415,6 +416,83 @@ describe('Base subclass features — shared save consumers', () => {
 
     await withRandomSeed([0.01, 0.99], async () => {
       await tryHandleChatCommand(io, s.ctx, '!feypresence fear Pip');
+    });
+
+    expect(halfling.conditions).not.toContain('frightened');
+    const content = lastBroadcast(emissions) ?? '';
+    expect(content).toContain('SAVED');
+    expect(content).toContain('Lightfoot Halfling: advantage on save vs frightened');
+  });
+});
+
+describe('Misc class features — shared save consumers', () => {
+  it('applies shared DEX save advantage for Breath Weapon', async () => {
+    const enemy = makeToken('tEnemy', 'Enemy', {
+      characterId: 'char-enemy',
+      conditions: ['hasted' as never],
+    });
+    const s = makeScenario({
+      inCombat: true,
+      otherTokens: [enemy],
+      otherCombatants: [makeCombatant('tEnemy', { characterId: 'char-enemy' })],
+    });
+    routeCharacterQueries({
+      'char-caller': { class: 'Fighter', level: 5, name: 'Dragonborn' },
+      'char-enemy': { ability_scores: { dex: 10 }, saving_throws: [], proficiency_bonus: 2, name: 'Enemy' },
+    });
+    const { io, emissions } = makeFakeIo();
+
+    await withRandomSeed([0.99, 0.99, 0.01, 0.99], async () => {
+      await tryHandleChatCommand(io, s.ctx, '!breath 2d6/dex/13 Enemy');
+    });
+
+    const content = lastBroadcast(emissions) ?? '';
+    expect(content).toContain('SAVED (half)');
+    expect(content).toContain('6 dmg');
+    expect(content).toContain('hasted: advantage on DEX save');
+  });
+
+  it('applies shared auto-fail save modifiers for Trip Attack', async () => {
+    const enemy = makeToken('tEnemy', 'Enemy', {
+      characterId: 'char-enemy',
+      conditions: ['paralyzed'],
+    });
+    const s = makeScenario({
+      inCombat: true,
+      otherTokens: [enemy],
+      otherCombatants: [makeCombatant('tEnemy', { characterId: 'char-enemy' })],
+    });
+    routeCharacterQueries({
+      'char-caller': { class: 'Fighter (Battle Master)', level: 3, name: 'BM', features: [] },
+      'char-enemy': { ability_scores: { str: 20 }, saving_throws: ['str'], proficiency_bonus: 2, name: 'Enemy' },
+    });
+    const { io, emissions } = makeFakeIo();
+
+    await withRandomSeed([0.5], async () => {
+      await tryHandleChatCommand(io, s.ctx, '!maneuver trip Enemy 13');
+    });
+
+    expect(enemy.conditions).toContain('prone');
+    const content = lastBroadcast(emissions) ?? '';
+    expect(content).toContain('auto-fail');
+    expect(content).toContain('Enemy is PRONE');
+  });
+
+  it('applies halfling Brave before Menacing Attack fear', async () => {
+    const halfling = makeToken('tHalf', 'Pip', { characterId: 'char-half' });
+    const s = makeScenario({
+      inCombat: true,
+      otherTokens: [halfling],
+      otherCombatants: [makeCombatant('tHalf', { characterId: 'char-half' })],
+    });
+    routeCharacterQueries({
+      'char-caller': { class: 'Fighter (Battle Master)', level: 3, name: 'BM', features: [] },
+      'char-half': { ability_scores: { wis: 10 }, saving_throws: [], proficiency_bonus: 2, name: 'Pip', race: 'Lightfoot Halfling' },
+    });
+    const { io, emissions } = makeFakeIo();
+
+    await withRandomSeed([0.5, 0.01, 0.99], async () => {
+      await tryHandleChatCommand(io, s.ctx, '!maneuver menacing Pip 13');
     });
 
     expect(halfling.conditions).not.toContain('frightened');

@@ -164,6 +164,7 @@ export const RULES_MATRIX: RulesMatrixEntry[] = [
       'server/src/services/chatCommands/subclassFeaturesTier11Handler.ts',
       'server/src/services/chatCommands/subclassFeaturesTier13Handler.ts',
       'server/src/services/chatCommands/monkHandler.ts',
+      'server/src/services/chatCommands/miscClassHandlers.ts',
       'client/src/utils/roll-engine.ts',
     ],
     notes: [
@@ -174,6 +175,7 @@ export const RULES_MATRIX: RulesMatrixEntry[] = [
       'Tier 11 Open Hand, Strength of the Grave, and Enthralling Performance saves route through the shared save helper.',
       'Tier 13 Channel Divinity feature saves route through the shared save helper.',
       'Monk Stunning Strike routes its CON save through the shared save helper.',
+      'Dragonborn Breath Weapon and Battle Master save maneuvers route through the shared save helper.',
     ],
     nextSteps: ['Continue routing remaining individual spell and feature chat-command save helpers through the shared resolver so every save path gets the same modifier math.'],
   },
