@@ -13,7 +13,7 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { Server } from 'socket.io';
-import type { Combatant, CombatState, Token, ActionEconomy } from '@dnd-vtt/shared';
+import type { Combatant, CombatState, Token, ActionEconomy, SaveBreakdown } from '@dnd-vtt/shared';
 
 // Mock the DB before importing anything that touches it.
 const { mockQuery } = vi.hoisted(() => ({ mockQuery: vi.fn() }));
@@ -71,6 +71,23 @@ function systemBroadcasts(emissions: Emission[]): string[] {
 function lastSystemLine(emissions: Emission[]): string | undefined {
   const sys = systemBroadcasts(emissions);
   return sys[sys.length - 1];
+}
+
+function extractSaveResult(payload: unknown): SaveBreakdown | undefined {
+  if (typeof payload !== 'object' || payload === null) return undefined;
+  const candidate = payload as { saveResult?: unknown };
+  return typeof candidate.saveResult === 'object' && candidate.saveResult !== null
+    ? (candidate.saveResult as SaveBreakdown)
+    : undefined;
+}
+
+function lastSaveResult(emissions: Emission[]): SaveBreakdown | undefined {
+  for (let i = emissions.length - 1; i >= 0; i -= 1) {
+    if (emissions[i].event !== 'chat:new-message') continue;
+    const saveResult = extractSaveResult(emissions[i].payload);
+    if (saveResult) return saveResult;
+  }
+  return undefined;
 }
 
 function tokenUpdates(emissions: Emission[]): Array<{ tokenId: string; changes: Record<string, unknown> }> {
@@ -739,11 +756,40 @@ describe('Hazards — !disease', () => {
     const target = makeToken('tBob', 'Bob');
     const s = makeScenario({ role: 'dm', inCombat: true, otherTokens: [target] });
     const { io } = makeFakeIo();
-    // Nat 1 → auto-fail DC 11 regardless of mod
+    // Low roll fails DC 11.
     await withRandomSeed([0.02], async () => {
       await tryHandleChatCommand(io, s.ctx, '!disease sewer-plague Bob');
     });
     expect(target.conditions).toContain('poisoned');
+  });
+
+  it('applies shared save advantage before disease takes hold', async () => {
+    const target = makeToken('tBob', 'Bob', {
+      characterId: 'char-bob',
+      conditions: ['inspired' as never],
+    });
+    const s = makeScenario({ role: 'dm', inCombat: true, otherTokens: [target] });
+    routeCharacterQueries({
+      'char-bob': {
+        ability_scores: { con: 10 },
+        saving_throws: [],
+        proficiency_bonus: 2,
+        name: 'Bob',
+      },
+    });
+    const { io, emissions } = makeFakeIo();
+
+    await withRandomSeed([0.02, 0.99], async () => {
+      await tryHandleChatCommand(io, s.ctx, '!disease sewer-plague Bob');
+    });
+
+    expect(target.conditions).not.toContain('poisoned');
+    const line = lastSystemLine(emissions) ?? '';
+    expect(line).toContain('SAVED');
+    expect(line).toContain('inspired: advantage on CON save');
+    const saveResult = lastSaveResult(emissions);
+    expect(saveResult?.advantage).toBe('advantage');
+    expect(saveResult?.passed).toBe(true);
   });
 });
 
@@ -766,6 +812,33 @@ describe('Hazards — !poison', () => {
     // Bob should have SOMETHING (poisoned at minimum or other state).
     // Just verify broadcast exists.
     expect(target.name).toBe('Bob');
+  });
+
+  it('applies dwarf poison-save advantage before poison damage', async () => {
+    const target = makeToken('tDwarf', 'Borin', { characterId: 'char-dwarf' });
+    const s = makeScenario({ role: 'dm', inCombat: true, otherTokens: [target] });
+    routeCharacterQueries({
+      'char-dwarf': {
+        ability_scores: { con: 10 },
+        saving_throws: [],
+        proficiency_bonus: 2,
+        name: 'Borin',
+        race: 'Hill Dwarf',
+      },
+    });
+    const { io, emissions } = makeFakeIo();
+
+    await withRandomSeed([0.02, 0.99, 0.99, 0.99, 0.99], async () => {
+      await tryHandleChatCommand(io, s.ctx, '!poison serpent-venom Borin');
+    });
+
+    const line = lastSystemLine(emissions) ?? '';
+    expect(line).toContain('SAVED');
+    expect(line).toContain('Hill Dwarf: advantage on save vs poison');
+    expect(line).toContain('= 9 dmg');
+    const saveResult = lastSaveResult(emissions);
+    expect(saveResult?.advantage).toBe('advantage');
+    expect(saveResult?.passed).toBe(true);
   });
 });
 
