@@ -568,6 +568,19 @@ export function registerListeners(socket: Socket): () => void {
     triggerSnapshot('character:hit-die-spent');
   });
 
+  socket.on('character:spell-slot-adjusted', (payload: { changes: string[]; updates: Record<string, unknown> }) => {
+    if (Object.keys(payload.updates).length === 0) {
+      import('../components/ui/Toast').then(({ showToast }) => {
+        showToast({
+          message: `Spell Slot — ${payload.changes.join(' • ')}`,
+          variant: 'warning',
+          duration: 3000,
+        });
+      });
+    }
+    triggerSnapshot('character:spell-slot-adjusted');
+  });
+
   // --- Chat ---
   socket.on('chat:new-message', (message) => {
     const chat = useChatStore.getState();
@@ -719,6 +732,7 @@ export function registerListeners(socket: Socket): () => void {
     socket.off('character:synced');
     socket.off('character:rested');
     socket.off('character:hit-die-spent');
+    socket.off('character:spell-slot-adjusted');
     socket.off('chat:new-message');
     socket.off('chat:roll-result');
     socket.off('chat:history');

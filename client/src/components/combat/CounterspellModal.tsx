@@ -3,7 +3,7 @@ import { useCharacterStore } from '../../stores/useCharacterStore';
 import { useSessionStore } from '../../stores/useSessionStore';
 import { useMapStore } from '../../stores/useMapStore';
 import { useCombatStore } from '../../stores/useCombatStore';
-import { emitSystemMessage, emitCharacterUpdate, emitUseAction } from '../../socket/emitters';
+import { emitSystemMessage, emitSpellSlotAdjust, emitUseAction } from '../../socket/emitters';
 import { theme } from '../../styles/theme';
 
 /**
@@ -91,16 +91,8 @@ export function CounterspellModal() {
   const handleCounter = useCallback((slotLevel: number) => {
     if (!head || !eligibility?.canCounter) return;
 
-    // Burn the slot
-    const slots = eligibility.slots;
-    const slotKey = String(slotLevel);
-    const updated = {
-      ...slots,
-      [slotKey]: { ...slots[slotKey], used: (slots[slotKey]?.used ?? 0) + 1 },
-    };
     if (myCharacter) {
-      emitCharacterUpdate(myCharacter.id, { spellSlots: updated });
-      useCharacterStore.getState().applyRemoteUpdate(myCharacter.id, { spellSlots: updated });
+      emitSpellSlotAdjust(myCharacter.id, slotLevel, 1);
     }
 
     // Burn the reaction (only fires if I'm the current combatant

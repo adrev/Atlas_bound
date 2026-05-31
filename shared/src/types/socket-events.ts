@@ -242,6 +242,7 @@ export interface ClientCharacterEvents {
   'character:update': { characterId: string; changes: Record<string, unknown> };
   'character:rest': { characterId: string; kind: 'short' | 'long' };
   'character:spend-hit-die': { characterId: string; dieSize: number };
+  'character:spell-slot-adjust': { characterId: string; level: number; delta: 1 | -1 };
   'character:sync-request': { characterId: string };
 }
 
@@ -261,6 +262,16 @@ export interface ServerCharacterEvents {
     heal: number;
     oldHp: number;
     newHp: number;
+    changes: string[];
+    updates: Record<string, unknown>;
+  };
+  'character:spell-slot-adjusted': {
+    characterId: string;
+    level: number;
+    delta: 1 | -1;
+    oldUsed: number;
+    newUsed: number;
+    max: number;
     changes: string[];
     updates: Record<string, unknown>;
   };

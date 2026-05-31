@@ -518,6 +518,11 @@ export function emitSpendHitDie(characterId: string, dieSize: number) {
   triggerSnapshot('character:spend-hit-die');
 }
 
+export function emitSpellSlotAdjust(characterId: string, level: number, delta: 1 | -1) {
+  getSocket().emit('character:spell-slot-adjust', { characterId, level, delta });
+  triggerSnapshot('character:spell-slot-adjust');
+}
+
 export function emitCharacterSyncRequest(characterId: string) {
   getSocket().emit('character:sync-request', { characterId });
 }

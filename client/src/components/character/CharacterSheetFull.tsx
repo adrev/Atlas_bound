@@ -20,7 +20,7 @@ import {
   type AbilityScores,
   type DeathSaves,
 } from '@dnd-vtt/shared';
-import { emitRoll, emitCharacterUpdate, emitSystemMessage, emitSpendHitDie } from '../../socket/emitters';
+import { emitRoll, emitCharacterUpdate, emitSystemMessage, emitSpendHitDie, emitSpellSlotAdjust } from '../../socket/emitters';
 import { parseSpellMetaFromDesc, enrichSpellFromDescription } from '../../utils/spell-enrich';
 import { useMapStore } from '../../stores/useMapStore';
 import { useSessionStore } from '../../stores/useSessionStore';
@@ -1791,10 +1791,12 @@ function SpellsTab({ spells: rawSpells, spellSlots, spellcastingAbility, spellAt
   const toggleSlot = (level: number, index: number) => {
     const slot = spellSlots[level];
     if (!slot) return;
-    const newUsed = index < slot.used ? index : index + 1;
-    const updatedSlots = { ...spellSlots, [level]: { ...slot, used: newUsed } };
-    emitCharacterUpdate(characterId, { spellSlots: updatedSlots });
-    useCharacterStore.getState().applyRemoteUpdate(characterId, { spellSlots: updatedSlots });
+    const targetUsed = index < slot.used ? index : index + 1;
+    const steps = Math.abs(targetUsed - slot.used);
+    const delta = targetUsed > slot.used ? 1 : -1;
+    for (let i = 0; i < steps; i += 1) {
+      emitSpellSlotAdjust(characterId, level, delta);
+    }
   };
 
   const getSpellSlug = (name: string) => name.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '').replace(/'/g, '');
