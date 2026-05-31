@@ -161,7 +161,10 @@ export const RULES_MATRIX: RulesMatrixEntry[] = [
       'server/src/services/chatCommands/saveHandler.ts',
       'client/src/utils/roll-engine.ts',
     ],
-    notes: ['Slow and cover flat save modifiers are modeled in shared rules and applied by the server save resolver plus client roll engine.'],
+    notes: [
+      'Slow and cover flat save modifiers are modeled in shared rules and applied by the server save resolver plus client roll engine.',
+      'Race save traits are read from raceFeatures.savesVs; damage resistances remain defense math rather than save advantage.',
+    ],
     nextSteps: ['Route individual spell chat-command save helpers through the shared resolver so every save path gets the same modifier math.'],
   },
   {

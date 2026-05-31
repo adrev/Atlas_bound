@@ -160,6 +160,25 @@ describe('computeSaveModifiers', () => {
     expect(computeSaveModifiers(['three-quarters-cover'], 'wis').flatModifier).toBe(0); // cover is DEX-only
     expect(computeSaveModifiers([], 'dex').flatModifier).toBe(0);
   });
+
+  it('applies real race save traits from raceFeatures.savesVs', () => {
+    expect(computeSaveModifiers([], 'con', 0, 'Hill Dwarf', 'poison').effectiveAdvantage).toBe('advantage');
+    expect(computeSaveModifiers([], 'wis', 0, 'Lightfoot Halfling', 'frightened').effectiveAdvantage).toBe('advantage');
+    expect(computeSaveModifiers([], 'wis', 0, 'Wood Elf', 'charm').effectiveAdvantage).toBe('advantage');
+  });
+
+  it('limits gnome cunning to INT/WIS/CHA saves against magic', () => {
+    expect(computeSaveModifiers([], 'int', 0, 'Forest Gnome', 'magic').effectiveAdvantage).toBe('advantage');
+    expect(computeSaveModifiers([], 'wis', 0, 'Forest Gnome', 'magic').effectiveAdvantage).toBe('advantage');
+    expect(computeSaveModifiers([], 'cha', 0, 'Forest Gnome', 'magic').effectiveAdvantage).toBe('advantage');
+    expect(computeSaveModifiers([], 'dex', 0, 'Forest Gnome', 'magic').effectiveAdvantage).toBe('normal');
+  });
+
+  it('does not treat damage resistance as save advantage', () => {
+    expect(computeSaveModifiers([], 'dex', 0, 'Tiefling', 'fire').effectiveAdvantage).toBe('normal');
+    expect(computeSaveModifiers([], 'con', 0, 'Aasimar', 'radiant').effectiveAdvantage).toBe('normal');
+    expect(computeSaveModifiers([], 'con', 0, 'Aasimar', 'necrotic').effectiveAdvantage).toBe('normal');
+  });
 });
 
 describe('computeEffectiveAC', () => {

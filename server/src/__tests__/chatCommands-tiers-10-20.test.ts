@@ -285,13 +285,15 @@ describe('!save shared resolver', () => {
     });
     const { io, emissions } = makeFakeIo();
 
-    await withRandomSeed([0.99], async () => {
+    await withRandomSeed([0.99, 0.99, 0.99, 0.99, 0.99, 0.99, 0.99, 0.99, 0], async () => {
       const handled = await tryHandleChatCommand(io, s.ctx, '!save dex 30 8d6/fire Tiefling');
       expect(handled).toBe(true);
     });
 
     expect(targetComb.hp).toBe(26);
     const content = lastBroadcast(emissions) ?? '';
+    expect(content).toContain('d20=1+0=1');
+    expect(content).not.toContain('(adv)');
     expect(content).toContain('48→24');
     expect(content).toContain('resist fire');
   });
