@@ -3,9 +3,10 @@
  * Follows D&D 5e rules for armor, shields, and magic item bonuses.
  */
 
-interface EquippedItem {
+export interface EquippedItem {
   name: string;
   type: string;
+  category?: string;
   equipped: boolean;
   damage?: string;
   damageType?: string;
@@ -16,14 +17,17 @@ interface EquippedItem {
   slug?: string;
   // From rawJson enrichment
   ac?: number;
-  acType?: string; // 'flat' | 'dex' | 'dex-max-2'
+  acType?: string; // 'flat' | 'dex' | 'dex-max-2' or 'light' | 'medium' | 'heavy'
+  magicBonus?: number;
+  strengthRequirement?: number;
+  strRequirement?: number;
 }
 
-interface AbilityScores {
+export interface EquipmentAbilityScores {
   str: number; dex: number; con: number; int: number; wis: number; cha: number;
 }
 
-interface EquipmentBonuses {
+export interface EquipmentBonuses {
   /** Total AC from equipped armor + shield + magic bonuses */
   effectiveAC: number;
   /** AC breakdown for tooltip */
@@ -38,22 +42,121 @@ interface EquipmentBonuses {
   speedPenalty: number;
 }
 
+type ArmorKind = 'light' | 'medium' | 'heavy';
+
+interface ArmorRule {
+  name: string;
+  baseAC: number;
+  kind: ArmorKind;
+  stealthDisadvantage: boolean;
+  strengthRequirement?: number;
+}
+
+const ARMOR_RULES: ArmorRule[] = [
+  { name: 'studded leather', baseAC: 12, kind: 'light', stealthDisadvantage: false },
+  { name: 'padded', baseAC: 11, kind: 'light', stealthDisadvantage: true },
+  { name: 'leather', baseAC: 11, kind: 'light', stealthDisadvantage: false },
+  { name: 'half plate', baseAC: 15, kind: 'medium', stealthDisadvantage: true },
+  { name: 'chain shirt', baseAC: 13, kind: 'medium', stealthDisadvantage: false },
+  { name: 'scale mail', baseAC: 14, kind: 'medium', stealthDisadvantage: true },
+  { name: 'breastplate', baseAC: 14, kind: 'medium', stealthDisadvantage: false },
+  { name: 'hide', baseAC: 12, kind: 'medium', stealthDisadvantage: false },
+  { name: 'chain mail', baseAC: 16, kind: 'heavy', stealthDisadvantage: true, strengthRequirement: 13 },
+  { name: 'ring mail', baseAC: 14, kind: 'heavy', stealthDisadvantage: true },
+  { name: 'splint', baseAC: 17, kind: 'heavy', stealthDisadvantage: true, strengthRequirement: 15 },
+  { name: 'plate', baseAC: 18, kind: 'heavy', stealthDisadvantage: true, strengthRequirement: 15 },
+];
+
+function lower(value: unknown): string {
+  return typeof value === 'string' ? value.toLowerCase() : '';
+}
+
+function itemKind(item: EquippedItem): string {
+  const type = lower(item.type);
+  if (type === 'armor' || type === 'shield' || type === 'weapon') return type;
+  return lower(item.category) || type;
+}
+
+function isShield(item: EquippedItem): boolean {
+  const kind = itemKind(item);
+  return kind === 'shield' || (kind === 'armor' && lower(item.name).includes('shield'));
+}
+
+function isArmor(item: EquippedItem): boolean {
+  return itemKind(item) === 'armor' && !isShield(item);
+}
+
+function firstNumber(...values: Array<number | undefined>): number | undefined {
+  for (const value of values) {
+    if (Number.isFinite(value) && value !== undefined && value > 0) return value;
+  }
+  return undefined;
+}
+
+function armorRuleFor(item: EquippedItem): ArmorRule | undefined {
+  const name = lower(item.name);
+  return ARMOR_RULES.find((rule) => name.includes(rule.name));
+}
+
+function armorKindFor(item: EquippedItem, rule?: ArmorRule): ArmorKind | null {
+  const acType = lower(item.acType);
+  if (acType === 'dex' || acType === 'light') return 'light';
+  if (acType === 'dex-max-2' || acType === 'medium') return 'medium';
+  if (acType === 'flat' || acType === 'heavy') return 'heavy';
+
+  const desc = lower(item.description);
+  if (desc.includes('light armor')) return 'light';
+  if (desc.includes('medium armor')) return 'medium';
+  if (desc.includes('heavy armor')) return 'heavy';
+  return rule?.kind ?? null;
+}
+
+function parseMagicBonus(
+  item: EquippedItem,
+  mundaneBase?: number,
+  structuredAC?: number,
+): number {
+  if (Number.isFinite(item.magicBonus) && item.magicBonus !== undefined && item.magicBonus > 0) {
+    return item.magicBonus;
+  }
+  // Some imports store the final AC on magic armor/shields already
+  // (e.g. +1 plate as AC 19). Do not parse the text bonus again.
+  if (mundaneBase !== undefined && structuredAC !== undefined && structuredAC > mundaneBase) {
+    return 0;
+  }
+  const text = `${item.name} ${item.description ?? ''}`;
+  const explicit = text.match(/\+(\d)\s*bonus to (?:AC|armor class)/i);
+  if (explicit) return parseInt(explicit[1], 10);
+  const prefix = text.match(/(?:^|\s)\+(\d)\b/);
+  return prefix ? parseInt(prefix[1], 10) : 0;
+}
+
+function hasStealthDisadvantage(item: EquippedItem, rule?: ArmorRule): boolean {
+  if (rule?.stealthDisadvantage) return true;
+  if (item.properties?.some((p) => lower(p).includes('stealth disadvantage'))) return true;
+  const desc = lower(item.description);
+  return desc.includes('stealth') && desc.includes('disadvantage');
+}
+
+function strengthRequirementFor(item: EquippedItem, rule?: ArmorRule): number {
+  const explicit = firstNumber(item.strengthRequirement, item.strRequirement);
+  if (explicit !== undefined) return explicit;
+  const match = lower(item.description).match(/str(?:ength)?(?:\s+score)?\s*(?:of\s*)?(\d{2})/);
+  if (match) return parseInt(match[1], 10);
+  return rule?.strengthRequirement ?? 0;
+}
+
 export function calculateEquipmentBonuses(
   inventory: EquippedItem[],
-  abilityScores: AbilityScores,
+  abilityScores: EquipmentAbilityScores,
   baseAC?: number, // Character's stored AC (from DDB import or manual)
 ): EquipmentBonuses {
   const dexMod = Math.floor((abilityScores.dex - 10) / 2);
   const equipped = inventory.filter(i => i.equipped);
 
   // Find equipped armor and shield
-  const armor = equipped.find(i =>
-    i.type === 'armor' && !i.name.toLowerCase().includes('shield')
-  );
-  const shield = equipped.find(i =>
-    i.type === 'armor' && i.name.toLowerCase().includes('shield')
-    || i.type === 'shield'
-  );
+  const armor = equipped.find(isArmor);
+  const shield = equipped.find(isShield);
 
   let ac = 10 + dexMod; // Default: unarmored
   let acBreakdown = `10 + ${dexMod} DEX`;
@@ -61,22 +164,19 @@ export function calculateEquipmentBonuses(
   let speedPenalty = 0;
 
   if (armor) {
-    const armorAC = armor.acBonus || armor.ac || 0;
-    const acType = armor.acType || '';
-    const desc = (armor.description || '').toLowerCase();
-
-    // Parse magic armor bonus from description
-    let magicArmorBonus = 0;
-    const magicMatch = (armor.description || '').match(/\+(\d)\s*bonus to (?:AC|armor class)/i);
-    if (magicMatch) magicArmorBonus = parseInt(magicMatch[1], 10);
+    const rule = armorRuleFor(armor);
+    const structuredArmorAC = firstNumber(armor.acBonus, armor.ac);
+    const armorAC = structuredArmorAC ?? rule?.baseAC ?? 0;
+    const kind = armorKindFor(armor, rule);
+    const magicArmorBonus = parseMagicBonus(armor, rule?.baseAC, structuredArmorAC);
 
     if (armorAC > 0) {
       // We have structured AC data
-      if (acType === 'dex' || desc.includes('light armor') || armor.type?.toLowerCase().includes('light')) {
+      if (kind === 'light') {
         // Light armor: base + full DEX
         ac = armorAC + dexMod + magicArmorBonus;
         acBreakdown = `${armorAC} + ${dexMod} DEX${magicArmorBonus ? ` + ${magicArmorBonus} magic` : ''}`;
-      } else if (acType === 'dex-max-2' || desc.includes('medium armor') || armor.type?.toLowerCase().includes('medium')) {
+      } else if (kind === 'medium') {
         // Medium armor: base + DEX (max 2)
         const cappedDex = Math.min(dexMod, 2);
         ac = armorAC + cappedDex + magicArmorBonus;
@@ -96,17 +196,21 @@ export function calculateEquipmentBonuses(
     }
 
     // Stealth disadvantage check
-    if (desc.includes('stealth') && desc.includes('disadvantage')) {
-      stealthDisadvantage = true;
+    stealthDisadvantage = hasStealthDisadvantage(armor, rule);
+
+    if (kind === 'heavy') {
+      const strengthRequirement = strengthRequirementFor(armor, rule);
+      if (strengthRequirement > 0 && abilityScores.str < strengthRequirement) {
+        speedPenalty = -10;
+      }
     }
   }
 
   // Shield bonus
   if (shield) {
-    const shieldBonus = shield.acBonus || 2; // Default D&D shield is +2
-    let magicShieldBonus = 0;
-    const shieldMagicMatch = (shield.description || '').match(/\+(\d)\s*bonus to (?:AC|armor class)/i);
-    if (shieldMagicMatch) magicShieldBonus = parseInt(shieldMagicMatch[1], 10);
+    const structuredShieldBonus = firstNumber(shield.acBonus, shield.ac);
+    const shieldBonus = structuredShieldBonus ?? 2; // Default D&D shield is +2
+    const magicShieldBonus = parseMagicBonus(shield, 2, structuredShieldBonus);
 
     ac += shieldBonus + magicShieldBonus;
     acBreakdown += ` + ${shieldBonus + magicShieldBonus} shield`;
@@ -134,7 +238,7 @@ export function calculateEquipmentBonuses(
   let damageBonus = 0;
 
   for (const item of equipped) {
-    if (item.type === 'armor') continue; // Armor bonuses handled above
+    if (isArmor(item) || isShield(item)) continue; // Armor bonuses handled above
     const desc = (item.description || '').toLowerCase();
 
     // +X to attack and damage (weapon bonuses handled separately in TokenActionPanel)
