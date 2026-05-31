@@ -1,7 +1,7 @@
 import { useCallback } from 'react';
 import type { KonvaEventObject } from 'konva/lib/Node';
 import { snapToGrid } from '@dnd-vtt/shared';
-import { emitTokenMove, emitUseMovement } from '../socket/emitters';
+import { emitTokenMove } from '../socket/emitters';
 import { useMapStore } from '../stores/useMapStore';
 import { useSessionStore } from '../stores/useSessionStore';
 import { useCombatStore } from '../stores/useCombatStore';
@@ -175,14 +175,9 @@ export function useDragToken(tokenId: string) {
       useMapStore.getState().moveToken(tokenId, snapped.x, snapped.y);
       emitTokenMove(tokenId, snapped.x, snapped.y);
 
-      // Deduct movement from the action economy when combat is active
-      // AND the dragged token belongs to the CURRENT combatant. DM
-      // dragging a non-current token during combat is treated as a
-      // free teleport (useful for placing NPCs) — only the active
-      // combatant burns their move pool.
-      if (isActiveCombatant && feet > 0) {
-        emitUseMovement(feet);
-      }
+      // The server validates and spends movement inside map:token-move.
+      // Keeping the spend in the authoritative movement handler
+      // prevents crafted clients from moving without paying the cost.
 
       // Opportunity Attack detection now happens server-side in the
       // map:token-move handler. The server emits combat:oa-opportunity

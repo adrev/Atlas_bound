@@ -118,14 +118,16 @@ export const RULES_MATRIX: RulesMatrixEntry[] = [
     priority: 'P1',
     paths: [
       'shared/src/utils/grid-math.ts',
+      'server/src/socket/tokenEvents.ts',
       'client/src/hooks/useDragToken.ts',
       'client/src/components/canvas/layers/MovementRangeLayer.tsx',
     ],
     notes: [
       'The default grid rule treats a diagonal square as one square.',
+      'Active-combat token movement is validated and spent server-side for the current combatant.',
       'Optional diagonal variants should be session settings rather than hidden mismatches.',
     ],
-    nextSteps: ['Use one distance function for range preview, drag spending, and server validation.'],
+    nextSteps: ['Keep range preview, drag display, and server validation on the shared grid-distance helper.'],
   },
   {
     id: 'combat.opportunity-attacks',

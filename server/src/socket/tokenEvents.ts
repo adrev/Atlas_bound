@@ -1,20 +1,47 @@
 import type { Server, Socket } from 'socket.io';
 import type { Token } from '@dnd-vtt/shared';
-import { snapToGrid } from '@dnd-vtt/shared';
+import { gridDistance, snapToGrid } from '@dnd-vtt/shared';
 import { v4 as uuidv4 } from 'uuid';
 import pool from '../db/connection.js';
 import {
-  checkRateLimit, getPlayerBySocketId, mapRecipientsForToken,
+  checkRateLimit, getPlayerBySocketId, isTokenActionable, mapRecipientsForToken,
   resolveViewingMapId, socketRecipientsOnMap, socketsOnMap,
 } from '../utils/roomState.js';
 import { broadcastEventToSockets } from '../utils/eventBroadcast.js';
 import * as OpportunityAttackService from '../services/OpportunityAttackService.js';
+import * as CombatService from '../services/CombatService.js';
 import {
   tokenMoveSchema, tokenAddSchema, tokenRemoveSchema, tokenUpdateSchema,
 } from '../utils/validation.js';
 import { safeHandler } from '../utils/socketHelpers.js';
 import { rowToToken } from '../utils/tokenMapper.js';
 import { tokenVisibleToPlayer } from '../utils/tokenVisibility.js';
+
+function rejectTokenMove(
+  io: Server,
+  socketId: string,
+  sessionId: string,
+  userId: string,
+  token: Token,
+  reason?: string,
+): void {
+  io.to(socketId).emit('map:token-moved', {
+    tokenId: token.id, x: token.x, y: token.y, mapId: token.mapId,
+  });
+  if (!reason) return;
+  io.to(socketId).emit('chat:new-message', {
+    id: uuidv4(),
+    sessionId,
+    userId: 'system',
+    displayName: 'System',
+    type: 'whisper',
+    content: reason,
+    characterName: null,
+    whisperTo: userId,
+    rollData: null,
+    createdAt: new Date().toISOString(),
+  });
+}
 
 /**
  * All token-lifecycle socket events (add / move / remove / update).
@@ -56,15 +83,57 @@ export function registerTokenEvents(io: Server, socket: Socket): void {
     if (!isOwnerOrDM) {
       const viewerMapId = resolveViewingMapId(ctx.room, ctx.player.userId, ctx.player.role);
       if (viewerMapId === token.mapId && tokenVisibleToPlayer(token, ctx.player.userId)) {
-        io.to(socket.id).emit('map:token-moved', {
-          tokenId, x: token.x, y: token.y, mapId: token.mapId,
-        });
+        rejectTokenMove(io, socket.id, ctx.room.sessionId, ctx.player.userId, token);
       }
       return;
     }
 
     const oldX = token.x;
     const oldY = token.y;
+    const activeCombatant = ctx.room.combatState?.active
+      ? ctx.room.combatState.combatants[ctx.room.combatState.currentTurnIndex]
+      : null;
+    const isCurrentCombatantMove = activeCombatant?.tokenId === tokenId;
+    const gridSize = ctx.room.mapGridSizes.get(token.mapId) ?? 70;
+    const movedFeet = gridSize > 0 ? gridDistance(oldX, oldY, x, y, gridSize) : 0;
+
+    if (activeCombatant && ctx.player.role !== 'dm') {
+      if (!isCurrentCombatantMove) {
+        rejectTokenMove(
+          io,
+          socket.id,
+          ctx.room.sessionId,
+          ctx.player.userId,
+          token,
+          `⛔ ${token.name} cannot move right now — it is not that token's turn.`,
+        );
+        return;
+      }
+      if (!isTokenActionable(ctx, tokenId)) {
+        rejectTokenMove(
+          io,
+          socket.id,
+          ctx.room.sessionId,
+          ctx.player.userId,
+          token,
+          `⛔ ${token.name} cannot move while incapacitated or downed.`,
+        );
+        return;
+      }
+      const economy = CombatService.getActionEconomy(ctx.room.sessionId);
+      const remaining = economy?.movementRemaining ?? activeCombatant.speed;
+      if (movedFeet > remaining) {
+        rejectTokenMove(
+          io,
+          socket.id,
+          ctx.room.sessionId,
+          ctx.player.userId,
+          token,
+          `⛔ ${token.name} tried to move ${movedFeet} ft but only ${remaining} ft remain this turn. Take Dash for more movement.`,
+        );
+        return;
+      }
+    }
 
     // ── Frightened: can't willingly move CLOSER to the fear source ──
     // RAW (PHB p.291): "A frightened creature … can't willingly move
@@ -86,21 +155,14 @@ export function registerTokenEvents(io: Server, socket: Socket): void {
           if (newDist < oldDist - 1) { // 1-px tolerance for snap rounding
             // Reject: emit the token back to its original position for
             // the moving client and whisper the reason.
-            io.to(socket.id).emit('map:token-moved', {
-              tokenId, x: oldX, y: oldY, mapId: token.mapId,
-            });
-            io.to(socket.id).emit('chat:new-message', {
-              id: `frightened-${Date.now()}`,
-              sessionId: ctx.room.sessionId,
-              userId: 'system',
-              displayName: 'System',
-              type: 'whisper',
-              content: `⛔ ${token.name} is frightened of ${sourceToken.name} — can't willingly move closer.`,
-              characterName: null,
-              whisperTo: ctx.player.userId,
-              rollData: null,
-              createdAt: new Date().toISOString(),
-            });
+            rejectTokenMove(
+              io,
+              socket.id,
+              ctx.room.sessionId,
+              ctx.player.userId,
+              token,
+              `⛔ ${token.name} is frightened of ${sourceToken.name} — can't willingly move closer.`,
+            );
             return;
           }
         }
@@ -121,6 +183,14 @@ export function registerTokenEvents(io: Server, socket: Socket): void {
       moveRecipients,
       { tokenId, mapId: token.mapId },
     );
+
+    if (activeCombatant && isCurrentCombatantMove && movedFeet > 0) {
+      const remaining = CombatService.useMovement(ctx.room.sessionId, movedFeet);
+      io.to(ctx.room.sessionId).emit('combat:movement-used', {
+        tokenId,
+        remaining,
+      });
+    }
 
     if (ctx.room.combatState?.active) {
       const opportunities = OpportunityAttackService.detectOpportunityAttacks(ctx.room.sessionId, tokenId, oldX, oldY, x, y);
