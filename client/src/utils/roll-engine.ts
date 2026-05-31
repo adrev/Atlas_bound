@@ -39,10 +39,10 @@ export type { DamageResult, DefenseLists, WeaponMaterial } from '@dnd-vtt/shared
  *                 within 5ft auto-crit; auto-fail CON-related death checks
  *   • Petrified → advantage to attackers
  *   • Hasted    → advantage on DEX saves
+ *   • Slowed    → -2 DEX saves
+ *   • Cover     → +2/+5 DEX saves for half / three-quarters cover
  *
  * NOT yet implemented (need separate phases):
- *   • Slow's -2 DEX save penalty (handled as part of AC/save modifier
- *     phase 2)
  *   • Frightened source-visibility check (we apply unconditionally for now)
  *   • Hex / Hunter's Mark damage rider (separate damage system)
  *   • Bardic Inspiration (target picks when to use, not auto-applied)
@@ -60,6 +60,8 @@ export interface RollModifiers {
   attackAdvantage: Adv;
   /** Net advantage state for saves of each ability */
   saveAdvantage: Partial<Record<AbilityName, Adv>>;
+  /** Flat save modifiers by ability, e.g. Slow -2 DEX or cover +2/+5 DEX */
+  saveFlatModifier: Partial<Record<AbilityName, number>>;
   /** Net advantage state for ability checks of each ability */
   checkAdvantage: Partial<Record<AbilityName, Adv>>;
   /** Bonus dice notation for attack rolls (e.g. '+1d4', '-1d4', '') */
@@ -84,6 +86,7 @@ export interface RollModifiers {
 export const EMPTY_MODS: RollModifiers = {
   attackAdvantage: 'normal',
   saveAdvantage: {},
+  saveFlatModifier: {},
   checkAdvantage: {},
   attackBonusDice: '',
   saveBonusDice: '',
@@ -185,6 +188,13 @@ function applyEffectOwn(out: RollModifiers, key: string): void {
       if (dir) applyAdvantage(out, 'save', dir, ab as AbilityName);
     }
   }
+  if (eff.saveFlatModifier) {
+    for (const [ab, value] of Object.entries(eff.saveFlatModifier)) {
+      if (typeof value !== 'number' || value === 0) continue;
+      const ability = ab as AbilityName;
+      out.saveFlatModifier[ability] = (out.saveFlatModifier[ability] ?? 0) + value;
+    }
+  }
   if (eff.checkAdvantage) {
     for (const [ab, dir] of Object.entries(eff.checkAdvantage)) {
       if (dir) applyAdvantage(out, 'check', dir, ab as AbilityName);
@@ -209,6 +219,7 @@ export function getOwnRollModifiers(conditions: string[]): RollModifiers {
   const out: RollModifiers = {
     attackAdvantage: 'normal',
     saveAdvantage: {},
+    saveFlatModifier: {},
     checkAdvantage: {},
     attackBonusDice: '',
     saveBonusDice: '',
@@ -240,6 +251,7 @@ export function getTargetRollModifiers(
   const out: RollModifiers = {
     attackAdvantage: 'normal',
     saveAdvantage: {},
+    saveFlatModifier: {},
     checkAdvantage: {},
     attackBonusDice: '',
     saveBonusDice: '',
@@ -384,6 +396,7 @@ export function combineAttackModifiers(
   const out: RollModifiers = {
     attackAdvantage: 'normal',
     saveAdvantage: { ...attackerOwn.saveAdvantage },
+    saveFlatModifier: { ...attackerOwn.saveFlatModifier },
     checkAdvantage: { ...attackerOwn.checkAdvantage },
     attackBonusDice: attackerOwn.attackBonusDice,
     saveBonusDice: attackerOwn.saveBonusDice,
@@ -445,6 +458,7 @@ export interface SaveResult {
   advantage: Adv;
   bonusDiceValue: number;
   bonusDiceNotation: string;
+  flatModifier: number;
   autoFailed: boolean;
   breakdown: string;       // "d20=14 +5 +1d4(3) = 22 (advantage)"
 }
@@ -463,6 +477,7 @@ export function rollSaveWithModifiers(
       advantage: 'normal',
       bonusDiceValue: 0,
       bonusDiceNotation: '',
+      flatModifier: 0,
       autoFailed: true,
       breakdown: 'auto-fail (Paralyzed/Stunned/Unconscious)',
     };
@@ -471,15 +486,17 @@ export function rollSaveWithModifiers(
   const adv = modifiers.saveAdvantage[ability] ?? 'normal';
   const { kept, rolls } = rollD20(adv);
   const bonus = rollBonusDice(modifiers.saveBonusDice);
-  const total = kept + saveMod + bonus.value;
+  const flat = modifiers.saveFlatModifier[ability] ?? 0;
+  const total = kept + saveMod + flat + bonus.value;
 
   const advLabel = adv === 'advantage' ? ' (adv)' : adv === 'disadvantage' ? ' (disadv)' : '';
   const rollsStr = rolls.length > 1 ? `[${rolls.join(',')}]` : `${kept}`;
   const modStr = saveMod >= 0 ? `+${saveMod}` : `${saveMod}`;
+  const flatStr = flat !== 0 ? ` ${flat > 0 ? '+' : ''}${flat}` : '';
   const bonusStr = bonus.value !== 0
     ? ` ${bonus.value > 0 ? '+' : '-'}${Math.abs(bonus.raw)}(${modifiers.saveBonusDice.replace(/[+-]/, '')})`
     : '';
-  const breakdown = `d20=${rollsStr}${advLabel}${modStr}${bonusStr} = ${total}`;
+  const breakdown = `d20=${rollsStr}${advLabel}${modStr}${flatStr}${bonusStr} = ${total}`;
 
   return {
     total,
@@ -488,6 +505,7 @@ export function rollSaveWithModifiers(
     advantage: adv,
     bonusDiceValue: bonus.value,
     bonusDiceNotation: modifiers.saveBonusDice,
+    flatModifier: flat,
     autoFailed: false,
     breakdown,
   };

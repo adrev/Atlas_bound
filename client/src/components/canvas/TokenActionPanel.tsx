@@ -1205,6 +1205,13 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
               source: 'condition',
             });
           }
+          if (saveResult.flatModifier !== 0) {
+            saveModifiers.push({
+              label: saveResult.flatModifier > 0 ? 'Cover / condition' : 'Slow / condition',
+              value: saveResult.flatModifier,
+              source: 'condition',
+            });
+          }
           spellTargetOutcome = {
             name: targetName,
             tokenId: targetToken.id,
@@ -3994,6 +4001,13 @@ async function resolveAreaSpell(
         aSaveModifiers.push({
           label: `Bless ${aSaveBonusDiceNotation}`.trim(),
           value: aSaveBonusDiceValue,
+          source: 'condition',
+        });
+      }
+      if (saveResult.flatModifier !== 0) {
+        aSaveModifiers.push({
+          label: saveResult.flatModifier > 0 ? 'Cover / condition' : 'Slow / condition',
+          value: saveResult.flatModifier,
           source: 'condition',
         });
       }

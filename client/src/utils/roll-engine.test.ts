@@ -6,6 +6,7 @@ import {
   effectiveAC,
   effectiveSpeed,
   applyDamageWithResist,
+  rollSaveWithModifiers,
 } from './roll-engine';
 
 /**
@@ -48,6 +49,27 @@ describe('getOwnRollModifiers', () => {
   it('grants DEX save advantage when hasted', () => {
     const out = getOwnRollModifiers(['hasted']);
     expect(out.saveAdvantage.dex).toBe('advantage');
+  });
+
+  it('carries flat DEX save modifiers from Slow and cover', () => {
+    expect(getOwnRollModifiers(['slowed']).saveFlatModifier.dex).toBe(-2);
+    expect(getOwnRollModifiers(['half-cover']).saveFlatModifier.dex).toBe(2);
+    expect(getOwnRollModifiers(['three-quarters-cover']).saveFlatModifier.dex).toBe(5);
+    expect(getOwnRollModifiers(['slowed', 'half-cover']).saveFlatModifier.dex).toBe(0);
+  });
+
+  it('adds flat save modifiers into save totals and breakdowns', () => {
+    const originalRandom = Math.random;
+    Math.random = () => 0.45; // d20 = 10
+    try {
+      const mods = getOwnRollModifiers(['three-quarters-cover', 'slowed']);
+      const result = rollSaveWithModifiers('dex', 3, mods);
+      expect(result.flatModifier).toBe(3);
+      expect(result.total).toBe(16);
+      expect(result.breakdown).toBe('d20=10+3 +3 = 16');
+    } finally {
+      Math.random = originalRandom;
+    }
   });
 
   it('grants attack advantage when inspired', () => {
