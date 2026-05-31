@@ -187,4 +187,70 @@ describe('character:rest socket event', () => {
     };
     expect(rested.changes).toEqual(['Already fully rested']);
   });
+
+  it('spends a hit die on the server and broadcasts the authoritative HP update', async () => {
+    seedPlayerRoom();
+    mockQuery.mockImplementation(async (sql: string) => {
+      if (sql.includes('FROM session_players')) return { rows: [{ '?column?': 1 }] };
+      return { rows: [] };
+    });
+    mockClientQuery.mockImplementation(async (sql: string) => {
+      if (sql.includes('SELECT * FROM characters')) {
+        return {
+          rows: [{
+            id: 'char-1',
+            name: 'Rook',
+            user_id: 'player-1',
+            class: 'Fighter',
+            hit_points: 5,
+            max_hit_points: 20,
+            ability_scores: { con: 14 },
+            hit_dice: [{ dieSize: 10, total: 2, used: 0 }],
+          }],
+        };
+      }
+      return { rows: [] };
+    });
+    const { io, emissions } = fakeIo();
+    const { socket, handlers, emissions: socketEmissions } = fakeSocket();
+    registerCharacterEvents(io, socket);
+    const originalRandom = Math.random;
+    Math.random = () => 0.4; // d10 roll = 5
+    try {
+      await handlers.get('character:spend-hit-die')?.({ characterId: 'char-1', dieSize: 10 });
+    } finally {
+      Math.random = originalRandom;
+    }
+
+    const sqlLog = mockClientQuery.mock.calls.map((call) => call[0]);
+    expect(sqlLog).toContain('BEGIN');
+    expect(sqlLog).toContain('COMMIT');
+    expect(sqlLog).not.toContain('ROLLBACK');
+    expect(sqlLog.some((sql) => String(sql).includes('FOR UPDATE'))).toBe(true);
+    const characterUpdate = emissions.find((e) => e.event === 'character:updated')?.payload as {
+      characterId?: string;
+      changes?: Record<string, unknown>;
+    };
+    expect(characterUpdate.characterId).toBe('char-1');
+    expect(characterUpdate.changes?.hitPoints).toBe(12);
+    expect(characterUpdate.changes?.hitDice).toEqual([{ dieSize: 10, total: 2, used: 1 }]);
+    const spent = socketEmissions.find((e) => e.event === 'character:hit-die-spent')?.payload as {
+      roll?: number;
+      conMod?: number;
+      heal?: number;
+      newHp?: number;
+    };
+    expect(spent.roll).toBe(5);
+    expect(spent.conMod).toBe(2);
+    expect(spent.heal).toBe(7);
+    expect(spent.newHp).toBe(12);
+    const chat = emissions.find((e) => e.event === 'chat:new-message')?.payload as {
+      type?: string;
+      sessionId?: string;
+      content?: string;
+    };
+    expect(chat.type).toBe('system');
+    expect(chat.sessionId).toBe('session-rest-event');
+    expect(chat.content).toContain('Rook spends 1d10 Hit Die');
+  });
 });

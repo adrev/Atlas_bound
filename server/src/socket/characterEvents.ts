@@ -6,7 +6,7 @@ import { broadcastEvent } from '../utils/eventBroadcast.js';
 import { dbRowToCharacter } from '../utils/characterMapper.js';
 import { safeHandler } from '../utils/socketHelpers.js';
 import { broadcastSystem } from '../services/ChatCommands.js';
-import { computeRest, persistRestUpdates, syncRestToCombatants } from '../services/RestService.js';
+import { computeRest, computeSpendHitDie, persistRestUpdates, syncRestToCombatants } from '../services/RestService.js';
 
 const characterUpdateSchema = z.object({
   characterId: z.string().min(1),
@@ -27,6 +27,11 @@ const characterSyncRequestSchema = z.object({
 const characterRestSchema = z.object({
   characterId: z.string().min(1),
   kind: z.enum(['short', 'long']),
+});
+
+const spendHitDieSchema = z.object({
+  characterId: z.string().min(1),
+  dieSize: z.number().int().refine((value) => [6, 8, 10, 12].includes(value)),
 });
 
 const FIELD_TO_COLUMN: Record<string, { col: string; json: boolean }> = {
@@ -247,6 +252,58 @@ export function registerCharacterEvents(io: Server, socket: Socket): void {
         io,
         ctx,
         `🛌 ${result.name} finishes a ${kind === 'long' ? 'Long' : 'Short'} Rest\n   ${result.changes.join(' • ')}`,
+      );
+    }
+  }));
+
+  socket.on('character:spend-hit-die', safeHandler(socket, async (data) => {
+    const parsed = spendHitDieSchema.safeParse(data);
+    if (!parsed.success) return;
+
+    const ctx = getPlayerBySocketId(socket.id);
+    if (!ctx) return;
+
+    const { characterId, dieSize } = parsed.data;
+    let result: ReturnType<typeof computeSpendHitDie> | null = null;
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const { rows } = await client.query('SELECT * FROM characters WHERE id = $1 FOR UPDATE', [characterId]);
+      if (rows.length > 0) {
+        const row = rows[0] as Record<string, unknown>;
+        const charUserId = String(row.user_id ?? '');
+        const isDM = playerIsDM(ctx);
+        const inSession = await characterIsInSession(characterId, ctx.room.sessionId);
+        if (inSession && (isDM || charUserId === ctx.player.userId) && (isDM || charUserId !== 'npc')) {
+          result = computeSpendHitDie(row, dieSize);
+          await persistRestUpdates(client, result.characterId, result.updates);
+        }
+      }
+      await client.query('COMMIT');
+    } catch (err) {
+      await client.query('ROLLBACK');
+      throw err;
+    } finally {
+      client.release();
+    }
+
+    if (!result) return;
+
+    const hasUpdates = Object.keys(result.updates).length > 0;
+    if (hasUpdates) {
+      syncRestToCombatants(ctx.room, result.characterId, result.updates);
+      broadcastEvent(io, ctx.room, 'character:updated', {
+        characterId: result.characterId,
+        changes: result.updates,
+      });
+    }
+
+    socket.emit('character:hit-die-spent', result);
+    if (hasUpdates) {
+      broadcastSystem(
+        io,
+        ctx,
+        `💤 ${result.name} spends 1d${dieSize} Hit Die\n   ${result.changes.join(' • ')}`,
       );
     }
   }));

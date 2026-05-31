@@ -20,7 +20,7 @@ import {
   type AbilityScores,
   type DeathSaves,
 } from '@dnd-vtt/shared';
-import { emitRoll, emitCharacterUpdate, emitSystemMessage } from '../../socket/emitters';
+import { emitRoll, emitCharacterUpdate, emitSystemMessage, emitSpendHitDie } from '../../socket/emitters';
 import { parseSpellMetaFromDesc, enrichSpellFromDescription } from '../../utils/spell-enrich';
 import { useMapStore } from '../../stores/useMapStore';
 import { useSessionStore } from '../../stores/useSessionStore';
@@ -1047,27 +1047,14 @@ function ShortRestDialog({ character, onClose }: { character: Character; onClose
     if (pool.used >= pool.total) return;
     if (hp >= maxHp) return;
 
-    // Roll 1d(dieSize) + CON mod, heal that much (min 1)
-    const roll = Math.floor(Math.random() * dieSize) + 1;
-    const heal = Math.max(1, roll + conMod);
-    const newHp = Math.min(maxHp, hp + heal);
-
-    const updatedPools = hitDicePools.map((p, i) => i === poolIdx ? { ...p, used: p.used + 1 } : p);
-    const updates = { hitPoints: newHp, hitDice: updatedPools };
-    emitCharacterUpdate(character.id, updates);
-    useCharacterStore.getState().applyRemoteUpdate(character.id, updates);
-
-    emitSystemMessage(
-      `💤 ${character.name} spends 1d${dieSize} Hit Die\n   Rolled ${roll}${conMod >= 0 ? '+' : ''}${conMod} = ${heal} HP (HP ${hp}→${newHp})`
-    );
+    emitSpendHitDie(character.id, dieSize);
   }
 
   function finishRest() {
     // Delegated to the shared utility so the sheet's "Finish Short
     // Rest" button emits the exact same chat message as the bottom
-    // bar's Short Rest quick action. HP healing from Hit Dice that
-    // the player spent during this dialog already went through via
-    // spendHitDie() above.
+    // bar's Short Rest quick action. Manual Hit Dice spending above
+    // is also server-owned, but remains a separate per-die action.
     performShortRest(liveChar);
     onClose();
   }
