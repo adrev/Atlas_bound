@@ -107,6 +107,9 @@ function seedContext(targetOverrides: Partial<Token> = {}): PlayerContext {
 
 function mockCharacterRows(): void {
   mockQuery.mockImplementation(async (sql: string, params?: unknown[]) => {
+    if (String(sql).includes('SELECT inventory')) {
+      return { rows: [{ inventory: [] }] };
+    }
     if (String(sql).includes('SELECT ability_scores')) {
       const characterId = params?.[0];
       return {
@@ -174,5 +177,55 @@ describe('grapple and shove chat commands', () => {
     expect(ctx.room.tokens.get('target-token')?.conditions).not.toContain('prone');
     const whisper = emissions.find((e) => e.event === 'chat:new-message')?.payload as { content?: string };
     expect(whisper.content).toContain('too large');
+  });
+
+  it('rejects maneuvers against targets outside reach without spending the action', async () => {
+    const ctx = seedContext({ x: 700, y: 0 });
+    const emissions: Emission[] = [];
+
+    await tryHandleChatCommand(fakeIo(emissions), ctx, '!shove Ogre prone');
+
+    expect(ctx.room.actionEconomies.get('hero-token')?.action).toBe(false);
+    expect(ctx.room.tokens.get('target-token')?.conditions).not.toContain('prone');
+    const whisper = emissions.find((e) => e.event === 'chat:new-message')?.payload as { content?: string };
+    expect(whisper.content).toContain('out of reach');
+  });
+
+  it('rejects a grapple when equipped weapons and shields occupy both hands', async () => {
+    const ctx = seedContext();
+    mockQuery.mockImplementation(async (sql: string) => {
+      if (String(sql).includes('SELECT inventory')) {
+        return {
+          rows: [{
+            inventory: [
+              { name: 'Longsword', type: 'weapon', equipped: true },
+              { name: 'Shield', type: 'shield', equipped: true },
+            ],
+          }],
+        };
+      }
+      return { rows: [] };
+    });
+    const emissions: Emission[] = [];
+
+    await tryHandleChatCommand(fakeIo(emissions), ctx, '!grapple Ogre');
+
+    expect(ctx.room.actionEconomies.get('hero-token')?.action).toBe(false);
+    expect(ctx.room.tokens.get('target-token')?.conditions).not.toContain('grappled');
+    const whisper = emissions.find((e) => e.event === 'chat:new-message')?.payload as { content?: string };
+    expect(whisper.content).toContain('both hands occupied');
+  });
+
+  it('rejects a maneuver from an incapacitated caller without spending the action', async () => {
+    const ctx = seedContext();
+    ctx.room.tokens.get('hero-token')!.conditions = ['stunned'];
+    const emissions: Emission[] = [];
+
+    await tryHandleChatCommand(fakeIo(emissions), ctx, '!grapple Ogre');
+
+    expect(ctx.room.actionEconomies.get('hero-token')?.action).toBe(false);
+    expect(ctx.room.tokens.get('target-token')?.conditions).not.toContain('grappled');
+    const whisper = emissions.find((e) => e.event === 'chat:new-message')?.payload as { content?: string };
+    expect(whisper.content).toContain('incapacitated or downed');
   });
 });
