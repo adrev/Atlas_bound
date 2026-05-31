@@ -40,6 +40,7 @@ import '../services/chatCommands/subclassFeaturesTier14Handler.js';
 import '../services/chatCommands/subclassFeaturesTier15Handler.js';
 import '../services/chatCommands/spellsTier16Handler.js';
 import '../services/chatCommands/saveHandler.js';
+import '../services/chatCommands/monkHandler.js';
 import '../services/chatCommands/spellsTier17Handler.js';
 import '../services/chatCommands/featsTier18Handler.js';
 import '../services/chatCommands/racesTier19Handler.js';
@@ -296,6 +297,66 @@ describe('!save shared resolver', () => {
     expect(content).not.toContain('(adv)');
     expect(content).toContain('48→24');
     expect(content).toContain('resist fire');
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════
+// Shared save resolver consumers
+// ═══════════════════════════════════════════════════════════════════
+
+describe('Monk — Stunning Strike', () => {
+  it('applies shared save advantage before stunning', async () => {
+    const enemy = makeToken('tE', 'Foe', {
+      characterId: 'char-foe',
+      conditions: ['inspired' as never],
+    });
+    const s = makeScenario({
+      inCombat: true,
+      otherTokens: [enemy],
+      otherCombatants: [makeCombatant('tE', { characterId: 'char-foe' })],
+    });
+    routeCharacterQueries({
+      'char-caller': { class: 'Monk', level: 5, name: 'Kai' },
+      'char-foe': { ability_scores: { con: 10 }, saving_throws: [], proficiency_bonus: 2, name: 'Foe' },
+    });
+    const { io, emissions } = makeFakeIo();
+
+    await withRandomSeed([0.01, 0.99], async () => {
+      await tryHandleChatCommand(io, s.ctx, '!stunstrike Foe 13');
+    });
+
+    expect(enemy.conditions).not.toContain('stunned');
+    const content = lastBroadcast(emissions) ?? '';
+    expect(content).toContain('SAVED');
+    expect(content).toContain('inspired: advantage on CON save');
+    expect(content).toContain('Ki 4/5');
+  });
+
+  it('applies shared exhaustion disadvantage before stunning', async () => {
+    const enemy = makeToken('tE', 'Foe', { characterId: 'char-foe' });
+    const s = makeScenario({
+      inCombat: true,
+      otherTokens: [enemy],
+      otherCombatants: [makeCombatant('tE', { characterId: 'char-foe', exhaustionLevel: 3 })],
+    });
+    routeCharacterQueries({
+      'char-caller': { class: 'Monk', level: 5, name: 'Kai' },
+      'char-foe': { ability_scores: { con: 10 }, saving_throws: [], proficiency_bonus: 2, name: 'Foe' },
+    });
+    const { io, emissions } = makeFakeIo();
+
+    await withRandomSeed([0.99, 0.01], async () => {
+      await tryHandleChatCommand(io, s.ctx, '!stunstrike Foe 13');
+    });
+
+    expect(enemy.conditions).toContain('stunned');
+    const content = lastBroadcast(emissions) ?? '';
+    expect(content).toContain('STUNNED');
+    expect(content).toContain('exhaustion L3: disadvantage on all saves');
+    expect(conditionUpdates(emissions)).toContainEqual({
+      tokenId: 'tE',
+      conditions: expect.arrayContaining(['stunned']),
+    });
   });
 });
 
