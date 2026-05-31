@@ -61,12 +61,22 @@ export function validateConfig(
   const warnings: string[] = [];
   if (env.NODE_ENV !== 'production') return warnings;
 
-  if (!env.DISCORD_CLIENT_ID && !env.GOOGLE_CLIENT_ID) {
+  if (!env.DISCORD_CLIENT_ID && !env.GOOGLE_CLIENT_ID && !env.APPLE_CLIENT_ID) {
     warnings.push(
-      'No OAuth provider configured (DISCORD_CLIENT_ID / GOOGLE_CLIENT_ID both unset) — only email/password login will work.',
+      'No OAuth provider configured (DISCORD_CLIENT_ID / GOOGLE_CLIENT_ID / APPLE_CLIENT_ID all unset) — only email/password login will work.',
     );
   }
-  if (!env.BASE_URL || env.BASE_URL.includes('localhost')) {
+  const baseUrl = env.BASE_URL;
+  let hasInvalidBaseUrl = !baseUrl;
+  if (baseUrl) {
+    try {
+      const hostname = new URL(baseUrl).hostname.toLowerCase();
+      hasInvalidBaseUrl = hostname === 'localhost' || hostname.endsWith('.localhost');
+    } catch {
+      hasInvalidBaseUrl = true;
+    }
+  }
+  if (hasInvalidBaseUrl) {
     warnings.push(
       `BASE_URL is "${env.BASE_URL ?? '(unset)'}" in production — OAuth redirect callbacks will break. Set it to your public URL.`,
     );

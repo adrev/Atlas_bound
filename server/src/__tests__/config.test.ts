@@ -25,6 +25,38 @@ describe('validateConfig', () => {
     expect(w.some((x) => /No OAuth provider/.test(x))).toBe(false);
   });
 
+  it('recognizes Discord and Apple as valid OAuth providers', () => {
+    const discord = validateConfig({ NODE_ENV: 'production', DISCORD_CLIENT_ID: 'd' });
+    expect(discord.some((x) => /No OAuth provider/.test(x))).toBe(false);
+
+    const apple = validateConfig({ NODE_ENV: 'production', APPLE_CLIENT_ID: 'a' });
+    expect(apple.some((x) => /No OAuth provider/.test(x))).toBe(false);
+  });
+
+  it('only flags actual localhost hostnames for BASE_URL', () => {
+    expect(validateConfig({
+      NODE_ENV: 'production',
+      GOOGLE_CLIENT_ID: 'g',
+      BASE_URL: 'https://mylocalhost.com',
+    })).toEqual([]);
+
+    const w = validateConfig({
+      NODE_ENV: 'production',
+      GOOGLE_CLIENT_ID: 'g',
+      BASE_URL: 'https://preview.localhost',
+    });
+    expect(w.some((x) => /BASE_URL/.test(x))).toBe(true);
+  });
+
+  it('flags malformed BASE_URL values in production', () => {
+    const w = validateConfig({
+      NODE_ENV: 'production',
+      GOOGLE_CLIENT_ID: 'g',
+      BASE_URL: 'not-a-url',
+    });
+    expect(w.some((x) => /BASE_URL/.test(x))).toBe(true);
+  });
+
   it('is silent when production is properly configured', () => {
     expect(validateConfig({
       NODE_ENV: 'production',
