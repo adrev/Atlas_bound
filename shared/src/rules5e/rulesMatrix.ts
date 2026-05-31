@@ -183,8 +183,8 @@ export const RULES_MATRIX: RulesMatrixEntry[] = [
     authority: 'chat-command',
     priority: 'P2',
     paths: ['server/src/services/chatCommands/maneuverHandlers.ts'],
-    notes: ['Opposed checks exist, but size, reach, free-hand, and action-cost constraints are incomplete.'],
-    nextSteps: ['Add rules validation and tests before making these authoritative.'],
+    notes: ['Opposed checks, the one-size-larger target limit, and in-combat Action cost are enforced.'],
+    nextSteps: ['Add reach, free-hand, and incapacitated-target nuance before marking the maneuver helpers fully implemented.'],
   },
   {
     id: 'action.hide-stealth',

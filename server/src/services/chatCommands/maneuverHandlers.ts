@@ -1,4 +1,4 @@
-import type { Token, ActionBreakdown } from '@dnd-vtt/shared';
+import type { Token, ActionBreakdown, ActionEconomy } from '@dnd-vtt/shared';
 import {
   registerChatCommand,
   whisperToCaller,
@@ -80,6 +80,76 @@ function resolveTargetOrSelf(
   return matches[0];
 }
 
+function tokenSizeRank(token: Token): number {
+  const size = Number(token.size);
+  return Number.isFinite(size) && size > 0 ? size : 1;
+}
+
+function validateManeuverTargetSize(
+  c: ChatCommandContext,
+  caller: Token,
+  target: Token,
+  command: 'grapple' | 'shove',
+): boolean {
+  const callerRank = tokenSizeRank(caller);
+  const targetRank = tokenSizeRank(target);
+  if (targetRank <= callerRank + 1) return true;
+  whisperToCaller(
+    c.io,
+    c.ctx,
+    `!${command}: ${target.name} is too large. Grapple/shove targets can be at most one size larger than ${caller.name}.`,
+  );
+  return false;
+}
+
+function actionEconomyFor(caller: Token, c: ChatCommandContext): ActionEconomy | null {
+  const state = c.ctx.room.combatState;
+  if (!state?.active) return null;
+  const current = state.combatants[state.currentTurnIndex];
+  if (!current) return null;
+  const existing = c.ctx.room.actionEconomies.get(caller.id);
+  if (existing) return existing;
+  const economy = {
+    action: false,
+    bonusAction: false,
+    movementRemaining: current.speed,
+    movementMax: current.speed,
+    reaction: false,
+  };
+  c.ctx.room.actionEconomies.set(caller.id, economy);
+  return economy;
+}
+
+function spendManeuverAction(
+  c: ChatCommandContext,
+  caller: Token,
+  command: 'grapple' | 'shove',
+): boolean {
+  const state = c.ctx.room.combatState;
+  if (!state?.active) return true;
+
+  const current = state.combatants[state.currentTurnIndex];
+  if (!current || current.tokenId !== caller.id) {
+    whisperToCaller(c.io, c.ctx, `!${command}: ${caller.name} can only do this on their own turn.`);
+    return false;
+  }
+
+  const economy = actionEconomyFor(caller, c);
+  if (!economy) return false;
+  if (economy.action) {
+    whisperToCaller(c.io, c.ctx, `!${command}: ${caller.name}'s Action is already spent this turn.`);
+    return false;
+  }
+
+  economy.action = true;
+  c.io.to(c.ctx.room.sessionId).emit('combat:action-used', {
+    tokenId: caller.id,
+    actionType: 'action',
+    economy,
+  });
+  return true;
+}
+
 async function handleGrapple(c: ChatCommandContext): Promise<boolean> {
   const parts = c.rest.split(/\s+/).filter(Boolean);
   if (parts.length === 0) {
@@ -99,6 +169,8 @@ async function handleGrapple(c: ChatCommandContext): Promise<boolean> {
     whisperToCaller(c.io, c.ctx, `!grapple: no target named "${targetName}" (or target is you).`);
     return true;
   }
+  if (!validateManeuverTargetSize(c, caller, target, 'grapple')) return true;
+  if (!spendManeuverAction(c, caller, 'grapple')) return true;
 
   const callerAth = await resolveSkillMod(caller, 'athletics');
   const targetAth = await resolveSkillMod(target, 'athletics');
@@ -180,6 +252,8 @@ async function handleShove(c: ChatCommandContext): Promise<boolean> {
     whisperToCaller(c.io, c.ctx, `!shove: no target named "${targetName}" (or target is you).`);
     return true;
   }
+  if (!validateManeuverTargetSize(c, caller, target, 'shove')) return true;
+  if (!spendManeuverAction(c, caller, 'shove')) return true;
 
   const callerAth = await resolveSkillMod(caller, 'athletics');
   const targetAth = await resolveSkillMod(target, 'athletics');
