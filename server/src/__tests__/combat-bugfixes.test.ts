@@ -283,6 +283,55 @@ describe('CombatService death-save state helpers', () => {
     expect(token.conditions).toEqual(['unconscious']);
     expect(combatant.conditions).toEqual(['unconscious']);
   });
+
+  it('critical damage against a PC already at 0 HP records two death-save failures', async () => {
+    const sessionId = 's-damage-stable-crit';
+    const token = makeToken('tPC', {
+      ownerUserId: 'player-1',
+      characterId: 'char-1',
+      conditions: ['unconscious'],
+    });
+    const combatant = makeCombatant('tPC', {
+      characterId: 'char-1',
+      hp: 0,
+      maxHp: 20,
+      isNPC: false,
+      conditions: ['unconscious'],
+      deathSaves: { successes: 0, failures: 0 },
+    });
+    seedRoom(sessionId, [token], [combatant]);
+
+    const result = await CombatService.applyDamage(sessionId, 'tPC', 3, { criticalHit: true });
+
+    expect(result.hp).toBe(0);
+    expect(result.autoDeathSaveFailuresApplied).toBe(2);
+    expect(result.autoDeathSaveFailure).toEqual({ successes: 0, failures: 2 });
+    expect(combatant.deathSaves).toEqual({ successes: 0, failures: 2 });
+  });
+
+  it('reports only the actual death-save failures applied after clamping', async () => {
+    const sessionId = 's-damage-stable-crit-clamped';
+    const token = makeToken('tPC', {
+      ownerUserId: 'player-1',
+      characterId: 'char-1',
+      conditions: ['unconscious'],
+    });
+    const combatant = makeCombatant('tPC', {
+      characterId: 'char-1',
+      hp: 0,
+      maxHp: 20,
+      isNPC: false,
+      conditions: ['unconscious'],
+      deathSaves: { successes: 0, failures: 2 },
+    });
+    seedRoom(sessionId, [token], [combatant]);
+
+    const result = await CombatService.applyDamage(sessionId, 'tPC', 3, { criticalHit: true });
+
+    expect(result.autoDeathSaveFailuresApplied).toBe(1);
+    expect(result.autoDeathSaveFailure).toEqual({ successes: 0, failures: 3 });
+    expect(combatant.deathSaves).toEqual({ successes: 0, failures: 3 });
+  });
 });
 
 // ---------------------------------------------------------------------------

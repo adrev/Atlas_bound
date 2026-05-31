@@ -165,7 +165,7 @@ export interface ClientCombatEvents {
   'combat:roll-initiative': { tokenId: string; bonus: number };
   'combat:set-initiative': { tokenId: string; total: number };
   'combat:next-turn': NoPayload;
-  'combat:damage': { tokenId: string; amount: number };
+  'combat:damage': { tokenId: string; amount: number; criticalHit?: boolean };
   'combat:heal': { tokenId: string; amount: number };
   'combat:condition-add': { tokenId: string; condition: Condition };
   'combat:condition-remove': { tokenId: string; condition: Condition };

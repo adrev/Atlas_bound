@@ -1,6 +1,7 @@
 import type { Token } from '@dnd-vtt/shared';
 import { getRoom } from '../utils/roomState.js';
 import pool from '../db/connection.js';
+import * as CombatService from './CombatService.js';
 
 export interface OAOpportunity {
   attackerTokenId: string;
@@ -173,8 +174,10 @@ export function detectSpellCastingOA(
 export interface OAExecutionResult {
   success: boolean;
   messages: string[];
-  hpChange?: { tokenId: string; hp: number; tempHp: number };
-  characterHpUpdated?: { characterId: string; hp: number };
+  hpChange?: { tokenId: string; hp: number; tempHp: number; change: number };
+  characterHpUpdated?: { characterId: string; hp: number; tempHp: number };
+  deathSaveFailure?: { tokenId: string; deathSaves: { successes: number; failures: number } };
+  conditionTokenIds?: string[];
   /**
    * Structured attack breakdown for the chat card. Populated on
    * successful OA resolution (hit or miss) so the chat card shows
@@ -262,23 +265,41 @@ export async function executeOpportunityAttack(
     const rolledDamage = rollDamageString(attack.damageDice, isCrit);
     damage = Math.max(0, rolledDamage);
     let newHp: number | null = null;
-    const combatant = room.combatState?.combatants.find((c) => c.tokenId === moverTokenId);
-    if (combatant) { combatant.hp = Math.max(0, combatant.hp - damage); newHp = combatant.hp; }
-    if (mover.characterId) {
-      const { rows } = await pool.query('SELECT hit_points FROM characters WHERE id = $1', [mover.characterId]);
-      if (rows[0]) {
-        const updatedHp = Math.max(0, rows[0].hit_points - damage);
-        await pool.query('UPDATE characters SET hit_points = $1 WHERE id = $2', [updatedHp, mover.characterId]);
-        if (newHp === null) newHp = updatedHp;
-        result.characterHpUpdated = { characterId: mover.characterId, hp: updatedHp };
+    let tempHp = 0;
+    if (damage > 0) {
+      const damageResult = await CombatService.applyDamage(sessionId, moverTokenId, damage, {
+        criticalHit: isCrit,
+      });
+      newHp = damageResult.hp;
+      tempHp = damageResult.tempHp;
+      if (damageResult.characterId) {
+        result.characterHpUpdated = {
+          characterId: damageResult.characterId,
+          hp: damageResult.hp,
+          tempHp: damageResult.tempHp,
+        };
       }
+      if (damageResult.autoDeathSaveFailure) {
+        result.deathSaveFailure = {
+          tokenId: moverTokenId,
+          deathSaves: damageResult.autoDeathSaveFailure,
+        };
+      }
+      const conditionTokenIds = new Set<string>();
+      if (damageResult.autoAppliedConditions || (damageResult.autoRemovedConditions && damageResult.autoRemovedConditions.length > 0)) {
+        conditionTokenIds.add(moverTokenId);
+      }
+      for (const freedId of damageResult.releasedGrappleTokenIds ?? []) {
+        conditionTokenIds.add(freedId);
+      }
+      if (conditionTokenIds.size > 0) result.conditionTokenIds = [...conditionTokenIds];
     }
     const dmgTypeWord = attack.damageType ? ` ${attack.damageType}` : '';
     messages.push(`   ${damage}${dmgTypeWord} damage${isCrit ? ' [CRIT]' : ''}`);
     if (newHp !== null) {
       hpAfter = newHp;
       messages.push(`   ${mover.name} HP \u2192 ${newHp}`);
-      result.hpChange = { tokenId: moverTokenId, hp: newHp, tempHp: combatant?.tempHp ?? 0 };
+      result.hpChange = { tokenId: moverTokenId, hp: newHp, tempHp, change: -damage };
       if (newHp <= 0) messages.push(`   \uD83D\uDC80 ${mover.name} is DOWN`);
     }
 

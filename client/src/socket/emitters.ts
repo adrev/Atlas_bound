@@ -292,8 +292,8 @@ export function emitNextTurn() {
   triggerSnapshot('combat:next-turn');
 }
 
-export function emitDamage(tokenId: string, amount: number) {
-  getSocket().emit('combat:damage', { tokenId, amount });
+export function emitDamage(tokenId: string, amount: number, options: { criticalHit?: boolean } = {}) {
+  getSocket().emit('combat:damage', { tokenId, amount, ...options });
   triggerSnapshot('combat:damage');
 }
 

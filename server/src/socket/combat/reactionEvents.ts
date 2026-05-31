@@ -13,6 +13,7 @@ import {
 } from '../../utils/validation.js';
 import { safeHandler } from '../../utils/socketHelpers.js';
 import { emitToTokenViewers } from '../../utils/combatBroadcast.js';
+import { tokenConditionChanges } from '../../utils/conditionSources.js';
 
 /**
  * Reaction events: opportunity attacks, counterspell / Shield prompts,
@@ -107,7 +108,7 @@ export function registerCombatReactions(io: Server, socket: Socket): void {
         tokenId: result.hpChange.tokenId,
         hp: result.hpChange.hp,
         tempHp: result.hpChange.tempHp,
-        change: 0, // absolute value already reflected in hp
+        change: result.hpChange.change,
         type: 'damage',
       });
     }
@@ -116,8 +117,24 @@ export function registerCombatReactions(io: Server, socket: Socket): void {
       // players who can see it, plus the owner wherever they are.
       emitToTokenViewers(io, ctx.room, result.hpChange?.tokenId ?? '', 'character:updated', {
         characterId: result.characterHpUpdated.characterId,
-        changes: { hitPoints: result.characterHpUpdated.hp },
+        changes: {
+          hitPoints: result.characterHpUpdated.hp,
+          tempHitPoints: result.characterHpUpdated.tempHp,
+        },
       }, { includeOwner: true });
+    }
+    if (result.deathSaveFailure) {
+      emitToTokenViewers(io, ctx.room, result.deathSaveFailure.tokenId, 'combat:death-save-updated', {
+        tokenId: result.deathSaveFailure.tokenId,
+        deathSaves: result.deathSaveFailure.deathSaves,
+        roll: 0,
+      });
+    }
+    for (const tokenId of result.conditionTokenIds ?? []) {
+      emitToTokenViewers(io, ctx.room, tokenId, 'map:token-updated', {
+        tokenId,
+        changes: tokenConditionChanges(ctx.room, tokenId),
+      });
     }
 
     // Broadcast the updated reaction state for the attacker. We use

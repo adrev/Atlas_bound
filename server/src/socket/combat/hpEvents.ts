@@ -1,6 +1,6 @@
 import type { Server, Socket } from 'socket.io';
 import {
-  getPlayerBySocketId, canTargetToken, isTokenOwnerOrDM,
+  getPlayerBySocketId, canHealToken, canTargetToken, isTokenOwnerOrDM,
   isTokenActionable,
 } from '../../utils/roomState.js';
 import * as CombatService from '../../services/CombatService.js';
@@ -60,7 +60,9 @@ export function registerCombatHp(io: Server, socket: Socket): void {
     }
 
     try {
-      const result = await CombatService.applyDamage(ctx.room.sessionId, parsed.data.tokenId, parsed.data.amount);
+      const result = await CombatService.applyDamage(ctx.room.sessionId, parsed.data.tokenId, parsed.data.amount, {
+        criticalHit: parsed.data.criticalHit,
+      });
       emitToTokenViewers(io, ctx.room, parsed.data.tokenId, 'combat:hp-changed', {
         tokenId: parsed.data.tokenId,
         hp: result.hp,
@@ -73,9 +75,16 @@ export function registerCombatHp(io: Server, socket: Socket): void {
       // HP and the owning player sees themselves alive even after the
       // combatant is at 0.
       if (result.characterId) {
+        const changes: Record<string, unknown> = {
+          hitPoints: result.hp,
+          tempHitPoints: result.tempHp,
+        };
+        if (result.autoDeathSaveFailure) {
+          changes.deathSaves = result.autoDeathSaveFailure;
+        }
         emitToTokenViewers(io, ctx.room, parsed.data.tokenId, 'character:updated', {
           characterId: result.characterId,
-          changes: { hitPoints: result.hp, tempHitPoints: result.tempHp },
+          changes,
         }, { includeOwner: true });
       }
       if (result.autoRemovedConditions && result.autoRemovedConditions.length > 0) {
@@ -148,7 +157,7 @@ export function registerCombatHp(io: Server, socket: Socket): void {
     const amount = parsed.data.amount;
     if (!Number.isFinite(amount) || amount < 0 || amount > 9999) return;
 
-    if (!isTokenOwnerOrDM(ctx, parsed.data.tokenId)) return;
+    if (!canHealToken(ctx, parsed.data.tokenId)) return;
 
     // During active combat, non-DMs can only heal on their own turn
     // (same restriction as damage). Outside combat, healing is
@@ -174,9 +183,16 @@ export function registerCombatHp(io: Server, socket: Socket): void {
         type: 'heal',
       });
       if (result.characterId) {
+        const changes: Record<string, unknown> = {
+          hitPoints: result.hp,
+          tempHitPoints: result.tempHp,
+        };
+        if (result.hp > 0) {
+          changes.deathSaves = { successes: 0, failures: 0 };
+        }
         emitToTokenViewers(io, ctx.room, parsed.data.tokenId, 'character:updated', {
           characterId: result.characterId,
-          changes: { hitPoints: result.hp, tempHitPoints: result.tempHp },
+          changes,
         }, { includeOwner: true });
       }
     } catch (err) {

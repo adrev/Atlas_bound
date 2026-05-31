@@ -16,9 +16,18 @@ import {
   assertSessionDM,
   assertCharacterOwnerOrDM,
 } from '../utils/authorization.js';
+import {
+  canHealToken,
+  createRoom,
+  getAllRooms,
+  type PlayerContext,
+} from '../utils/roomState.js';
 
 beforeEach(() => {
   mockQuery.mockReset();
+  for (const id of Array.from(getAllRooms().keys())) {
+    getAllRooms().delete(id);
+  }
 });
 
 // ---------------------------------------------------------------------------
@@ -374,6 +383,39 @@ describe('combat:damage authorization (P1.3)', () => {
   it('damage is rejected if target token does not exist in room', () => {
     const room = makeRoom([pcA.id], 0);
     expect(canApplyDamage(room, 'dm', 'dm-user', 'tok-ghost', 10)).toBe(false);
+  });
+});
+
+describe('combat:heal authorization', () => {
+  function ctxFor(userId: string, role: 'dm' | 'player'): PlayerContext {
+    const room = createRoom(`heal-auth-${userId}-${role}`, 'ROOM', 'dm-user');
+    room.tokens.set('pc-a', { id: 'pc-a', ownerUserId: 'user-a' } as any);
+    room.tokens.set('pc-b', { id: 'pc-b', ownerUserId: 'user-b' } as any);
+    room.tokens.set('npc', { id: 'npc', ownerUserId: null } as any);
+    return {
+      room,
+      player: {
+        userId,
+        displayName: userId,
+        role,
+        socketId: `${userId}-socket`,
+        characterId: null,
+      },
+    };
+  }
+
+  it('allows a player to heal another player-owned token', () => {
+    expect(canHealToken(ctxFor('user-a', 'player'), 'pc-b')).toBe(true);
+  });
+
+  it('blocks a player from healing an unowned NPC token', () => {
+    expect(canHealToken(ctxFor('user-a', 'player'), 'npc')).toBe(false);
+  });
+
+  it('allows a DM to heal any token', () => {
+    const ctx = ctxFor('dm-user', 'dm');
+    expect(canHealToken(ctx, 'pc-a')).toBe(true);
+    expect(canHealToken(ctx, 'npc')).toBe(true);
   });
 });
 
