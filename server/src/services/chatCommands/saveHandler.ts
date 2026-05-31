@@ -172,10 +172,9 @@ async function handleSave(c: ChatCommandContext): Promise<boolean> {
     }
 
     // Hand the damage type to computeSaveModifiers as the `savingAgainst`
-    // tag so race traits fire (dwarf Resilience vs poison, tiefling vs
-    // fire, aasimar vs necrotic/radiant). For save-or-effect commands
-    // the DM would run the dedicated spell command which passes its own
-    // tag (frightened / charmed / magic).
+    // tag so real save traits fire (dwarf Resilience vs poison). Damage
+    // resistances such as tiefling fire and aasimar radiant/necrotic are
+    // applied by applyDamageWithResist below, not as save advantage.
     const mods = computeSaveModifiers(targetConds, ability, exhaustion, tRace, dmgType || null);
 
     // Aura of Protection (Paladin L6): when the target or any ally
