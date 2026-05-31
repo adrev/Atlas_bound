@@ -125,6 +125,26 @@ export async function pullStateSnapshot(): Promise<{ ok: boolean; applied: boole
       roundNumber: number;
     };
 
+    // Guard against a non-authoritative "no room on this instance"
+    // snapshot wiping real local state. The server returns an empty
+    // snapshot with nextEventId 0 when getRoom() is null — e.g. a Cloud
+    // Run session-affinity miss, or an instance that just restarted and
+    // hasn't rehydrated the room. nextEventId is monotonic, so a session
+    // that has ever had activity always reports > 0; only this fallback
+    // (or a pristine, genuinely-empty room) reports 0. Reconciling an
+    // empty fallback over real state would wipe the map + end combat from
+    // a stale source — skip it; the socket and the next poll to the
+    // authoritative instance self-heal.
+    if (
+      snap.nextEventId === 0
+      && snap.tokens.length === 0
+      && !snap.combat
+      && (Object.keys(useMapStore.getState().tokens).length > 0
+        || useCombatStore.getState().active)
+    ) {
+      return { ok: true, applied: false };
+    }
+
     // ── Tokens: replace the snapshot for the active map. We only
     //    get tokens on the caller's current map from the server, so
     //    we rebuild the store's view of this map-scope and leave
