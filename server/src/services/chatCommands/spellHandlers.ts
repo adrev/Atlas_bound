@@ -8,6 +8,7 @@ import {
 import * as ConditionService from '../ConditionService.js';
 import type { PlayerContext } from '../../utils/roomState.js';
 import { tokenConditionChanges } from '../../utils/conditionSources.js';
+import { formatSaveTotal, rollTargetSave, type SaveAbility } from './saveRoll.js';
 
 /**
  * Shortcuts for the save-or-suck and buff/debuff spells that come up
@@ -50,11 +51,12 @@ interface SaveOrSuckArgs {
   spellName: string;
   conditionName: string;
   dc: number;
-  saveAbility: 'str' | 'dex' | 'con' | 'int' | 'wis' | 'cha';
+  saveAbility: SaveAbility;
   durationRounds: number;
   target: Token;
   saveAtEndOfTurn: boolean;
   endsOnDamage?: boolean;
+  savingAgainst?: string | readonly string[] | null;
 }
 
 function apply(args: SaveOrSuckArgs): void {
@@ -76,6 +78,26 @@ function apply(args: SaveOrSuckArgs): void {
   });
 }
 
+function saveNotesLabel(notes: string[]): string {
+  return notes.length > 0 ? ` [${notes.join('; ')}]` : '';
+}
+
+async function applyOnFailedSave(args: SaveOrSuckArgs): Promise<{ applied: boolean; line: string }> {
+  const saveResult = await rollTargetSave(
+    args.c,
+    args.target,
+    args.saveAbility,
+    args.dc,
+    args.savingAgainst ?? args.spellName,
+  );
+  if (!saveResult.saved) apply(args);
+  const outcome = saveResult.saved ? 'SAVED' : 'FAILED';
+  return {
+    applied: !saveResult.saved,
+    line: `${saveResult.displayName} ${args.saveAbility.toUpperCase()} ${formatSaveTotal(saveResult)} vs DC ${args.dc} → ${outcome}${saveNotesLabel(saveResult.notes)}`,
+  };
+}
+
 // ────── !holdperson <target> <dc> ────────────────────────────
 async function handleHoldPerson(c: ChatCommandContext): Promise<boolean> {
   const parts = c.rest.split(/\s+/).filter(Boolean);
@@ -90,17 +112,18 @@ async function handleHoldPerson(c: ChatCommandContext): Promise<boolean> {
     whisperToCaller(c.io, c.ctx, '!holdperson: invalid target or DC.');
     return true;
   }
-  apply({
+  const result = await applyOnFailedSave({
     ctx: c.ctx, c,
     spellName: 'Hold Person',
     conditionName: 'paralyzed',
     dc, saveAbility: 'wis',
     durationRounds: 10, target,
     saveAtEndOfTurn: true,
+    savingAgainst: 'magic',
   });
   broadcastSystem(
     c.io, c.ctx,
-    `🖐 ${target.name} is PARALYZED by Hold Person (WIS DC ${dc}, save at end of each turn, 1 min).`,
+    `🖐 **Hold Person** — ${result.line}. ${result.applied ? 'PARALYZED, save at end of each turn, 1 min.' : 'No effect.'}`,
   );
   return true;
 }
@@ -119,15 +142,16 @@ async function handleHoldMonster(c: ChatCommandContext): Promise<boolean> {
     whisperToCaller(c.io, c.ctx, '!holdmonster: invalid target or DC.');
     return true;
   }
-  apply({
+  const result = await applyOnFailedSave({
     ctx: c.ctx, c,
     spellName: 'Hold Monster',
     conditionName: 'paralyzed',
     dc, saveAbility: 'wis',
     durationRounds: 10, target,
     saveAtEndOfTurn: true,
+    savingAgainst: 'magic',
   });
-  broadcastSystem(c.io, c.ctx, `🖐 ${target.name} PARALYZED by Hold Monster (WIS DC ${dc}).`);
+  broadcastSystem(c.io, c.ctx, `🖐 **Hold Monster** — ${result.line}. ${result.applied ? 'PARALYZED, save at end of each turn, 1 min.' : 'No effect.'}`);
   return true;
 }
 
@@ -176,17 +200,18 @@ async function handleFear(c: ChatCommandContext): Promise<boolean> {
     whisperToCaller(c.io, c.ctx, '!fear: invalid target or DC.');
     return true;
   }
-  apply({
+  const result = await applyOnFailedSave({
     ctx: c.ctx, c,
     spellName: 'Fear',
     conditionName: 'frightened',
     dc, saveAbility: 'wis',
     durationRounds: 10, target,
     saveAtEndOfTurn: true,
+    savingAgainst: ['magic', 'frightened'],
   });
   broadcastSystem(
     c.io, c.ctx,
-    `😱 ${target.name} is FRIGHTENED by Fear (WIS DC ${dc}, save at end of each turn, 1 min).`,
+    `😱 **Fear** — ${result.line}. ${result.applied ? 'FRIGHTENED, save at end of each turn, 1 min.' : 'No effect.'}`,
   );
   return true;
 }
@@ -205,17 +230,18 @@ async function handleSlow(c: ChatCommandContext): Promise<boolean> {
     whisperToCaller(c.io, c.ctx, '!slow: invalid target or DC.');
     return true;
   }
-  apply({
+  const result = await applyOnFailedSave({
     ctx: c.ctx, c,
     spellName: 'Slow',
     conditionName: 'slowed',
     dc, saveAbility: 'wis',
     durationRounds: 10, target,
     saveAtEndOfTurn: true,
+    savingAgainst: 'magic',
   });
   broadcastSystem(
     c.io, c.ctx,
-    `🐢 ${target.name} is SLOWED (half speed, -2 AC + DEX saves, no reactions, WIS DC ${dc}).`,
+    `🐢 **Slow** — ${result.line}. ${result.applied ? 'SLOWED: half speed, -2 AC + DEX saves, no reactions.' : 'No effect.'}`,
   );
   return true;
 }
@@ -270,32 +296,33 @@ async function handleBane(c: ChatCommandContext): Promise<boolean> {
     return true;
   }
   const targetNames = parts.slice(0, -1);
-  const caller = resolveCaller(c.ctx);
-  const currentRound = c.ctx.room.combatState?.roundNumber ?? 0;
   const applied: string[] = [];
+  const lines: string[] = [`🩸 **Bane** (CHA DC ${dc})`];
   for (const name of targetNames.slice(0, 3)) {
     const t = resolveTarget(c.ctx, name);
     if (!t) continue;
-    ConditionService.applyConditionWithMeta(c.ctx.room.sessionId, t.id, {
-      name: 'baned',
-      source: 'Bane',
-      casterTokenId: caller?.id,
-      appliedRound: currentRound,
-      expiresAfterRound: currentRound + 10,
+    const result = await applyOnFailedSave({
+      ctx: c.ctx, c,
+      spellName: 'Bane',
+      conditionName: 'baned',
+      dc, saveAbility: 'cha',
+      durationRounds: 10, target: t,
+      saveAtEndOfTurn: false,
+      savingAgainst: 'magic',
     });
-    c.io.to(c.ctx.room.sessionId).emit('map:token-updated', {
-      tokenId: t.id,
-      changes: tokenConditionChanges(c.ctx.room, t.id),
-    });
-    applied.push(t.name);
+    lines.push(`   • ${result.line} → ${result.applied ? 'BANED' : 'no effect'}`);
+    if (result.applied) applied.push(t.name);
   }
-  if (applied.length === 0) {
+  if (lines.length === 1) {
     whisperToCaller(c.io, c.ctx, '!bane: no targets matched.');
     return true;
   }
+  lines.push(applied.length > 0
+    ? `   Baned targets: ${applied.join(', ')}. -1d4 to attacks + saves for 10 rounds.`
+    : '   All targets saved.');
   broadcastSystem(
     c.io, c.ctx,
-    `🩸 Bane on ${applied.join(', ')} (CHA DC ${dc} negates) — -1d4 to attacks + saves for 10 rounds.`,
+    lines.join('\n'),
   );
   return true;
 }
@@ -312,32 +339,33 @@ async function handleFaerieFire(c: ChatCommandContext): Promise<boolean> {
     whisperToCaller(c.io, c.ctx, '!faeriefire: last argument must be the save DC.');
     return true;
   }
-  const caller = resolveCaller(c.ctx);
-  const currentRound = c.ctx.room.combatState?.roundNumber ?? 0;
   const applied: string[] = [];
+  const lines: string[] = [`✨ **Faerie Fire** (DEX DC ${dc})`];
   for (const name of parts.slice(0, -1)) {
     const t = resolveTarget(c.ctx, name);
     if (!t) continue;
-    ConditionService.applyConditionWithMeta(c.ctx.room.sessionId, t.id, {
-      name: 'outlined',
-      source: 'Faerie Fire',
-      casterTokenId: caller?.id,
-      appliedRound: currentRound,
-      expiresAfterRound: currentRound + 10,
+    const result = await applyOnFailedSave({
+      ctx: c.ctx, c,
+      spellName: 'Faerie Fire',
+      conditionName: 'outlined',
+      dc, saveAbility: 'dex',
+      durationRounds: 10, target: t,
+      saveAtEndOfTurn: false,
+      savingAgainst: 'magic',
     });
-    c.io.to(c.ctx.room.sessionId).emit('map:token-updated', {
-      tokenId: t.id,
-      changes: tokenConditionChanges(c.ctx.room, t.id),
-    });
-    applied.push(t.name);
+    lines.push(`   • ${result.line} → ${result.applied ? 'OUTLINED' : 'no effect'}`);
+    if (result.applied) applied.push(t.name);
   }
-  if (applied.length === 0) {
+  if (lines.length === 1) {
     whisperToCaller(c.io, c.ctx, '!faeriefire: no targets matched.');
     return true;
   }
+  lines.push(applied.length > 0
+    ? `   Outlined targets: ${applied.join(', ')}. Attacks against them have advantage; no invisibility.`
+    : '   All targets saved.');
   broadcastSystem(
     c.io, c.ctx,
-    `✨ Faerie Fire on ${applied.join(', ')} (DEX DC ${dc} negates) — attacks against have advantage, no invisibility.`,
+    lines.join('\n'),
   );
   return true;
 }
