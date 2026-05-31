@@ -6,7 +6,7 @@ import {
 } from '../ChatCommands.js';
 import * as ConditionService from '../ConditionService.js';
 import pool from '../../db/connection.js';
-import type { Token, SpellCastBreakdown, SpellTargetOutcome } from '@dnd-vtt/shared';
+import { computeSaveModifiers, type AttackBreakdownModifier, type Token, type SpellCastBreakdown, type SpellTargetOutcome } from '@dnd-vtt/shared';
 import type { PlayerContext } from '../../utils/roomState.js';
 import { tokenConditionChanges } from '../../utils/conditionSources.js';
 
@@ -105,11 +105,11 @@ async function loadCaster(c: ChatCommandContext, cmd: string): Promise<{ caller:
 async function loadTargetSaveMod(
   target: Token,
   ability: 'str' | 'dex' | 'con' | 'int' | 'wis' | 'cha',
-): Promise<{ mod: number; displayName: string }> {
-  if (!target.characterId) return { mod: 0, displayName: target.name };
+): Promise<{ mod: number; displayName: string; race: string | null }> {
+  if (!target.characterId) return { mod: 0, displayName: target.name, race: null };
   try {
     const { rows } = await pool.query(
-      'SELECT ability_scores, saving_throws, proficiency_bonus, name FROM characters WHERE id = $1',
+      'SELECT ability_scores, saving_throws, proficiency_bonus, name, race FROM characters WHERE id = $1',
       [target.characterId],
     );
     const row = rows[0] as Record<string, unknown> | undefined;
@@ -122,10 +122,94 @@ async function loadTargetSaveMod(
       : (row?.saving_throws ?? []);
     const mod = abilityMod(scores as Record<string, number>, ability) +
       (Array.isArray(saves) && saves.includes(ability) ? prof : 0);
-    return { mod, displayName: (row?.name as string) || target.name };
+    return { mod, displayName: (row?.name as string) || target.name, race: (row?.race as string) ?? null };
   } catch {
-    return { mod: 0, displayName: target.name };
+    return { mod: 0, displayName: target.name, race: null };
   }
+}
+
+interface RolledSave {
+  d20: number;
+  d20Rolls?: number[];
+  advantage: 'normal' | 'advantage' | 'disadvantage';
+  modifiers: AttackBreakdownModifier[];
+  total: number;
+  saved: boolean;
+  autoFailed?: boolean;
+  displayName: string;
+  notes: string[];
+  rollText: string;
+  totalMod: number;
+}
+
+async function rollTargetSave(
+  c: ChatCommandContext,
+  target: Token,
+  ability: 'str' | 'dex' | 'con' | 'int' | 'wis' | 'cha',
+  dc: number,
+  savingAgainst: string | null,
+): Promise<RolledSave> {
+  const { mod, displayName, race } = await loadTargetSaveMod(target, ability);
+  const conditions = (target.conditions as string[]) || [];
+  const combatant = c.ctx.room.combatState?.combatants.find((cm) => cm.tokenId === target.id);
+  const exhaustion = combatant?.exhaustionLevel ?? 0;
+  const mods = computeSaveModifiers(conditions, ability, exhaustion, race, savingAgainst);
+  const totalMod = mod + mods.flatModifier;
+
+  let d20 = 1;
+  let d20Rolls: number[] | undefined;
+  let rollText = 'auto-fail';
+  if (!mods.autoFail) {
+    if (mods.effectiveAdvantage === 'advantage') {
+      const r1 = Math.floor(Math.random() * 20) + 1;
+      const r2 = Math.floor(Math.random() * 20) + 1;
+      d20 = Math.max(r1, r2);
+      d20Rolls = [r1, r2];
+      rollText = `[${r1},${r2}] adv keep ${d20}`;
+    } else if (mods.effectiveAdvantage === 'disadvantage') {
+      const r1 = Math.floor(Math.random() * 20) + 1;
+      const r2 = Math.floor(Math.random() * 20) + 1;
+      d20 = Math.min(r1, r2);
+      d20Rolls = [r1, r2];
+      rollText = `[${r1},${r2}] disadv keep ${d20}`;
+    } else {
+      d20 = Math.floor(Math.random() * 20) + 1;
+      rollText = `${d20}`;
+    }
+  }
+
+  const total = mods.autoFail ? 0 : d20 + totalMod;
+  const modifiers: AttackBreakdownModifier[] = [];
+  if (mod !== 0) {
+    modifiers.push({ label: `${ability.toUpperCase()} save mod`, value: mod, source: 'ability' });
+  }
+  if (mods.flatModifier !== 0) {
+    modifiers.push({
+      label: mods.flatModifier > 0 ? 'Cover / condition' : 'Slow / condition',
+      value: mods.flatModifier,
+      source: 'condition',
+    });
+  }
+
+  return {
+    d20,
+    d20Rolls,
+    advantage: mods.effectiveAdvantage,
+    modifiers,
+    total,
+    saved: !mods.autoFail && total >= dc,
+    autoFailed: mods.autoFail || undefined,
+    displayName,
+    notes: mods.notes,
+    rollText,
+    totalMod,
+  };
+}
+
+function formatSaveTotal(save: RolledSave): string {
+  if (save.autoFailed) return 'auto-fail';
+  const sign = save.totalMod >= 0 ? '+' : '';
+  return `d20=${save.rollText}${sign}${save.totalMod}=${save.total}`;
 }
 
 async function applyHealToToken(
@@ -547,38 +631,40 @@ async function handleThunderwave(c: ChatCommandContext): Promise<boolean> {
       rolls.push(r);
       raw += r;
     }
-    const { mod, displayName } = await loadTargetSaveMod(target, 'con');
-    const d20 = Math.floor(Math.random() * 20) + 1;
-    const tot = d20 + mod;
-    const saved = tot >= stats.spellSaveDc;
-    const dmg = saved ? Math.floor(raw / 2) : raw;
-    const sign = mod >= 0 ? '+' : '';
-    const pushText = saved ? 'no push' : 'pushed 10 ft';
-    lines.push(`  • ${displayName}: CON d20=${d20}${sign}${mod}=${tot} → ${saved ? 'SAVED' : 'FAILED'}, ${dmg} thunder [${rolls.join(',')}] (${pushText})`);
+    const saveResult = await rollTargetSave(c, target, 'con', stats.spellSaveDc, 'magic');
+    const dmg = saveResult.saved ? Math.floor(raw / 2) : raw;
+    const pushText = saveResult.saved ? 'no push' : 'pushed 10 ft';
+    const noteLabel = saveResult.notes.length > 0 ? ` [${saveResult.notes.join(', ')}]` : '';
+    lines.push(`  • ${saveResult.displayName}: CON ${formatSaveTotal(saveResult)} → ${saveResult.saved ? 'SAVED' : 'FAILED'}, ${dmg} thunder [${rolls.join(',')}] (${pushText})${noteLabel}`);
     twOutcomes.push({
-      name: displayName,
+      name: saveResult.displayName,
       tokenId: target.id,
       kind: 'save',
       save: {
-        d20,
-        advantage: 'normal',
+        d20: saveResult.d20,
+        d20Rolls: saveResult.d20Rolls,
+        advantage: saveResult.advantage,
         ability: 'con',
-        modifiers: mod !== 0 ? [{ label: 'CON save mod', value: mod, source: 'ability' }] : [],
-        total: tot,
+        modifiers: saveResult.modifiers,
+        total: saveResult.total,
         dc: stats.spellSaveDc,
-        saved,
+        saved: saveResult.saved,
+        autoFailed: saveResult.autoFailed,
       },
       damage: {
         dice: `${dice}d8`,
         diceRolls: rolls,
         mainRoll: raw,
         bonuses: [],
-        halfDamage: saved || undefined,
+        halfDamage: saveResult.saved || undefined,
         finalDamage: dmg,
         targetHpBefore: 0,
         targetHpAfter: 0,
       },
-      notes: [saved ? 'No pushback' : 'Pushed 10 ft'],
+      notes: [
+        saveResult.saved ? 'No pushback' : 'Pushed 10 ft',
+        ...saveResult.notes,
+      ],
     });
   }
   const twBreakdown: SpellCastBreakdown = {
@@ -737,12 +823,8 @@ async function handleSpiritGuardians(c: ChatCommandContext): Promise<boolean> {
       rolls.push(r);
       raw += r;
     }
-    const { mod, displayName } = await loadTargetSaveMod(target, 'wis');
-    const d20 = Math.floor(Math.random() * 20) + 1;
-    const tot = d20 + mod;
-    const saved = tot >= stats.spellSaveDc;
-    const dmg = saved ? Math.floor(raw / 2) : raw;
-    const sign = mod >= 0 ? '+' : '';
+    const saveResult = await rollTargetSave(c, target, 'wis', stats.spellSaveDc, 'magic');
+    const dmg = saveResult.saved ? Math.floor(raw / 2) : raw;
     // Apply slowed pseudo-condition for aura effect (half speed).
     ConditionService.applyConditionWithMeta(c.ctx.room.sessionId, target.id, {
       name: 'slowed',
@@ -754,31 +836,35 @@ async function handleSpiritGuardians(c: ChatCommandContext): Promise<boolean> {
       tokenId: target.id,
       changes: tokenConditionChanges(c.ctx.room, target.id),
     });
-    lines.push(`  • ${displayName}: WIS d20=${d20}${sign}${mod}=${tot} → ${saved ? 'SAVED' : 'FAILED'}, ${dmg} radiant [${rolls.join(',')}]. Speed halved while in area.`);
+    const noteLabel = saveResult.notes.length > 0 ? ` [${saveResult.notes.join(', ')}]` : '';
+    lines.push(`  • ${saveResult.displayName}: WIS ${formatSaveTotal(saveResult)} → ${saveResult.saved ? 'SAVED' : 'FAILED'}, ${dmg} radiant [${rolls.join(',')}]. Speed halved while in area.${noteLabel}`);
     sgOutcomes.push({
-      name: displayName,
+      name: saveResult.displayName,
       tokenId: target.id,
       kind: 'save',
       save: {
-        d20,
-        advantage: 'normal',
+        d20: saveResult.d20,
+        d20Rolls: saveResult.d20Rolls,
+        advantage: saveResult.advantage,
         ability: 'wis',
-        modifiers: mod !== 0 ? [{ label: 'WIS save mod', value: mod, source: 'ability' }] : [],
-        total: tot,
+        modifiers: saveResult.modifiers,
+        total: saveResult.total,
         dc: stats.spellSaveDc,
-        saved,
+        saved: saveResult.saved,
+        autoFailed: saveResult.autoFailed,
       },
       damage: {
         dice: `${dice}d8`,
         diceRolls: rolls,
         mainRoll: raw,
         bonuses: [],
-        halfDamage: saved || undefined,
+        halfDamage: saveResult.saved || undefined,
         finalDamage: dmg,
         targetHpBefore: 0,
         targetHpAfter: 0,
       },
       conditionsApplied: ['slowed'],
+      notes: saveResult.notes.length > 0 ? saveResult.notes : undefined,
     });
   }
   const sgBreakdown: SpellCastBreakdown = {
@@ -828,13 +914,9 @@ async function handleCommand(c: ChatCommandContext): Promise<boolean> {
   const loaded = await loadCaster(c, 'command');
   if (!loaded) return true;
   const { caller, stats } = loaded;
-  const { mod, displayName } = await loadTargetSaveMod(target, 'wis');
-  const d20 = Math.floor(Math.random() * 20) + 1;
-  const tot = d20 + mod;
-  const saved = tot >= stats.spellSaveDc;
-  const sign = mod >= 0 ? '+' : '';
+  const saveResult = await rollTargetSave(c, target, 'wis', stats.spellSaveDc, 'magic');
   const currentRound = c.ctx.room.combatState?.roundNumber ?? 0;
-  if (!saved) {
+  if (!saveResult.saved) {
     ConditionService.applyConditionWithMeta(c.ctx.room.sessionId, target.id, {
       name: 'commanded',
       source: `${stats.callerName} (Command: ${word})`,
@@ -847,6 +929,10 @@ async function handleCommand(c: ChatCommandContext): Promise<boolean> {
       changes: tokenConditionChanges(c.ctx.room, target.id),
     });
   }
+  const commandTargetNotes = [
+    ...(saveResult.saved ? [] : [`Must ${word.toUpperCase()} on next turn`]),
+    ...saveResult.notes,
+  ];
   const commandBreakdown: SpellCastBreakdown = {
     caster: { name: stats.callerName, tokenId: caller.id },
     spell: {
@@ -858,19 +944,26 @@ async function handleCommand(c: ChatCommandContext): Promise<boolean> {
     },
     notes: [`1-word command — ${word}`],
     targets: [{
-      name: displayName, tokenId: target.id, kind: 'save',
+      name: saveResult.displayName, tokenId: target.id, kind: 'save',
       save: {
-        d20, advantage: 'normal', ability: 'wis',
-        modifiers: mod !== 0 ? [{ label: 'WIS save mod', value: mod, source: 'ability' }] : [],
-        total: tot, dc: stats.spellSaveDc, saved,
+        d20: saveResult.d20,
+        d20Rolls: saveResult.d20Rolls,
+        advantage: saveResult.advantage,
+        ability: 'wis',
+        modifiers: saveResult.modifiers,
+        total: saveResult.total,
+        dc: stats.spellSaveDc,
+        saved: saveResult.saved,
+        autoFailed: saveResult.autoFailed,
       },
-      conditionsApplied: saved ? undefined : ['commanded'],
-      notes: saved ? undefined : [`Must ${word.toUpperCase()} on next turn`],
+      conditionsApplied: saveResult.saved ? undefined : ['commanded'],
+      notes: commandTargetNotes.length > 0 ? commandTargetNotes : undefined,
     }],
   };
+  const noteLabel = saveResult.notes.length > 0 ? ` [${saveResult.notes.join(', ')}]` : '';
   broadcastSystem(
     c.io, c.ctx,
-    `📢 **Command "${word}"** (WIS DC ${stats.spellSaveDc}) — ${stats.callerName} → ${displayName}: d20=${d20}${sign}${mod}=${tot} → ${saved ? 'SAVED — no effect' : `COMPELLED: ${word.toUpperCase()} on next turn`}`,
+    `📢 **Command "${word}"** (WIS DC ${stats.spellSaveDc}) — ${stats.callerName} → ${saveResult.displayName}: ${formatSaveTotal(saveResult)} → ${saveResult.saved ? 'SAVED — no effect' : `COMPELLED: ${word.toUpperCase()} on next turn`}${noteLabel}`,
     { spellResult: commandBreakdown },
   );
   return true;
@@ -967,13 +1060,9 @@ async function handleBanishment(c: ChatCommandContext): Promise<boolean> {
   const loaded = await loadCaster(c, 'banishment');
   if (!loaded) return true;
   const { caller, stats } = loaded;
-  const { mod, displayName } = await loadTargetSaveMod(target, 'cha');
-  const d20 = Math.floor(Math.random() * 20) + 1;
-  const tot = d20 + mod;
-  const saved = tot >= stats.spellSaveDc;
-  const sign = mod >= 0 ? '+' : '';
+  const saveResult = await rollTargetSave(c, target, 'cha', stats.spellSaveDc, 'magic');
   const currentRound = c.ctx.room.combatState?.roundNumber ?? 0;
-  if (!saved) {
+  if (!saveResult.saved) {
     ConditionService.applyConditionWithMeta(c.ctx.room.sessionId, target.id, {
       name: 'banished',
       source: `${stats.callerName} (Banishment L${slotLvl})`,
@@ -997,18 +1086,26 @@ async function handleBanishment(c: ChatCommandContext): Promise<boolean> {
     },
     notes: ['Concentration, 1 min'],
     targets: [{
-      name: displayName, tokenId: target.id, kind: 'save',
+      name: saveResult.displayName, tokenId: target.id, kind: 'save',
       save: {
-        d20, advantage: 'normal', ability: 'cha',
-        modifiers: mod !== 0 ? [{ label: 'CHA save mod', value: mod, source: 'ability' }] : [],
-        total: tot, dc: stats.spellSaveDc, saved,
+        d20: saveResult.d20,
+        d20Rolls: saveResult.d20Rolls,
+        advantage: saveResult.advantage,
+        ability: 'cha',
+        modifiers: saveResult.modifiers,
+        total: saveResult.total,
+        dc: stats.spellSaveDc,
+        saved: saveResult.saved,
+        autoFailed: saveResult.autoFailed,
       },
-      conditionsApplied: saved ? undefined : ['banished'],
+      conditionsApplied: saveResult.saved ? undefined : ['banished'],
+      notes: saveResult.notes.length > 0 ? saveResult.notes : undefined,
     }],
   };
+  const noteLabel = saveResult.notes.length > 0 ? ` [${saveResult.notes.join(', ')}]` : '';
   broadcastSystem(
     c.io, c.ctx,
-    `🌀 **Banishment** (L${slotLvl}, CHA DC ${stats.spellSaveDc}) — ${stats.callerName} → ${displayName}: d20=${d20}${sign}${mod}=${tot} → ${saved ? 'SAVED — no effect' : 'BANISHED to another plane (concentration, 1 min)'}`,
+    `🌀 **Banishment** (L${slotLvl}, CHA DC ${stats.spellSaveDc}) — ${stats.callerName} → ${saveResult.displayName}: ${formatSaveTotal(saveResult)} → ${saveResult.saved ? 'SAVED — no effect' : 'BANISHED to another plane (concentration, 1 min)'}${noteLabel}`,
     { spellResult: banishBreakdown },
   );
   return true;

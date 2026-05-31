@@ -1491,6 +1491,24 @@ describe('Tier 12 — Banishment', () => {
     });
     expect(enemy.conditions).toContain('banished');
   });
+
+  it('applies gnome cunning on magic CHA saves before banishing', async () => {
+    const enemy = makeToken('tE', 'Gnome', { characterId: 'c-e' });
+    const s = makeScenario({ inCombat: true, otherTokens: [enemy] });
+    routeCharacterQueries({
+      'char-caller': { class: 'Wizard', level: 7, name: 'W', ability_scores: { int: 16 }, proficiency_bonus: 3, spell_save_dc: 15 },
+      'c-e': { ability_scores: { cha: 10 }, saving_throws: [], proficiency_bonus: 2, name: 'Gnome', race: 'Forest Gnome' },
+    });
+    const { io, emissions } = makeFakeIo();
+    await withRandomSeed([0, 0.99], async () => {
+      await tryHandleChatCommand(io, s.ctx, '!banishment Gnome');
+    });
+
+    expect(enemy.conditions).not.toContain('banished');
+    const broadcast = lastBroadcast(emissions) ?? '';
+    expect(broadcast).toContain('d20=[1,20] adv keep 20+0=20');
+    expect(broadcast).toContain('Forest Gnome: advantage on save vs magic');
+  });
 });
 
 describe('Tier 12 — Silvery Barbs', () => {
