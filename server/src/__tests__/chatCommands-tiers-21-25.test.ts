@@ -13,7 +13,7 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { Server } from 'socket.io';
-import type { Combatant, CombatState, Token, ActionEconomy } from '@dnd-vtt/shared';
+import type { Combatant, CombatState, Token, ActionEconomy, SaveBreakdown } from '@dnd-vtt/shared';
 
 // Mock the DB before importing anything that touches it.
 const { mockQuery } = vi.hoisted(() => ({ mockQuery: vi.fn() }));
@@ -71,6 +71,23 @@ function systemBroadcasts(emissions: Emission[]): string[] {
 function lastSystemLine(emissions: Emission[]): string | undefined {
   const sys = systemBroadcasts(emissions);
   return sys[sys.length - 1];
+}
+
+function extractSaveResult(payload: unknown): SaveBreakdown | undefined {
+  if (typeof payload !== 'object' || payload === null) return undefined;
+  const candidate = payload as { saveResult?: unknown };
+  return typeof candidate.saveResult === 'object' && candidate.saveResult !== null
+    ? (candidate.saveResult as SaveBreakdown)
+    : undefined;
+}
+
+function lastSaveResult(emissions: Emission[]): SaveBreakdown | undefined {
+  for (let i = emissions.length - 1; i >= 0; i -= 1) {
+    if (emissions[i].event !== 'chat:new-message') continue;
+    const saveResult = extractSaveResult(emissions[i].payload);
+    if (saveResult) return saveResult;
+  }
+  return undefined;
 }
 
 function tokenUpdates(emissions: Emission[]): Array<{ tokenId: string; changes: Record<string, unknown> }> {
@@ -770,9 +787,9 @@ describe('Hazards — !disease', () => {
     const line = lastSystemLine(emissions) ?? '';
     expect(line).toContain('SAVED');
     expect(line).toContain('inspired: advantage on CON save');
-    const payload = emissions.find((e) => e.event === 'chat:new-message')?.payload as { saveResult?: { advantage?: string; passed?: boolean } };
-    expect(payload.saveResult?.advantage).toBe('advantage');
-    expect(payload.saveResult?.passed).toBe(true);
+    const saveResult = lastSaveResult(emissions);
+    expect(saveResult?.advantage).toBe('advantage');
+    expect(saveResult?.passed).toBe(true);
   });
 });
 
@@ -819,9 +836,9 @@ describe('Hazards — !poison', () => {
     expect(line).toContain('SAVED');
     expect(line).toContain('Hill Dwarf: advantage on save vs poison');
     expect(line).toContain('= 9 dmg');
-    const payload = emissions.find((e) => e.event === 'chat:new-message')?.payload as { saveResult?: { advantage?: string; passed?: boolean } };
-    expect(payload.saveResult?.advantage).toBe('advantage');
-    expect(payload.saveResult?.passed).toBe(true);
+    const saveResult = lastSaveResult(emissions);
+    expect(saveResult?.advantage).toBe('advantage');
+    expect(saveResult?.passed).toBe(true);
   });
 });
 
