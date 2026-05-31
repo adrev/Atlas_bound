@@ -195,6 +195,12 @@ export function registerCombatHp(io: Server, socket: Socket): void {
           changes,
         }, { includeOwner: true });
       }
+      if (result.autoRemovedConditions && result.autoRemovedConditions.length > 0) {
+        emitToTokenViewers(io, ctx.room, parsed.data.tokenId, 'map:token-updated', {
+          tokenId: parsed.data.tokenId,
+          changes: tokenConditionChanges(ctx.room, parsed.data.tokenId),
+        });
+      }
     } catch (err) {
       socket.emit('session:error', {
         message: err instanceof Error ? err.message : 'Failed to apply healing',
