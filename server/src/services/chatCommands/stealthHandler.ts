@@ -1,4 +1,10 @@
-import type { Token, ActionBreakdown } from '@dnd-vtt/shared';
+import {
+  calculateEquipmentBonuses,
+  type ActionBreakdown,
+  type EquipmentAbilityScores,
+  type EquippedItem,
+  type Token,
+} from '@dnd-vtt/shared';
 import {
   registerChatCommand,
   whisperToCaller,
@@ -30,23 +36,55 @@ function resolveCallerToken(ctx: PlayerContext): Token | null {
   return own[0] ?? null;
 }
 
-async function loadStealthMod(characterId: string): Promise<{ mod: number; name: string }> {
+function parseJsonRecord(value: unknown): Record<string, unknown> {
+  if (typeof value === 'string') return JSON.parse(value) as Record<string, unknown>;
+  if (value && typeof value === 'object' && !Array.isArray(value)) return value as Record<string, unknown>;
+  return {};
+}
+
+function parseInventory(value: unknown): EquippedItem[] {
+  if (typeof value === 'string') {
+    const parsed = JSON.parse(value) as unknown;
+    return Array.isArray(parsed) ? parsed as EquippedItem[] : [];
+  }
+  return Array.isArray(value) ? value as EquippedItem[] : [];
+}
+
+function score(scores: Record<string, unknown>, shortName: string, longName: string): number {
+  const value = scores[shortName] ?? scores[longName];
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : 10;
+}
+
+async function loadStealthMod(characterId: string): Promise<{ mod: number; name: string; stealthDisadvantage: boolean }> {
   const { rows } = await pool.query(
-    'SELECT ability_scores, skills, proficiency_bonus, name FROM characters WHERE id = $1',
+    'SELECT ability_scores, skills, proficiency_bonus, name, inventory FROM characters WHERE id = $1',
     [characterId],
   );
   const row = rows[0] as Record<string, unknown> | undefined;
-  if (!row) return { mod: 0, name: '' };
+  if (!row) return { mod: 0, name: '', stealthDisadvantage: false };
   try {
-    const scores = typeof row.ability_scores === 'string' ? JSON.parse(row.ability_scores) : (row.ability_scores ?? {});
-    const dexMod = Math.floor((((scores as Record<string, number>).dex ?? 10) - 10) / 2);
+    const scores = parseJsonRecord(row.ability_scores);
+    const dexMod = Math.floor((score(scores, 'dex', 'dexterity') - 10) / 2);
     const prof = Number(row.proficiency_bonus) || 2;
-    const skills = typeof row.skills === 'string' ? JSON.parse(row.skills) : (row.skills ?? {});
+    const skills = parseJsonRecord(row.skills);
     const stealthProf = (skills as Record<string, string>)?.stealth ?? 'none';
     const profAdd = stealthProf === 'expertise' ? 2 * prof : stealthProf === 'proficient' ? prof : 0;
-    return { mod: dexMod + profAdd, name: (row.name as string) || '' };
+    const abilityScores: EquipmentAbilityScores = {
+      str: score(scores, 'str', 'strength'),
+      dex: score(scores, 'dex', 'dexterity'),
+      con: score(scores, 'con', 'constitution'),
+      int: score(scores, 'int', 'intelligence'),
+      wis: score(scores, 'wis', 'wisdom'),
+      cha: score(scores, 'cha', 'charisma'),
+    };
+    const stealthDisadvantage = calculateEquipmentBonuses(
+      parseInventory(row.inventory),
+      abilityScores,
+    ).stealthDisadvantage;
+    return { mod: dexMod + profAdd, name: (row.name as string) || '', stealthDisadvantage };
   } catch {
-    return { mod: 0, name: '' };
+    return { mod: 0, name: '', stealthDisadvantage: false };
   }
 }
 
@@ -76,11 +114,14 @@ async function handleStealth(c: ChatCommandContext): Promise<boolean> {
     return true;
   }
 
-  const { mod, name } = await loadStealthMod(caller.characterId);
-  const d20 = Math.floor(Math.random() * 20) + 1;
+  const { mod, name, stealthDisadvantage } = await loadStealthMod(caller.characterId);
+  const d20First = Math.floor(Math.random() * 20) + 1;
+  const d20Second = stealthDisadvantage ? Math.floor(Math.random() * 20) + 1 : null;
+  const d20 = d20Second === null ? d20First : Math.min(d20First, d20Second);
   const total = d20 + mod;
   const modSign = mod >= 0 ? '+' : '';
   const displayName = name || caller.name;
+  const rollText = d20Second === null ? `d20=${d20}` : `d20=${d20First}/${d20Second} keep ${d20}`;
 
   // Compare against every opposing-faction visible token that has a
   // character with passive perception. Two-team model: PCs vs NPCs
@@ -120,12 +161,12 @@ async function handleStealth(c: ChatCommandContext): Promise<boolean> {
 
   const broadcastLines: string[] = [];
   broadcastLines.push(
-    `👤 ${displayName} rolls Stealth: d20=${d20}${modSign}${mod}=${total}`,
+    `👤 ${displayName} rolls Stealth: ${rollText}${modSign}${mod}=${total}${stealthDisadvantage ? ' (armor disadvantage)' : ''}`,
   );
   const stealthBreakdown: ActionBreakdown = {
     actor: { name: displayName, tokenId: caller.id },
     action: {
-      name: `Stealth (d20=${d20}+${mod}=${total})`,
+      name: `Stealth (${rollText}${modSign}${mod}=${total})`,
       category: 'other',
       icon: '👤',
       cost: arg === 'hide' ? 'Action (Hide)' : 'Check',
@@ -136,7 +177,8 @@ async function handleStealth(c: ChatCommandContext): Promise<boolean> {
     ...(stealthTargets.length > 0 ? { targets: stealthTargets } : {}),
     notes: [
       `Roller: ${displayName}`,
-      `Stealth roll: d20=${d20} ${modSign}${mod} = ${total}`,
+      `Stealth roll: ${rollText} ${modSign}${mod} = ${total}`,
+      ...(stealthDisadvantage ? ['Armor imposes disadvantage on Stealth'] : []),
       `Compared against each visible enemy's passive Perception`,
       ...(autoApply ? ['Requested `hide` auto-apply'] : []),
     ],

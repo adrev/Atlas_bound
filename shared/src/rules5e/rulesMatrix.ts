@@ -195,7 +195,7 @@ export const RULES_MATRIX: RulesMatrixEntry[] = [
     authority: 'chat-command',
     priority: 'P2',
     paths: ['server/src/services/chatCommands/stealthHandler.ts'],
-    notes: ['Current helper compares passive perception but does not use full sight, lighting, cover, or active search.'],
+    notes: ['Current helper compares passive perception and applies armor-imposed Stealth disadvantage, but does not use full sight, lighting, cover, or active search.'],
     nextSteps: ['Keep labeled as manual-helper until it integrates with visibility and lighting.'],
   },
   {
@@ -211,7 +211,7 @@ export const RULES_MATRIX: RulesMatrixEntry[] = [
       'AC calculation covers light, medium, heavy, shields, named armor defaults, magic AC bonuses, stealth disadvantage, and heavy armor speed penalties in shared tests.',
       'Combatant speed derivation applies manual heavy-armor speed penalties server-side and skips DDB-imported characters to avoid double-counting.',
     ],
-    nextSteps: ['Wire stealth disadvantage into authoritative stealth roll helpers if stealth becomes more automated.'],
+    nextSteps: ['Keep armor disadvantage covered in both equipment and stealth-helper tests while broader visibility automation is added.'],
   },
   {
     id: 'resource.rests',
