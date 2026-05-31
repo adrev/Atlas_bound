@@ -165,7 +165,7 @@ export const RULES_MATRIX: RulesMatrixEntry[] = [
       'Slow and cover flat save modifiers are modeled in shared rules and applied by the server save resolver plus client roll engine.',
       'Race save traits are read from raceFeatures.savesVs; damage resistances remain defense math rather than save advantage.',
     ],
-    nextSteps: ['Route individual spell chat-command save helpers through the shared resolver so every save path gets the same modifier math.'],
+    nextSteps: ['Continue routing remaining individual spell chat-command save helpers through the shared resolver so every save path gets the same modifier math.'],
   },
   {
     id: 'spell.aoe-consistency',
@@ -181,6 +181,7 @@ export const RULES_MATRIX: RulesMatrixEntry[] = [
       'server/src/services/chatCommands/spellsTier16Handler.ts',
     ],
     notes: [
+      'Tier 12 save helpers use shared save modifier math for condition/race advantage, auto-fail, and flat save modifiers.',
       'Tier 16 save helpers use shared save modifier math for condition advantage, auto-fail, and flat save modifiers.',
       'Different spell paths still roll damage, apply defenses, and mutate HP differently.',
     ],
