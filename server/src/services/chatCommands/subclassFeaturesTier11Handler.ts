@@ -9,6 +9,7 @@ import pool from '../../db/connection.js';
 import type { Token, ActionBreakdown } from '@dnd-vtt/shared';
 import type { PlayerContext } from '../../utils/roomState.js';
 import { tokenConditionChanges } from '../../utils/conditionSources.js';
+import { formatSaveTotal, rollTargetSave, type RolledSave, type SaveAbility } from './saveRoll.js';
 
 /**
  * Tier 11 subclass features:
@@ -55,6 +56,20 @@ function getClassFeatures(row: Record<string, unknown> | undefined): string[] {
 
 function hasFeature(row: Record<string, unknown> | undefined, pattern: RegExp): boolean {
   return getClassFeatures(row).some((f) => pattern.test(f));
+}
+
+function saveNotesLabel(saveResult: RolledSave): string {
+  return saveResult.notes.length > 0 ? ` [${saveResult.notes.join(', ')}]` : '';
+}
+
+function actionSaveEffect(
+  saveResult: RolledSave,
+  ability: SaveAbility,
+  dc: number,
+  successText: string,
+  failText: string,
+): string {
+  return `${saveResult.saved ? 'SAVED' : 'FAILED'}: ${ability.toUpperCase()} ${formatSaveTotal(saveResult)} vs DC ${dc} — ${saveResult.saved ? successText : failText}${saveNotesLabel(saveResult)}`;
 }
 
 function abilityMod(scores: Record<string, number> | undefined, ability: string): number {
@@ -657,37 +672,13 @@ async function handleOpenHand(c: ChatCommandContext): Promise<boolean> {
     );
     return true;
   }
-  // Roll save.
-  const saveAbility = effect === 'prone' ? 'dex' : 'str';
-  let saveMod = 0;
-  let tName = target.name;
-  if (target.characterId) {
-    const { rows: trows } = await pool.query(
-      'SELECT ability_scores, saving_throws, proficiency_bonus, name FROM characters WHERE id = $1',
-      [target.characterId],
-    );
-    const trow = trows[0] as Record<string, unknown> | undefined;
-    try {
-      const scores = typeof trow?.ability_scores === 'string'
-        ? JSON.parse(trow.ability_scores as string)
-        : (trow?.ability_scores ?? {});
-      const prof = Number(trow?.proficiency_bonus) || 2;
-      const saves = typeof trow?.saving_throws === 'string'
-        ? JSON.parse(trow.saving_throws as string)
-        : (trow?.saving_throws ?? []);
-      saveMod = abilityMod(scores as Record<string, number>, saveAbility) +
-        (Array.isArray(saves) && saves.includes(saveAbility) ? prof : 0);
-      if (trow?.name) tName = trow.name as string;
-    } catch { /* ignore */ }
-  }
-  const d20 = Math.floor(Math.random() * 20) + 1;
-  const total = d20 + saveMod;
-  const saved = total >= dc;
-  const modSign = saveMod >= 0 ? '+' : '';
+  const saveAbility: SaveAbility = effect === 'prone' ? 'dex' : 'str';
   const label = effect === 'prone' ? 'DEX save vs prone' : 'STR save vs push 15 ft';
   const condName = effect === 'prone' ? 'prone' : null;
+  const saveResult = await rollTargetSave(c, target, saveAbility, dc, condName ?? 'push');
+  const tName = saveResult.displayName;
   const currentRound = c.ctx.room.combatState?.roundNumber ?? 0;
-  if (!saved && condName) {
+  if (!saveResult.saved && condName) {
     ConditionService.applyConditionWithMeta(c.ctx.room.sessionId, target.id, {
       name: condName,
       source: `${caller.name} (Open Hand)`,
@@ -707,24 +698,23 @@ async function handleOpenHand(c: ChatCommandContext): Promise<boolean> {
       icon: '👊',
       cost: 'Rider on Flurry of Blows hit',
     },
-    effect: `${tName} ${saveAbility.toUpperCase()} save d20=${d20}${modSign}${saveMod}=${total} vs DC ${dc} → ${saved ? 'SAVED' : effect === 'push' ? 'pushed 15 ft' : 'knocked PRONE'}.`,
+    effect: `${tName} ${saveAbility.toUpperCase()} save ${formatSaveTotal(saveResult)} vs DC ${dc} → ${saveResult.saved ? 'SAVED' : effect === 'push' ? 'pushed 15 ft' : 'knocked PRONE'}.${saveNotesLabel(saveResult)}`,
     targets: [{
       name: tName,
       tokenId: target.id,
-      effect: saved
-        ? `SAVED (${total} ≥ ${dc})`
-        : `FAILED (${total} < ${dc}) — ${effect === 'push' ? 'pushed 15 ft' : 'prone'}`,
-      ...(!saved && condName ? { conditionsApplied: [condName] } : {}),
+      effect: actionSaveEffect(saveResult, saveAbility, dc, 'no effect', effect === 'push' ? 'pushed 15 ft' : 'prone'),
+      ...(!saveResult.saved && condName ? { conditionsApplied: [condName] } : {}),
     }],
     notes: [
       `Open Hand Monk L3`,
       `Save: ${saveAbility.toUpperCase()} DC ${dc}`,
-      `d20: ${d20}; Save mod: ${modSign}${saveMod}; Total: ${total}`,
+      `Save roll: ${formatSaveTotal(saveResult)}`,
+      ...saveResult.notes,
     ],
   };
   broadcastSystem(
     c.io, c.ctx,
-    `👊 **Open Hand Technique** (${label}) — ${tName}: d20=${d20}${modSign}${saveMod}=${total} vs ${dc} → ${saved ? 'SAVED' : effect === 'push' ? 'pushed 15 ft' : 'KNOCKED PRONE'}`,
+    `👊 **Open Hand Technique** (${label}) — ${tName}: ${formatSaveTotal(saveResult)} vs ${dc} → ${saveResult.saved ? 'SAVED' : effect === 'push' ? 'pushed 15 ft' : 'KNOCKED PRONE'}${saveNotesLabel(saveResult)}`,
     { actionResult: ohtBreakdown },
   );
   return true;
@@ -770,21 +760,9 @@ async function handleGrave(c: ChatCommandContext): Promise<boolean> {
     return true;
   }
   const dc = 5 + dmg;
-  const scores = typeof row?.ability_scores === 'string'
-    ? JSON.parse(row.ability_scores as string)
-    : (row?.ability_scores ?? {});
-  const prof = Number(row?.proficiency_bonus) || 2;
-  const saves = typeof row?.saving_throws === 'string'
-    ? JSON.parse(row.saving_throws as string)
-    : (row?.saving_throws ?? []);
-  const chaSave = abilityMod(scores as Record<string, number>, 'cha') +
-    (Array.isArray(saves) && saves.includes('cha') ? prof : 0);
-  const d20 = Math.floor(Math.random() * 20) + 1;
-  const total = d20 + chaSave;
-  const saved = total >= dc;
-  const sign = chaSave >= 0 ? '+' : '';
+  const saveResult = await rollTargetSave(c, caller, 'cha', dc, 'death');
   const callerName = (row?.name as string) || caller.name;
-  if (saved) {
+  if (saveResult.saved) {
     // Force HP to 1 if currently 0.
     const curHp = Number(row?.hit_points) || 0;
     if (curHp <= 0) {
@@ -813,23 +791,24 @@ async function handleGrave(c: ChatCommandContext): Promise<boolean> {
       icon: '💀',
       cost: 'Triggered on reduction to 0 HP',
     },
-    effect: `CHA save d20=${d20}${sign}${chaSave}=${total} vs DC ${dc} (5 + ${dmg} damage) → ${saved ? 'SURVIVES at 1 HP' : 'FAILS, drops normally'}.`,
+    effect: `CHA save ${formatSaveTotal(saveResult)} vs DC ${dc} (5 + ${dmg} damage) → ${saveResult.saved ? 'SURVIVES at 1 HP' : 'FAILS, drops normally'}.${saveNotesLabel(saveResult)}`,
     targets: [{
       name: callerName,
       tokenId: caller.id,
-      effect: saved ? 'Clings to unlife at 1 HP' : 'Drops normally',
-      ...(saved ? { healing: { amount: 1, hpAfter: 1 } } : {}),
+      effect: saveResult.saved ? 'Clings to unlife at 1 HP' : 'Drops normally',
+      ...(saveResult.saved ? { healing: { amount: 1, hpAfter: 1 } } : {}),
     }],
     notes: [
       `Shadow Sorcerer L1`,
       `DC formula: 5 + damage taken = 5 + ${dmg} = ${dc}`,
-      `Save: CHA d20=${d20} ${sign}${chaSave} = ${total}`,
+      `Save: CHA ${formatSaveTotal(saveResult)}`,
       `Usable 1/short rest (XGtE)`,
+      ...saveResult.notes,
     ],
   };
   broadcastSystem(
     c.io, c.ctx,
-    `💀 **Strength of the Grave** — ${callerName} clings to unlife! CHA save d20=${d20}${sign}${chaSave}=${total} vs DC ${dc} → ${saved ? '**SURVIVES at 1 HP**' : 'FAILS, drops normally'}.`,
+    `💀 **Strength of the Grave** — ${callerName} clings to unlife! CHA save ${formatSaveTotal(saveResult)} vs DC ${dc} → ${saveResult.saved ? '**SURVIVES at 1 HP**' : 'FAILS, drops normally'}.${saveNotesLabel(saveResult)}`,
     { actionResult: graveBreakdown },
   );
   return true;
@@ -1078,41 +1057,16 @@ async function handleEnthrall(c: ChatCommandContext): Promise<boolean> {
       enthrallTargets.push({ name: targetName, effect: 'Token not found' });
       continue;
     }
-    let saveMod = 0;
-    let tName = target.name;
-    if (target.characterId) {
-      const { rows: trows } = await pool.query(
-        'SELECT ability_scores, saving_throws, proficiency_bonus, name FROM characters WHERE id = $1',
-        [target.characterId],
-      );
-      const trow = trows[0] as Record<string, unknown> | undefined;
-      try {
-        const tscores = typeof trow?.ability_scores === 'string'
-          ? JSON.parse(trow.ability_scores as string)
-          : (trow?.ability_scores ?? {});
-        const prof = Number(trow?.proficiency_bonus) || 2;
-        const tsaves = typeof trow?.saving_throws === 'string'
-          ? JSON.parse(trow.saving_throws as string)
-          : (trow?.saving_throws ?? []);
-        saveMod = abilityMod(tscores as Record<string, number>, 'wis') +
-          (Array.isArray(tsaves) && tsaves.includes('wis') ? prof : 0);
-        if (trow?.name) tName = trow.name as string;
-      } catch { /* ignore */ }
-    }
-    const d20 = Math.floor(Math.random() * 20) + 1;
-    const total = d20 + saveMod;
-    const saved = total >= dc;
-    const sign = saveMod >= 0 ? '+' : '';
-    lines.push(`  • ${tName}: d20=${d20}${sign}${saveMod}=${total} → ${saved ? 'SAVED' : 'CHARMED for 1 hour'}`);
+    const saveResult = await rollTargetSave(c, target, 'wis', dc, 'charmed');
+    const tName = saveResult.displayName;
+    lines.push(`  • ${tName}: ${formatSaveTotal(saveResult)} → ${saveResult.saved ? 'SAVED' : 'CHARMED for 1 hour'}${saveNotesLabel(saveResult)}`);
     enthrallTargets.push({
       name: tName,
       tokenId: target.id,
-      effect: saved
-        ? `SAVED: WIS d20=${d20}${sign}${saveMod}=${total} vs DC ${dc}`
-        : `FAILED: WIS d20=${d20}${sign}${saveMod}=${total} vs DC ${dc} — charmed 1 hour`,
-      ...(saved ? {} : { conditionsApplied: ['charmed'] }),
+      effect: actionSaveEffect(saveResult, 'wis', dc, 'no effect', 'charmed 1 hour'),
+      ...(saveResult.saved ? {} : { conditionsApplied: ['charmed'] }),
     });
-    if (!saved) {
+    if (!saveResult.saved) {
       anyCharmed = true;
       ConditionService.applyConditionWithMeta(c.ctx.room.sessionId, target.id, {
         name: 'charmed',

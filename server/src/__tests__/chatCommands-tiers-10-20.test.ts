@@ -596,6 +596,32 @@ describe('Tier 11 — Open Hand Monk (noreact)', () => {
     expect(enemy.conditions).toContain('no-reactions');
     expect(lastBroadcast(emissions)).toMatch(/strips.*reactions/);
   });
+
+  it('applies shared DEX save advantage before knocking prone', async () => {
+    const enemy = makeToken('tEnemy', 'Enemy', {
+      characterId: 'char-enemy',
+      conditions: ['hasted' as never],
+    });
+    const s = makeScenario({
+      inCombat: true,
+      otherTokens: [enemy],
+      otherCombatants: [makeCombatant('tEnemy', { characterId: 'char-enemy' })],
+    });
+    routeCharacterQueries({
+      'char-caller': { class: 'Monk (Open Hand)', level: 3, name: 'Kai', features: [{ name: 'Open Hand Technique' }] },
+      'char-enemy': { ability_scores: { dex: 10 }, saving_throws: [], proficiency_bonus: 2, name: 'Enemy' },
+    });
+    const { io, emissions } = makeFakeIo();
+
+    await withRandomSeed([0.01, 0.99], async () => {
+      await tryHandleChatCommand(io, s.ctx, '!openhand Enemy 13 prone');
+    });
+
+    expect(enemy.conditions).not.toContain('prone');
+    const content = lastBroadcast(emissions) ?? '';
+    expect(content).toContain('SAVED');
+    expect(content).toContain('hasted: advantage on DEX save');
+  });
 });
 
 describe('Tier 11 — Shadow Sorcerer Strength of the Grave', () => {
@@ -620,6 +646,32 @@ describe('Tier 11 — Shadow Sorcerer Strength of the Grave', () => {
     });
     expect(lastBroadcast(emissions)).toMatch(/Strength of the Grave/);
     expect(lastBroadcast(emissions)).toMatch(/SURVIVES at 1 HP/);
+  });
+
+  it('applies shared CHA save advantage before survival', async () => {
+    const s = makeScenario({ inCombat: true });
+    s.caller.conditions = ['inspired' as never];
+    routeCharacterQueries({
+      'char-caller': {
+        class: 'Sorcerer (Shadow)',
+        level: 3,
+        name: 'Nyx',
+        features: [{ name: 'Strength of the Grave' }],
+        ability_scores: { cha: 10 },
+        saving_throws: [],
+        proficiency_bonus: 2,
+        hit_points: 0,
+      },
+    });
+    const { io, emissions } = makeFakeIo();
+
+    await withRandomSeed([0.01, 0.99], async () => {
+      await tryHandleChatCommand(io, s.ctx, '!grave 8');
+    });
+
+    const content = lastBroadcast(emissions) ?? '';
+    expect(content).toContain('SURVIVES at 1 HP');
+    expect(content).toContain('inspired: advantage on CHA save');
   });
 });
 
@@ -1413,6 +1465,35 @@ describe('Tier 11 — Glamour Bard Mantle', () => {
     await tryHandleChatCommand(io, s.ctx, '!mantle Ally');
     expect(s.callerEconomy.bonusAction).toBe(true);
     expect(lastBroadcast(emissions)).toMatch(/5 temp HP/);
+  });
+
+  it('applies elf charm-save advantage for Enthralling Performance', async () => {
+    const elf = makeToken('tElf', 'Elf', { characterId: 'char-elf' });
+    const s = makeScenario({
+      inCombat: true,
+      otherTokens: [elf],
+      otherCombatants: [makeCombatant('tElf', { characterId: 'char-elf' })],
+    });
+    routeCharacterQueries({
+      'char-caller': {
+        class: 'Bard (Glamour)',
+        level: 3,
+        name: 'B',
+        features: [{ name: 'Enthralling Performance' }],
+        ability_scores: { cha: 18 },
+      },
+      'char-elf': { ability_scores: { wis: 10 }, saving_throws: [], proficiency_bonus: 2, name: 'Elf', race: 'High Elf' },
+    });
+    const { io, emissions } = makeFakeIo();
+
+    await withRandomSeed([0.01, 0.99], async () => {
+      await tryHandleChatCommand(io, s.ctx, '!enthrall Elf 13');
+    });
+
+    expect(elf.conditions).not.toContain('charmed');
+    const content = lastBroadcast(emissions) ?? '';
+    expect(content).toContain('SAVED');
+    expect(content).toContain('High Elf: advantage on save vs charmed');
   });
 });
 
