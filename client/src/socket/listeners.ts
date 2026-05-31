@@ -648,32 +648,13 @@ export function registerListeners(socket: Socket): () => void {
     pushHandout(payload);
   });
 
-  // --- Rests pull a fresh snapshot because they reset HP + slots + HD +
-  // uses-per-rest across every applicable character, most of it via
-  // the !rest chat command which never hit the legacy per-event
-  // broadcast path. Snapshot catches all of it at once.
-  // --- Rest trigger from !rest chat command ---
-  // The DM fires `!rest long` or `!rest short [target]` and the
-  // server broadcasts `rest:party-trigger` to every client in the
-  // session. Each client checks: is this for me? (either no target
-  // given = party-wide, or the target matches my active character's
-  // linked token). If yes, run the existing local performLongRest /
-  // performShortRest helper — keeps the rest logic in one place
-  // (client/src/utils/rest.ts) instead of duplicating it server-side.
-  socket.on('rest:party-trigger', async (payload: { kind: 'short' | 'long'; targetTokenId?: string; triggeredBy?: string }) => {
-    const myChar = useCharacterStore.getState().myCharacter;
-    if (!myChar) return;
-    if (payload.targetTokenId) {
-      // Targeted rest — only fire for the owner of that token.
-      const tokens = useMapStore.getState().tokens;
-      const targetToken = tokens[payload.targetTokenId];
-      if (!targetToken || targetToken.characterId !== myChar.id) return;
-    }
-    const { performLongRest, performShortRest } = await import('../utils/rest');
-    if (payload.kind === 'long') performLongRest(myChar);
-    else performShortRest(myChar);
-    triggerSnapshot('rest');
-  });
+  // Rests are server-authoritative: the DM `!rest` command (restHandlers)
+  // and the player Rest button (`character:rest`) both resolve on the
+  // server and fan out `character:updated`. There is intentionally NO
+  // client-side rest listener — the old `rest:party-trigger` path was
+  // removed when rests moved server-side (a stale handler here would have
+  // re-emitted `character:rest` and double-applied the rest). See
+  // RestService + rest-command.test.ts (asserts party-trigger is gone).
 
   // Return cleanup function
   return () => {
@@ -743,6 +724,5 @@ export function registerListeners(socket: Socket): () => void {
     socket.off('drawing:streamed');
     socket.off('drawing:stream-end');
     socket.off('session:handout-received');
-    socket.off('rest:party-trigger');
   };
 }
