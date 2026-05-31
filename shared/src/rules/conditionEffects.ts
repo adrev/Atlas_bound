@@ -369,6 +369,22 @@ export const PSEUDO_CONDITION_EFFECTS: Record<string, ConditionEffect> = {
     blocksBonusActions: true,
     notes: ['Banished to another plane — removed from combat', 'Returns when concentration drops'],
   },
+  feebleminded: {
+    name: 'feebleminded',
+    color: '#5b2c6f',
+    cannotSpeak: true,
+    notes: ['INT and CHA are 1', 'Cannot cast spells, activate magic items, understand language, or communicate intelligibly'],
+  },
+  polymorphed: {
+    name: 'polymorphed',
+    color: '#27ae60',
+    notes: ['Transformed into a beast form', 'Reverts when reduced to 0 HP or concentration ends'],
+  },
+  'true-polymorphed': {
+    name: 'true-polymorphed',
+    color: '#16a085',
+    notes: ['Transformed by True Polymorph', 'Can become permanent after 1 hour of concentration'],
+  },
   'marked-for-grave': {
     name: 'marked-for-grave',
     color: '#1b2631',
@@ -683,12 +699,12 @@ export function computeSaveModifiers(
    * Resilience (poison), gnome Cunning (magic vs INT/WIS/CHA), elf
    * Fey Ancestry (charmed).
    *
-   * Save category is inferred from `savingAgainst`: passing
-   * 'frightened' as the label lets halflings get adv; 'poison' lets
-   * dwarves. Callers that don't know the flavor can skip this.
+   * Save category is inferred from `savingAgainst`: passing 'frightened'
+   * lets halflings get adv; 'poison' lets dwarves. Some effects need more
+   * than one label, e.g. a magical charm is both 'magic' and 'charmed'.
    */
   race?: string | null,
-  savingAgainst?: string | null,
+  savingAgainst?: string | readonly string[] | null,
 ): SaveModifierResult {
   let hasAdv = false;
   let hasDis = false;
@@ -741,20 +757,29 @@ export function computeSaveModifiers(
   // tiefling fire or aasimar radiant/necrotic remain defense math, not
   // save advantage.
   if (race && savingAgainst) {
-    const rawTag = savingAgainst.toLowerCase().trim();
-    const tag = rawTag === 'charm' ? 'charmed' : rawTag;
+    const rawTags = Array.isArray(savingAgainst) ? savingAgainst : [savingAgainst];
     const traits = traitsForRace(race);
-    const flag = traits?.savesVs?.[tag];
+    const seenTags = new Set<string>();
 
-    // Gnome Cunning specifically gates on INT/WIS/CHA for `magic`.
-    // Other race save traits apply regardless of ability.
-    if (flag && !(tag === 'magic' && !['int', 'wis', 'cha'].includes(ability))) {
-      if (flag === 'advantage') {
-        hasAdv = true;
-        notes.push(`${race}: advantage on save vs ${tag}`);
-      } else {
-        hasDis = true;
-        notes.push(`${race}: disadvantage on save vs ${tag}`);
+    for (const raw of rawTags) {
+      const rawTag = raw.toLowerCase().trim();
+      if (!rawTag) continue;
+      const tag = rawTag === 'charm' ? 'charmed' : rawTag;
+      if (seenTags.has(tag)) continue;
+      seenTags.add(tag);
+
+      const flag = traits?.savesVs?.[tag];
+
+      // Gnome Cunning specifically gates on INT/WIS/CHA for `magic`.
+      // Other race save traits apply regardless of ability.
+      if (flag && !(tag === 'magic' && !['int', 'wis', 'cha'].includes(ability))) {
+        if (flag === 'advantage') {
+          hasAdv = true;
+          notes.push(`${race}: advantage on save vs ${tag}`);
+        } else {
+          hasDis = true;
+          notes.push(`${race}: disadvantage on save vs ${tag}`);
+        }
       }
     }
   }

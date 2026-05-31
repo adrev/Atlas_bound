@@ -167,6 +167,11 @@ describe('computeSaveModifiers', () => {
     expect(computeSaveModifiers([], 'wis', 0, 'Wood Elf', 'charm').effectiveAdvantage).toBe('advantage');
   });
 
+  it('accepts multiple saving-against tags for overlapping spell traits', () => {
+    expect(computeSaveModifiers([], 'wis', 0, 'Wood Elf', ['magic', 'charmed']).effectiveAdvantage).toBe('advantage');
+    expect(computeSaveModifiers([], 'wis', 0, 'Forest Gnome', ['magic', 'charmed']).effectiveAdvantage).toBe('advantage');
+  });
+
   it('limits gnome cunning to INT/WIS/CHA saves against magic', () => {
     expect(computeSaveModifiers([], 'int', 0, 'Forest Gnome', 'magic').effectiveAdvantage).toBe('advantage');
     expect(computeSaveModifiers([], 'wis', 0, 'Forest Gnome', 'magic').effectiveAdvantage).toBe('advantage');

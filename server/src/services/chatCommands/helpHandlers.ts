@@ -295,7 +295,7 @@ const GROUPS: Array<{ title: string; entries: Entry[] }> = [
       { name: 'dominatebeast', usage: '!dominatebeast <target> [slot]', desc: 'L4 Druid/Sorcerer — WIS save, beasts only.' },
       { name: 'polymorph', usage: '!polymorph <target> <beast-CR>', desc: 'L4, WIS save — transform into CR ≤ X beast for 1 hr concentration.' },
       { name: 'truepolymorph', usage: '!truepolymorph <target>', desc: 'L9 — any creature/object, concentration 1 hr → permanent.' },
-      { name: 'feeblemind', usage: '!feeblemind <target>', desc: 'L8 — INT DC save, 4d8 psychic + INT/CHA → 1 until cured.' },
+      { name: 'feeblemind', usage: '!feeblemind <target>', desc: 'L8 — INT DC save, 4d6 psychic + INT/CHA → 1 until cured.' },
       { name: 'stinkingcloud', usage: '!stinkingcloud <t1> [t2 …]', desc: 'L3 — CON save vs incapacitated; save at end of each turn.' },
       { name: 'cloudkill', usage: '!cloudkill <t1> [t2 …] [slot]', desc: 'L5 — 5d8 poison, half on CON save; moves 10 ft/turn (+1d8/slot).' },
       { name: 'meteorswarm', usage: '!meteorswarm <t1> [t2 …]', desc: 'L9 — 4×40-ft radius, 20d6 fire + 20d6 bludgeoning, DEX half.' },

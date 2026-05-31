@@ -158,12 +158,14 @@ export const RULES_MATRIX: RulesMatrixEntry[] = [
     priority: 'P1',
     paths: [
       'shared/src/rules/conditionEffects.ts',
+      'server/src/services/chatCommands/saveRoll.ts',
       'server/src/services/chatCommands/saveHandler.ts',
       'client/src/utils/roll-engine.ts',
     ],
     notes: [
       'Slow and cover flat save modifiers are modeled in shared rules and applied by the server save resolver plus client roll engine.',
       'Race save traits are read from raceFeatures.savesVs; damage resistances remain defense math rather than save advantage.',
+      'Save labels can include overlapping categories so magical charm effects can trigger both gnome magic and elf charm traits.',
     ],
     nextSteps: ['Continue routing remaining individual spell chat-command save helpers through the shared resolver so every save path gets the same modifier math.'],
   },
@@ -178,11 +180,15 @@ export const RULES_MATRIX: RulesMatrixEntry[] = [
     paths: [
       'client/src/components/canvas/TokenActionPanel.tsx',
       'server/src/services/chatCommands/saveHandler.ts',
+      'server/src/services/chatCommands/spellsTier12Handler.ts',
       'server/src/services/chatCommands/spellsTier16Handler.ts',
+      'server/src/services/chatCommands/spellsTier21Handler.ts',
     ],
     notes: [
       'Tier 12 save helpers use shared save modifier math for condition/race advantage, auto-fail, and flat save modifiers.',
       'Tier 16 save helpers use shared save modifier math for condition advantage, auto-fail, and flat save modifiers.',
+      'Tier 21 save helpers use shared save modifier math for condition/race advantage, auto-fail, and flat save modifiers.',
+      'Tier 21 Feeblemind now rolls 4d6 psychic and applies the feebleminded pseudo-condition; Power Word Stun end saves are CON.',
       'Different spell paths still roll damage, apply defenses, and mutate HP differently.',
     ],
     nextSteps: ['Continue routing one spell tier/family at a time through the shared server save/damage resolver.'],
