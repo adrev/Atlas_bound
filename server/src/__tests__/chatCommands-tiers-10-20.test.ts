@@ -32,6 +32,7 @@ import { tryHandleChatCommand } from '../services/ChatCommands.js';
 import { createRoom, getAllRooms, type RoomState, type RoomPlayer, type PlayerContext } from '../utils/roomState.js';
 
 // Trigger handler registration side effects.
+import '../services/chatCommands/subclassFeaturesHandler.js';
 import '../services/chatCommands/subclassFeaturesTier10Handler.js';
 import '../services/chatCommands/subclassFeaturesTier11Handler.js';
 import '../services/chatCommands/spellsTier12Handler.js';
@@ -357,6 +358,69 @@ describe('Monk — Stunning Strike', () => {
       tokenId: 'tE',
       conditions: expect.arrayContaining(['stunned']),
     });
+  });
+});
+
+describe('Base subclass features — shared save consumers', () => {
+  it('applies shared DEX save advantage and half damage for Wrath of the Storm', async () => {
+    const enemy = makeToken('tEnemy', 'Enemy', {
+      characterId: 'char-enemy',
+      conditions: ['hasted' as never],
+    });
+    const s = makeScenario({
+      inCombat: true,
+      otherTokens: [enemy],
+      otherCombatants: [makeCombatant('tEnemy', { characterId: 'char-enemy' })],
+    });
+    routeCharacterQueries({
+      'char-caller': {
+        class: 'Cleric (Tempest)',
+        level: 3,
+        name: 'Storm',
+        features: [{ name: 'Wrath of the Storm' }],
+      },
+      'char-enemy': { ability_scores: { dex: 10 }, saving_throws: [], proficiency_bonus: 2, name: 'Enemy' },
+    });
+    const { io, emissions } = makeFakeIo();
+
+    await withRandomSeed([0.01, 0.99, 0.99, 0.99], async () => {
+      await tryHandleChatCommand(io, s.ctx, '!wrath Enemy 13 lightning');
+    });
+
+    expect(s.callerEconomy.reaction).toBe(true);
+    const content = lastBroadcast(emissions) ?? '';
+    expect(content).toContain('SAVED (half)');
+    expect(content).toContain('8 lightning');
+    expect(content).toContain('hasted: advantage on DEX save');
+  });
+
+  it('applies halfling Brave before Fey Presence fear', async () => {
+    const halfling = makeToken('tHalf', 'Pip', { characterId: 'char-half' });
+    const s = makeScenario({
+      inCombat: true,
+      otherTokens: [halfling],
+      otherCombatants: [makeCombatant('tHalf', { characterId: 'char-half' })],
+    });
+    routeCharacterQueries({
+      'char-caller': {
+        class: 'Warlock (Archfey)',
+        level: 3,
+        name: 'Fey',
+        features: [{ name: 'Fey Presence' }],
+        spell_save_dc: 13,
+      },
+      'char-half': { ability_scores: { wis: 10 }, saving_throws: [], proficiency_bonus: 2, name: 'Pip', race: 'Lightfoot Halfling' },
+    });
+    const { io, emissions } = makeFakeIo();
+
+    await withRandomSeed([0.01, 0.99], async () => {
+      await tryHandleChatCommand(io, s.ctx, '!feypresence fear Pip');
+    });
+
+    expect(halfling.conditions).not.toContain('frightened');
+    const content = lastBroadcast(emissions) ?? '';
+    expect(content).toContain('SAVED');
+    expect(content).toContain('Lightfoot Halfling: advantage on save vs frightened');
   });
 });
 

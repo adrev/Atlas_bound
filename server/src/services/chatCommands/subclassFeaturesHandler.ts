@@ -9,6 +9,7 @@ import pool from '../../db/connection.js';
 import type { Token, ActionBreakdown } from '@dnd-vtt/shared';
 import type { PlayerContext } from '../../utils/roomState.js';
 import { tokenConditionChanges } from '../../utils/conditionSources.js';
+import { formatSaveTotal, rollTargetSave, type RolledSave, type SaveAbility } from './saveRoll.js';
 
 /**
  * High-frequency subclass features that interact meaningfully with
@@ -32,6 +33,20 @@ function resolveTargetByName(ctx: PlayerContext, name: string): Token | null {
   if (matches.length === 0) return null;
   matches.sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
   return matches[0];
+}
+
+function saveNotesLabel(saveResult: RolledSave): string {
+  return saveResult.notes.length > 0 ? ` [${saveResult.notes.join(', ')}]` : '';
+}
+
+function actionSaveEffect(
+  saveResult: RolledSave,
+  ability: SaveAbility,
+  dc: number,
+  successText: string,
+  failText: string,
+): string {
+  return `${saveResult.saved ? 'SAVED' : 'FAILED'}: ${ability.toUpperCase()} ${formatSaveTotal(saveResult)} vs DC ${dc} — ${saveResult.saved ? successText : failText}${saveNotesLabel(saveResult)}`;
 }
 
 // ────── Portent (Divination Wizard L2) ────────────────────
@@ -470,6 +485,29 @@ async function handleWrath(c: ChatCommandContext): Promise<boolean> {
     whisperToCaller(c.io, c.ctx, '!wrath: no owned PC token.');
     return true;
   }
+  const { rows } = await pool.query(
+    'SELECT class, name, features FROM characters WHERE id = $1',
+    [caller.characterId],
+  );
+  const row = rows[0] as Record<string, unknown> | undefined;
+  const classLower = String(row?.class || '').toLowerCase();
+  if (!classLower.includes('cleric')) {
+    whisperToCaller(c.io, c.ctx, `!wrath: ${caller.name} isn't a Cleric.`);
+    return true;
+  }
+  let hasIt = false;
+  try {
+    const rawF = row?.features;
+    const feats = typeof rawF === 'string' ? JSON.parse(rawF as string) : (rawF ?? []);
+    hasIt = Array.isArray(feats) && feats.some(
+      (f: { name?: string }) => typeof f?.name === 'string' && /wrath\s+of\s+the\s+storm/i.test(f.name),
+    );
+  } catch { /* ignore */ }
+  if (!hasIt && !classLower.includes('tempest')) {
+    whisperToCaller(c.io, c.ctx, `!wrath: ${caller.name} isn't a Tempest Cleric.`);
+    return true;
+  }
+  const callerName = (row?.name as string) || caller.name;
   // Spend reaction.
   const economy = c.ctx.room.actionEconomies.get(caller.id);
   if (economy?.reaction) {
@@ -484,60 +522,40 @@ async function handleWrath(c: ChatCommandContext): Promise<boolean> {
       economy,
     });
   }
-  // Roll target's DEX save.
-  let saveMod = 0;
-  let tName = target.name;
-  if (target.characterId) {
-    const { rows } = await pool.query(
-      'SELECT ability_scores, saving_throws, proficiency_bonus, name FROM characters WHERE id = $1',
-      [target.characterId],
-    );
-    const row = rows[0] as Record<string, unknown> | undefined;
-    try {
-      const scores = typeof row?.ability_scores === 'string' ? JSON.parse(row.ability_scores as string) : (row?.ability_scores ?? {});
-      const dex = Math.floor((((scores as Record<string, number>).dex ?? 10) - 10) / 2);
-      const prof = Number(row?.proficiency_bonus) || 2;
-      const saves = typeof row?.saving_throws === 'string' ? JSON.parse(row.saving_throws as string) : (row?.saving_throws ?? []);
-      saveMod = dex + (Array.isArray(saves) && saves.includes('dex') ? prof : 0);
-      if (row?.name) tName = row.name as string;
-    } catch { /* ignore */ }
-  }
-  const d20 = Math.floor(Math.random() * 20) + 1;
-  const total = d20 + saveMod;
-  const saved = total >= dc;
+  const saveResult = await rollTargetSave(c, target, 'dex', dc, dmgType);
+  const tName = saveResult.displayName;
 
   // Damage: 2d8
   const r1 = Math.floor(Math.random() * 8) + 1;
   const r2 = Math.floor(Math.random() * 8) + 1;
-  const dmg = saved ? 0 : r1 + r2;
-  const modSign = saveMod >= 0 ? '+' : '';
+  const fullDmg = r1 + r2;
+  const dmg = saveResult.saved ? Math.floor(fullDmg / 2) : fullDmg;
   const wrathBreakdown: ActionBreakdown = {
-    actor: { name: caller.name, tokenId: caller.id },
+    actor: { name: callerName, tokenId: caller.id },
     action: {
       name: 'Wrath of the Storm',
       category: 'class-feature',
       icon: '⚡',
       cost: 'Reaction',
     },
-    effect: `${tName} DEX save d20=${d20}${modSign}${saveMod}=${total} vs DC ${dc} → ${saved ? 'SAVED (no damage)' : `FAILED → 2d8 = [${r1},${r2}] = **${dmg}** ${dmgType} damage`}.`,
+    effect: `${tName} DEX save ${formatSaveTotal(saveResult)} vs DC ${dc} → ${saveResult.saved ? `SAVED (half) → **${dmg}** ${dmgType} damage` : `FAILED → 2d8 = [${r1},${r2}] = **${dmg}** ${dmgType} damage`}.${saveNotesLabel(saveResult)}`,
     targets: [{
       name: tName,
       tokenId: target.id,
-      effect: saved
-        ? `SAVED (${total} ≥ ${dc}) — no damage`
-        : `FAILED (${total} < ${dc}) — ${dmg} ${dmgType} damage`,
-      ...(!saved ? { damage: { amount: dmg, damageType: dmgType } } : {}),
+      effect: actionSaveEffect(saveResult, 'dex', dc, `${dmg} ${dmgType} damage (half)`, `${dmg} ${dmgType} damage`),
+      damage: { amount: dmg, damageType: dmgType },
     }],
     notes: [
       `Tempest Cleric L1 (reaction)`,
-      `DEX save: d20=${d20} ${modSign}${saveMod} = ${total} vs DC ${dc}`,
-      ...(!saved ? [`Damage rolls: 2d8 = [${r1}, ${r2}] = ${dmg}`] : []),
+      `DEX save: ${formatSaveTotal(saveResult)} vs DC ${dc}`,
+      `Damage rolls: 2d8 = [${r1}, ${r2}] = ${fullDmg}${saveResult.saved ? `, halved to ${dmg}` : ''}`,
       `Damage type: ${dmgType}`,
+      ...saveResult.notes,
     ],
   };
   broadcastSystem(
     c.io, c.ctx,
-    `⚡ **Wrath of the Storm** — ${caller.name} blasts ${tName} (reaction, 2d8 ${dmgType}):\n   ${tName} DEX save: d20=${d20}${modSign}${saveMod}=${total} vs ${dc} → ${saved ? 'SAVED (no dmg)' : `FAILED — ${r1}+${r2} = ${dmg} ${dmgType} dmg`}`,
+    `⚡ **Wrath of the Storm** — ${callerName} blasts ${tName} (reaction, 2d8 ${dmgType}):\n   ${tName} DEX save: ${formatSaveTotal(saveResult)} vs ${dc} → ${saveResult.saved ? `SAVED (half) — ${dmg} ${dmgType} dmg` : `FAILED — ${r1}+${r2} = ${dmg} ${dmgType} dmg`}${saveNotesLabel(saveResult)}`,
     { actionResult: wrathBreakdown },
   );
   return true;
@@ -991,38 +1009,16 @@ async function handleFeyPresence(c: ChatCommandContext): Promise<boolean> {
       feyTargets.push({ name: targetName, effect: 'Token not found' });
       continue;
     }
-    // Roll WIS save.
-    let saveMod = 0;
-    let tName = target.name;
-    if (target.characterId) {
-      const { rows: trows } = await pool.query(
-        'SELECT ability_scores, saving_throws, proficiency_bonus, name FROM characters WHERE id = $1',
-        [target.characterId],
-      );
-      const trow = trows[0] as Record<string, unknown> | undefined;
-      try {
-        const scores = typeof trow?.ability_scores === 'string' ? JSON.parse(trow.ability_scores as string) : (trow?.ability_scores ?? {});
-        const wis = Math.floor((((scores as Record<string, number>).wis ?? 10) - 10) / 2);
-        const prof = Number(trow?.proficiency_bonus) || 2;
-        const saves = typeof trow?.saving_throws === 'string' ? JSON.parse(trow.saving_throws as string) : (trow?.saving_throws ?? []);
-        saveMod = wis + (Array.isArray(saves) && saves.includes('wis') ? prof : 0);
-        if (trow?.name) tName = trow.name as string;
-      } catch { /* ignore */ }
-    }
-    const d20 = Math.floor(Math.random() * 20) + 1;
-    const total = d20 + saveMod;
-    const saved = total >= dc;
-    const sign = saveMod >= 0 ? '+' : '';
-    lines.push(`  • ${tName}: d20=${d20}${sign}${saveMod}=${total} vs ${dc} → ${saved ? 'SAVED' : `${condName.toUpperCase()} until end of ${callerName}'s next turn`}`);
+    const saveResult = await rollTargetSave(c, target, 'wis', dc, condName);
+    const tName = saveResult.displayName;
+    lines.push(`  • ${tName}: ${formatSaveTotal(saveResult)} vs ${dc} → ${saveResult.saved ? 'SAVED' : `${condName.toUpperCase()} until end of ${callerName}'s next turn`}${saveNotesLabel(saveResult)}`);
     feyTargets.push({
       name: tName,
       tokenId: target.id,
-      effect: saved
-        ? `SAVED: d20=${d20}${sign}${saveMod}=${total} vs DC ${dc}`
-        : `FAILED: d20=${d20}${sign}${saveMod}=${total} vs DC ${dc} — ${condName}`,
-      ...(saved ? {} : { conditionsApplied: [condName] }),
+      effect: actionSaveEffect(saveResult, 'wis', dc, 'no effect', condName),
+      ...(saveResult.saved ? {} : { conditionsApplied: [condName] }),
     });
-    if (!saved) {
+    if (!saveResult.saved) {
       anyFailed = true;
       const currentRound = c.ctx.room.combatState?.roundNumber ?? 0;
       ConditionService.applyConditionWithMeta(c.ctx.room.sessionId, target.id, {
