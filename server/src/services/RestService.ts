@@ -10,6 +10,19 @@ export interface RestResult {
   changes: string[];
 }
 
+export interface SpendHitDieResult {
+  characterId: string;
+  name: string;
+  dieSize: number;
+  roll: number;
+  conMod: number;
+  heal: number;
+  oldHp: number;
+  newHp: number;
+  updates: Record<string, unknown>;
+  changes: string[];
+}
+
 type SpellSlots = Record<string, { max: number; used: number }>;
 type FeatureUse = { name?: string; usesTotal?: number; usesRemaining?: number; resetOn?: string | null };
 type HitDicePool = { dieSize: number; total: number; used: number };
@@ -184,6 +197,62 @@ function computeShortRest(row: Record<string, unknown>): RestResult {
 
 export function computeRest(row: Record<string, unknown>, kind: RestKind): RestResult {
   return kind === 'long' ? computeLongRest(row) : computeShortRest(row);
+}
+
+export function computeSpendHitDie(
+  row: Record<string, unknown>,
+  dieSize: number,
+  roll = Math.floor(Math.random() * dieSize) + 1,
+): SpendHitDieResult {
+  const characterId = String(row.id);
+  const name = String(row.name ?? 'Character');
+  const hitPoints = finiteNumber(row.hit_points);
+  const maxHitPoints = finiteNumber(row.max_hit_points);
+  const hitDice = parseArray<HitDicePool>(row.hit_dice);
+  const abilityScores = parseRecord<number>(row.ability_scores);
+  const con = finiteNumber(abilityScores.con ?? abilityScores.constitution, 10);
+  const conMod = Math.floor((con - 10) / 2);
+  const poolIdx = hitDice.findIndex((pool) => finiteNumber(pool.dieSize) === dieSize);
+
+  if (poolIdx < 0) {
+    return {
+      characterId, name, dieSize, roll, conMod, heal: 0, oldHp: hitPoints, newHp: hitPoints,
+      updates: {}, changes: [`No d${dieSize} Hit Dice available`],
+    };
+  }
+
+  const pool = hitDice[poolIdx];
+  if (finiteNumber(pool.used) >= finiteNumber(pool.total)) {
+    return {
+      characterId, name, dieSize, roll, conMod, heal: 0, oldHp: hitPoints, newHp: hitPoints,
+      updates: {}, changes: [`No d${dieSize} Hit Dice remaining`],
+    };
+  }
+
+  if (hitPoints >= maxHitPoints) {
+    return {
+      characterId, name, dieSize, roll, conMod, heal: 0, oldHp: hitPoints, newHp: hitPoints,
+      updates: {}, changes: ['Already at maximum HP'],
+    };
+  }
+
+  const heal = Math.max(1, roll + conMod);
+  const newHp = Math.min(maxHitPoints, hitPoints + heal);
+  const updatedHitDice = hitDice.map((poolItem, idx) => (
+    idx === poolIdx ? { ...poolItem, used: finiteNumber(poolItem.used) + 1 } : poolItem
+  ));
+  return {
+    characterId,
+    name,
+    dieSize,
+    roll,
+    conMod,
+    heal,
+    oldHp: hitPoints,
+    newHp,
+    updates: { hitPoints: newHp, hitDice: updatedHitDice },
+    changes: [`Rolled ${roll}${conMod >= 0 ? '+' : ''}${conMod} = ${heal} HP (HP ${hitPoints} -> ${newHp})`],
+  };
 }
 
 export async function persistRestUpdates(

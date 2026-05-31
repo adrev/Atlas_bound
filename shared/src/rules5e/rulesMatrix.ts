@@ -224,9 +224,9 @@ export const RULES_MATRIX: RulesMatrixEntry[] = [
     paths: ['client/src/utils/rest.ts', 'server/src/services/chatCommands/restHandlers.ts'],
     notes: [
       'DM !rest commands and player rest buttons both request server-owned character updates.',
-      'Manual short-rest Hit Dice spending still uses direct character updates from the sheet dialog.',
+      'Manual short-rest Hit Dice spending is also server-owned and rolls on the server.',
     ],
-    nextSteps: ['Move manual Hit Dice spending and remaining resource spend/refund flows into server-owned actions.'],
+    nextSteps: ['Move remaining ad-hoc resource spend/refund flows into server-owned actions.'],
   },
   {
     id: 'content.monster-actions',

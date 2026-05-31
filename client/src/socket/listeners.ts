@@ -557,6 +557,17 @@ export function registerListeners(socket: Socket): () => void {
     triggerSnapshot('character:rested');
   });
 
+  socket.on('character:hit-die-spent', (payload: { changes: string[] }) => {
+    import('../components/ui/Toast').then(({ showToast }) => {
+      showToast({
+        message: `Hit Die — ${payload.changes.join(' • ')}`,
+        variant: 'success',
+        duration: 4000,
+      });
+    });
+    triggerSnapshot('character:hit-die-spent');
+  });
+
   // --- Chat ---
   socket.on('chat:new-message', (message) => {
     const chat = useChatStore.getState();
@@ -707,6 +718,7 @@ export function registerListeners(socket: Socket): () => void {
     socket.off('character:updated');
     socket.off('character:synced');
     socket.off('character:rested');
+    socket.off('character:hit-die-spent');
     socket.off('chat:new-message');
     socket.off('chat:roll-result');
     socket.off('chat:history');

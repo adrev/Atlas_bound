@@ -513,6 +513,11 @@ export function emitCharacterRest(characterId: string, kind: 'short' | 'long') {
   triggerSnapshot('character:rest');
 }
 
+export function emitSpendHitDie(characterId: string, dieSize: number) {
+  getSocket().emit('character:spend-hit-die', { characterId, dieSize });
+  triggerSnapshot('character:spend-hit-die');
+}
+
 export function emitCharacterSyncRequest(characterId: string) {
   getSocket().emit('character:sync-request', { characterId });
 }

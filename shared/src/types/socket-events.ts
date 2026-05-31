@@ -241,6 +241,7 @@ export interface ServerDrawingEvents {
 export interface ClientCharacterEvents {
   'character:update': { characterId: string; changes: Record<string, unknown> };
   'character:rest': { characterId: string; kind: 'short' | 'long' };
+  'character:spend-hit-die': { characterId: string; dieSize: number };
   'character:sync-request': { characterId: string };
 }
 
@@ -249,6 +250,17 @@ export interface ServerCharacterEvents {
   'character:rested': {
     characterId: string;
     kind: 'short' | 'long';
+    changes: string[];
+    updates: Record<string, unknown>;
+  };
+  'character:hit-die-spent': {
+    characterId: string;
+    dieSize: number;
+    roll: number;
+    conMod: number;
+    heal: number;
+    oldHp: number;
+    newHp: number;
     changes: string[];
     updates: Record<string, unknown>;
   };
