@@ -101,6 +101,14 @@ export {
   getReachableCells, findPath,
 } from './utils/grid-math.js';
 export {
+  applyDamageWithResist,
+} from './utils/damage-resistance.js';
+export type {
+  DamageResult,
+  DefenseLists,
+  WeaponMaterial,
+} from './utils/damage-resistance.js';
+export {
   computeVisibilityPolygon, lineSegmentIntersection,
 } from './utils/visibility.js';
 

@@ -9,6 +9,8 @@ import {
   type Token,
   type AmbientLight,
 } from '@dnd-vtt/shared';
+export { applyDamageWithResist } from '@dnd-vtt/shared';
+export type { DamageResult, DefenseLists, WeaponMaterial } from '@dnd-vtt/shared';
 
 /**
  * Centralized roll engine that reads a token's conditions/buffs and
@@ -567,150 +569,6 @@ export function effectiveAC(baseAC: number, conditions: string[], dexMod: number
  */
 export function effectiveSpeed(baseSpeed: number, conditions: string[]): EffectiveStat {
   return computeEffectiveSpeed(baseSpeed, conditions) as SharedEffectiveStat;
-}
-
-// --- Damage resistance / immunity / vulnerability (Phase 3) ---
-
-export interface DamageResult {
-  /** Final amount applied to HP */
-  amount: number;
-  /** Multiplier vs the input amount: 0 immune, 0.5 resistant, 1 normal, 2 vulnerable */
-  multiplier: number;
-  /** Human-readable label for chat ("resisted Stoneskin", "vulnerable to fire", etc.) */
-  source: string;
-}
-
-interface DefenseLists {
-  resistances: string[];
-  immunities: string[];
-  vulnerabilities: string[];
-}
-
-/**
- * Apply resistance / immunity / vulnerability to a damage amount.
- *
- * Looks at:
- *   1. The character's `defenses` arrays (from DDB import or compendium)
- *   2. Active conditions:
- *        • Stoneskin → resistance to nonmagical bludgeoning, piercing, slashing
- *        • Petrified → resistance to all damage
- *
- * Returns the adjusted amount + a label for chat output.
- */
-/**
- * Weapon material markers that matter for resistance-bypass rules.
- * Werewolves / werebears / lycanthropes resist non-magical non-silvered
- * weapon damage; golems / many constructs resist non-magical
- * non-adamantine weapon damage. Optional fourth parameter on
- * `applyDamageWithResist`.
- */
-export type WeaponMaterial = 'silvered' | 'adamantine' | 'cold-iron' | null;
-
-/**
- * True when a resistance / immunity string should be SKIPPED for this
- * attack because the attack satisfies an exemption qualifier in the
- * string itself. Handles the three 5e monster-manual formats:
- *   "nonmagical attacks"                         → skip if isMagical
- *   "nonmagical attacks that aren't silvered"    → skip if silvered
- *   "nonmagical attacks that aren't adamantine"  → skip if adamantine
- *
- * Returns true = this particular resistance entry is exempted.
- */
-function resistanceExempted(
-  entry: string, isMagical: boolean, material: WeaponMaterial,
-): boolean {
-  const e = entry.toLowerCase();
-  // The entry only applies to NONMAGICAL attacks. Magical attacks skip.
-  if (/\bnon[\s-]?magical\b/.test(e)) {
-    if (isMagical) return true;
-    // Silvered / adamantine / cold-iron weapons bypass the remaining
-    // non-magical resistance via explicit "that aren't X" clause.
-    if (material === 'silvered' && /aren'?t\s+silvered|except\s+silvered/.test(e)) return true;
-    if (material === 'adamantine' && /aren'?t\s+adamantine|except\s+adamantine/.test(e)) return true;
-    if (material === 'cold-iron' && /aren'?t\s+cold[\s-]?iron|except\s+cold[\s-]?iron/.test(e)) return true;
-  }
-  return false;
-}
-
-export function applyDamageWithResist(
-  baseAmount: number,
-  damageType: string,
-  defenses: Partial<DefenseLists> | undefined,
-  conditions: string[],
-  isMagical: boolean = true,
-  material: WeaponMaterial = null,
-): DamageResult {
-  const dt = (damageType || '').toLowerCase();
-  const set = new Set(conditions.map(c => c.toLowerCase()));
-  const sourceParts: string[] = [];
-  let multiplier = 1;
-
-  // 1. Character racial / class defenses. Each entry is checked against
-  // the damage type substring — AND against the "nonmagical" /
-  // "aren't silvered" / "aren't adamantine" exemptions. Silvered
-  // longsword vs werewolf: the werewolf's "non-magical non-silvered"
-  // resistance is skipped, so full damage lands.
-  const lists: DefenseLists = {
-    resistances: (defenses?.resistances || []).map(s => s.toLowerCase()),
-    immunities: (defenses?.immunities || []).map(s => s.toLowerCase()),
-    vulnerabilities: (defenses?.vulnerabilities || []).map(s => s.toLowerCase()),
-  };
-
-  if (dt && lists.immunities.some(d => d.includes(dt) && !resistanceExempted(d, isMagical, material))) {
-    return {
-      amount: 0,
-      multiplier: 0,
-      source: `immune to ${dt}`,
-    };
-  }
-  if (dt && lists.resistances.some(d => d.includes(dt) && !resistanceExempted(d, isMagical, material))) {
-    multiplier = 0.5;
-    sourceParts.push(`resist ${dt}`);
-  }
-  if (dt && lists.vulnerabilities.some(d => d.includes(dt))) {
-    multiplier = 2;
-    sourceParts.push(`vulnerable to ${dt}`);
-  }
-
-  // 2. Petrified → resistance to ALL damage (overrides current state if more lenient)
-  if (set.has('petrified')) {
-    if (multiplier > 0.5) multiplier = 0.5;
-    sourceParts.push('Petrified (resist all)');
-  }
-
-  // 3. Stoneskin → resistance to nonmagical bludgeoning, piercing, slashing
-  if (set.has('stoneskin') && !isMagical) {
-    if (dt === 'bludgeoning' || dt === 'piercing' || dt === 'slashing') {
-      if (multiplier > 0.5) multiplier = 0.5;
-      sourceParts.push(`Stoneskin (resist ${dt})`);
-    }
-  }
-
-  // 4. Raging (Barbarian) → resistance to bludgeoning, piercing, slashing
-  // regardless of magical/non-magical (5e: "you have resistance to
-  // bludgeoning, piercing, and slashing damage" while raging — no
-  // magic qualifier).
-  if (set.has('raging')) {
-    if (dt === 'bludgeoning' || dt === 'piercing' || dt === 'slashing') {
-      if (multiplier > 0.5) multiplier = 0.5;
-      sourceParts.push(`Rage (resist ${dt})`);
-    }
-  }
-  // 5. Bear Totem (Path of the Totem Warrior L3) — while raging,
-  // resistance to ALL damage except psychic. Stacks with standard
-  // Rage resistance; psychic is explicitly excluded per RAW.
-  if (set.has('bear-raging') && set.has('raging')) {
-    if (dt !== 'psychic' && dt !== '') {
-      if (multiplier > 0.5) multiplier = 0.5;
-      sourceParts.push(`Bear Totem (resist ${dt})`);
-    }
-  }
-
-  return {
-    amount: Math.floor(baseAmount * multiplier),
-    multiplier,
-    source: sourceParts.length > 0 ? sourceParts.join(', ') : '',
-  };
 }
 
 // --- Internal helpers ---

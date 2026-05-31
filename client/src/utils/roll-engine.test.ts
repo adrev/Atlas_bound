@@ -261,5 +261,23 @@ describe('applyDamageWithResist — weapon material exemptions', () => {
     expect(result.amount).toBe(8);
     expect(result.multiplier).toBe(0.5);
   });
-});
 
+  it('resistance and vulnerability cancel to normal damage', () => {
+    const result = applyDamageWithResist(
+      20,
+      'fire',
+      { resistances: ['fire'], immunities: [], vulnerabilities: ['fire'] },
+      [],
+      true,
+    );
+    expect(result.amount).toBe(20);
+    expect(result.multiplier).toBe(1);
+  });
+
+  it('ignores malformed defense lists instead of throwing', () => {
+    const malformed = { resistances: 'fire' } as unknown as Parameters<typeof applyDamageWithResist>[2];
+    const result = applyDamageWithResist(20, 'fire', malformed, [], true);
+    expect(result.amount).toBe(20);
+    expect(result.multiplier).toBe(1);
+  });
+});
