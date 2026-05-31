@@ -166,6 +166,7 @@ export const RULES_MATRIX: RulesMatrixEntry[] = [
       'server/src/services/chatCommands/monkHandler.ts',
       'server/src/services/chatCommands/miscClassHandlers.ts',
       'server/src/services/chatCommands/hazardsHandler.ts',
+      'server/src/services/chatCommands/utilityHandlers.ts',
       'client/src/utils/roll-engine.ts',
     ],
     notes: [
@@ -178,6 +179,7 @@ export const RULES_MATRIX: RulesMatrixEntry[] = [
       'Monk Stunning Strike routes its CON save through the shared save helper.',
       'Dragonborn Breath Weapon and Battle Master save maneuvers route through the shared save helper.',
       'Disease and poison hazard saves route through the shared save helper.',
+      'Turn Undead routes its WIS save through the shared save helper.',
     ],
     nextSteps: ['Continue routing remaining individual spell and feature chat-command save helpers through the shared resolver so every save path gets the same modifier math.'],
   },

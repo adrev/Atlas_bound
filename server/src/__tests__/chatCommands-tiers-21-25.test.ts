@@ -30,6 +30,7 @@ import '../services/chatCommands/subclassFeaturesTier25Handler.js';
 import '../services/chatCommands/hazardsHandler.js';
 import '../services/chatCommands/environmentHandler.js';
 import '../services/chatCommands/downtimeHandler.js';
+import '../services/chatCommands/utilityHandlers.js';
 import '../services/chatCommands/racialSpellsHandler.js';
 import '../services/chatCommands/throwWeaponHandler.js';
 
@@ -965,6 +966,63 @@ describe('Downtime — !currency', () => {
     const out = whispers(emissions).join('\n');
     expect(out).toMatch(/Currency conversion/i);
     expect(out).toMatch(/15,000.*cp/); // 150gp = 15,000 cp
+  });
+});
+
+describe('Utility — !turnundead', () => {
+  it('applies frightened on a failed shared WIS save', async () => {
+    const target = makeToken('tSkeleton', 'Skeleton', { characterId: 'char-skeleton' });
+    const s = makeScenario({ role: 'dm', inCombat: true, otherTokens: [target] });
+    routeCharacterQueries({
+      'char-caller': {
+        class: 'Cleric',
+        spell_save_dc: 15,
+        name: 'Priest',
+      },
+      'char-skeleton': {
+        ability_scores: { wis: 10 },
+        saving_throws: [],
+        proficiency_bonus: 2,
+        name: 'Skeleton',
+      },
+    });
+    const { io, emissions } = makeFakeIo();
+
+    await withRandomSeed([0.02], async () => {
+      await tryHandleChatCommand(io, s.ctx, '!turnundead Skeleton');
+    });
+
+    expect(target.conditions).toContain('frightened');
+    expect(lastSystemLine(emissions)).toContain('FAILED');
+  });
+
+  it('applies halfling Brave advantage before Turn Undead frightens', async () => {
+    const target = makeToken('tGhostwise', 'Ghostwise', { characterId: 'char-ghostwise' });
+    const s = makeScenario({ role: 'dm', inCombat: true, otherTokens: [target] });
+    routeCharacterQueries({
+      'char-caller': {
+        class: 'Cleric',
+        spell_save_dc: 15,
+        name: 'Priest',
+      },
+      'char-ghostwise': {
+        ability_scores: { wis: 10 },
+        saving_throws: [],
+        proficiency_bonus: 2,
+        name: 'Ghostwise',
+        race: 'Ghostwise Halfling',
+      },
+    });
+    const { io, emissions } = makeFakeIo();
+
+    await withRandomSeed([0.02, 0.99], async () => {
+      await tryHandleChatCommand(io, s.ctx, '!turnundead Ghostwise');
+    });
+
+    expect(target.conditions).not.toContain('frightened');
+    const line = lastSystemLine(emissions) ?? '';
+    expect(line).toContain('SAVED');
+    expect(line).toContain('Ghostwise Halfling: advantage on save vs frightened');
   });
 });
 
