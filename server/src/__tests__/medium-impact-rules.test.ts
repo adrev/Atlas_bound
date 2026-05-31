@@ -231,6 +231,68 @@ describe('Unarmored Defense — DDB import bypasses the formula', () => {
 });
 
 // ═══════════════════════════════════════════════════════════════════
+// Heavy armor speed penalty — manual sheets only
+// ═══════════════════════════════════════════════════════════════════
+
+describe('Heavy armor speed penalties', () => {
+  it('applies the -10 ft penalty to manual characters below the STR requirement', async () => {
+    const sessionId = 's-heavy-speed';
+    seedRoom(sessionId, [makeToken('tKnight', 'Knight', { characterId: 'char-knight' })]);
+    mockManualCharacter({
+      ability_scores: JSON.stringify({ str: 12, dex: 10, con: 10, int: 10, wis: 10, cha: 10 }),
+      inventory: JSON.stringify([
+        { name: 'Chain Mail', category: 'armor', equipped: true },
+      ]),
+      speed: 30,
+    });
+
+    const state = await CombatService.startCombatAsync(sessionId, ['tKnight']);
+
+    expect(state.combatants[0].speed).toBe(20);
+  });
+
+  it('does not double-apply armor speed penalties to DDB-imported characters', async () => {
+    const sessionId = 's-heavy-speed-ddb';
+    seedRoom(sessionId, [makeToken('tDdbKnight', 'Knight', { characterId: 'char-ddb-knight' })]);
+    mockManualCharacter({
+      dndbeyond_id: 'beyond-42',
+      ability_scores: JSON.stringify({ str: 12, dex: 10, con: 10, int: 10, wis: 10, cha: 10 }),
+      inventory: JSON.stringify([
+        { name: 'Chain Mail', category: 'armor', equipped: true },
+      ]),
+      speed: 20,
+    });
+
+    const state = await CombatService.startCombatAsync(sessionId, ['tDdbKnight']);
+
+    expect(state.combatants[0].speed).toBe(20);
+  });
+
+  it('uses the same manual armor speed penalty when adding a combatant mid-fight', async () => {
+    const sessionId = 's-heavy-speed-add';
+    seedRoom(
+      sessionId,
+      [
+        makeToken('tCurrent', 'Current'),
+        makeToken('tKnight', 'Knight', { characterId: 'char-knight' }),
+      ],
+      [makeCombatant('tCurrent', { initiative: 20 })],
+    );
+    mockManualCharacter({
+      ability_scores: JSON.stringify({ str: 12, dex: 10, con: 10, int: 10, wis: 10, cha: 10 }),
+      inventory: JSON.stringify([
+        { name: 'Chain Mail', category: 'armor', equipped: true },
+      ]),
+      speed: 30,
+    });
+
+    const combatant = await CombatService.addCombatantAsync(sessionId, 'tKnight');
+
+    expect(combatant?.speed).toBe(20);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════
 // Surprise — setSurprise + Alert immunity + skip-in-round-1
 // ═══════════════════════════════════════════════════════════════════
 

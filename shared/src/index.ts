@@ -43,6 +43,7 @@ export type {
 
 // Utils
 export { calculateEquipmentBonuses } from './utils/equipmentBonuses.js';
+export type { EquippedItem, EquipmentAbilityScores, EquipmentBonuses } from './utils/equipmentBonuses.js';
 
 // Constants
 export { CONDITIONS, CONDITION_MAP } from './constants/conditions.js';
