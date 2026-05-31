@@ -177,8 +177,11 @@ export const RULES_MATRIX: RulesMatrixEntry[] = [
       'server/src/services/chatCommands/saveHandler.ts',
       'server/src/services/chatCommands/spellsTier16Handler.ts',
     ],
-    notes: ['Different spell paths roll damage, apply defenses, and mutate HP differently.'],
-    nextSteps: ['Route one save-for-half spell family through a shared server resolver.'],
+    notes: [
+      'Tier 16 save helpers use shared save modifier math for condition advantage, auto-fail, and flat save modifiers.',
+      'Different spell paths still roll damage, apply defenses, and mutate HP differently.',
+    ],
+    nextSteps: ['Continue routing one spell tier/family at a time through the shared server save/damage resolver.'],
   },
   {
     id: 'action.grapple-shove',
