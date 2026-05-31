@@ -39,8 +39,8 @@ The target architecture is server-authoritative mechanics with client preview:
 | Save modifiers | `core-5e` | partial | P1 | Slow and cover require flat save modifiers, not only advantage/disadvantage. |
 | Spell AoE commands | `manual-helper` -> `core-5e` | inconsistent | P1 | Some commands apply HP, some only render cards. Normalize through the server resolver. |
 | Grapple and shove | `core-5e` | partial | P2 | Opposed checks, size limit, and Action cost are enforced; reach/free-hand/incapacitated-target nuance still needs deeper automation. |
-| Hide and stealth | `manual-helper` | partial | P2 | Useful helper, but not rules-complete until it uses line of sight, lighting, cover, and active searching. |
-| Equipment and armor | `core-5e` | partial | P2 | AC and manual heavy armor speed penalties are covered; stealth disadvantage is still only data until stealth is more automated. |
+| Hide and stealth | `manual-helper` | partial | P2 | Useful helper and now applies armor-imposed Stealth disadvantage, but not rules-complete until it uses line of sight, lighting, cover, and active searching. |
+| Equipment and armor | `core-5e` | partial | P2 | AC, manual heavy armor speed penalties, and Stealth disadvantage data are covered; broader feature/resource interactions still need cleanup. |
 | Rests and resources | `core-5e` | partial | P2 | DM `!rest`, player rest buttons, manual Hit Dice spending, and spell-slot spend/refund counters are server-owned; broader feature/resource spend flows still need cleanup. |
 | Race, class, feat features | mixed | partial | P2 | Many are notes or chat macros. Each needs automation or explicit manual-helper labeling. |
 | Monsters and compendium actions | `core-5e` | partial | P3 | Raw stat-block prose is useful for browsing but not enough for automated combat. |
