@@ -533,6 +533,18 @@ export function canTargetToken(ctx: PlayerContext, tokenId: string): boolean {
 }
 
 /**
+ * True if the player can apply healing to the specified token.
+ * Healing is intentionally broader than damage: players may heal their
+ * own PC or another player-owned PC, but not unowned NPC/enemy tokens.
+ */
+export function canHealToken(ctx: PlayerContext, tokenId: string): boolean {
+  if (ctx.player.role === 'dm') return true;
+  const token = ctx.room.tokens.get(tokenId);
+  if (!token) return false;
+  return Boolean(token.ownerUserId);
+}
+
+/**
  * True if the given token is alive and able to act in combat — HP > 0
  * and no hard-incapacitating condition. Used by combat action handlers
  * to block downed tokens from attacking, casting, moving, etc. DM

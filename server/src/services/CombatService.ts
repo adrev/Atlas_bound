@@ -1017,6 +1017,8 @@ export interface HpChangeResult {
    * the failure tally.
    */
   autoDeathSaveFailure?: { successes: number; failures: number };
+  /** Number of death-save failures applied by this damage event. */
+  autoDeathSaveFailuresApplied?: number;
   /**
    * Populated when applyDamage auto-applied a condition to the token
    * (e.g. `unconscious` when HP drops to 0). Caller broadcasts
@@ -1035,6 +1037,16 @@ export interface HpChangeResult {
    * broadcast `map:token-updated` for each.
    */
   releasedGrappleTokenIds?: string[];
+}
+
+export interface ApplyDamageOptions {
+  /** 5e: a critical hit against a creature at 0 HP causes two failures. */
+  criticalHit?: boolean;
+  /**
+   * Explicit override for unusual damage sources. Defaults to 2 for a
+   * critical hit and 1 for normal damage when the target is already at 0 HP.
+   */
+  deathSaveFailures?: 1 | 2;
 }
 
 function setTokenConditions(
@@ -1095,7 +1107,12 @@ export function persistSessionCombatState(sessionId: string): void {
   if (room?.combatState) persistCombatState(room.combatState);
 }
 
-export async function applyDamage(sessionId: string, tokenId: string, amount: number): Promise<HpChangeResult> {
+export async function applyDamage(
+  sessionId: string,
+  tokenId: string,
+  amount: number,
+  options: ApplyDamageOptions = {},
+): Promise<HpChangeResult> {
   const room = getRoom(sessionId);
   if (!room?.combatState) throw new Error('No active combat');
   const combatant = room.combatState.combatants.find(c => c.tokenId === tokenId);
@@ -1124,10 +1141,14 @@ export async function applyDamage(sessionId: string, tokenId: string, amount: nu
   }
 
   let autoDeathSaveFailure: { successes: number; failures: number } | undefined;
+  let autoDeathSaveFailuresApplied: number | undefined;
   if (wasAlreadyDown && combatant.hp === 0 && amount > 0) {
+    const failureCount = options.deathSaveFailures ?? (options.criticalHit ? 2 : 1);
     combatant.deathSaves = combatant.deathSaves ?? { successes: 0, failures: 0 };
-    combatant.deathSaves.failures = Math.min(3, combatant.deathSaves.failures + 1);
+    const failuresBefore = combatant.deathSaves.failures;
+    combatant.deathSaves.failures = Math.min(3, combatant.deathSaves.failures + failureCount);
     autoDeathSaveFailure = { ...combatant.deathSaves };
+    autoDeathSaveFailuresApplied = combatant.deathSaves.failures - failuresBefore;
   }
 
   // 5e: dropping a PC to 0 HP auto-applies the unconscious condition.
@@ -1175,6 +1196,7 @@ export async function applyDamage(sessionId: string, tokenId: string, amount: nu
     change: -amount,
     characterId: combatant.characterId ?? null,
     autoDeathSaveFailure,
+    autoDeathSaveFailuresApplied,
     autoAppliedConditions,
     autoRemovedConditions,
     releasedGrappleTokenIds,

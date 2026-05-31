@@ -3,7 +3,7 @@ import { useMapStore } from '../../stores/useMapStore';
 import { useCharacterStore } from '../../stores/useCharacterStore';
 import { useSessionStore } from '../../stores/useSessionStore';
 import { useCombatStore } from '../../stores/useCombatStore';
-import { emitRoll, emitCharacterUpdate, emitTokenUpdate, emitSystemMessage, emitTokenAdd, emitUseAction, emitDash, emitSpellCastAttempt, emitAttackHitAttempt, emitMobileAttacked } from '../../socket/emitters';
+import { emitRoll, emitCharacterUpdate, emitTokenUpdate, emitSystemMessage, emitTokenAdd, emitUseAction, emitDash, emitSpellCastAttempt, emitAttackHitAttempt, emitMobileAttacked, emitDamage, emitHeal } from '../../socket/emitters';
 import { theme } from '../../styles/theme';
 import type {
   ActionType, AttackBreakdown, AttackBreakdownModifier, AttackBreakdownDamageSource,
@@ -701,6 +701,30 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
         }
       };
 
+      const applyTargetDamage = (
+        tokenId: string,
+        cid: string,
+        newHp: number,
+        damageAmount: number,
+        criticalHit = false,
+      ): boolean => {
+        if (damageAmount > 0 && useCombatStore.getState().active) {
+          emitDamage(tokenId, damageAmount, { criticalHit });
+          return true;
+        }
+        updateTargetHp(cid, newHp);
+        return false;
+      };
+
+      const applyTargetHealing = (tokenId: string, cid: string, newHp: number, healingAmount: number): boolean => {
+        if (healingAmount > 0 && useCombatStore.getState().active) {
+          emitHeal(tokenId, healingAmount);
+          return true;
+        }
+        updateTargetHp(cid, newHp);
+        return false;
+      };
+
       const casterToken = useMapStore.getState().tokens[currentTargeting.casterTokenId];
       const casterChar = casterToken?.characterId ? useCharacterStore.getState().allCharacters[casterToken.characterId] : null;
       // Use the effective DC helpers — they recompute from class+ability if
@@ -1141,9 +1165,9 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
               }
             }
             setTimeout(() => {
-              updateTargetHp(effectiveCharId, newHp);
+              const serverHandled = applyTargetDamage(targetToken.id, effectiveCharId, newHp, resisted.final, isCrit);
               // Trigger CON save for concentration + clear endsOnDamage conditions
-              if (resisted.final > 0) emitDamageSideEffects(targetToken.id, resisted.final);
+              if (!serverHandled && resisted.final > 0) emitDamageSideEffects(targetToken.id, resisted.final);
             }, 400);
           }
         }
@@ -1242,8 +1266,8 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
                 }
               }
               setTimeout(() => {
-                updateTargetHp(effectiveCharId, newHp);
-                if (resisted.final > 0) emitDamageSideEffects(targetToken.id, resisted.final);
+                const serverHandled = applyTargetDamage(targetToken.id, effectiveCharId, newHp, resisted.final);
+                if (!serverHandled && resisted.final > 0) emitDamageSideEffects(targetToken.id, resisted.final);
               }, 400);
             } else if (saved && !halfOnSave) {
               resultParts.push('no damage');
@@ -1308,7 +1332,7 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
             const freshHp = freshChar ? (typeof freshChar.hitPoints === 'number' ? freshChar.hitPoints : parseInt(String(freshChar.hitPoints)) || 0) : targetHp;
             const newHp = Math.min(targetMaxHp, freshHp + heal);
             resultParts.push(`+${heal} HP (${freshHp}→${newHp})`);
-            updateTargetHp(effectiveCharId, newHp);
+            applyTargetHealing(targetToken.id, effectiveCharId, newHp, heal);
 
             spellTargetOutcome = {
               name: targetName,
@@ -1352,8 +1376,8 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
             const dmgChange = resisted.final !== dmg ? `${dmg}→${resisted.final}` : `${resisted.final}`;
             resultParts.push(`${dmgChange} ${dmgWord}dmg${resistTag} (HP ${freshHp}→${newHp})`);
             if (newHp === 0) resultParts.push('💀 DOWN');
-            updateTargetHp(effectiveCharId, newHp);
-            if (resisted.final > 0) emitDamageSideEffects(targetToken.id, resisted.final);
+            const serverHandled = applyTargetDamage(targetToken.id, effectiveCharId, newHp, resisted.final);
+            if (!serverHandled && resisted.final > 0) emitDamageSideEffects(targetToken.id, resisted.final);
 
             spellTargetOutcome = {
               name: targetName,
@@ -2225,8 +2249,8 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
           };
 
           setTimeout(() => {
-            updateTargetHp(effectiveCharId, wNewHp);
-            if (wTotalResisted > 0) emitDamageSideEffects(targetToken.id, wTotalResisted);
+            const serverHandled = applyTargetDamage(targetToken.id, effectiveCharId, wNewHp, wTotalResisted, wIsCrit);
+            if (!serverHandled && wTotalResisted > 0) emitDamageSideEffects(targetToken.id, wTotalResisted);
           }, 300);
         }
 
@@ -4019,9 +4043,13 @@ async function resolveAreaSpell(
         // Schedule the actual HP update + damage side effects (CON save,
         // Sleep ends-on-damage, Hideous Laughter save retry)
         setTimeout(() => {
-          emitCharacterUpdate(aCharId, { hitPoints: newHp });
-          useCharacterStore.getState().applyRemoteUpdate(aCharId, { hitPoints: newHp });
-          if (finalDmg > 0) emitDamageSideEffects(aToken.id, finalDmg);
+          if (useCombatStore.getState().active && finalDmg > 0) {
+            emitDamage(aToken.id, finalDmg);
+          } else if (!useCombatStore.getState().active) {
+            emitCharacterUpdate(aCharId, { hitPoints: newHp });
+            useCharacterStore.getState().applyRemoteUpdate(aCharId, { hitPoints: newHp });
+            if (finalDmg > 0) emitDamageSideEffects(aToken.id, finalDmg);
+          }
         }, delay + 300);
 
         // Structured damage row with the same rolled faces.

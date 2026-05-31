@@ -324,6 +324,7 @@ export const combatSetInitiativeSchema = z.object({
 export const combatDamageSchema = z.object({
   tokenId: z.string().min(1),
   amount: z.number().int().min(0).max(9999),
+  criticalHit: z.boolean().optional(),
 });
 
 export const combatHealSchema = z.object({
