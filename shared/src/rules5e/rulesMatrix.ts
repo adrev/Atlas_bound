@@ -80,7 +80,7 @@ export const RULES_MATRIX: RulesMatrixEntry[] = [
     label: 'Death saves and stabilization',
     category: 'combat',
     mode: 'core-5e',
-    status: 'partial',
+    status: 'implemented',
     authority: 'server',
     priority: 'P1',
     paths: [
@@ -90,10 +90,10 @@ export const RULES_MATRIX: RulesMatrixEntry[] = [
     notes: [
       'A creature with three death-save successes is stable at 0 HP and remains unconscious.',
       'A natural 20 heals 1 HP and should clear unconscious/stable state.',
+      'Non-DM death saves require the token to be at 0 HP, in active combat, on its own turn, not stable, and not already rolled this round.',
     ],
     nextSteps: [
-      'Persist stable/unconscious state consistently.',
-      'Enforce one death save per turn.',
+      'Keep regression coverage as combat state expands.',
     ],
   },
   {
@@ -101,12 +101,12 @@ export const RULES_MATRIX: RulesMatrixEntry[] = [
     label: 'Healing downed characters',
     category: 'combat',
     mode: 'core-5e',
-    status: 'partial',
+    status: 'implemented',
     authority: 'server',
     priority: 'P1',
     paths: ['server/src/services/CombatService.ts', 'server/src/socket/combat/hpEvents.ts'],
-    notes: ['Healing above 0 HP should clear death saves plus stable/unconscious state.'],
-    nextSteps: ['Broadcast token condition changes whenever healing changes downed-state conditions.'],
+    notes: ['Healing above 0 HP clears death saves plus stable/unconscious state and broadcasts the resulting token condition patch.'],
+    nextSteps: ['Keep healing routed through server-owned HP actions as more item/spell healers are automated.'],
   },
   {
     id: 'combat.movement-distance',
