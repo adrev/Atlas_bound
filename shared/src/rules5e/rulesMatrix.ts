@@ -161,6 +161,7 @@ export const RULES_MATRIX: RulesMatrixEntry[] = [
       'server/src/services/chatCommands/saveRoll.ts',
       'server/src/services/chatCommands/saveHandler.ts',
       'server/src/services/chatCommands/subclassFeaturesTier13Handler.ts',
+      'server/src/services/chatCommands/monkHandler.ts',
       'client/src/utils/roll-engine.ts',
     ],
     notes: [
@@ -168,8 +169,9 @@ export const RULES_MATRIX: RulesMatrixEntry[] = [
       'Race save traits are read from raceFeatures.savesVs; damage resistances remain defense math rather than save advantage.',
       'Save labels can include overlapping categories so magical charm effects can trigger both gnome magic and elf charm traits.',
       'Tier 13 Channel Divinity feature saves route through the shared save helper.',
+      'Monk Stunning Strike routes its CON save through the shared save helper.',
     ],
-    nextSteps: ['Continue routing remaining individual spell chat-command save helpers through the shared resolver so every save path gets the same modifier math.'],
+    nextSteps: ['Continue routing remaining individual spell and feature chat-command save helpers through the shared resolver so every save path gets the same modifier math.'],
   },
   {
     id: 'spell.aoe-consistency',

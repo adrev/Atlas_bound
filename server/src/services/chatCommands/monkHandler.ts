@@ -9,6 +9,7 @@ import pool from '../../db/connection.js';
 import type { Token, ActionBreakdown } from '@dnd-vtt/shared';
 import type { PlayerContext } from '../../utils/roomState.js';
 import { tokenConditionChanges } from '../../utils/conditionSources.js';
+import { formatSaveTotal, rollTargetSave } from './saveRoll.js';
 
 /**
  * Monk class features — Ki pool + bonus-action spenders.
@@ -89,6 +90,10 @@ function spendKi(ki: { max: number; remaining: number }, amount: number): boolea
   if (ki.remaining < amount) return false;
   ki.remaining -= amount;
   return true;
+}
+
+function saveNotesLabel(notes: string[]): string {
+  return notes.length > 0 ? ` [${notes.join(', ')}]` : '';
 }
 
 // ────── !ki status | use [n] | reset | set <n> ──────────────
@@ -283,35 +288,15 @@ async function handleStunStrike(c: ChatCommandContext): Promise<boolean> {
     return true;
   }
 
-  // Roll the target's CON save. We reuse the !save pattern inline
-  // since we only need one target + no damage.
-  let saveMod = 0;
-  let tName = target.name;
-  if (target.characterId) {
-    const { rows } = await pool.query(
-      'SELECT ability_scores, saving_throws, proficiency_bonus, name FROM characters WHERE id = $1',
-      [target.characterId],
-    );
-    const row = rows[0] as Record<string, unknown> | undefined;
-    try {
-      const scores = typeof row?.ability_scores === 'string' ? JSON.parse(row.ability_scores as string) : (row?.ability_scores ?? {});
-      const con = Math.floor((((scores as Record<string, number>).con ?? 10) - 10) / 2);
-      const prof = Number(row?.proficiency_bonus) || 2;
-      const saves = typeof row?.saving_throws === 'string' ? JSON.parse(row.saving_throws as string) : (row?.saving_throws ?? []);
-      const isProf = Array.isArray(saves) && saves.includes('con');
-      saveMod = con + (isProf ? prof : 0);
-      if (row?.name) tName = row.name as string;
-    } catch { /* ignore */ }
-  }
-  const d20 = Math.floor(Math.random() * 20) + 1;
-  const total = d20 + saveMod;
-  const saved = total >= dc;
-  const modSign = saveMod >= 0 ? '+' : '';
+  const saveResult = await rollTargetSave(c, target, 'con', dc, 'stunned');
+  const tName = saveResult.displayName;
+  const saveText = formatSaveTotal(saveResult);
+  const notesText = saveNotesLabel(saveResult.notes);
 
   const lines: string[] = [];
   lines.push(`👊 ${monk.monkName} uses Stunning Strike on ${tName}! (CON DC ${dc})`);
-  lines.push(`   CON save: d20=${d20}${modSign}${saveMod}=${total} → ${saved ? 'SAVED' : 'STUNNED (until end of next turn)'}`);
-  if (!saved) {
+  lines.push(`   CON save: ${saveText} → ${saveResult.saved ? 'SAVED' : 'STUNNED (until end of next turn)'}${notesText}`);
+  if (!saveResult.saved) {
     const currentRound = c.ctx.room.combatState?.roundNumber ?? 0;
     ConditionService.applyConditionWithMeta(c.ctx.room.sessionId, target.id, {
       name: 'stunned',
@@ -334,19 +319,20 @@ async function handleStunStrike(c: ChatCommandContext): Promise<boolean> {
       icon: '👊',
       cost: '1 ki + rider on melee hit',
     },
-    effect: `${tName} CON save d20=${d20}${modSign}${saveMod}=${total} vs DC ${dc} → ${saved ? 'SAVED' : 'STUNNED until end of next turn'}.`,
+    effect: `${tName} CON save ${saveText} vs DC ${dc} → ${saveResult.saved ? 'SAVED' : 'STUNNED until end of next turn'}.${notesText}`,
     targets: [{
       name: tName,
       tokenId: target.id,
-      effect: saved
-        ? `SAVED (${total} ≥ ${dc})`
-        : `FAILED (${total} < ${dc}) — stunned until end of next turn`,
-      ...(saved ? {} : { conditionsApplied: ['stunned'] }),
+      effect: saveResult.saved
+        ? `SAVED (${saveResult.total} ≥ ${dc})`
+        : `FAILED (${saveResult.total} < ${dc}) — stunned until end of next turn`,
+      ...(saveResult.saved ? {} : { conditionsApplied: ['stunned'] }),
     }],
     notes: [
       `Monk L${monk.level}`,
-      `Save: CON d20=${d20} ${modSign}${saveMod} = ${total} vs DC ${dc}`,
+      `Save: CON ${saveText} vs DC ${dc}`,
       `Ki remaining: ${ki.remaining}/${ki.max}`,
+      ...saveResult.notes,
     ],
   };
   broadcastSystem(c.io, c.ctx, lines.join('\n'), { actionResult: ssBreakdown });
