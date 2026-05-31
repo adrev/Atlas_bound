@@ -253,4 +253,88 @@ describe('character:rest socket event', () => {
     expect(chat.sessionId).toBe('session-rest-event');
     expect(chat.content).toContain('Rook spends 1d10 Hit Die');
   });
+
+  it('adjusts spell slots on the server with a locked character row', async () => {
+    seedPlayerRoom();
+    mockQuery.mockImplementation(async (sql: string) => {
+      if (sql.includes('FROM session_players')) return { rows: [{ '?column?': 1 }] };
+      return { rows: [] };
+    });
+    mockClientQuery.mockImplementation(async (sql: string) => {
+      if (sql.includes('SELECT * FROM characters')) {
+        return {
+          rows: [{
+            id: 'char-1',
+            name: 'Rook',
+            user_id: 'player-1',
+            spell_slots: { '1': { max: 2, used: 0 } },
+          }],
+        };
+      }
+      return { rows: [] };
+    });
+    const { io, emissions } = fakeIo();
+    const { socket, handlers, emissions: socketEmissions } = fakeSocket();
+    registerCharacterEvents(io, socket);
+
+    await handlers.get('character:spell-slot-adjust')?.({ characterId: 'char-1', level: 1, delta: 1 });
+
+    const sqlLog = mockClientQuery.mock.calls.map((call) => call[0]);
+    expect(sqlLog).toContain('BEGIN');
+    expect(sqlLog).toContain('COMMIT');
+    expect(sqlLog).not.toContain('ROLLBACK');
+    expect(sqlLog.some((sql) => String(sql).includes('FOR UPDATE'))).toBe(true);
+    const characterUpdate = emissions.find((e) => e.event === 'character:updated')?.payload as {
+      characterId?: string;
+      changes?: Record<string, unknown>;
+    };
+    expect(characterUpdate.characterId).toBe('char-1');
+    expect(characterUpdate.changes?.spellSlots).toEqual({ '1': { max: 2, used: 1 } });
+    const adjusted = socketEmissions.find((e) => e.event === 'character:spell-slot-adjusted')?.payload as {
+      level?: number;
+      oldUsed?: number;
+      newUsed?: number;
+      changes?: string[];
+    };
+    expect(adjusted.level).toBe(1);
+    expect(adjusted.oldUsed).toBe(0);
+    expect(adjusted.newUsed).toBe(1);
+    expect(adjusted.changes?.join(' ')).toContain('spent');
+  });
+
+  it('does not broadcast a spell slot update when the slot is already spent', async () => {
+    seedPlayerRoom();
+    mockQuery.mockImplementation(async (sql: string) => {
+      if (sql.includes('FROM session_players')) return { rows: [{ '?column?': 1 }] };
+      return { rows: [] };
+    });
+    mockClientQuery.mockImplementation(async (sql: string) => {
+      if (sql.includes('SELECT * FROM characters')) {
+        return {
+          rows: [{
+            id: 'char-1',
+            name: 'Rook',
+            user_id: 'player-1',
+            spell_slots: { '1': { max: 1, used: 1 } },
+          }],
+        };
+      }
+      return { rows: [] };
+    });
+    const { io, emissions } = fakeIo();
+    const { socket, handlers, emissions: socketEmissions } = fakeSocket();
+    registerCharacterEvents(io, socket);
+
+    await handlers.get('character:spell-slot-adjust')?.({ characterId: 'char-1', level: 1, delta: 1 });
+
+    expect(emissions.some((e) => e.event === 'character:updated')).toBe(false);
+    const sqlLog = mockClientQuery.mock.calls.map((call) => call[0]);
+    expect(sqlLog.some((sql) => String(sql).startsWith('UPDATE characters'))).toBe(false);
+    const adjusted = socketEmissions.find((e) => e.event === 'character:spell-slot-adjusted')?.payload as {
+      updates?: Record<string, unknown>;
+      changes?: string[];
+    };
+    expect(adjusted.updates).toEqual({});
+    expect(adjusted.changes?.join(' ')).toContain('No level 1 spell slots remaining');
+  });
 });

@@ -225,8 +225,9 @@ export const RULES_MATRIX: RulesMatrixEntry[] = [
     notes: [
       'DM !rest commands and player rest buttons both request server-owned character updates.',
       'Manual short-rest Hit Dice spending is also server-owned and rolls on the server.',
+      'Manual spell-slot spend/refund counters request server-owned character updates.',
     ],
-    nextSteps: ['Move remaining ad-hoc resource spend/refund flows into server-owned actions.'],
+    nextSteps: ['Move remaining ad-hoc feature and item resource spend/refund flows into server-owned actions.'],
   },
   {
     id: 'content.monster-actions',

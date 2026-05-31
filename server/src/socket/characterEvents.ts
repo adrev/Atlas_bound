@@ -6,7 +6,7 @@ import { broadcastEvent } from '../utils/eventBroadcast.js';
 import { dbRowToCharacter } from '../utils/characterMapper.js';
 import { safeHandler } from '../utils/socketHelpers.js';
 import { broadcastSystem } from '../services/ChatCommands.js';
-import { computeRest, computeSpendHitDie, persistRestUpdates, syncRestToCombatants } from '../services/RestService.js';
+import { computeAdjustSpellSlot, computeRest, computeSpendHitDie, persistRestUpdates, syncRestToCombatants } from '../services/RestService.js';
 
 const characterUpdateSchema = z.object({
   characterId: z.string().min(1),
@@ -32,6 +32,12 @@ const characterRestSchema = z.object({
 const spendHitDieSchema = z.object({
   characterId: z.string().min(1),
   dieSize: z.number().int().refine((value) => [6, 8, 10, 12].includes(value)),
+});
+
+const spellSlotAdjustSchema = z.object({
+  characterId: z.string().min(1),
+  level: z.number().int().min(1).max(9),
+  delta: z.union([z.literal(1), z.literal(-1)]),
 });
 
 const FIELD_TO_COLUMN: Record<string, { col: string; json: boolean }> = {
@@ -306,6 +312,50 @@ export function registerCharacterEvents(io: Server, socket: Socket): void {
         `💤 ${result.name} spends 1d${dieSize} Hit Die\n   ${result.changes.join(' • ')}`,
       );
     }
+  }));
+
+  socket.on('character:spell-slot-adjust', safeHandler(socket, async (data) => {
+    const parsed = spellSlotAdjustSchema.safeParse(data);
+    if (!parsed.success) return;
+
+    const ctx = getPlayerBySocketId(socket.id);
+    if (!ctx) return;
+
+    const { characterId, level, delta } = parsed.data;
+    let result: ReturnType<typeof computeAdjustSpellSlot> | null = null;
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const { rows } = await client.query('SELECT * FROM characters WHERE id = $1 FOR UPDATE', [characterId]);
+      if (rows.length > 0) {
+        const row = rows[0] as Record<string, unknown>;
+        const charUserId = String(row.user_id ?? '');
+        const isDM = playerIsDM(ctx);
+        const inSession = await characterIsInSession(characterId, ctx.room.sessionId);
+        if (inSession && (isDM || charUserId === ctx.player.userId) && (isDM || charUserId !== 'npc')) {
+          result = computeAdjustSpellSlot(row, level, delta);
+          await persistRestUpdates(client, result.characterId, result.updates);
+        }
+      }
+      await client.query('COMMIT');
+    } catch (err) {
+      await client.query('ROLLBACK');
+      throw err;
+    } finally {
+      client.release();
+    }
+
+    if (!result) return;
+
+    const hasUpdates = Object.keys(result.updates).length > 0;
+    if (hasUpdates) {
+      broadcastEvent(io, ctx.room, 'character:updated', {
+        characterId: result.characterId,
+        changes: result.updates,
+      });
+    }
+
+    socket.emit('character:spell-slot-adjusted', result);
   }));
 
   socket.on('character:sync-request', safeHandler(socket, async (data) => {

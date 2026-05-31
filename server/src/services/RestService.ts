@@ -23,6 +23,18 @@ export interface SpendHitDieResult {
   changes: string[];
 }
 
+export interface AdjustSpellSlotResult {
+  characterId: string;
+  name: string;
+  level: number;
+  delta: 1 | -1;
+  oldUsed: number;
+  newUsed: number;
+  max: number;
+  updates: Record<string, unknown>;
+  changes: string[];
+}
+
 type SpellSlots = Record<string, { max: number; used: number }>;
 type FeatureUse = { name?: string; usesTotal?: number; usesRemaining?: number; resetOn?: string | null };
 type HitDicePool = { dieSize: number; total: number; used: number };
@@ -252,6 +264,73 @@ export function computeSpendHitDie(
     newHp,
     updates: { hitPoints: newHp, hitDice: updatedHitDice },
     changes: [`Rolled ${roll}${conMod >= 0 ? '+' : ''}${conMod} = ${heal} HP (HP ${hitPoints} -> ${newHp})`],
+  };
+}
+
+export function computeAdjustSpellSlot(
+  row: Record<string, unknown>,
+  level: number,
+  delta: 1 | -1,
+): AdjustSpellSlotResult {
+  const characterId = String(row.id);
+  const name = String(row.name ?? 'Character');
+  const slots = parseRecord<{ max: number; used: number }>(row.spell_slots);
+  const levelKey = slots[String(level)] ? String(level) : String(Number(level));
+  const slot = slots[levelKey];
+
+  if (!slot) {
+    return {
+      characterId, name, level, delta, oldUsed: 0, newUsed: 0, max: 0,
+      updates: {}, changes: [`No level ${level} spell slots available`],
+    };
+  }
+
+  const max = Math.max(0, Math.floor(finiteNumber(slot.max)));
+  const oldUsed = Math.min(max, Math.max(0, Math.floor(finiteNumber(slot.used))));
+  if (max <= 0) {
+    return {
+      characterId, name, level, delta, oldUsed, newUsed: oldUsed, max,
+      updates: {}, changes: [`No level ${level} spell slots available`],
+    };
+  }
+
+  const newUsed = Math.min(max, Math.max(0, oldUsed + delta));
+  if (newUsed === oldUsed) {
+    const reason = delta > 0
+      ? `No level ${level} spell slots remaining`
+      : `All level ${level} spell slots are already recovered`;
+    return {
+      characterId, name, level, delta, oldUsed, newUsed, max,
+      updates: {}, changes: [reason],
+    };
+  }
+
+  const updatedSlots: SpellSlots = {};
+  for (const [key, value] of Object.entries(slots)) {
+    updatedSlots[key] = {
+      max: Math.max(0, Math.floor(finiteNumber(value?.max))),
+      used: Math.min(
+        Math.max(0, Math.floor(finiteNumber(value?.max))),
+        Math.max(0, Math.floor(finiteNumber(value?.used))),
+      ),
+    };
+  }
+  updatedSlots[levelKey] = { max, used: newUsed };
+
+  return {
+    characterId,
+    name,
+    level,
+    delta,
+    oldUsed,
+    newUsed,
+    max,
+    updates: { spellSlots: updatedSlots },
+    changes: [
+      delta > 0
+        ? `Level ${level} spell slot spent (${max - oldUsed} -> ${max - newUsed} remaining)`
+        : `Level ${level} spell slot recovered (${max - oldUsed} -> ${max - newUsed} remaining)`,
+    ],
   };
 }
 

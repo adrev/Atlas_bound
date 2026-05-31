@@ -3,7 +3,7 @@ import { useCharacterStore } from '../../stores/useCharacterStore';
 import { useSessionStore } from '../../stores/useSessionStore';
 import { useMapStore } from '../../stores/useMapStore';
 import { useCombatStore } from '../../stores/useCombatStore';
-import { emitShieldCast, emitCharacterUpdate, emitUseAction, emitSystemMessage } from '../../socket/emitters';
+import { emitShieldCast, emitSpellSlotAdjust, emitUseAction, emitSystemMessage } from '../../socket/emitters';
 import { theme } from '../../styles/theme';
 
 /**
@@ -75,16 +75,8 @@ export function ShieldModal() {
 
   const handleCast = useCallback(() => {
     if (!head || !eligibility?.canCast) return;
-    // Burn a 1st-level slot (or higher)
-    const slots = eligibility.slots;
-    const slotKey = String(eligibility.slotLevel);
-    const updated = {
-      ...slots,
-      [slotKey]: { ...slots[slotKey], used: (slots[slotKey]?.used ?? 0) + 1 },
-    };
     if (myCharacter) {
-      emitCharacterUpdate(myCharacter.id, { spellSlots: updated });
-      useCharacterStore.getState().applyRemoteUpdate(myCharacter.id, { spellSlots: updated });
+      emitSpellSlotAdjust(myCharacter.id, eligibility.slotLevel, 1);
     }
     // Burn the reaction
     emitUseAction('reaction');

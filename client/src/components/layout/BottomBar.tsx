@@ -3,7 +3,7 @@ import { QuickActions } from '../quickactions/QuickActions';
 import { DiceTray } from '../dice/DiceTray';
 import { useCharacterStore } from '../../stores/useCharacterStore';
 import { useSessionStore } from '../../stores/useSessionStore';
-import { emitCharacterUpdate } from '../../socket/emitters';
+import { emitSpellSlotAdjust } from '../../socket/emitters';
 import { theme } from '../../styles/theme';
 import type { SpellSlot } from '@dnd-vtt/shared';
 
@@ -68,36 +68,11 @@ function SpellSlotTracker({
   spellSlots: Record<number, SpellSlot>;
   characterId: string;
 }) {
-  const handleSlotClick = useCallback(
-    (level: number, slot: SpellSlot) => {
-      const newSlots = { ...spellSlots };
-      if (slot.used < slot.max) {
-        // Use a slot
-        newSlots[level] = { ...slot, used: slot.used + 1 };
-      } else {
-        // Recover a slot
-        newSlots[level] = { ...slot, used: Math.max(0, slot.used - 1) };
-      }
-      useCharacterStore.getState().updateCharacter({ spellSlots: newSlots });
-      emitCharacterUpdate(characterId, { spellSlots: newSlots });
-    },
-    [spellSlots, characterId]
-  );
-
   const handlePipClick = useCallback(
     (level: number, pipIndex: number, isAvailable: boolean) => {
       const slot = spellSlots[level];
       if (!slot) return;
-      const newSlots = { ...spellSlots };
-      if (isAvailable) {
-        // Mark this slot as used
-        newSlots[level] = { ...slot, used: slot.used + 1 };
-      } else {
-        // Recover this slot
-        newSlots[level] = { ...slot, used: Math.max(0, slot.used - 1) };
-      }
-      useCharacterStore.getState().updateCharacter({ spellSlots: newSlots });
-      emitCharacterUpdate(characterId, { spellSlots: newSlots });
+      emitSpellSlotAdjust(characterId, level, isAvailable ? 1 : -1);
     },
     [spellSlots, characterId]
   );

@@ -3,7 +3,7 @@ import { useMapStore } from '../../stores/useMapStore';
 import { useCharacterStore } from '../../stores/useCharacterStore';
 import { useSessionStore } from '../../stores/useSessionStore';
 import { useCombatStore } from '../../stores/useCombatStore';
-import { emitRoll, emitCharacterUpdate, emitTokenUpdate, emitSystemMessage, emitTokenAdd, emitUseAction, emitDash, emitSpellCastAttempt, emitAttackHitAttempt, emitMobileAttacked, emitDamage, emitHeal } from '../../socket/emitters';
+import { emitRoll, emitCharacterUpdate, emitTokenUpdate, emitSystemMessage, emitTokenAdd, emitUseAction, emitDash, emitSpellCastAttempt, emitAttackHitAttempt, emitMobileAttacked, emitDamage, emitHeal, emitSpellSlotAdjust } from '../../socket/emitters';
 import { theme } from '../../styles/theme';
 import type {
   ActionType, AttackBreakdown, AttackBreakdownModifier, AttackBreakdownDamageSource,
@@ -818,13 +818,7 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
               return;
             }
             castAtLevel = chosenLevel;
-            const slotKey = slots[chosenLevel] ? chosenLevel : String(chosenLevel);
-            const slot = slots[slotKey];
-            const updatedSlots = { ...slots, [slotKey]: { ...slot, used: slot.used + 1 } };
-            emitCharacterUpdate(
-              casterChar.id || currentTargeting.casterTokenId,
-              { spellSlots: updatedSlots },
-            );
+            emitSpellSlotAdjust(casterChar.id || currentTargeting.casterTokenId, chosenLevel, 1);
           }
         }
         // Stash for the header below
@@ -3738,10 +3732,7 @@ async function resolveAreaSpell(
         emitSystemMessage(`✦ ${casterName} tried to cast ${spell.name} (level ${spell.level}) but has no available slots of level ${spell.level} or higher!`);
         return;
       }
-      const slotKey = slots[chosenLevel] ? chosenLevel : String(chosenLevel);
-      const slot = slots[slotKey];
-      const updatedSlots = { ...slots, [slotKey]: { ...slot, used: slot.used + 1 } };
-      emitCharacterUpdate(casterId, { spellSlots: updatedSlots });
+      emitSpellSlotAdjust(casterId, chosenLevel, 1);
       // Note for chat header
       if (chosenLevel > spell.level) {
         // Mark for the header below — stash on the spell object temporarily
