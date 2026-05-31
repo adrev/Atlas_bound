@@ -10,6 +10,7 @@ import pool from '../../db/connection.js';
 import type { Token } from '@dnd-vtt/shared';
 import type { PlayerContext } from '../../utils/roomState.js';
 import { tokenConditionChanges } from '../../utils/conditionSources.js';
+import { formatSaveTotal, rollTargetSave } from './saveRoll.js';
 
 /**
  * Utility commands for common mid-session effects that players
@@ -53,6 +54,10 @@ function rollDice(notation: string): { total: number; rolls: number[] } {
     sum += r;
   }
   return { total: Math.max(0, sum + mod), rolls };
+}
+
+function formatSaveNotes(notes: string[]): string {
+  return notes.length > 0 ? ` [${notes.join('; ')}]` : '';
 }
 
 // ────── !potion <target> [dice] ───────────────────────────────
@@ -465,31 +470,15 @@ async function handleTurnUndead(c: ChatCommandContext): Promise<boolean> {
       lines.push(`   • ${targetName}: not found`);
       continue;
     }
-    // Roll target's WIS save. If they have a character, use it; else
-    // DM rolls externally and applies.
+    // Roll target's WIS save. If they have a character, use the shared save
+    // resolver; otherwise the DM rolls externally and applies.
     if (!target.characterId) {
       lines.push(`   • ${target.name}: no character sheet — DM rolls WIS save externally.`);
       continue;
     }
-    const { rows: trows } = await pool.query(
-      'SELECT ability_scores, saving_throws, proficiency_bonus FROM characters WHERE id = $1',
-      [target.characterId],
-    );
-    const trow = trows[0] as Record<string, unknown> | undefined;
-    let wisMod = 0, tProf = 2, isProf = false;
-    try {
-      const scores = typeof trow?.ability_scores === 'string' ? JSON.parse(trow.ability_scores as string) : (trow?.ability_scores ?? {});
-      wisMod = Math.floor((((scores as Record<string, number>).wis ?? 10) - 10) / 2);
-      tProf = Number(trow?.proficiency_bonus) || 2;
-      const saves = typeof trow?.saving_throws === 'string' ? JSON.parse(trow.saving_throws as string) : (trow?.saving_throws ?? []);
-      isProf = Array.isArray(saves) && saves.includes('wis');
-    } catch { /* ignore */ }
-    const saveMod = wisMod + (isProf ? tProf : 0);
-    const d20 = Math.floor(Math.random() * 20) + 1;
-    const total = d20 + saveMod;
-    const saved = total >= dc;
-    const modSign = saveMod >= 0 ? '+' : '';
-    lines.push(`   • ${target.name} WIS save: d20=${d20}${modSign}${saveMod}=${total} → ${saved ? 'SAVED' : 'FAILED'}`);
+    const saveResult = await rollTargetSave(c, target, 'wis', dc, 'frightened');
+    const saved = saveResult.saved;
+    lines.push(`   • ${saveResult.displayName} WIS save: ${formatSaveTotal(saveResult)} → ${saved ? 'SAVED' : 'FAILED'}${formatSaveNotes(saveResult.notes)}`);
     if (!saved) {
       const currentRound = c.ctx.room.combatState?.roundNumber ?? 0;
       ConditionService.applyConditionWithMeta(c.ctx.room.sessionId, target.id, {
