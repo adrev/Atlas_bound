@@ -1,5 +1,14 @@
-import type { Combatant, CombatState, ActionEconomy, ActionType, Condition, InitiativeBreakdown } from '@dnd-vtt/shared';
-import { speedMultiplierFor, traitsForRace } from '@dnd-vtt/shared';
+import type {
+  Combatant,
+  CombatState,
+  ActionEconomy,
+  ActionType,
+  Condition,
+  InitiativeBreakdown,
+  EquippedItem,
+  EquipmentAbilityScores,
+} from '@dnd-vtt/shared';
+import { calculateEquipmentBonuses, speedMultiplierFor, traitsForRace } from '@dnd-vtt/shared';
 import { getRoom, type RoomState } from '../utils/roomState.js';
 import pool from '../db/connection.js';
 import { releaseGrapplesByGrappler } from './ConditionService.js';
@@ -17,6 +26,64 @@ function computeMovementCap(combatant: Combatant, room: RoomState): number {
   const conditions = (token.conditions || []) as string[];
   const mul = speedMultiplierFor(conditions, combatant.exhaustionLevel ?? 0);
   return Math.floor(combatant.speed * mul);
+}
+
+function safeJson(raw: unknown, fallback: unknown): unknown {
+  if (typeof raw !== 'string') return raw ?? fallback;
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return fallback;
+  }
+}
+
+function finiteNumber(raw: unknown): number | undefined {
+  const value = Number(raw);
+  return Number.isFinite(value) ? value : undefined;
+}
+
+function equipmentScores(raw: unknown): EquipmentAbilityScores {
+  const parsed = safeJson(raw, {});
+  const src = (parsed && typeof parsed === 'object') ? parsed as Record<string, unknown> : {};
+  const score = (shortName: string, longName: string): number => finiteNumber(src[shortName] ?? src[longName]) ?? 10;
+  return {
+    str: score('str', 'strength'),
+    dex: score('dex', 'dexterity'),
+    con: score('con', 'constitution'),
+    int: score('int', 'intelligence'),
+    wis: score('wis', 'wisdom'),
+    cha: score('cha', 'charisma'),
+  };
+}
+
+function equipmentItems(raw: unknown): EquippedItem[] {
+  const parsed = safeJson(raw, []);
+  if (!Array.isArray(parsed)) return [];
+  return parsed
+    .filter((item): item is Record<string, unknown> => !!item && typeof item === 'object')
+    .map((item) => ({
+      name: String(item.name ?? ''),
+      type: String(item.type ?? 'gear'),
+      category: typeof item.category === 'string' ? item.category : undefined,
+      equipped: item.equipped !== false,
+      properties: Array.isArray(item.properties) ? item.properties.map(String) : [],
+      description: typeof item.description === 'string' ? item.description : undefined,
+      ac: finiteNumber(item.ac),
+      acBonus: finiteNumber(item.acBonus),
+      acType: typeof item.acType === 'string' ? item.acType : undefined,
+      magicBonus: finiteNumber(item.magicBonus),
+      strengthRequirement: finiteNumber(item.strengthRequirement),
+      strRequirement: finiteNumber(item.strRequirement),
+    }));
+}
+
+function applyManualEquipmentSpeedPenalty(charRow: Record<string, unknown>, speed: number): number {
+  if (charRow.dndbeyond_id) return speed;
+  const inventory = equipmentItems(charRow.inventory);
+  if (inventory.length === 0) return speed;
+  const baseAC = finiteNumber(charRow.armor_class);
+  const bonuses = calculateEquipmentBonuses(inventory, equipmentScores(charRow.ability_scores), baseAC);
+  return Math.max(0, speed + bonuses.speedPenalty);
 }
 
 export function startCombat(sessionId: string, tokenIds: string[]): CombatState {
@@ -286,6 +353,7 @@ export async function startCombatAsync(sessionId: string, tokenIds: string[]): P
         tempHp = (charRow.temp_hit_points as number) ?? 0;
         ac = (charRow.armor_class as number) ?? 10;
         speed = (charRow.speed as number) ?? 30;
+        speed = applyManualEquipmentSpeedPenalty(charRow, speed);
         portrait = charRow.portrait_url as string | null;
 
         // ── Unarmored Defense (Barbarian + Monk) ───────────────
@@ -732,6 +800,7 @@ export async function addCombatantAsync(sessionId: string, tokenId: string): Pro
       tempHp = (charRow.temp_hit_points as number) ?? 0;
       ac = (charRow.armor_class as number) ?? 10;
       speed = (charRow.speed as number) ?? 30;
+      speed = applyManualEquipmentSpeedPenalty(charRow, speed);
       portrait = charRow.portrait_url as string | null;
       exhaustionLevel = Math.max(0, Math.min(6, Number(charRow.exhaustion_level ?? 0) || 0));
       if (exhaustionLevel >= 4) {
