@@ -33,7 +33,7 @@ The target architecture is server-authoritative mechanics with client preview:
 | Server action authority | `core-5e` | partial | P0 | `TokenActionPanel` still resolves many attacks/spells and writes HP/resources from the client. |
 | Death saves and stabilization | `core-5e` | implemented | P1 | 3 successes make the creature stable at 0 HP and still unconscious. Nat 20 heals 1 HP. Non-DMs can roll only on their death-save turn and once per round. |
 | Healing downed characters | `core-5e` | implemented | P1 | Healing above 0 HP clears stable/unconscious state and syncs token/combatant/character state. |
-| Movement diagonals | `core-5e` | partial | P1 | Default grid behavior should count a diagonal square as one square unless a variant setting is added. |
+| Movement diagonals | `core-5e` | partial | P1 | Default grid behavior counts a diagonal square as one square, and active-combat token movement is now validated/spent server-side. |
 | Opportunity attacks | `core-5e` | partial | P1 | Movement OAs are core. Spellcasting OAs are not core and are disabled by default. |
 | Damage pipeline | `core-5e` | partial | P1 | All damage should flow through the same server path for temp HP, death saves, concentration, and visibility-scoped broadcasts. |
 | Save modifiers | `core-5e` | partial | P1 | Slow and cover require flat save modifiers, not only advantage/disadvantage. |
