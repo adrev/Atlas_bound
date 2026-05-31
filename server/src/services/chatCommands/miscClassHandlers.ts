@@ -9,6 +9,7 @@ import pool from '../../db/connection.js';
 import type { Token, ActionBreakdown } from '@dnd-vtt/shared';
 import type { PlayerContext } from '../../utils/roomState.js';
 import { tokenConditionChanges } from '../../utils/conditionSources.js';
+import { formatSaveTotal, rollTargetSave, type RolledSave, type SaveAbility } from './saveRoll.js';
 
 /**
  * Misc class / race features that didn't warrant their own file:
@@ -34,6 +35,20 @@ function resolveTargetByName(ctx: PlayerContext, name: string): Token | null {
   if (matches.length === 0) return null;
   matches.sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
   return matches[0];
+}
+
+function saveNotesLabel(saveResult: RolledSave): string {
+  return saveResult.notes.length > 0 ? ` [${saveResult.notes.join(', ')}]` : '';
+}
+
+function actionSaveEffect(
+  saveResult: RolledSave,
+  ability: SaveAbility,
+  dc: number,
+  successText: string,
+  failText: string,
+): string {
+  return `${saveResult.saved ? 'SAVED' : 'FAILED'}: ${ability.toUpperCase()} ${formatSaveTotal(saveResult)} vs DC ${dc} — ${saveResult.saved ? successText : failText}${saveNotesLabel(saveResult)}`;
 }
 
 // ────── !reckless (Barbarian, toggle) ──────────────────────
@@ -211,7 +226,7 @@ async function handleBreath(c: ChatCommandContext): Promise<boolean> {
     return true;
   }
   const [diceRaw, abilityRaw, dcRaw] = specParts;
-  const ability = abilityRaw.toLowerCase();
+  const ability = abilityRaw.toLowerCase() as SaveAbility;
   if (!['str', 'dex', 'con', 'int', 'wis', 'cha'].includes(ability)) {
     whisperToCaller(c.io, c.ctx, `!breath: unknown save ability "${abilityRaw}".`);
     return true;
@@ -225,12 +240,6 @@ async function handleBreath(c: ChatCommandContext): Promise<boolean> {
     whisperToCaller(c.io, c.ctx, `!breath: damage must be NdN[+M].`);
     return true;
   }
-  // Fan out via the existing !save command for consistency. This
-  // means we get Aura of Protection, condition mods, etc. for free.
-  // Just reformat and dispatch by calling the save handler directly.
-  //
-  // We inline a minimal version here rather than importing because
-  // keeping this handler self-contained avoids a circular dep.
   const rollDice = (notation: string): { total: number; rolls: number[] } => {
     const m = notation.match(/(\d+)d(\d+)(?:\s*([+-])\s*(\d+))?/);
     if (!m) return { total: 0, rolls: [] };
@@ -262,38 +271,14 @@ async function handleBreath(c: ChatCommandContext): Promise<boolean> {
       breathTargets.push({ name, effect: 'Token not found' });
       continue;
     }
-    // Lightweight save roll (no condition adv etc. — the DM can
-    // re-roll through !save if they want the full pipeline).
-    let saveMod = 0;
-    let tName = target.name;
-    if (target.characterId) {
-      const { rows } = await pool.query(
-        'SELECT ability_scores, saving_throws, proficiency_bonus, name FROM characters WHERE id = $1',
-        [target.characterId],
-      );
-      const row = rows[0] as Record<string, unknown> | undefined;
-      try {
-        const scores = typeof row?.ability_scores === 'string' ? JSON.parse(row.ability_scores as string) : (row?.ability_scores ?? {});
-        const ab = Math.floor((((scores as Record<string, number>)[ability] ?? 10) - 10) / 2);
-        const prof = Number(row?.proficiency_bonus) || 2;
-        const saves = typeof row?.saving_throws === 'string' ? JSON.parse(row.saving_throws as string) : (row?.saving_throws ?? []);
-        const isProf = Array.isArray(saves) && saves.includes(ability);
-        saveMod = ab + (isProf ? prof : 0);
-        if (row?.name) tName = row.name as string;
-      } catch { /* ignore */ }
-    }
-    const d20 = Math.floor(Math.random() * 20) + 1;
-    const total = d20 + saveMod;
-    const saved = total >= dc;
-    const dmg = saved ? halfDmg : fullDmg;
-    const sign = saveMod >= 0 ? '+' : '';
-    lines.push(`  • ${tName}: d20=${d20}${sign}${saveMod}=${total} → ${saved ? 'SAVED (half)' : 'FAILED'} — ${dmg} dmg`);
+    const saveResult = await rollTargetSave(c, target, ability, dc, 'breath');
+    const tName = saveResult.displayName;
+    const dmg = saveResult.saved ? halfDmg : fullDmg;
+    lines.push(`  • ${tName}: ${formatSaveTotal(saveResult)} → ${saveResult.saved ? 'SAVED (half)' : 'FAILED'} — ${dmg} dmg${saveNotesLabel(saveResult)}`);
     breathTargets.push({
       name: tName,
       tokenId: target.id,
-      effect: saved
-        ? `SAVED (half): ${ability.toUpperCase()} d20=${d20}${sign}${saveMod}=${total} vs DC ${dc} — ${dmg} damage`
-        : `FAILED: ${ability.toUpperCase()} d20=${d20}${sign}${saveMod}=${total} vs DC ${dc} — ${dmg} damage`,
+      effect: actionSaveEffect(saveResult, ability, dc, `${dmg} damage (half)`, `${dmg} damage`),
       damage: { amount: dmg, damageType: 'breath' },
     });
   }
@@ -555,28 +540,9 @@ async function handleManeuver(c: ChatCommandContext): Promise<boolean> {
     const targetName = parts.slice(1, -1).join(' ');
     const target = resolveTargetByName(c.ctx, targetName);
     if (target && Number.isFinite(dc)) {
-      let saveMod = 0;
-      if (target.characterId) {
-        const { rows } = await pool.query(
-          'SELECT ability_scores, saving_throws, proficiency_bonus FROM characters WHERE id = $1',
-          [target.characterId],
-        );
-        const row = rows[0] as Record<string, unknown> | undefined;
-        try {
-          const scores = typeof row?.ability_scores === 'string' ? JSON.parse(row.ability_scores as string) : (row?.ability_scores ?? {});
-          const ab = Math.floor((((scores as Record<string, number>)[saveMeta.ability] ?? 10) - 10) / 2);
-          const prof = Number(row?.proficiency_bonus) || 2;
-          const saves = typeof row?.saving_throws === 'string' ? JSON.parse(row.saving_throws as string) : (row?.saving_throws ?? []);
-          const isProf = Array.isArray(saves) && saves.includes(saveMeta.ability);
-          saveMod = ab + (isProf ? prof : 0);
-        } catch { /* ignore */ }
-      }
-      const d20 = Math.floor(Math.random() * 20) + 1;
-      const total = d20 + saveMod;
-      const saved = total >= dc;
-      const sign = saveMod >= 0 ? '+' : '';
-      lines.push(`   ${target.name} ${saveMeta.ability.toUpperCase()} save: d20=${d20}${sign}${saveMod}=${total} vs DC ${dc} → ${saved ? 'SAVED' : 'FAILED'}`);
-      if (!saved && (saveMeta.on === 'prone' || saveMeta.on === 'frightened')) {
+      const saveResult = await rollTargetSave(c, target, saveMeta.ability, dc, saveMeta.on);
+      lines.push(`   ${saveResult.displayName} ${saveMeta.ability.toUpperCase()} save: ${formatSaveTotal(saveResult)} vs DC ${dc} → ${saveResult.saved ? 'SAVED' : 'FAILED'}${saveNotesLabel(saveResult)}`);
+      if (!saveResult.saved && (saveMeta.on === 'prone' || saveMeta.on === 'frightened')) {
         const currentRound = c.ctx.room.combatState?.roundNumber ?? 0;
         ConditionService.applyConditionWithMeta(c.ctx.room.sessionId, target.id, {
           name: saveMeta.on,
@@ -589,15 +555,13 @@ async function handleManeuver(c: ChatCommandContext): Promise<boolean> {
           tokenId: target.id,
           changes: tokenConditionChanges(c.ctx.room, target.id),
         });
-        lines.push(`     → ${target.name} is ${saveMeta.on.toUpperCase()}.`);
+        lines.push(`     → ${saveResult.displayName} is ${saveMeta.on.toUpperCase()}.`);
         appliedCondition = saveMeta.on;
       }
       maneuverTargets.push({
-        name: target.name,
+        name: saveResult.displayName,
         tokenId: target.id,
-        effect: saved
-          ? `SAVED: ${saveMeta.ability.toUpperCase()} d20=${d20}${sign}${saveMod}=${total} vs DC ${dc}`
-          : `FAILED: ${saveMeta.ability.toUpperCase()} d20=${d20}${sign}${saveMod}=${total} vs DC ${dc}${appliedCondition ? ` — ${appliedCondition}` : ''}`,
+        effect: actionSaveEffect(saveResult, saveMeta.ability, dc, 'no effect', saveMeta.on),
         ...(appliedCondition ? { conditionsApplied: [appliedCondition] } : {}),
       });
     }
@@ -618,6 +582,7 @@ async function handleManeuver(c: ChatCommandContext): Promise<boolean> {
       `Rolled: ${roll}`,
       `Dice remaining: ${sup.remaining}/${sup.max}`,
       ...(saveMeta ? [`Save: ${saveMeta.ability.toUpperCase()}`] : []),
+      ...(maneuverTargets.length > 0 ? ['Save modifiers: shared resolver'] : []),
     ],
   };
   broadcastSystem(c.io, c.ctx, lines.join('\n'), { actionResult: maneuverBreakdown });
