@@ -37,7 +37,7 @@ The target architecture is server-authoritative mechanics with client preview:
 | Opportunity attacks | `core-5e` | partial | P1 | Movement OAs are core. Spellcasting OAs are not core and are disabled by default. |
 | Damage pipeline | `core-5e` | partial | P1 | All damage should flow through the same server path for temp HP, death saves, concentration, and visibility-scoped broadcasts. |
 | Save modifiers | `core-5e` | partial | P1 | Slow and cover flat save modifiers are applied in the shared rules, server `!save`, and client roll engine; individual spell command helpers still need normalization. |
-| Spell AoE commands | `manual-helper` -> `core-5e` | inconsistent | P1 | Some commands apply HP, some only render cards. Normalize through the server resolver. |
+| Spell AoE commands | `manual-helper` -> `core-5e` | inconsistent | P1 | Tier 16 saves now use shared save modifier math, but broader spell damage/HP/defense handling still needs server resolver normalization. |
 | Grapple and shove | `core-5e` | partial | P2 | Opposed checks, reach, size limit, caller incapacitation, grapple free-hand checks, and Action cost are enforced; push movement still needs richer automation. |
 | Hide and stealth | `manual-helper` | partial | P2 | Useful helper and now applies armor-imposed Stealth disadvantage, but not rules-complete until it uses line of sight, lighting, cover, and active searching. |
 | Equipment and armor | `core-5e` | partial | P2 | AC, manual heavy armor speed penalties, and Stealth disadvantage data are covered; broader feature/resource interactions still need cleanup. |

@@ -1827,6 +1827,27 @@ describe('Tier 16 — Web', () => {
     });
     expect(e.conditions).toContain('restrained');
   });
+
+  it('applies shared flat save modifiers such as cover before deciding restraint', async () => {
+    const e = makeToken('tE', 'G', {
+      characterId: 'c-g',
+      conditions: ['half-cover' as unknown as Token['conditions'][number]],
+    });
+    const s = makeScenario({ inCombat: true, otherTokens: [e] });
+    routeCharacterQueries({
+      'char-caller': { class: 'Wizard', level: 3, name: 'W', ability_scores: { int: 16 }, proficiency_bonus: 2, spell_save_dc: 13 },
+      'c-g': { ability_scores: { dex: 10 }, saving_throws: [], proficiency_bonus: 2, name: 'G' },
+    });
+    const { io, emissions } = makeFakeIo();
+    await withRandomSeed([0.5], async () => {
+      await tryHandleChatCommand(io, s.ctx, '!web G');
+    });
+
+    expect(e.conditions).not.toContain('restrained');
+    const broadcast = lastBroadcast(emissions) ?? '';
+    expect(broadcast).toContain('d20=11+2=13');
+    expect(broadcast).toContain('half-cover: +2 to DEX save');
+  });
 });
 
 describe('Tier 16 — Moonbeam', () => {
