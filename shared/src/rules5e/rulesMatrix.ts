@@ -207,8 +207,11 @@ export const RULES_MATRIX: RulesMatrixEntry[] = [
     authority: 'shared',
     priority: 'P2',
     paths: ['shared/src/utils/equipmentBonuses.ts'],
-    notes: ['AC is partially handled; heavy armor speed penalty and structured stealth disadvantage need coverage.'],
-    nextSteps: ['Add structured equipment fixtures and tests for armor, shields, magic bonuses, and speed penalties.'],
+    notes: [
+      'AC calculation covers light, medium, heavy, shields, named armor defaults, magic AC bonuses, stealth disadvantage, and heavy armor speed penalties in shared tests.',
+      'Combat movement still needs a safe server-side wiring pass that avoids double-applying penalties for DDB-imported characters.',
+    ],
+    nextSteps: ['Wire speed penalties into authoritative combat movement for manual characters without double-counting DDB-imported speed.'],
   },
   {
     id: 'resource.rests',
