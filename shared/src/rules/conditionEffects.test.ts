@@ -143,6 +143,23 @@ describe('computeSaveModifiers', () => {
   it('exhaustion L3 → disadvantage on all saves', () => {
     expect(computeSaveModifiers([], 'wis', 3).effectiveAdvantage).toBe('disadvantage');
   });
+
+  it('slowed → flat -2 to DEX saves (not disadvantage)', () => {
+    const r = computeSaveModifiers(['slowed'], 'dex');
+    expect(r.flatModifier).toBe(-2);
+    expect(r.effectiveAdvantage).toBe('normal');
+  });
+
+  it('cover → flat +2 (half) / +5 (three-quarters) to DEX saves', () => {
+    expect(computeSaveModifiers(['half-cover'], 'dex').flatModifier).toBe(2);
+    expect(computeSaveModifiers(['three-quarters-cover'], 'dex').flatModifier).toBe(5);
+  });
+
+  it('flat save modifiers stack and only hit the matching ability', () => {
+    expect(computeSaveModifiers(['slowed', 'half-cover'], 'dex').flatModifier).toBe(0); // -2 + 2
+    expect(computeSaveModifiers(['three-quarters-cover'], 'wis').flatModifier).toBe(0); // cover is DEX-only
+    expect(computeSaveModifiers([], 'dex').flatModifier).toBe(0);
+  });
 });
 
 describe('computeEffectiveAC', () => {

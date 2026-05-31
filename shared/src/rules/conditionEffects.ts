@@ -88,6 +88,13 @@ export interface ConditionEffect {
    */
   saveAdvantage?: Partial<Record<Ability, 'advantage' | 'disadvantage'>>;
   /**
+   * Flat numeric modifier to specific ability saves (NOT advantage).
+   * Slow is a flat -2 to DEX saves; half / three-quarters cover are flat
+   * +2 / +5 to DEX saves. Stacks additively, applied on top of any
+   * advantage/disadvantage.
+   */
+  saveFlatModifier?: Partial<Record<Ability, number>>;
+  /**
    * Per-ability check advantage. Helped gives advantage on all, a few
    * rages grant advantage on STR checks.
    */
@@ -288,7 +295,8 @@ export const PSEUDO_CONDITION_EFFECTS: Record<string, ConditionEffect> = {
     name: 'slowed',
     color: '#5d6d7e',
     acBonus: -2,
-    saveAdvantage: { dex: 'disadvantage' },
+    // 5e Slow: a flat -2 penalty to AC and DEX saves, NOT disadvantage.
+    saveFlatModifier: { dex: -2 },
     notes: ['-2 AC', '-2 DEX saves', 'half speed'],
   },
   dodging: {
@@ -432,13 +440,14 @@ export const PSEUDO_CONDITION_EFFECTS: Record<string, ConditionEffect> = {
     name: 'half-cover',
     color: '#7f8c8d',
     acBonus: 2,
-    saveAdvantage: {},
+    saveFlatModifier: { dex: 2 },
     notes: ['+2 AC + DEX saves (half cover)'],
   },
   'three-quarters-cover': {
     name: 'three-quarters-cover',
     color: '#576574',
     acBonus: 5,
+    saveFlatModifier: { dex: 5 },
     notes: ['+5 AC + DEX saves (three-quarters cover)'],
   },
   'full-cover': {
@@ -656,6 +665,8 @@ export function computeAttackModifiers(
 export interface SaveModifierResult {
   effectiveAdvantage: Advantage;
   autoFail: boolean;
+  /** Net flat numeric modifier to the save (Slow -2, cover +2/+5, summed). */
+  flatModifier: number;
   notes: string[];
 }
 
@@ -681,6 +692,7 @@ export function computeSaveModifiers(
   let hasAdv = false;
   let hasDis = false;
   let autoFail = false;
+  let flatModifier = 0;
   const notes: string[] = [];
 
   for (const c of targetConditions) {
@@ -707,6 +719,11 @@ export function computeSaveModifiers(
     } else if (adv === 'disadvantage') {
       hasDis = true;
       notes.push(`${eff.name}: disadvantage on ${ability.toUpperCase()} save`);
+    }
+    const flat = eff.saveFlatModifier?.[ability];
+    if (typeof flat === 'number' && flat !== 0) {
+      flatModifier += flat;
+      notes.push(`${eff.name}: ${flat > 0 ? '+' : ''}${flat} to ${ability.toUpperCase()} save`);
     }
   }
 
@@ -754,7 +771,7 @@ export function computeSaveModifiers(
     }
   }
 
-  return { effectiveAdvantage: resolveAdvantage(hasAdv, hasDis), autoFail, notes };
+  return { effectiveAdvantage: resolveAdvantage(hasAdv, hasDis), autoFail, flatModifier, notes };
 }
 
 // --- Effective-stat helpers (AC, speed) — computed with notes ----------

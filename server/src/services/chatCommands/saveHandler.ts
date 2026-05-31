@@ -257,14 +257,19 @@ async function handleSave(c: ChatCommandContext): Promise<boolean> {
       d20 = Math.floor(Math.random() * 20) + 1;
       rollsStr = `${d20}`;
     }
-    const modSign = saveMod >= 0 ? '+' : '';
-    const total = mods.autoFail ? 0 : d20 + saveMod;
+    // Slow (-2) / cover (+2/+5) apply a FLAT modifier to the save (not
+    // advantage), summed across the target's conditions by the shared
+    // helper. Fold it into the displayed modifier + the total.
+    const flatMod = mods.flatModifier;
+    const totalMod = saveMod + flatMod;
+    const modSign = totalMod >= 0 ? '+' : '';
+    const total = mods.autoFail ? 0 : d20 + totalMod;
     const saved = !mods.autoFail && total >= dc;
     const dmg = saved ? halfDmg : fullDmg;
     const auraLabel = auraBonus > 0 ? ` (incl. +${auraBonus} Aura of Protection from ${auraSource})` : '';
 
     lines.push(
-      `   • ${tName}: d20=${rollsStr}${mods.autoFail ? '' : `${modSign}${saveMod}=${total}`} vs ${dc}${auraLabel} → ${saved ? 'SAVED (half)' : 'FAILED (full)'} — ${dmg}${typeLabel} dmg`,
+      `   • ${tName}: d20=${rollsStr}${mods.autoFail ? '' : `${modSign}${totalMod}=${total}`} vs ${dc}${auraLabel} → ${saved ? 'SAVED (half)' : 'FAILED (full)'} — ${dmg}${typeLabel} dmg`,
     );
 
     // Collect structured per-target outcome for the breakdown card.
@@ -281,6 +286,13 @@ async function handleSave(c: ChatCommandContext): Promise<boolean> {
         label: `Aura of Protection (${auraSource})`,
         value: auraBonus,
         source: 'magic',
+      });
+    }
+    if (flatMod !== 0) {
+      saveModifiersList.push({
+        label: flatMod > 0 ? 'Cover' : 'Slow / condition',
+        value: flatMod,
+        source: 'other',
       });
     }
     const advState =
