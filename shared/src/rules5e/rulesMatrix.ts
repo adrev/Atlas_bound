@@ -209,9 +209,9 @@ export const RULES_MATRIX: RulesMatrixEntry[] = [
     paths: ['shared/src/utils/equipmentBonuses.ts'],
     notes: [
       'AC calculation covers light, medium, heavy, shields, named armor defaults, magic AC bonuses, stealth disadvantage, and heavy armor speed penalties in shared tests.',
-      'Combat movement still needs a safe server-side wiring pass that avoids double-applying penalties for DDB-imported characters.',
+      'Combatant speed derivation applies manual heavy-armor speed penalties server-side and skips DDB-imported characters to avoid double-counting.',
     ],
-    nextSteps: ['Wire speed penalties into authoritative combat movement for manual characters without double-counting DDB-imported speed.'],
+    nextSteps: ['Wire stealth disadvantage into authoritative stealth roll helpers if stealth becomes more automated.'],
   },
   {
     id: 'resource.rests',
@@ -219,11 +219,14 @@ export const RULES_MATRIX: RulesMatrixEntry[] = [
     category: 'resource',
     mode: 'core-5e',
     status: 'partial',
-    authority: 'client',
+    authority: 'mixed',
     priority: 'P2',
     paths: ['client/src/utils/rest.ts', 'server/src/services/chatCommands/restHandlers.ts'],
-    notes: ['Rest updates are mostly connected-client local updates, which can drift for offline players or multi-tab sessions.'],
-    nextSteps: ['Move rest/resource recovery to a server service with auditable updates.'],
+    notes: [
+      'DM !rest commands apply server-owned character updates so offline players and secondary tabs do not drift.',
+      'Player quick-action rest buttons still use the client helper path.',
+    ],
+    nextSteps: ['Move player rest buttons to a server rest request event with the same update service.'],
   },
   {
     id: 'content.monster-actions',

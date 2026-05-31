@@ -40,8 +40,8 @@ The target architecture is server-authoritative mechanics with client preview:
 | Spell AoE commands | `manual-helper` -> `core-5e` | inconsistent | P1 | Some commands apply HP, some only render cards. Normalize through the server resolver. |
 | Grapple and shove | `core-5e` | partial | P2 | Needs size, reach, free-hand, action-cost, and incapacitated-target handling. |
 | Hide and stealth | `manual-helper` | partial | P2 | Useful helper, but not rules-complete until it uses line of sight, lighting, cover, and active searching. |
-| Equipment and armor | `core-5e` | partial | P2 | AC is partly handled; heavy armor speed penalties and structured stealth disadvantage need coverage. |
-| Rests and resources | `core-5e` | partial | P2 | Rest/resource updates should be server-owned, not only connected-client local updates. |
+| Equipment and armor | `core-5e` | partial | P2 | AC and manual heavy armor speed penalties are covered; stealth disadvantage is still only data until stealth is more automated. |
+| Rests and resources | `core-5e` | partial | P2 | DM `!rest` is server-owned; player quick-action rests still use the client helper path. |
 | Race, class, feat features | mixed | partial | P2 | Many are notes or chat macros. Each needs automation or explicit manual-helper labeling. |
 | Monsters and compendium actions | `core-5e` | partial | P3 | Raw stat-block prose is useful for browsing but not enough for automated combat. |
 
