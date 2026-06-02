@@ -8,6 +8,8 @@ import {
   combatUseActionSchema, combatUseMovementSchema,
 } from '../../utils/validation.js';
 import { safeHandler } from '../../utils/socketHelpers.js';
+import { emitToTokenViewers } from '../../utils/combatBroadcast.js';
+import { emitTokenScopedChat } from '../../utils/tokenScopedChat.js';
 
 /**
  * Action-economy events: use-action / use-movement / dash.
@@ -36,11 +38,11 @@ export function registerCombatActions(io: Server, socket: Socket): void {
     const combatant = ctx.room.combatState?.combatants[ctx.room.combatState.currentTurnIndex];
     if (!combatant) return;
 
-    io.to(ctx.room.sessionId).emit('combat:action-used', {
+    emitToTokenViewers(io, ctx.room, combatant.tokenId, 'combat:action-used', {
       tokenId: combatant.tokenId,
       actionType: parsed.data.actionType,
       economy,
-    });
+    }, { includeOwner: true });
   }));
 
   socket.on('combat:use-movement', safeHandler(socket, async (data) => {
@@ -61,10 +63,10 @@ export function registerCombatActions(io: Server, socket: Socket): void {
     const combatant = ctx.room.combatState?.combatants[ctx.room.combatState.currentTurnIndex];
     if (!combatant) return;
 
-    io.to(ctx.room.sessionId).emit('combat:movement-used', {
+    emitToTokenViewers(io, ctx.room, combatant.tokenId, 'combat:movement-used', {
       tokenId: combatant.tokenId,
       remaining,
-    });
+    }, { includeOwner: true });
   }));
 
   // ----------------------------------------------------------------------
@@ -89,13 +91,13 @@ export function registerCombatActions(io: Server, socket: Socket): void {
     const combatant = ctx.room.combatState?.combatants[ctx.room.combatState.currentTurnIndex];
     if (!combatant) return;
 
-    io.to(ctx.room.sessionId).emit('combat:action-used', {
+    emitToTokenViewers(io, ctx.room, combatant.tokenId, 'combat:action-used', {
       tokenId: combatant.tokenId,
       actionType: 'action',
       economy,
-    });
+    }, { includeOwner: true });
 
-    io.to(ctx.room.sessionId).emit('chat:new-message', {
+    emitTokenScopedChat(io, ctx.room, combatant.tokenId, {
       id: uuidv4(),
       sessionId: ctx.room.sessionId,
       userId: 'system',
