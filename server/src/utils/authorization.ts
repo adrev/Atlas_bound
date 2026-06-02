@@ -26,8 +26,51 @@ export async function assertCharacterOwnerOrDM(
   sessionId?: string,
 ): Promise<void> {
   const { rows } = await pool.query(
-    'SELECT user_id FROM characters WHERE id = $1',
-    [characterId],
+    `SELECT
+       c.user_id,
+       c.user_id = $2 AS is_owner,
+       (
+         $3::text IS NOT NULL
+         AND EXISTS (
+           SELECT 1
+             FROM session_players sp
+            WHERE sp.session_id = $3
+              AND sp.user_id = $2
+              AND sp.role = 'dm'
+         )
+       ) AS is_dm_in_session,
+       EXISTS (
+         SELECT 1
+           FROM session_players dm
+           JOIN session_players linked
+             ON linked.session_id = dm.session_id
+          WHERE linked.character_id = c.id
+            AND dm.user_id = $2
+            AND dm.role = 'dm'
+       ) AS is_linked_session_dm,
+       EXISTS (
+         SELECT 1
+           FROM tokens t
+           JOIN maps m ON m.id = t.map_id
+           JOIN session_players sp ON sp.session_id = m.session_id
+          WHERE t.character_id = c.id
+            AND sp.user_id = $2
+            AND sp.role = 'dm'
+       ) AS is_token_session_dm,
+       (
+         c.user_id = 'npc'
+         AND EXISTS (
+           SELECT 1
+             FROM session_players sp
+            WHERE sp.user_id = $2
+              AND sp.role = 'dm'
+            LIMIT 1
+         )
+       ) AS is_any_dm_for_npc
+     FROM characters c
+     WHERE c.id = $1
+     LIMIT 1`,
+    [characterId, userId, sessionId ?? null],
   );
   if (rows.length === 0) {
     const err = new Error('Character not found') as Error & { status: number };
@@ -35,65 +78,15 @@ export async function assertCharacterOwnerOrDM(
     throw err;
   }
 
-  // Owner check
-  if (rows[0].user_id === userId) return;
-
-  // DM check: if a sessionId is given, see if user is DM of that session
-  if (sessionId) {
-    const { rows: spRows } = await pool.query(
-      "SELECT 1 FROM session_players WHERE session_id = $1 AND user_id = $2 AND role = 'dm'",
-      [sessionId, userId],
-    );
-    if (spRows.length > 0) return;
-  }
-
-  // Fallback #1: user is DM of ANY session where this character is
-  // linked via session_players. Covers the PC case.
-  const { rows: dmRows } = await pool.query(
-    `SELECT 1 FROM session_players sp
-     JOIN session_players sp2 ON sp2.session_id = sp.session_id
-     WHERE sp2.character_id = $1
-       AND sp.user_id = $2
-       AND sp.role = 'dm'
-     LIMIT 1`,
-    [characterId, userId],
-  );
-  if (dmRows.length > 0) return;
-
-  // Fallback #2: NPCs (creatures, loot bags) are never in
-  // session_players — they exist only as tokens on maps. A DM editing
-  // a creature's inventory or loot needs the session-via-token path
-  // or they hit 403 on every "add loot to creature" / "toggle NPC
-  // weapon equipped" call. Same pattern we fixed on /loot/transfer.
-  const { rows: npcDmRows } = await pool.query(
-    `SELECT 1 FROM tokens t
-       JOIN maps m ON m.id = t.map_id
-       JOIN session_players sp ON sp.session_id = m.session_id
-      WHERE t.character_id = $1
-        AND sp.user_id = $2
-        AND sp.role = 'dm'
-      LIMIT 1`,
-    [characterId, userId],
-  );
-  if (npcDmRows.length > 0) return;
-
-  // Fallback #3: Brand-new NPC rows with `user_id = 'npc'` that don't
-  // have a token yet. The LootEditor drop flow creates a loot-bag
-  // character BEFORE spawning its token, then immediately calls
-  // `/characters/:id/loot` to add the item — at that moment there's
-  // no token linking the character to any session, so fallback #2
-  // can't find a DM record. Allow any DM (of any session the caller
-  // is a member of) to mutate NPC characters; NPCs are a shared
-  // resource without cross-session impact, and the caller being a
-  // DM somewhere proves they have legitimate game-running
-  // authority. Human-owned PCs still require the stricter checks
-  // above — this only widens access for `user_id = 'npc'` rows.
-  if (rows[0].user_id === 'npc') {
-    const { rows: anyDmRows } = await pool.query(
-      `SELECT 1 FROM session_players WHERE user_id = $1 AND role = 'dm' LIMIT 1`,
-      [userId],
-    );
-    if (anyDmRows.length > 0) return;
+  const auth = rows[0];
+  if (
+    auth.is_owner ||
+    auth.is_dm_in_session ||
+    auth.is_linked_session_dm ||
+    auth.is_token_session_dm ||
+    auth.is_any_dm_for_npc
+  ) {
+    return;
   }
 
   const err = new Error('Not authorized') as Error & { status: number };

@@ -32,6 +32,18 @@ function makeRes() {
   };
 }
 
+function characterAuthRow(overrides: Record<string, unknown> = {}) {
+  return {
+    user_id: 'caller',
+    is_owner: true,
+    is_dm_in_session: false,
+    is_linked_session_dm: false,
+    is_token_session_dm: false,
+    is_any_dm_for_npc: false,
+    ...overrides,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // P1 #1 — GET /api/sessions/:id must not leak prep maps to players
 // ---------------------------------------------------------------------------
@@ -274,7 +286,7 @@ describe('POST /api/characters/:id/loot/take — cross-player PC theft (P1 #5)',
 
   it('rejects take when the source is another human-owned PC (403)', async () => {
     // target character ownership check (caller's own target)
-    mockQuery.mockResolvedValueOnce({ rows: [{ user_id: 'caller' }] });
+    mockQuery.mockResolvedValueOnce({ rows: [characterAuthRow()] });
     // source character lookup — owned by a different human
     mockQuery.mockResolvedValueOnce({ rows: [{ user_id: 'other-human' }] });
     // DM-override check: caller is NOT a DM of any session containing the source
@@ -294,7 +306,7 @@ describe('POST /api/characters/:id/loot/take — cross-player PC theft (P1 #5)',
   });
 
   it('allows take when source is an NPC and both share a session', async () => {
-    mockQuery.mockResolvedValueOnce({ rows: [{ user_id: 'caller' }] }); // target char owner
+    mockQuery.mockResolvedValueOnce({ rows: [characterAuthRow()] });    // target char owner
     mockQuery.mockResolvedValueOnce({ rows: [{ user_id: 'npc' }] });    // source is NPC
     mockQuery.mockResolvedValueOnce({ rows: [] });                      // not DM
     mockQuery.mockResolvedValueOnce({ rows: [{ '?column?': 1 }] });     // NPC in shared session

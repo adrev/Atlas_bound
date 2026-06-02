@@ -111,23 +111,47 @@ describe('assertSessionDM', () => {
 // assertCharacterOwnerOrDM
 // ---------------------------------------------------------------------------
 describe('assertCharacterOwnerOrDM', () => {
+  const authRow = (overrides: Record<string, unknown> = {}) => ({
+    user_id: 'real-owner',
+    is_owner: false,
+    is_dm_in_session: false,
+    is_linked_session_dm: false,
+    is_token_session_dm: false,
+    is_any_dm_for_npc: false,
+    ...overrides,
+  });
+
   it('resolves when user owns the character', async () => {
-    mockQuery.mockResolvedValueOnce({ rows: [{ user_id: 'owner-1' }] });
+    mockQuery.mockResolvedValueOnce({ rows: [authRow({ user_id: 'owner-1', is_owner: true })] });
     await expect(assertCharacterOwnerOrDM('char-1', 'owner-1')).resolves.toBeUndefined();
-    // Only one query needed (character lookup)
     expect(mockQuery).toHaveBeenCalledTimes(1);
   });
 
   it('resolves when user is DM of the given session', async () => {
-    // First call: character lookup (different owner)
-    mockQuery.mockResolvedValueOnce({ rows: [{ user_id: 'someone-else' }] });
-    // Second call: DM check for the specified session
-    mockQuery.mockResolvedValueOnce({ rows: [{ '?column?': 1 }] });
+    mockQuery.mockResolvedValueOnce({ rows: [authRow({ is_dm_in_session: true })] });
 
     await expect(
       assertCharacterOwnerOrDM('char-1', 'dm-user', 'sess-1'),
     ).resolves.toBeUndefined();
-    expect(mockQuery).toHaveBeenCalledTimes(2);
+    expect(mockQuery).toHaveBeenCalledTimes(1);
+  });
+
+  it('resolves when user is DM of a session where the character is linked', async () => {
+    mockQuery.mockResolvedValueOnce({ rows: [authRow({ is_linked_session_dm: true })] });
+    await expect(assertCharacterOwnerOrDM('char-1', 'dm-user')).resolves.toBeUndefined();
+    expect(mockQuery).toHaveBeenCalledTimes(1);
+  });
+
+  it('resolves when user is DM of a session with an NPC token for the character', async () => {
+    mockQuery.mockResolvedValueOnce({ rows: [authRow({ user_id: 'npc', is_token_session_dm: true })] });
+    await expect(assertCharacterOwnerOrDM('npc-char', 'dm-user')).resolves.toBeUndefined();
+    expect(mockQuery).toHaveBeenCalledTimes(1);
+  });
+
+  it('resolves when any DM edits a new NPC character with no token yet', async () => {
+    mockQuery.mockResolvedValueOnce({ rows: [authRow({ user_id: 'npc', is_any_dm_for_npc: true })] });
+    await expect(assertCharacterOwnerOrDM('loot-bag-char', 'dm-user')).resolves.toBeUndefined();
+    expect(mockQuery).toHaveBeenCalledTimes(1);
   });
 
   it('throws 404 when character does not exist', async () => {
@@ -142,13 +166,7 @@ describe('assertCharacterOwnerOrDM', () => {
   });
 
   it('throws 403 when user is neither owner nor DM', async () => {
-    // Character lookup: owned by someone else (a real PC, not an NPC,
-    // so fallback #3 — "is the caller any-DM-anywhere" — never fires).
-    mockQuery.mockResolvedValueOnce({ rows: [{ user_id: 'real-owner' }] });
-    // Fallback #1 (DM-of-session-via-session_players link): empty
-    mockQuery.mockResolvedValueOnce({ rows: [] });
-    // Fallback #2 (DM-of-session-via-NPC-token link): empty too
-    mockQuery.mockResolvedValueOnce({ rows: [] });
+    mockQuery.mockResolvedValueOnce({ rows: [authRow()] });
 
     try {
       await assertCharacterOwnerOrDM('char-1', 'unauthorized');
@@ -157,6 +175,7 @@ describe('assertCharacterOwnerOrDM', () => {
       expect(err.message).toBe('Not authorized');
       expect(err.status).toBe(403);
     }
+    expect(mockQuery).toHaveBeenCalledTimes(1);
   });
 });
 
