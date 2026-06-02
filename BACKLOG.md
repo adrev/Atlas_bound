@@ -59,9 +59,9 @@ Each item below needs a verification pass. "Unit-testable" = I can pin it headle
 | T2.2 | Off-canvas culling for Konva grid/background layers | ⬜ | large maps |
 | T2.3 | Defer Three.js dice-box bundle until first roll | ⬜ | initial-paint win |
 | T2.4 | Reduce `/state` poll churn when nothing changed | ✅ | heartbeat churn fixed in #3; `/state` ETag merged in #14 |
-| T2.5 | Collapse `assertCharacterOwnerOrDM` 4 sequential queries → one CTE | ⬜ | per-edit latency |
+| T2.5 | Collapse `assertCharacterOwnerOrDM` 4 sequential queries → one CTE | ✅ | Done in PR #66; replaced sequential checks with one authorization query |
 | T2.6 | Batch token-move broadcasts (one frame, N moves) | 🔶 | fan-out scoping/visibility centralized in #7; batching still open |
-| T2.7 | `Cache-Control` on list endpoints (`/sessions/mine`, `/characters`, `/custom/*`) | ⬜ | quick win |
+| T2.7 | `Cache-Control` on list endpoints (`/sessions/mine`, `/characters`, `/custom/*`) | ✅ | Done in PR #65; private no-store for user/session reads, short-lived public cache for compendium reads |
 
 ## Tier 3 — reliability / security
 
