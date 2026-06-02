@@ -15,6 +15,7 @@ import { dbRowToCharacter } from '../utils/characterMapper.js';
 import { shouldDeliverChatRow } from '../utils/chatHistoryFilter.js';
 import { safeParseJSON } from '../utils/safeJson.js';
 import { rowToToken } from '../utils/tokenMapper.js';
+import { tokenVisibleToPlayer } from '../utils/tokenVisibility.js';
 
 export function registerSessionEvents(io: Server, socket: Socket): void {
 
@@ -237,7 +238,7 @@ export function registerSessionEvents(io: Server, socket: Socket): void {
             zones,
           },
           // Filter hidden tokens for players — DMs see everything.
-          tokens: isDM ? tokens : tokens.filter(t => t.visible !== false && t.visible !== 0 as unknown),
+          tokens: isDM ? tokens : tokens.filter(t => tokenVisibleToPlayer(t, userId)),
           drawings: visibleDrawings,
         });
       }
@@ -285,7 +286,7 @@ export function registerSessionEvents(io: Server, socket: Socket): void {
           ? combatState.combatants
           : combatState.combatants.filter((c) => {
               const tok = room.tokens.get(c.tokenId);
-              return tok ? tok.visible !== false : false;
+              return tok ? tokenVisibleToPlayer(tok, userId) : false;
             });
 
         socket.emit('combat:state-sync', {

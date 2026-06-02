@@ -1,6 +1,7 @@
 import type { Token, Drawing } from '@dnd-vtt/shared';
 import type { CombatState, ActionEconomy } from '@dnd-vtt/shared';
 import { blocksActions } from '@dnd-vtt/shared';
+import { tokenVisibleToPlayer } from './tokenVisibility.js';
 
 export interface RoomPlayer {
   userId: string;
@@ -665,12 +666,13 @@ export function dmSocketsOnMap(room: RoomState, mapId: string): string[] {
     .map((recipient) => recipient.socketId);
 }
 
-/**
- * Token visibility is enforced before fan-out. Hidden tokens can exist
- * on maps players are rendering, but only DMs should receive their
- * add/move/update payloads unless a visibility transition needs a
- * player-side removal diff.
- */
-export function mapRecipientsForToken(room: RoomState, mapId: string, visible: boolean): string[] {
-  return visible ? socketsOnMap(room, mapId) : dmSocketsOnMap(room, mapId);
+export function socketRecipientsForToken(room: RoomState, mapId: string, token: Token): MapSocketRecipient[] {
+  return socketRecipientsOnMap(room, mapId)
+    .filter((recipient) => (
+      recipient.role === 'dm' || tokenVisibleToPlayer(token, recipient.userId)
+    ));
+}
+
+export function socketsForToken(room: RoomState, mapId: string, token: Token): string[] {
+  return socketRecipientsForToken(room, mapId, token).map((recipient) => recipient.socketId);
 }

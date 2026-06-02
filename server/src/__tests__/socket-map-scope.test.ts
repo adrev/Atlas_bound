@@ -77,8 +77,38 @@ function token(id: string, overrides: Partial<Token> = {}): Token {
   };
 }
 
+function tokenRow(t: Token): Record<string, unknown> {
+  return {
+    id: t.id,
+    map_id: t.mapId,
+    character_id: t.characterId,
+    name: t.name,
+    x: t.x,
+    y: t.y,
+    size: t.size,
+    image_url: t.imageUrl,
+    color: t.color,
+    layer: t.layer,
+    visible: t.visible === false ? 0 : 1,
+    has_light: t.hasLight ? 1 : 0,
+    light_radius: t.lightRadius,
+    light_dim_radius: t.lightDimRadius,
+    light_color: t.lightColor,
+    conditions: JSON.stringify(t.conditions ?? []),
+    owner_user_id: t.ownerUserId,
+    faction: t.faction,
+    created_at: t.createdAt,
+  };
+}
+
 function channelsFor(emissions: Emission[], event: string): string[] {
   return emissions.filter((e) => e.event === event).map((e) => e.channelId).sort();
+}
+
+function mapLoadedFor(emissions: Emission[], channelId: string): { tokens: Array<{ id: string }> } | undefined {
+  return emissions.find((e) => e.channelId === channelId && e.event === 'map:loaded')?.payload as
+    | { tokens: Array<{ id: string }> }
+    | undefined;
 }
 
 beforeEach(() => {
@@ -169,6 +199,59 @@ describe('map:zone scoping (DM-only data)', () => {
     const channels = channelsFor(emissions, 'map:zones-updated');
     expect(channels).toContain('dm-sock');
     expect(channels).not.toContain('player-sock');
+  });
+});
+
+describe('map:load token visibility', () => {
+  it('filters invisible unoutlined tokens from player socket payloads', async () => {
+    seedRoom();
+    const visible = token('visible-token', { name: 'Lantern' });
+    const invisible = token('invisible-npc', {
+      name: 'Invisible Stalker',
+      visible: true,
+      conditions: ['invisible'],
+      ownerUserId: 'npc',
+    });
+
+    mockQuery.mockImplementation((sql: unknown) => {
+      const s = String(sql);
+      if (/SELECT 1 FROM maps/i.test(s)) return Promise.resolve({ rows: [{ '?column?': 1 }] });
+      if (/SELECT \* FROM maps WHERE id/i.test(s)) {
+        return Promise.resolve({
+          rows: [{
+            id: 'map-1',
+            session_id: SESSION,
+            name: 'Active Map',
+            image_url: null,
+            width: 1400,
+            height: 1050,
+            grid_size: 70,
+            grid_type: 'square',
+            grid_offset_x: 0,
+            grid_offset_y: 0,
+            walls: '[]',
+            fog_state: '[]',
+            ambient_light: 'bright',
+            ambient_opacity: null,
+          }],
+        });
+      }
+      if (/SELECT \* FROM tokens WHERE map_id/i.test(s)) {
+        return Promise.resolve({ rows: [tokenRow(visible), tokenRow(invisible)] });
+      }
+      if (/FROM map_zones/i.test(s)) return Promise.resolve({ rows: [] });
+      return Promise.resolve({ rows: [] });
+    });
+
+    const { io, socket, handlers, emissions } = makeHarness('dm-sock', 'dm-user');
+    registerMapEvents(io, socket);
+
+    await handlers['map:load']!({ mapId: 'map-1' });
+
+    expect(mapLoadedFor(emissions, 'dm-sock')?.tokens.map((t) => t.id).sort())
+      .toEqual(['invisible-npc', 'visible-token']);
+    expect(mapLoadedFor(emissions, 'player-sock')?.tokens.map((t) => t.id))
+      .toEqual(['visible-token']);
   });
 });
 

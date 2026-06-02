@@ -4,8 +4,9 @@ import { gridDistance, snapToGrid } from '@dnd-vtt/shared';
 import { v4 as uuidv4 } from 'uuid';
 import pool from '../db/connection.js';
 import {
-  checkRateLimit, getPlayerBySocketId, isTokenActionable, mapRecipientsForToken,
+  checkRateLimit, getPlayerBySocketId, isTokenActionable,
   resolveViewingMapId, socketRecipientsOnMap, socketsOnMap,
+  socketsForToken,
 } from '../utils/roomState.js';
 import { broadcastEventToSockets } from '../utils/eventBroadcast.js';
 import * as OpportunityAttackService from '../services/OpportunityAttackService.js';
@@ -176,7 +177,7 @@ export function registerTokenEvents(io: Server, socket: Socket): void {
     // Scope movement to sockets rendering this map. A DM can move
     // tokens on a preview map; those coordinates must not be shipped
     // to players sitting on the ribbon map.
-    const moveRecipients = mapRecipientsForToken(ctx.room, token.mapId, token.visible !== false);
+    const moveRecipients = socketsForToken(ctx.room, token.mapId, token);
     broadcastEventToSockets(
       io, ctx.room, 'map:token-moved',
       { tokenId, x, y, mapId: token.mapId },
@@ -405,7 +406,7 @@ export function registerTokenEvents(io: Server, socket: Socket): void {
       JSON.stringify(token.conditions), token.ownerUserId, token.faction,
     ]);
 
-    const addRecipients = mapRecipientsForToken(ctx.room, targetMapId, token.visible !== false);
+    const addRecipients = socketsForToken(ctx.room, targetMapId, token);
     broadcastEventToSockets(
       io, ctx.room, 'map:token-added',
       token as unknown as Record<string, unknown>,
@@ -490,12 +491,13 @@ export function registerTokenEvents(io: Server, socket: Socket): void {
       token = rowToToken(row);
     }
 
-    // Snapshot pre-update visibility so we can tell if this edit is
-    // promoting a hidden token into view for non-DM players. We re-emit
-    // as `map:token-added` in that case because the client filtered it
-    // out on `map:loaded` (invisible tokens are never sent to players),
-    // so a plain diff broadcast would have nothing to apply.
-    const wasVisible = token.visible !== false;
+    // Snapshot pre-update visibility so per-recipient fanout can send
+    // added/removed events instead of leaking hidden/invisible token
+    // payloads to players that should not currently see the token.
+    const beforeToken: Token = {
+      ...token,
+      conditions: Array.isArray(token.conditions) ? [...token.conditions] as Token['conditions'] : token.conditions,
+    };
 
     const isDM = ctx.player.role === 'dm';
     const isOwner = token.ownerUserId === ctx.player.userId;
@@ -549,24 +551,22 @@ export function registerTokenEvents(io: Server, socket: Socket): void {
       await pool.query(`UPDATE tokens SET ${setClauses.join(', ')} WHERE id = $${paramIdx}`, params);
     }
 
-    // If this update flipped a hidden token to visible, non-DM players
-    // need the FULL token payload (their client never received it on
-    // `map:loaded` because of the hidden filter there). DMs always had
-    // it, so they still get the diff. Per-recipient so the mixed
-    // audience (DM + players in one room) pays the full-token cost only
-    // for the players who actually need it.
-    const promotedToVisible =
-      changes.visible === true && !wasVisible;
     const latestToken = ctx.room.tokens.get(tokenId) ?? token;
 
     if (tokenMapId) {
       const recipients = socketRecipientsOnMap(ctx.room, tokenMapId);
-      for (const { socketId: sid, role } of recipients) {
-        const canSeeLatest = role === 'dm' || latestToken.visible !== false;
-        const demotedToHidden = changes.visible === false && wasVisible;
-        if (!canSeeLatest && !demotedToHidden) continue;
-        if (promotedToVisible && role !== 'dm') {
+      for (const { socketId: sid, role, userId } of recipients) {
+        if (role === 'dm') {
+          io.to(sid).emit('map:token-updated', { tokenId, changes, mapId: tokenMapId });
+          continue;
+        }
+        const couldSeeBefore = tokenVisibleToPlayer(beforeToken, userId);
+        const canSeeLatest = tokenVisibleToPlayer(latestToken, userId);
+        if (!couldSeeBefore && !canSeeLatest) continue;
+        if (!couldSeeBefore && canSeeLatest) {
           io.to(sid).emit('map:token-added', latestToken);
+        } else if (couldSeeBefore && !canSeeLatest) {
+          io.to(sid).emit('map:token-removed', { tokenId, mapId: tokenMapId });
         } else {
           io.to(sid).emit('map:token-updated', { tokenId, changes, mapId: tokenMapId });
         }
