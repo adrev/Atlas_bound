@@ -3,6 +3,7 @@ import type { Server } from 'socket.io';
 import * as CombatService from '../../services/CombatService.js';
 import * as DiscordService from '../../services/DiscordService.js';
 import { getRoom } from '../../utils/roomState.js';
+import { tokenVisibleToPlayer } from '../../utils/tokenVisibility.js';
 import type { Combatant } from '@dnd-vtt/shared';
 
 /**
@@ -17,9 +18,9 @@ import type { Combatant } from '@dnd-vtt/shared';
 function combatantsVisibleTo(
   sessionId: string,
   combatants: Combatant[],
-  role: 'dm' | 'player',
+  recipient: { userId: string; role: 'dm' | 'player' },
 ): Combatant[] {
-  if (role === 'dm') return combatants;
+  if (recipient.role === 'dm') return combatants;
   const room = getRoom(sessionId);
   if (!room) return combatants;
   return combatants.filter((c) => {
@@ -28,7 +29,7 @@ function combatantsVisibleTo(
     // added by slug with no map presence), default to hidden — safer
     // to drop than to leak.
     if (!tok) return false;
-    return tok.visible !== false;
+    return tokenVisibleToPlayer(tok, recipient.userId);
   });
 }
 
@@ -59,7 +60,7 @@ export async function startCombat(
   // advertise them until the DM reveals the token.
   if (room) {
     for (const p of room.players.values()) {
-      const visibleCombatants = combatantsVisibleTo(sessionId, combatState.combatants, p.role);
+      const visibleCombatants = combatantsVisibleTo(sessionId, combatState.combatants, p);
       io.to(p.socketId).emit('combat:started', {
         combatants: visibleCombatants,
         roundNumber: combatState.roundNumber,
@@ -79,12 +80,12 @@ export async function startCombat(
   // entries replaced by a "???" placeholder so they still see the slot
   // counts (and understand that an unseen threat acts between turns 2
   // and 3) without knowing who or with what modifier.
-  const buildLines = (pov: 'dm' | 'player'): string => {
+  const buildLines = (recipient: { userId: string; role: 'dm' | 'player' }): string => {
     const out: string[] = ['⚔️ Combat begins! Initiative order:'];
     combatState.combatants.forEach((c, idx) => {
       const marker = idx === 0 ? '▶' : ' ';
       const tok = room?.tokens.get(c.tokenId);
-      const hidden = pov === 'player' && tok?.visible === false;
+      const hidden = recipient.role === 'player' && (!tok || !tokenVisibleToPlayer(tok, recipient.userId));
       if (hidden) {
         out.push(`   ${marker} ${idx + 1}. ??? — ??`);
       } else {
@@ -92,8 +93,11 @@ export async function startCombat(
         out.push(`   ${marker} ${idx + 1}. ${c.name}${tag} — ${c.initiative}`);
       }
     });
-    const firstVisibleName = pov === 'player'
-      ? combatState.combatants.find((c) => room?.tokens.get(c.tokenId)?.visible !== false)?.name
+    const firstVisibleName = recipient.role === 'player'
+      ? combatState.combatants.find((c) => {
+          const tok = room?.tokens.get(c.tokenId);
+          return tok ? tokenVisibleToPlayer(tok, recipient.userId) : false;
+        })?.name
       : combatState.combatants[0]?.name;
     out.push(`   Round 1 — ${firstVisibleName ?? '???'}'s turn`);
     return out.join('\n');
@@ -117,7 +121,7 @@ export async function startCombat(
         userId: 'system',
         displayName: 'System',
         type: 'system',
-        content: buildLines(p.role),
+        content: buildLines(p),
         characterName: null,
         whisperTo: null,
         rollData: null,
@@ -142,7 +146,7 @@ export async function startCombat(
       continue;
     }
     for (const p of room.players.values()) {
-      if (p.role === 'dm' || tok?.visible !== false) {
+      if (p.role === 'dm' || (tok ? tokenVisibleToPlayer(tok, p.userId) : false)) {
         io.to(p.socketId).emit('combat:initiative-set', payload);
       }
     }
@@ -154,7 +158,7 @@ export async function startCombat(
     if (room) {
       for (const p of room.players.values()) {
         io.to(p.socketId).emit('combat:all-initiatives-ready', {
-          combatants: combatantsVisibleTo(sessionId, sorted, p.role),
+          combatants: combatantsVisibleTo(sessionId, sorted, p),
         });
       }
     } else {

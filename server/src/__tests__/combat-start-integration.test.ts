@@ -64,6 +64,16 @@ function seedRoom(sessionId: string, tokens: Token[]): void {
   });
 }
 
+function addPlayer(sessionId: string, userId = 'player-user', socketId = 'player-sock'): void {
+  addPlayerToRoom(sessionId, {
+    userId,
+    displayName: 'Player',
+    socketId,
+    role: 'player',
+    characterId: null,
+  });
+}
+
 function tok(id: string, overrides: Partial<Token> = {}): Token {
   return {
     id, mapId: 'map-1', characterId: null, name: id,
@@ -152,6 +162,38 @@ describe('combat:start end-to-end through split modules', () => {
       expect(typeof c.tokenId).toBe('string');
       expect(typeof c.isNPC).toBe('boolean');
     }
+  });
+
+  it('hides invisible unoutlined NPCs from player combat-start payloads and initiative chat', async () => {
+    const sessionId = 's-start-invisible';
+    seedRoom(sessionId, [
+      tok('tGuard', { name: 'Guard' }),
+      tok('tStalker', { name: 'Invisible Stalker', conditions: ['invisible'], ownerUserId: 'npc' }),
+    ]);
+    addPlayer(sessionId);
+
+    const { io, socket, handlers, emissions } = makeHarness();
+    registerCombatEvents(io, socket);
+
+    await handlers['combat:start']!({ tokenIds: ['tGuard', 'tStalker'] });
+
+    const playerStarted = emissions.find((e) => e.channelId === 'player-sock' && e.event === 'combat:started');
+    expect(playerStarted).toBeDefined();
+    expect((playerStarted!.payload as { combatants: Combatant[] }).combatants.map((c) => c.tokenId))
+      .toEqual(['tGuard']);
+
+    const playerChat = emissions.find((e) => e.channelId === 'player-sock' && e.event === 'chat:new-message');
+    expect((playerChat!.payload as { content: string }).content).not.toContain('Invisible Stalker');
+    expect((playerChat!.payload as { content: string }).content).toContain('???');
+
+    const playerInitTokenIds = emissions
+      .filter((e) => e.channelId === 'player-sock' && e.event === 'combat:initiative-set')
+      .map((e) => (e.payload as { tokenId: string }).tokenId);
+    expect(playerInitTokenIds).not.toContain('tStalker');
+
+    const dmStarted = emissions.find((e) => e.channelId === 'sock-1' && e.event === 'combat:started');
+    expect((dmStarted!.payload as { combatants: Combatant[] }).combatants.map((c) => c.tokenId).sort())
+      .toEqual(['tGuard', 'tStalker']);
   });
 
   it('combat:end after combat:start clears state and emits combat:ended', async () => {

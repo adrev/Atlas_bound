@@ -2,13 +2,14 @@ import type { Server, Socket } from 'socket.io';
 import type { Token, WallSegment, FogPolygon } from '@dnd-vtt/shared';
 import pool from '../db/connection.js';
 import {
-  getPlayerBySocketId, mapRecipientsForToken, resolveViewingMapId, socketsOnMap,
+  getPlayerBySocketId, resolveViewingMapId, socketsForToken, socketsOnMap,
 } from '../utils/roomState.js';
 import { loadDrawingsForMapAsync, filterDrawingsForPlayer } from './drawingEvents.js';
 import { mapLoadSchema, mapPingSchema } from '../utils/validation.js';
 import { safeHandler } from '../utils/socketHelpers.js';
 import { safeParseJSON } from '../utils/safeJson.js';
 import { rowToToken } from '../utils/tokenMapper.js';
+import { tokenVisibleToPlayer } from '../utils/tokenVisibility.js';
 import { withConditionSources } from '../utils/conditionSources.js';
 
 import { registerTokenEvents } from './tokenEvents.js';
@@ -93,7 +94,7 @@ export function registerMapEvents(io: Server, socket: Socket): void {
       const isDM = player.role === 'dm';
       const playerTokens = isDM
         ? tokens
-        : tokens.filter(t => t.visible !== false && t.visible !== 0 as unknown);
+        : tokens.filter(t => tokenVisibleToPlayer(t, player.userId));
       const mapData = {
         ...baseMapData,
         zones: isDM ? zones : [],
@@ -199,7 +200,7 @@ export function registerMapEvents(io: Server, socket: Socket): void {
     // Hidden-token metadata must follow the same recipient rules as
     // token move/update. Otherwise a DM changing senses on a hidden NPC
     // leaks that token id and vision payload to every player socket.
-    for (const sid of mapRecipientsForToken(ctx.room, token.mapId, token.visible !== false)) {
+    for (const sid of socketsForToken(ctx.room, token.mapId, token)) {
       io.to(sid).emit('map:token-updated', {
         tokenId,
         changes: { visionOverrides: cleanOverrides ?? undefined },

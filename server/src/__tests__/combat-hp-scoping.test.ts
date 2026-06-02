@@ -71,6 +71,13 @@ describe('emitToTokenViewers — combat HP/condition scoping', () => {
     expect(channels(em)).toEqual(['dm-sock']);
   });
 
+  it('an invisible unoutlined NPC HP change reaches DM sockets only', () => {
+    const room = seedRoom([tok('npc', { conditions: ['invisible'] })]);
+    const em: Emission[] = [];
+    emitToTokenViewers(fakeIo(em), room, 'npc', 'combat:hp-changed', { tokenId: 'npc', hp: 3 });
+    expect(channels(em)).toEqual(['dm-sock']);
+  });
+
   it('a VISIBLE NPC HP change reaches DM and players on the map', () => {
     const room = seedRoom([tok('npc', { visible: true })]);
     const em: Emission[] = [];

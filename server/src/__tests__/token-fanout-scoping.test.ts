@@ -5,8 +5,8 @@
  *
  *   - a token move is broadcast only to sockets rendering the token's map
  *     (DM-preview moves must not leak to players on the ribbon map);
- *   - a HIDDEN token's move reaches DM sockets only, never player sockets,
- *     even when the player is on the same map.
+ *   - a hidden/invisible token's move reaches only sockets that should see it,
+ *     never unrelated player sockets, even when the player is on the same map.
  *
  * Same fake-io/socket harness style as combat-start-integration.test.ts —
  * no real Socket.IO boot. We inject a DM "mover" socket, invoke the
@@ -106,6 +106,28 @@ describe('token move fan-out scoping (98bd0a6)', () => {
     expect(channels).not.toContain('player-sock');
   });
 
+  it('hides an invisible unoutlined token move from non-owner player sockets', async () => {
+    seedRoom([tok('tInvisible', { visible: true, conditions: ['invisible'], ownerUserId: 'npc' })]);
+    const { io, socket, handlers, emissions } = makeHarness('dm-sock');
+    registerTokenEvents(io, socket);
+
+    await handlers['map:token-move']!({ tokenId: 'tInvisible', x: 70, y: 70 });
+
+    const channels = movedChannels(emissions);
+    expect(channels).toContain('dm-sock');
+    expect(channels).not.toContain('player-sock');
+  });
+
+  it('keeps an invisible owned token visible to its owning player', async () => {
+    seedRoom([tok('tInvisibleMine', { visible: true, conditions: ['invisible'], ownerUserId: 'player-user' })]);
+    const { io, socket, handlers, emissions } = makeHarness('dm-sock');
+    registerTokenEvents(io, socket);
+
+    await handlers['map:token-move']!({ tokenId: 'tInvisibleMine', x: 70, y: 70 });
+
+    expect(movedChannels(emissions)).toEqual(['dm-sock', 'player-sock']);
+  });
+
   it('does not leak a DM-preview-map move to a player on the ribbon map', async () => {
     // DM previews map-2; player stays on the ribbon map-1. A visible
     // token living on map-2 moves — only the DM (who is viewing map-2)
@@ -160,6 +182,31 @@ describe('token move fan-out scoping (98bd0a6)', () => {
     expect(eventChannels(emissions, 'map:token-added')).toEqual(['dm-sock']);
   });
 
+  it('hides an invisible unoutlined token add from non-owner player sockets', async () => {
+    seedRoom([]);
+    const { io, socket, handlers, emissions } = makeHarness('dm-sock');
+    registerTokenEvents(io, socket);
+
+    await handlers['map:token-add']!({
+      mapId: 'map-1',
+      name: 'Invisible Stalker',
+      x: 70,
+      y: 70,
+      size: 1,
+      color: '#000000',
+      layer: 'token',
+      visible: true,
+      hasLight: false,
+      lightRadius: 0,
+      lightDimRadius: 0,
+      lightColor: '#ffffff',
+      conditions: ['invisible'],
+      ownerUserId: 'npc',
+    });
+
+    expect(eventChannels(emissions, 'map:token-added')).toEqual(['dm-sock']);
+  });
+
   it('keeps hidden token updates DM-only when visibility does not change', async () => {
     seedRoom([tok('tHidden', { visible: false })]);
     const { io, socket, handlers, emissions } = makeHarness('dm-sock');
@@ -170,14 +217,26 @@ describe('token move fan-out scoping (98bd0a6)', () => {
     expect(eventChannels(emissions, 'map:token-updated')).toEqual(['dm-sock']);
   });
 
-  it('sends demote-to-hidden updates to players so clients can remove known tokens', async () => {
+  it('sends demote-to-hidden removals to players so clients drop known tokens', async () => {
     seedRoom([tok('tVis', { visible: true })]);
     const { io, socket, handlers, emissions } = makeHarness('dm-sock');
     registerTokenEvents(io, socket);
 
     await handlers['map:token-update']!({ tokenId: 'tVis', changes: { visible: false } });
 
-    expect(eventChannels(emissions, 'map:token-updated')).toEqual(['dm-sock', 'player-sock']);
+    expect(eventChannels(emissions, 'map:token-updated')).toEqual(['dm-sock']);
+    expect(eventChannels(emissions, 'map:token-removed')).toEqual(['player-sock']);
+  });
+
+  it('sends turn-invisible removals to non-owner players', async () => {
+    seedRoom([tok('tVis', { visible: true, ownerUserId: 'npc' })]);
+    const { io, socket, handlers, emissions } = makeHarness('dm-sock');
+    registerTokenEvents(io, socket);
+
+    await handlers['map:token-update']!({ tokenId: 'tVis', changes: { conditions: ['invisible'] } });
+
+    expect(eventChannels(emissions, 'map:token-updated')).toEqual(['dm-sock']);
+    expect(eventChannels(emissions, 'map:token-removed')).toEqual(['player-sock']);
   });
 
   it('sends full token payloads to players when a hidden token becomes visible', async () => {
@@ -186,6 +245,17 @@ describe('token move fan-out scoping (98bd0a6)', () => {
     registerTokenEvents(io, socket);
 
     await handlers['map:token-update']!({ tokenId: 'tHidden', changes: { visible: true } });
+
+    expect(eventChannels(emissions, 'map:token-updated')).toEqual(['dm-sock']);
+    expect(eventChannels(emissions, 'map:token-added')).toEqual(['player-sock']);
+  });
+
+  it('sends full token payloads to players when invisible is outlined', async () => {
+    seedRoom([tok('tInvisible', { visible: true, conditions: ['invisible'], ownerUserId: 'npc' })]);
+    const { io, socket, handlers, emissions } = makeHarness('dm-sock');
+    registerTokenEvents(io, socket);
+
+    await handlers['map:token-update']!({ tokenId: 'tInvisible', changes: { conditions: ['invisible', 'outlined'] } });
 
     expect(eventChannels(emissions, 'map:token-updated')).toEqual(['dm-sock']);
     expect(eventChannels(emissions, 'map:token-added')).toEqual(['player-sock']);

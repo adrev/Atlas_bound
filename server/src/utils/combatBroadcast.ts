@@ -1,5 +1,5 @@
 import type { Server } from 'socket.io';
-import { type RoomState, mapRecipientsForToken } from './roomState.js';
+import { type RoomState, socketsForToken } from './roomState.js';
 
 /** All live socket ids for the room's DMs (multi-tab aware). The safe
  *  fallback recipient set — a DM may always see everything. */
@@ -44,7 +44,7 @@ export function emitToTokenViewers(
     for (const sid of new Set(dmSocketIds(room))) io.to(sid).emit(event, payload);
     return;
   }
-  const recipients = new Set(mapRecipientsForToken(room, token.mapId, token.visible !== false));
+  const recipients = new Set(socketsForToken(room, token.mapId, token));
   if (opts.includeOwner && token.ownerUserId) {
     const ownerSockets = room.userSockets.get(token.ownerUserId);
     if (ownerSockets) for (const sid of ownerSockets) recipients.add(sid);

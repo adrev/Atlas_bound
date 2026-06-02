@@ -12,6 +12,7 @@ import { loadDrawingsForMapAsync, filterDrawingsForPlayer } from './drawingEvent
 import { loadZonesForMap } from './mapEvents.js';
 import { safeParseJSON } from '../utils/safeJson.js';
 import { rowToToken } from '../utils/tokenMapper.js';
+import { tokenVisibleToPlayer } from '../utils/tokenVisibility.js';
 
 const MAP_SUMMARY_SELECT = `
   SELECT m.id, m.name, m.image_url, m.thumbnail_url, m.width, m.height, m.grid_size,
@@ -267,7 +268,7 @@ export function registerSceneEvents(io: Server, socket: Socket): void {
       };
       const playerTokens = player.role === 'dm'
         ? tokens
-        : tokens.filter(t => t.visible !== false && t.visible !== 0 as unknown);
+        : tokens.filter(t => tokenVisibleToPlayer(t, player.userId));
       io.to(player.socketId).emit('map:loaded', { map: mapData, tokens: playerTokens, drawings: visibleDrawings, isPreview: false });
     }
 
