@@ -112,6 +112,7 @@ export async function pullStateSnapshot(): Promise<{ ok: boolean; applied: boole
     }
 
     const snap = (await resp.json()) as {
+      mapId?: string | null;
       tokens: Token[];
       combat: null | {
         active: boolean;
@@ -156,9 +157,10 @@ export async function pullStateSnapshot(): Promise<{ ok: boolean; applied: boole
     // If the current map is the one the server snapshotted for,
     // replace. Otherwise leave the store alone — the DM is on a
     // preview map and will get its own snapshot on its hydration
-    // path. We recognize "same map" via the first token's mapId.
-    const activeMapId = snap.tokens[0]?.mapId ?? mapStore.currentMap?.id;
-    if (activeMapId && activeMapId === mapStore.currentMap?.id) {
+    // path. Newer servers send `mapId` even for empty maps; keep
+    // token-based fallback for legacy responses.
+    const snapshotMapId = snap.mapId ?? snap.tokens[0]?.mapId ?? mapStore.currentMap?.id;
+    if (snapshotMapId && snapshotMapId === mapStore.currentMap?.id) {
       // Diff to detect actual changes — avoids re-rendering the
       // whole token layer every 15 s if nothing changed.
       const currentIds = Object.keys(mapStore.tokens).sort().join(',');
