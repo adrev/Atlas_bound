@@ -5,6 +5,7 @@ import type {
 import { v4 as uuidv4 } from 'uuid';
 import pool from '../db/connection.js';
 import type { PlayerContext } from '../utils/roomState.js';
+import { emitToTokenViewers } from '../utils/combatBroadcast.js';
 
 /**
  * Chat slash-command dispatcher. A single entry point for every
@@ -69,7 +70,7 @@ export async function tryHandleChatCommand(
   if (!handler) return false;
 
   try {
-    return await handler({ io, ctx, raw, command, rest });
+    return await handler({ io: scopedChatCommandIo(io, ctx), ctx, raw, command, rest });
   } catch (err) {
     // Surface the error back to the caller as a private whisper
     // instead of letting the exception escape the safeHandler wrapper.
@@ -77,6 +78,36 @@ export async function tryHandleChatCommand(
     whisperToCaller(io, ctx, `⚠ !${command}: ${msg}`);
     return true;
   }
+}
+
+function scopedChatCommandIo(io: Server, ctx: PlayerContext): Server {
+  return new Proxy(io, {
+    get(target, prop, receiver) {
+      if (prop !== 'to') return Reflect.get(target, prop, receiver);
+      return (channel: unknown) => {
+        const operator = target.to(channel as never);
+        if (channel !== ctx.room.sessionId) return operator;
+        return new Proxy(operator, {
+          get(opTarget, opProp, opReceiver) {
+            if (opProp !== 'emit') return Reflect.get(opTarget, opProp, opReceiver);
+            return (event: string, payload?: unknown, ...args: unknown[]) => {
+              if (event === 'map:token-updated') {
+                const tokenId = typeof payload === 'object' && payload !== null
+                  ? (payload as { tokenId?: unknown }).tokenId
+                  : null;
+                if (typeof tokenId === 'string') {
+                  emitToTokenViewers(io, ctx.room, tokenId, event, payload);
+                  return true;
+                }
+              }
+              return (opTarget.emit as (...emitArgs: unknown[]) => unknown)
+                .call(opTarget, event, payload, ...args);
+            };
+          },
+        });
+      };
+    },
+  }) as Server;
 }
 
 // ── Helpers used by command handlers ───────────────────────────────
