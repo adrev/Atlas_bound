@@ -110,7 +110,7 @@ Each item below needs a verification pass. "Unit-testable" = I can pin it headle
 | `map:token-update` visibility promote/demote transitions | ✅ covered by #7 |
 | Player ribbon activation + refresh returns to ribbon | 🔴 browser-only |
 | Reconnect / membership (background-tab return, network reconnect, kick/ban no stale sockets) | 🔴 browser-only |
-| Combat/spell recipient scoping (cast card, counterspell, shield, HP, conditions, death save, OA) | 🔶 HP/conditions/death-save/reaction token visibility covered in #23; cast/counterspell/shield/OA still need QA |
+| Combat/spell recipient scoping (cast card, counterspell, shield, HP, conditions, death save, OA) | ✅ HP/conditions/death-save/reaction in #23; counterspell/Shield prompts covered by `combat-reaction-scoping`; cast VFX + counterspell/Shield responses + OA prompt fan-out covered in PR #68 |
 | Music late-joiner sync; chat whisper/hidden-roll visibility | ⬜ partly server-testable |
 
 ## Design / UX backlog (experience improvements — Claude's lane)
