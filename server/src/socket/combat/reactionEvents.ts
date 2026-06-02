@@ -1,7 +1,7 @@
 import { v4 as uuidv4 } from 'uuid';
 import type { Server, Socket } from 'socket.io';
 import {
-  getPlayerBySocketId, isTokenActionable,
+  getPlayerBySocketId, isTokenActionable, socketRecipientsOnMap,
 } from '../../utils/roomState.js';
 import * as OpportunityAttackService from '../../services/OpportunityAttackService.js';
 import { getSpellAnimation } from '@dnd-vtt/shared';
@@ -14,6 +14,7 @@ import {
 import { safeHandler } from '../../utils/socketHelpers.js';
 import { emitToTokenViewers } from '../../utils/combatBroadcast.js';
 import { tokenConditionChanges } from '../../utils/conditionSources.js';
+import { tokenVisibleToPlayer } from '../../utils/tokenVisibility.js';
 
 /**
  * Reaction events: opportunity attacks, counterspell / Shield prompts,
@@ -321,13 +322,13 @@ export function registerCombatReactions(io: Server, socket: Socket): void {
     if (!ctx) return;
 
     const spellEvent = parsed.data;
+    const casterToken = ctx.room.tokens.get(spellEvent.casterId);
+    if (!casterToken) return;
 
     // Ownership check for players: must own the caster token AND it
     // must be alive. DMs may cast for any token (NPCs etc.).
     const isDM = ctx.player.role === 'dm';
     if (!isDM) {
-      const casterToken = ctx.room.tokens.get(spellEvent.casterId);
-      if (!casterToken) return;
       if (casterToken.ownerUserId !== ctx.player.userId) return;
       if (!isTokenActionable(ctx, spellEvent.casterId)) return;
     }
@@ -335,8 +336,7 @@ export function registerCombatReactions(io: Server, socket: Socket): void {
     // Get animation config for the spell
     const animConfig = getSpellAnimation(spellEvent.spellName);
 
-    // Broadcast the spell cast event with animation data
-    io.to(ctx.room.sessionId).emit('combat:spell-cast', {
+    const payload = {
       casterId: spellEvent.casterId,
       spellName: spellEvent.spellName,
       targetIds: spellEvent.targetIds,
@@ -346,7 +346,22 @@ export function registerCombatReactions(io: Server, socket: Socket): void {
       aoeType: spellEvent.aoeType,
       aoeSize: spellEvent.aoeSize,
       aoeDirection: spellEvent.aoeDirection,
-    });
+    };
+
+    for (const recipient of socketRecipientsOnMap(ctx.room, casterToken.mapId)) {
+      if (recipient.role === 'dm') {
+        io.to(recipient.socketId).emit('combat:spell-cast', payload);
+        continue;
+      }
+      if (!tokenVisibleToPlayer(casterToken, recipient.userId)) continue;
+      io.to(recipient.socketId).emit('combat:spell-cast', {
+        ...payload,
+        targetIds: payload.targetIds.filter((targetId) => {
+          const targetToken = ctx.room.tokens.get(targetId);
+          return targetToken ? tokenVisibleToPlayer(targetToken, recipient.userId) : false;
+        }),
+      });
+    }
 
     // Core 5e: casting a spell while adjacent does not itself
     // provoke an opportunity attack. Keep spellcasting OAs out of the

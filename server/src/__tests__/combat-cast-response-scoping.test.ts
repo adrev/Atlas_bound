@@ -7,13 +7,11 @@
  *
  * Two distinct recipient policies live here, and both are intentional:
  *
- *  • `combat:spell-cast` (the cast VFX / animation) broadcasts room-wide.
- *    The on-map effect — a projectile, a fireball, an aura — is something
- *    every client is meant to see, so it is NOT token-visibility scoped the
- *    way the counterspell prompt is. These are CHARACTERIZATION tests: they
- *    lock in the current room-wide behavior plus the caster-ownership gate.
- *    (Open question for whether a HIDDEN caster's `casterId` should leak in
- *    that payload is flagged on the PR, not asserted here.)
+ *  • `combat:spell-cast` (the cast VFX / animation) is scoped to clients on
+ *    the caster's map who can see the caster token. A hidden or invisible
+ *    unoutlined caster must not leak its token id / spell name to bystanders.
+ *    Target token ids are also filtered per recipient so the VFX payload does
+ *    not reveal hidden targets while still showing the on-map spell effect.
  *
  *  • `combat:spell-counterspelled` / `combat:shield-cast` (the responses)
  *    broadcast room-wide ON PURPOSE: they must reach the original
@@ -81,6 +79,10 @@ function channelsFor(emissions: Emission[], event: string): string[] {
   return emissions.filter((e) => e.event === event).map((e) => e.channelId).sort();
 }
 
+function payloadFor<T = Record<string, unknown>>(emissions: Emission[], channelId: string, event: string): T | undefined {
+  return emissions.find((e) => e.channelId === channelId && e.event === event)?.payload as T | undefined;
+}
+
 /** A schema-valid `combat:cast-spell` payload for the given caster token. */
 function castPayload(casterId: string) {
   return {
@@ -110,20 +112,36 @@ beforeEach(() => {
 });
 
 describe('combat:spell-cast — cast VFX broadcast & ownership', () => {
-  it('a DM cast broadcasts the spell VFX room-wide (every client sees the effect)', async () => {
+  it('a visible DM-cast spell VFX reaches clients on the caster map', async () => {
     const em: Emission[] = [];
     seedRoom([tok('npc', { ownerUserId: null })]);
     const h = handlersFor(fakeIo(em), 'dm-sock');
     await h.get('combat:cast-spell')!(castPayload('npc'));
-    expect(channelsFor(em, 'combat:spell-cast')).toEqual([SESSION]);
+    expect(channelsFor(em, 'combat:spell-cast')).toEqual(['dm-sock', 'player-sock']);
   });
 
-  it('a player casting a token they OWN broadcasts the VFX room-wide', async () => {
+  it('a hidden DM-cast spell VFX reaches the DM only', async () => {
+    const em: Emission[] = [];
+    seedRoom([tok('npc', { visible: false })]);
+    const h = handlersFor(fakeIo(em), 'dm-sock');
+    await h.get('combat:cast-spell')!(castPayload('npc'));
+    expect(channelsFor(em, 'combat:spell-cast')).toEqual(['dm-sock']);
+  });
+
+  it('an invisible unoutlined DM-cast spell VFX reaches the DM only', async () => {
+    const em: Emission[] = [];
+    seedRoom([tok('npc', { conditions: ['invisible'] })]);
+    const h = handlersFor(fakeIo(em), 'dm-sock');
+    await h.get('combat:cast-spell')!(castPayload('npc'));
+    expect(channelsFor(em, 'combat:spell-cast')).toEqual(['dm-sock']);
+  });
+
+  it('a player casting a token they OWN reaches that player and the DM', async () => {
     const em: Emission[] = [];
     seedRoom([tok('pc', { ownerUserId: 'player-user' })]);
     const h = handlersFor(fakeIo(em), 'player-sock');
     await h.get('combat:cast-spell')!(castPayload('pc'));
-    expect(channelsFor(em, 'combat:spell-cast')).toEqual([SESSION]);
+    expect(channelsFor(em, 'combat:spell-cast')).toEqual(['dm-sock', 'player-sock']);
   });
 
   it('a player casting a token they do NOT own emits nothing (ownership gate)', async () => {
@@ -132,6 +150,26 @@ describe('combat:spell-cast — cast VFX broadcast & ownership', () => {
     const h = handlersFor(fakeIo(em), 'player-sock');
     await h.get('combat:cast-spell')!(castPayload('npc'));
     expect(em).toHaveLength(0);
+  });
+
+  it('filters hidden target token ids from player VFX payloads', async () => {
+    const em: Emission[] = [];
+    seedRoom([
+      tok('caster'),
+      tok('visible-target'),
+      tok('hidden-target', { visible: false }),
+      tok('invisible-owned-target', { ownerUserId: 'player-user', conditions: ['invisible'] }),
+      tok('invisible-npc-target', { conditions: ['invisible'] }),
+    ]);
+    const h = handlersFor(fakeIo(em), 'dm-sock');
+    await h.get('combat:cast-spell')!({
+      ...castPayload('caster'),
+      targetIds: ['visible-target', 'hidden-target', 'invisible-owned-target', 'invisible-npc-target'],
+    });
+    expect(payloadFor<{ targetIds: string[] }>(em, 'dm-sock', 'combat:spell-cast')?.targetIds)
+      .toEqual(['visible-target', 'hidden-target', 'invisible-owned-target', 'invisible-npc-target']);
+    expect(payloadFor<{ targetIds: string[] }>(em, 'player-sock', 'combat:spell-cast')?.targetIds)
+      .toEqual(['visible-target', 'invisible-owned-target']);
   });
 });
 
