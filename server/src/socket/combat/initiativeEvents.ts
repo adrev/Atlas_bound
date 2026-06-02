@@ -2,7 +2,7 @@ import { v4 as uuidv4 } from 'uuid';
 import type { Server, Socket } from 'socket.io';
 import {
   getPlayerBySocketId, playerIsDM, isTokenOwnerOrDM,
-  isCurrentTurnOwnerOrDM,
+  isCurrentTurnOwnerOrDM, type RoomPlayer, type RoomState,
 } from '../../utils/roomState.js';
 import * as CombatService from '../../services/CombatService.js';
 import * as DiceService from '../../services/DiceService.js';
@@ -14,6 +14,24 @@ import {
 import { safeHandler } from '../../utils/socketHelpers.js';
 import { tokenConditionChanges } from '../../utils/conditionSources.js';
 import { emitToTokenViewers } from '../../utils/combatBroadcast.js';
+import { tokenVisibleToPlayer } from '../../utils/tokenVisibility.js';
+
+function liveSocketIdsForPlayer(room: RoomState, player: RoomPlayer): string[] {
+  const liveSockets = room.userSockets.get(player.userId);
+  if (liveSockets && liveSockets.size > 0) return [...liveSockets];
+  return [player.socketId];
+}
+
+function canSeeTokenDetails(room: RoomState, player: RoomPlayer, tokenId: string): boolean {
+  if (player.role === 'dm') return true;
+  const token = room.tokens.get(tokenId);
+  if (!token) return false;
+  return token.ownerUserId === player.userId || tokenVisibleToPlayer(token, player.userId);
+}
+
+function combatantLabelForPlayer(room: RoomState, player: RoomPlayer, combatant: { tokenId: string; name: string }): string {
+  return canSeeTokenDetails(room, player, combatant.tokenId) ? combatant.name : '???';
+}
 
 /**
  * Initiative + turn-advance events. The end-of-turn / start-of-turn
@@ -205,57 +223,68 @@ export function registerCombatInitiative(io: Server, socket: Socket): void {
       // initiative tracker. Includes any condition tick messages from
       // BOTH the previous combatant's end-of-turn saves AND the new
       // combatant's start-of-turn expirations.
-      const lines: string[] = [];
-      for (const m of endTickResult.messages) lines.push(m);
-      for (const m of startTickResult.messages) lines.push(m);
-      // R7 \u2014 round hooks fire when the round number advanced.
-      if (result.roundNumber !== preAdvanceRound) {
-        for (const m of ctx.room.roundHooks) lines.push(`\uD83D\uDCE3 ${m}`);
-        // Lair actions fire at initiative 20 (losing ties). We emit a
-        // reminder at every new-round transition because the tracker
-        // doesn't interrupt play to insert a virtual init-20 slot \u2014
-        // the DM reads the reminder and narrates the lair effect.
-        for (const lairTokenId of ctx.room.lairActionTokens) {
-          const lairToken = ctx.room.tokens.get(lairTokenId);
-          if (!lairToken) continue;
-          lines.push(`\uD83C\uDFF0 LAIR ACTION \u2014 ${lairToken.name} (init 20, losing ties). DM: narrate + resolve via !lair <action>.`);
+      const buildAnnouncement = (recipient: RoomPlayer): string => {
+        const lines: string[] = [];
+        if (endingCombatant && canSeeTokenDetails(ctx.room, recipient, endingCombatant.tokenId)) {
+          for (const m of endTickResult.messages) lines.push(m);
         }
-      }
-      // Recharge reminder: CombatService.nextTurn already rolled the
-      // recharge die. If any abilities flipped into 'available' just
-      // now, show a one-line reminder so the DM knows the breath
-      // weapon is back online.
-      if (result.rechargedAbilities.length > 0 && startingCombatant) {
-        lines.push(`\uD83D\uDD25 ${startingCombatant.name} recharged: ${result.rechargedAbilities.join(', ')}`);
-      }
-      // R7 \u2014 turn hooks for the combatant whose turn is now starting.
-      if (startingCombatant) {
-        const hooks = ctx.room.turnHooks.get(startingCombatant.tokenId);
-        if (hooks && hooks.length > 0) {
-          for (const m of hooks) lines.push(`\uD83D\uDCE3 ${m}`);
+        if (startingCombatant && canSeeTokenDetails(ctx.room, recipient, startingCombatant.tokenId)) {
+          for (const m of startTickResult.messages) lines.push(m);
         }
-      }
-      lines.push(result.skippedTokenIds.length > 0
-        ? `\u2694\uFE0F Round ${result.roundNumber} \u2014 ${result.currentCombatant.name}'s turn (skipped ${result.skippedTokenIds.length} downed)`
-        : `\u2694\uFE0F Round ${result.roundNumber} \u2014 ${result.currentCombatant.name}'s turn`);
-      const announcement = lines.join('\n');
+        // R7 \u2014 round hooks fire when the round number advanced.
+        if (result.roundNumber !== preAdvanceRound) {
+          for (const m of ctx.room.roundHooks) lines.push(`\uD83D\uDCE3 ${m}`);
+          // Lair actions are DM-facing reminders. Sending hidden lair
+          // token names to players reveals encounter prep through chat.
+          if (recipient.role === 'dm') {
+            for (const lairTokenId of ctx.room.lairActionTokens) {
+              const lairToken = ctx.room.tokens.get(lairTokenId);
+              if (!lairToken) continue;
+              lines.push(`\uD83C\uDFF0 LAIR ACTION \u2014 ${lairToken.name} (init 20, losing ties). DM: narrate + resolve via !lair <action>.`);
+            }
+          }
+        }
+        // Recharge reminders name monster abilities, so only show
+        // them when the recipient can see/own the starting combatant.
+        if (result.rechargedAbilities.length > 0 && startingCombatant &&
+            canSeeTokenDetails(ctx.room, recipient, startingCombatant.tokenId)) {
+          lines.push(`\uD83D\uDD25 ${startingCombatant.name} recharged: ${result.rechargedAbilities.join(', ')}`);
+        }
+        // R7 \u2014 turn hooks for the combatant whose turn is now starting.
+        if (startingCombatant && canSeeTokenDetails(ctx.room, recipient, startingCombatant.tokenId)) {
+          const hooks = ctx.room.turnHooks.get(startingCombatant.tokenId);
+          if (hooks && hooks.length > 0) {
+            for (const m of hooks) lines.push(`\uD83D\uDCE3 ${m}`);
+          }
+        }
+        const currentName = combatantLabelForPlayer(ctx.room, recipient, result.currentCombatant);
+        lines.push(result.skippedTokenIds.length > 0
+          ? `\u2694\uFE0F Round ${result.roundNumber} \u2014 ${currentName}'s turn (skipped ${result.skippedTokenIds.length} downed)`
+          : `\u2694\uFE0F Round ${result.roundNumber} \u2014 ${currentName}'s turn`);
+        return lines.join('\n');
+      };
 
-      // Emit as a system chat message that gets persisted + broadcast.
-      // Inline the message construction to avoid pulling in another import.
+      // Emit as per-recipient system chat so hidden combatants don't
+      // leak through the text payload.
       const msgId = uuidv4();
       const now = new Date().toISOString();
-      io.to(ctx.room.sessionId).emit('chat:new-message', {
-        id: msgId,
-        sessionId: ctx.room.sessionId,
-        userId: 'system',
-        displayName: 'System',
-        type: 'system',
-        content: announcement,
-        characterName: null,
-        whisperTo: null,
-        rollData: null,
-        createdAt: now,
-      });
+      for (const recipient of ctx.room.players.values()) {
+        const payload = {
+          id: msgId,
+          sessionId: ctx.room.sessionId,
+          userId: 'system',
+          displayName: 'System',
+          type: 'system',
+          content: buildAnnouncement(recipient),
+          characterName: null,
+          whisperTo: null,
+          rollData: null,
+          createdAt: now,
+        };
+        for (const sid of liveSocketIdsForPlayer(ctx.room, recipient)) {
+          io.to(sid).emit('chat:new-message', payload);
+        }
+      }
     } catch (err) {
       socket.emit('session:error', {
         message: err instanceof Error ? err.message : 'Failed to advance turn',
