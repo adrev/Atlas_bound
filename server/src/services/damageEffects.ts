@@ -5,31 +5,7 @@ import * as ConditionService from './ConditionService.js';
 import { tokenConditionChanges } from '../utils/conditionSources.js';
 import pool from '../db/connection.js';
 import { emitToTokenViewers } from '../utils/combatBroadcast.js';
-import { tokenVisibleToPlayer } from '../utils/tokenVisibility.js';
-
-function sideEffectChatIsPrivate(room: RoomState, tokenId: string): boolean {
-  const token = room.tokens.get(tokenId);
-  if (!token) return true;
-
-  for (const player of room.players.values()) {
-    if (player.role === 'dm') continue;
-    if (!tokenVisibleToPlayer(token, player.userId)) return true;
-  }
-  return false;
-}
-
-function emitSideEffectChat(
-  io: Server,
-  room: RoomState,
-  tokenId: string,
-  payload: Record<string, unknown>,
-): void {
-  if (sideEffectChatIsPrivate(room, tokenId)) {
-    emitToTokenViewers(io, room, tokenId, 'chat:new-message', payload, { includeOwner: true });
-    return;
-  }
-  io.to(room.sessionId).emit('chat:new-message', payload);
-}
+import { emitTokenScopedChat, tokenScopedChatIsPrivate } from '../utils/tokenScopedChat.js';
 
 /**
  * R2 — central "damage was applied" broadcaster. Runs the side-effect
@@ -88,7 +64,7 @@ export async function applyDamageSideEffects(
     const msgId = uuidv4();
     const createdAt = new Date().toISOString();
     const concSave = result.concentrationSave;
-    const hidden = sideEffectChatIsPrivate(room, tokenId);
+    const hidden = tokenScopedChatIsPrivate(room, tokenId);
     const content = concSave.passed
       ? `\uD83C\uDFAF ${concSave.roller.name} maintained concentration on ${concSave.concentration?.spellName ?? 'spell'} (CON save ${concSave.total} vs DC ${concSave.dc})`
       : `\u26A1 ${concSave.roller.name} lost concentration on ${concSave.concentration?.spellName ?? 'spell'} (CON save ${concSave.total} vs DC ${concSave.dc})`;
@@ -98,7 +74,7 @@ export async function applyDamageSideEffects(
       [msgId, room.sessionId, 'system', 'System', 'system', content, null,
        JSON.stringify(concSave), hidden ? 1 : 0, createdAt],
     ).catch((e) => console.warn('[damageEffects] persist concentration save failed:', e));
-    emitSideEffectChat(io, room, tokenId, {
+    emitTokenScopedChat(io, room, tokenId, {
       id: msgId,
       sessionId: room.sessionId,
       userId: 'system',
@@ -125,9 +101,9 @@ export async function applyDamageSideEffects(
     : result.messages;
   if (remainingMessages.length > 0) {
     const now = new Date().toISOString();
-    const hidden = sideEffectChatIsPrivate(room, tokenId);
+    const hidden = tokenScopedChatIsPrivate(room, tokenId);
     for (const msg of remainingMessages) {
-      emitSideEffectChat(io, room, tokenId, {
+      emitTokenScopedChat(io, room, tokenId, {
         id: uuidv4(),
         sessionId: room.sessionId,
         userId: 'system',
