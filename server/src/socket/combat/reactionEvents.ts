@@ -154,11 +154,11 @@ export function registerCombatReactions(io: Server, socket: Socket): void {
     // combat:action-used with the real economy from room state.
     const attackerEconomy = ctx.room.actionEconomies.get(parsed.data.attackerTokenId);
     if (attackerEconomy) {
-      io.to(ctx.room.sessionId).emit('combat:action-used', {
+      emitToTokenViewers(io, ctx.room, parsed.data.attackerTokenId, 'combat:action-used', {
         tokenId: parsed.data.attackerTokenId,
         actionType: 'reaction',
         economy: attackerEconomy,
-      });
+      }, { includeOwner: true });
     }
   }));
 

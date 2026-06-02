@@ -17,6 +17,7 @@ import {
 import { safeHandler } from '../utils/socketHelpers.js';
 import { rowToToken } from '../utils/tokenMapper.js';
 import { tokenVisibleToPlayer } from '../utils/tokenVisibility.js';
+import { emitToTokenViewers } from '../utils/combatBroadcast.js';
 
 function rejectTokenMove(
   io: Server,
@@ -187,10 +188,10 @@ export function registerTokenEvents(io: Server, socket: Socket): void {
 
     if (activeCombatant && isCurrentCombatantMove && movedFeet > 0) {
       const remaining = CombatService.useMovement(ctx.room.sessionId, movedFeet);
-      io.to(ctx.room.sessionId).emit('combat:movement-used', {
+      emitToTokenViewers(io, ctx.room, tokenId, 'combat:movement-used', {
         tokenId,
         remaining,
-      });
+      }, { includeOwner: true });
     }
 
     if (ctx.room.combatState?.active) {
