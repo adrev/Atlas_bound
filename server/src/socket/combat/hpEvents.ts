@@ -13,6 +13,7 @@ import {
 import { safeHandler } from '../../utils/socketHelpers.js';
 import { tokenConditionChanges } from '../../utils/conditionSources.js';
 import { emitToTokenViewers } from '../../utils/combatBroadcast.js';
+import { emitTokenScopedChat, tokenScopedChatIsPrivate } from '../../utils/tokenScopedChat.js';
 import { v4 as uuidv4 } from 'uuid';
 import pool from '../../db/connection.js';
 import type { SaveBreakdown } from '@dnd-vtt/shared';
@@ -317,13 +318,14 @@ export function registerCombatHp(io: Server, socket: Socket): void {
           : `\u2717 ${combatant.name} failed a death save (d20=${result.roll}).`;
     const msgId = uuidv4();
     const createdAt = new Date().toISOString();
+    const hidden = tokenScopedChatIsPrivate(ctx.room, tokenId);
     pool.query(
-      `INSERT INTO chat_messages (id, session_id, user_id, display_name, type, content, character_name, save_result, created_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+      `INSERT INTO chat_messages (id, session_id, user_id, display_name, type, content, character_name, save_result, hidden, created_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
       [msgId, ctx.room.sessionId, 'system', 'System', 'system', chatContent, null,
-       JSON.stringify(deathSaveBreakdown), createdAt],
+       JSON.stringify(deathSaveBreakdown), hidden ? 1 : 0, createdAt],
     ).catch((e) => console.warn('[death-save] persist failed:', e));
-    io.to(ctx.room.sessionId).emit('chat:new-message', {
+    emitTokenScopedChat(io, ctx.room, tokenId, {
       id: msgId,
       sessionId: ctx.room.sessionId,
       userId: 'system',
@@ -334,6 +336,7 @@ export function registerCombatHp(io: Server, socket: Socket): void {
       whisperTo: null,
       rollData: null,
       saveResult: deathSaveBreakdown,
+      hidden,
       createdAt,
     });
 

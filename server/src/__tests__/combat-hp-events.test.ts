@@ -9,6 +9,7 @@ vi.mock('../db/connection.js', () => ({
 
 import { registerCombatHp } from '../socket/combat/hpEvents.js';
 import { addPlayerToRoom, createRoom, getAllRooms } from '../utils/roomState.js';
+import * as DiceService from '../services/DiceService.js';
 
 interface Emission {
   channelId: string;
@@ -140,5 +141,76 @@ describe('combat HP socket events', () => {
     };
     expect(characterUpdate.characterId).toBe('char-1');
     expect(characterUpdate.changes?.deathSaves).toEqual({ successes: 0, failures: 0 });
+  });
+
+  it('does not leak hidden token death-save chat to player sockets or history', async () => {
+    vi.spyOn(DiceService, 'rollDeathSave').mockReturnValue({
+      roll: 10,
+      isSuccess: true,
+      isCritSuccess: false,
+      isCritFail: false,
+    });
+
+    const sessionId = 'hidden-death-save-session';
+    const room = createRoom(sessionId, 'HIDDEN-DEATH', 'dm-user');
+    room.currentMapId = 'map-1';
+    room.playerMapId = 'map-1';
+    const hiddenToken = token('hidden-npc', {
+      visible: false,
+      ownerUserId: 'npc',
+      characterId: 'char-hidden-npc',
+    });
+    room.tokens.set(hiddenToken.id, hiddenToken);
+    room.combatState = {
+      sessionId,
+      active: true,
+      roundNumber: 1,
+      currentTurnIndex: 0,
+      combatants: [
+        combatant(hiddenToken.id, {
+          characterId: 'char-hidden-npc',
+          name: 'Hidden NPC',
+          hp: 0,
+          deathSaves: { successes: 0, failures: 0 },
+        }),
+      ],
+      startedAt: new Date().toISOString(),
+    };
+    addPlayerToRoom(sessionId, {
+      userId: 'dm-user',
+      displayName: 'DM',
+      socketId: 'dm-sock',
+      role: 'dm',
+      characterId: null,
+    });
+    addPlayerToRoom(sessionId, {
+      userId: 'player-user',
+      displayName: 'Pip',
+      socketId: 'player-sock',
+      role: 'player',
+      characterId: 'char-1',
+    });
+
+    const emissions: Emission[] = [];
+    const { socket, handlers } = fakeSocket('dm-sock');
+    registerCombatHp(fakeIo(emissions), socket);
+
+    await handlers.get('combat:death-save')?.({ tokenId: hiddenToken.id });
+
+    const chatChannels = emissions
+      .filter((e) => e.event === 'chat:new-message')
+      .map((e) => e.channelId)
+      .sort();
+    expect(chatChannels).toEqual(['dm-sock']);
+
+    const deathSaveChannels = emissions
+      .filter((e) => e.event === 'combat:death-save-updated')
+      .map((e) => e.channelId)
+      .sort();
+    expect(deathSaveChannels).toEqual(['dm-sock']);
+
+    const chatInsert = mockQuery.mock.calls.find(([sql]) => String(sql).includes('INSERT INTO chat_messages'));
+    const params = chatInsert?.[1] as unknown[];
+    expect(params[8]).toBe(1);
   });
 });
