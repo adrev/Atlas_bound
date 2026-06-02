@@ -73,7 +73,7 @@ Each item below needs a verification pass. "Unit-testable" = I can pin it headle
 | T3.4 | Version/seq field for tokens + HP → detect concurrent writes | ⬜ | LWW currently silent |
 | T3.5 | Await DB writes in `CombatService.applyDamage` (no fire-and-forget) | ⬜ | divergence risk on transient DB fail |
 | T3.6 | Wrap character DDB import+merge in a transaction | 🔶 | CodeX touched DDB sync in `fe9a7d2` — verify if still needed |
-| T3.7 | Tag `/state` snapshot with explicit `mapId` | 🔶 | CodeX added `mapId` to event log in `98bd0a6` — check if snapshot covered |
+| T3.7 | Tag `/state` snapshot with explicit `mapId` | ✅ | Done in PR #67; state payload carries map scope and client no longer infers empty snapshots from current map |
 | T3.8 | Refactor opportunity-attack multi-tab fan-out logic | ⬜ | byzantine fallback path |
 
 ## Tier 4 — code quality / hygiene
