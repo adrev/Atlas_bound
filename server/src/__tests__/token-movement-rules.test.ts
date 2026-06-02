@@ -150,13 +150,35 @@ describe('server movement rules', () => {
 
     expect(room.tokens.get('hero-token')).toMatchObject({ x: 210, y: 210 });
     expect(room.actionEconomies.get('hero-token')?.movementRemaining).toBe(15);
-    expect(events(emissions, 'combat:movement-used')).toEqual([
-      expect.objectContaining({
-        channelId: sessionId,
-        payload: { tokenId: 'hero-token', remaining: 15 },
-      }),
+    expect(events(emissions, 'combat:movement-used').map((e) => e.channelId).sort()).toEqual([
+      `dm-${sessionId}`,
+      `player-${sessionId}`,
     ]);
+    for (const event of events(emissions, 'combat:movement-used')) {
+      expect(event.payload).toEqual({ tokenId: 'hero-token', remaining: 15 });
+    }
     expect(events(emissions, 'map:token-moved').map((e) => e.channelId).sort()).toEqual([
+      `dm-${sessionId}`,
+      `player-${sessionId}`,
+    ]);
+  });
+
+  it('does not leak hidden combat movement spend to uninvolved players', async () => {
+    const sessionId = 'move-hidden-spend';
+    seedCombatRoom(sessionId, { visible: false });
+    addPlayerToRoom(sessionId, {
+      userId: 'bystander-user',
+      displayName: 'Bystander',
+      socketId: `bystander-${sessionId}`,
+      role: 'player',
+      characterId: null,
+    });
+    const { io, socket, handlers, emissions } = makeHarness(`dm-${sessionId}`);
+    registerTokenEvents(io, socket);
+
+    await handlers['map:token-move']!({ tokenId: 'hero-token', x: 210, y: 210 });
+
+    expect(events(emissions, 'combat:movement-used').map((e) => e.channelId).sort()).toEqual([
       `dm-${sessionId}`,
       `player-${sessionId}`,
     ]);

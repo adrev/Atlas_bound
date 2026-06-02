@@ -187,6 +187,13 @@ describe('combat:oa-execute — result-card scoping', () => {
       role: 'player',
       characterId: null,
     });
+    room.actionEconomies.set('hidden-attacker', {
+      action: false,
+      bonusAction: false,
+      movementRemaining: 30,
+      movementMax: 30,
+      reaction: true,
+    });
     mockExecuteOpportunityAttack.mockResolvedValue({
       success: true,
       messages: ['Hidden Stalker makes an Opportunity Attack on Pip'],
@@ -200,6 +207,7 @@ describe('combat:oa-execute — result-card scoping', () => {
     await flushAsyncWork();
 
     expect(channelsFor(em, 'chat:new-message')).toEqual(['dm-sock', 'player-sock']);
+    expect(channelsFor(em, 'combat:action-used')).toEqual(['dm-sock']);
     const chatInsert = mockQuery.mock.calls.find(([sql]) => String(sql).includes('INSERT INTO chat_messages'));
     const params = chatInsert?.[1] as unknown[];
     expect(params[8]).toBe(1);
