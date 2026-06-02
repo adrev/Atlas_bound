@@ -18,6 +18,18 @@ import { LIGHTING_SCENARIOS } from '@dnd-vtt/shared';
 const ACCEPTED_TYPES = '.jpg,.jpeg,.png,.webp';
 const DEFAULT_GRID_SIZE = 70;
 
+function inferReadableMapName(filename: string): string {
+  const stem = filename.replace(/\.[^.]+$/, '').trim();
+  const compactStem = stem.replace(/[_-]/g, '');
+
+  // AI/download pipelines often save assets as UUIDs or long hashes.
+  // Using those as scene titles makes the map library hard to use, so
+  // force the DM to enter a real name instead.
+  if (/^[a-f0-9]{24,}$/i.test(compactStem)) return '';
+
+  return stem.replace(/[_-]+/g, ' ').trim();
+}
+
 // ---------------------------------------------------------------------------
 // MapUpload
 // ---------------------------------------------------------------------------
@@ -62,8 +74,9 @@ export function MapUpload({ open, onClose, onMapCreated }: MapUploadProps) {
     const f = e.target.files?.[0];
     if (!f) return;
     setFile(f);
-    setMapName(f.name.replace(/\.[^.]+$/, '').replace(/[_-]/g, ' '));
-    setError(null);
+    const inferredName = inferReadableMapName(f.name);
+    setMapName(inferredName);
+    setError(inferredName ? null : 'Please enter a readable map name for this upload.');
 
     const url = URL.createObjectURL(f);
     setPreviewUrl(url);
