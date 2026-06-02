@@ -6,11 +6,12 @@ import { proficiencyBonusForLevel } from '@dnd-vtt/shared';
 import { parseCharacterJSON } from '../services/DndBeyondService.js';
 import { getAuthUserId, assertCharacterOwnerOrDM, assertSessionDM } from '../utils/authorization.js';
 import { dbRowToCharacter } from '../utils/characterMapper.js';
+import { privateNoStoreCache } from '../utils/cacheHeaders.js';
 
 const router = Router();
 
 // GET /api/characters - List the authenticated user's characters
-router.get('/', async (req: Request, res: Response) => {
+router.get('/', privateNoStoreCache, async (req: Request, res: Response) => {
   const userId = getAuthUserId(req);
   // Defense-in-depth filters beyond user_id='npc':
   //  * class LIKE 'CR %' — EncounterBuilder stamps creatures with e.g.
@@ -93,7 +94,7 @@ router.post('/', async (req: Request, res: Response) => {
 });
 
 // GET /api/characters/:id
-router.get('/:id', async (req: Request, res: Response) => {
+router.get('/:id', privateNoStoreCache, async (req: Request, res: Response) => {
   const userId = getAuthUserId(req);
   const { rows } = await pool.query('SELECT * FROM characters WHERE id = $1', [req.params.id]);
   if (rows.length === 0) {

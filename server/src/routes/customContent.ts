@@ -9,6 +9,7 @@ import { getAuthUserId, assertSessionDM, assertSessionMember } from '../utils/au
 import { validateAndSaveUpload } from './uploads.js';
 import { createCustomMonsterSchema, createCustomSpellSchema, createCustomItemSchema, updateCustomMonsterSchema, updateCustomSpellSchema, updateCustomItemSchema } from '../utils/validation.js';
 import { handleDbError } from '../utils/dbError.js';
+import { privateNoStoreCache } from '../utils/cacheHeaders.js';
 
 const router = Router();
 
@@ -55,7 +56,7 @@ router.post('/monsters', async (req: Request, res: Response) => {
   }
 });
 
-router.get('/monsters', async (req: Request, res: Response) => {
+router.get('/monsters', privateNoStoreCache, async (req: Request, res: Response) => {
   const userId = getAuthUserId(req);
   const sessionId = req.query.sessionId as string;
   if (!sessionId) { res.json([]); return; }
@@ -64,7 +65,7 @@ router.get('/monsters', async (req: Request, res: Response) => {
   res.json(rows.map(mapMonsterRow));
 });
 
-router.get('/monsters/:slug', async (req: Request, res: Response) => {
+router.get('/monsters/:slug', privateNoStoreCache, async (req: Request, res: Response) => {
   const userId = getAuthUserId(req);
   const { rows } = await pool.query('SELECT * FROM custom_monsters WHERE slug = $1', [req.params.slug]);
   if (rows.length === 0) { res.status(404).json({ error: 'Not found' }); return; }
@@ -177,7 +178,7 @@ router.post('/spells', async (req: Request, res: Response) => {
   }
 });
 
-router.get('/spells', async (req: Request, res: Response) => {
+router.get('/spells', privateNoStoreCache, async (req: Request, res: Response) => {
   const userId = getAuthUserId(req);
   const sessionId = req.query.sessionId as string;
   if (!sessionId) { res.json([]); return; }
@@ -186,7 +187,7 @@ router.get('/spells', async (req: Request, res: Response) => {
   res.json(rows.map(mapSpellRow));
 });
 
-router.get('/spells/:slug', async (req: Request, res: Response) => {
+router.get('/spells/:slug', privateNoStoreCache, async (req: Request, res: Response) => {
   const userId = getAuthUserId(req);
   const { rows } = await pool.query('SELECT * FROM custom_spells WHERE slug = $1', [req.params.slug]);
   if (rows.length === 0) { res.status(404).json({ error: 'Not found' }); return; }
@@ -284,7 +285,7 @@ router.post('/items', async (req: Request, res: Response) => {
   }
 });
 
-router.get('/items', async (req: Request, res: Response) => {
+router.get('/items', privateNoStoreCache, async (req: Request, res: Response) => {
   const userId = getAuthUserId(req);
   const sessionId = req.query.sessionId as string;
   if (!sessionId) { res.json([]); return; }
@@ -293,7 +294,7 @@ router.get('/items', async (req: Request, res: Response) => {
   res.json(rows);
 });
 
-router.get('/items/:id', async (req: Request, res: Response) => {
+router.get('/items/:id', privateNoStoreCache, async (req: Request, res: Response) => {
   const userId = getAuthUserId(req);
   const { rows } = await pool.query('SELECT * FROM custom_items WHERE id = $1', [req.params.id]);
   if (rows.length === 0) { res.status(404).json({ error: 'Not found' }); return; }
