@@ -4,6 +4,7 @@ import { isCompendiumSeeded, getCompendiumStats, reseedCompendium } from '../ser
 import { requireAuth } from '../auth/middleware.js';
 import { requireAdmin } from '../auth/admin.js';
 import { tokenUpload, validateAndSaveUpload } from './uploads.js';
+import { publicCompendiumCache } from '../utils/cacheHeaders.js';
 import type {
   CompendiumMonster, CompendiumSpell, CompendiumItem,
   CompendiumSearchResult,
@@ -77,7 +78,7 @@ function makeSnippet(desc: string, maxLen = 120): string {
 }
 
 // --- GET /search?q=...&category=...&limit=20 ---
-router.get('/search', async (req: Request, res: Response) => {
+router.get('/search', publicCompendiumCache, async (req: Request, res: Response) => {
   const q = (req.query.q as string ?? '').trim();
   const category = req.query.category as string | undefined;
   const limit = Math.min(parseInt(req.query.limit as string, 10) || 20, 100);
@@ -135,13 +136,13 @@ router.get('/search', async (req: Request, res: Response) => {
   res.json({ results });
 });
 
-router.get('/monsters/:slug', async (req: Request, res: Response) => {
+router.get('/monsters/:slug', publicCompendiumCache, async (req: Request, res: Response) => {
   const { rows } = await pool.query('SELECT * FROM compendium_monsters WHERE slug = $1', [req.params.slug]);
   if (rows.length === 0) { res.status(404).json({ error: 'Monster not found' }); return; }
   res.json(dbRowToMonster(rows[0]));
 });
 
-router.get('/monsters/:slug/versions', async (req: Request, res: Response) => {
+router.get('/monsters/:slug/versions', publicCompendiumCache, async (req: Request, res: Response) => {
   const { rows: mainRows } = await pool.query('SELECT name FROM compendium_monsters WHERE slug = $1', [req.params.slug]);
   if (mainRows.length === 0) { res.status(404).json({ error: 'Monster not found' }); return; }
   const { rows: versions } = await pool.query(
@@ -151,19 +152,19 @@ router.get('/monsters/:slug/versions', async (req: Request, res: Response) => {
   res.json(versions.map(v => ({ slug: v.slug, name: v.name, source: v.source, cr: v.challenge_rating, hp: v.hit_points, ac: v.armor_class })));
 });
 
-router.get('/spells/:slug', async (req: Request, res: Response) => {
+router.get('/spells/:slug', publicCompendiumCache, async (req: Request, res: Response) => {
   const { rows } = await pool.query('SELECT * FROM compendium_spells WHERE slug = $1', [req.params.slug]);
   if (rows.length === 0) { res.status(404).json({ error: 'Spell not found' }); return; }
   res.json(dbRowToSpell(rows[0]));
 });
 
-router.get('/items/:slug', async (req: Request, res: Response) => {
+router.get('/items/:slug', publicCompendiumCache, async (req: Request, res: Response) => {
   const { rows } = await pool.query('SELECT * FROM compendium_items WHERE slug = $1', [req.params.slug]);
   if (rows.length === 0) { res.status(404).json({ error: 'Item not found' }); return; }
   res.json(dbRowToItem(rows[0]));
 });
 
-router.get('/monsters', async (req: Request, res: Response) => {
+router.get('/monsters', publicCompendiumCache, async (req: Request, res: Response) => {
   const type = req.query.type as string | undefined;
   const crMin = parseFloat(req.query.cr_min as string);
   const crMax = parseFloat(req.query.cr_max as string);
@@ -189,7 +190,7 @@ router.get('/monsters', async (req: Request, res: Response) => {
   res.json(rows.map(dbRowToMonster));
 });
 
-router.get('/spells', async (req: Request, res: Response) => {
+router.get('/spells', publicCompendiumCache, async (req: Request, res: Response) => {
   const level = req.query.level as string | undefined;
   const school = req.query.school as string | undefined;
   const classFilter = req.query.class as string | undefined;
@@ -221,7 +222,7 @@ router.get('/spells', async (req: Request, res: Response) => {
   res.json(rows.map(dbRowToSpell));
 });
 
-router.get('/items', async (req: Request, res: Response) => {
+router.get('/items', publicCompendiumCache, async (req: Request, res: Response) => {
   const rarity = req.query.rarity as string | undefined;
   const limit = Math.min(parseInt(req.query.limit as string, 10) || 50, 200);
 
@@ -242,7 +243,7 @@ router.get('/items', async (req: Request, res: Response) => {
   res.json(rows.map(dbRowToItem));
 });
 
-router.get('/status', async (_req: Request, res: Response) => {
+router.get('/status', publicCompendiumCache, async (_req: Request, res: Response) => {
   const seeded = await isCompendiumSeeded();
   const stats = await getCompendiumStats();
   res.json({ seeded, ...stats });

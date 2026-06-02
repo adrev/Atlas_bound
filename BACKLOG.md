@@ -69,7 +69,7 @@ Each item below needs a verification pass. "Unit-testable" = I can pin it headle
 |---|---|---|---|
 | T3.1 | Lucia v3 deprecated → migration plan (Auth.js / Better-Auth / DIY) | ⬜ | no security patches incoming; not urgent |
 | T3.2 | `npm audit fix` — 5 moderate vulns (uuid, express-rate-limit, postcss, brace-expansion) | ✅ | Done in PR #8; CI now runs `npm audit --audit-level=moderate` green |
-| T3.3 | Zod-validate env at boot (fail fast on missing OAuth/DB secrets) | ⬜ | `server/src/config.ts` |
+| T3.3 | Boot-time config validation warnings | ✅ | Merged/deployed in PR #64; warns on missing OAuth provider or invalid production `BASE_URL` without blocking boot |
 | T3.4 | Version/seq field for tokens + HP → detect concurrent writes | ⬜ | LWW currently silent |
 | T3.5 | Await DB writes in `CombatService.applyDamage` (no fire-and-forget) | ⬜ | divergence risk on transient DB fail |
 | T3.6 | Wrap character DDB import+merge in a transaction | 🔶 | CodeX touched DDB sync in `fe9a7d2` — verify if still needed |

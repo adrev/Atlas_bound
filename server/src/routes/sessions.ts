@@ -20,6 +20,7 @@ import { safeParseJSON } from '../utils/safeJson.js';
 import { stateSnapshotEtag } from '../utils/stateEtag.js';
 import { tokenVisibleToPlayer } from '../utils/tokenVisibility.js';
 import { dbRowToCharacter } from '../utils/characterMapper.js';
+import { privateNoStoreCache } from '../utils/cacheHeaders.js';
 
 const router = Router();
 
@@ -282,7 +283,7 @@ router.get('/invites/:token', async (req: Request, res: Response) => {
 // to `created_at` for legacy rows). The lobby uses these to drive the
 // per-tile Live dot, "X online" badge, and "2d ago" relative time
 // without needing a separate presence service yet.
-router.get('/mine', async (req: Request, res: Response) => {
+router.get('/mine', privateNoStoreCache, async (req: Request, res: Response) => {
   const userId = req.user?.id;
   if (!userId) { res.json([]); return; }
 
