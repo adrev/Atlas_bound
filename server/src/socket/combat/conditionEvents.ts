@@ -12,6 +12,7 @@ import {
 import { safeHandler } from '../../utils/socketHelpers.js';
 import { tokenConditionChanges } from '../../utils/conditionSources.js';
 import { emitToTokenViewers } from '../../utils/combatBroadcast.js';
+import { applyDamageSideEffects } from '../../services/damageEffects.js';
 
 /**
  * Condition + damage-side-effect events:
@@ -199,49 +200,7 @@ export function registerCombatConditions(io: Server, socket: Socket): void {
       if (!ownsTarget && !isAttackingNPC) return;
     }
 
-    const result = await ConditionService.processDamageSideEffects(
-      ctx.room.sessionId, parsed.data.tokenId, parsed.data.damageAmount,
-    );
-
-    // Broadcast updated tokens for any whose conditions changed
-    for (const tokenId of result.affectedTokens) {
-      const t = ctx.room.tokens.get(tokenId);
-      if (t) {
-        emitToTokenViewers(io, ctx.room, tokenId, 'map:token-updated', {
-          tokenId, changes: tokenConditionChanges(ctx.room, tokenId),
-        });
-      }
-    }
-
-    // If the target dropped concentration, also broadcast the cleared
-    // concentratingOn field on their character
-    if (result.droppedConcentration) {
-      const t = ctx.room.tokens.get(parsed.data.tokenId);
-      if (t?.characterId) {
-        emitToTokenViewers(io, ctx.room, parsed.data.tokenId, 'character:updated', {
-          characterId: t.characterId,
-          changes: { concentratingOn: null },
-        }, { includeOwner: true });
-      }
-    }
-
-    // Broadcast all the chat messages from the side effects (CON save
-    // result, Sleep ending, Laughter save retry, etc.)
-    const now = new Date().toISOString();
-    for (const msg of result.messages) {
-      io.to(ctx.room.sessionId).emit('chat:new-message', {
-        id: uuidv4(),
-        sessionId: ctx.room.sessionId,
-        userId: 'system',
-        displayName: 'System',
-        type: 'system',
-        content: msg,
-        characterName: null,
-        whisperTo: null,
-        rollData: null,
-        createdAt: now,
-      });
-    }
+    await applyDamageSideEffects(io, ctx.room, parsed.data.tokenId, parsed.data.damageAmount);
   }));
 
   // ----------------------------------------------------------------------
