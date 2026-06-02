@@ -10,6 +10,7 @@ vi.mock('../db/connection.js', () => ({
 import { registerCombatHp } from '../socket/combat/hpEvents.js';
 import { addPlayerToRoom, createRoom, getAllRooms } from '../utils/roomState.js';
 import * as DiceService from '../services/DiceService.js';
+import * as DiscordService from '../services/DiscordService.js';
 
 interface Emission {
   channelId: string;
@@ -144,11 +145,12 @@ describe('combat HP socket events', () => {
   });
 
   it('does not leak hidden token death-save chat to player sockets or history', async () => {
+    const notifySpy = vi.spyOn(DiscordService, 'notifySession').mockResolvedValue(undefined);
     vi.spyOn(DiceService, 'rollDeathSave').mockReturnValue({
-      roll: 10,
-      isSuccess: true,
+      roll: 1,
+      isSuccess: false,
       isCritSuccess: false,
-      isCritFail: false,
+      isCritFail: true,
     });
 
     const sessionId = 'hidden-death-save-session';
@@ -212,5 +214,6 @@ describe('combat HP socket events', () => {
     const chatInsert = mockQuery.mock.calls.find(([sql]) => String(sql).includes('INSERT INTO chat_messages'));
     const params = chatInsert?.[1] as unknown[];
     expect(params[8]).toBe(1);
+    expect(notifySpy).not.toHaveBeenCalled();
   });
 });
