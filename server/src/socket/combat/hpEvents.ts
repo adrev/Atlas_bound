@@ -343,7 +343,7 @@ export function registerCombatHp(io: Server, socket: Socket): void {
     // Only notify Discord on the dramatic outcomes \u2014 a successful
     // save every round would spam the channel. Nat-20 stabilises,
     // nat-1 is 2 failures, 3 failures = dead.
-    if (result.isCritSuccess || result.isCritFail || dead) {
+    if (!hidden && (result.isCritSuccess || result.isCritFail || dead)) {
       const title = dead
         ? `\uD83D\uDC80 ${combatant.name} has died`
         : result.isCritSuccess
