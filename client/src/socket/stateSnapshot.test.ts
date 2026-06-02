@@ -55,4 +55,38 @@ describe('pullStateSnapshot — no-room fallback guard', () => {
     expect(res.applied).toBe(true);
     expect(Object.keys(useMapStore.getState().tokens)).toEqual([]);
   });
+
+  it('does NOT wipe current-map tokens when an empty snapshot is for another map', async () => {
+    useMapStore.setState({ tokens: { t1: tok('t1') }, currentMap: { id: 'dm-preview' } } as never);
+    mockState({
+      mapId: 'player-ribbon',
+      tokens: [],
+      combat: null,
+      characters: {},
+      nextEventId: 7,
+      roundNumber: 0,
+    }, 'W/"v2"');
+
+    const res = await pullStateSnapshot();
+
+    expect(res.applied).toBe(true);
+    expect(Object.keys(useMapStore.getState().tokens)).toEqual(['t1']);
+  });
+
+  it('clears stale tokens when an empty snapshot is explicitly for the current map', async () => {
+    useMapStore.setState({ tokens: { t1: tok('t1') }, currentMap: { id: 'map-1' } } as never);
+    mockState({
+      mapId: 'map-1',
+      tokens: [],
+      combat: null,
+      characters: {},
+      nextEventId: 7,
+      roundNumber: 0,
+    }, 'W/"v3"');
+
+    const res = await pullStateSnapshot();
+
+    expect(res.applied).toBe(true);
+    expect(Object.keys(useMapStore.getState().tokens)).toEqual([]);
+  });
 });

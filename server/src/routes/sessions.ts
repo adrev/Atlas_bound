@@ -1008,6 +1008,7 @@ router.get('/:id/state', async (req: Request, res: Response) => {
   const room = getRoom(sessionId);
   if (!room) {
     res.json({
+      mapId: null,
       tokens: [],
       combat: null,
       characters: {},
@@ -1116,6 +1117,7 @@ router.get('/:id/state', async (req: Request, res: Response) => {
   }
 
   res.json({
+    mapId: viewingMapId ?? null,
     tokens: visibleTokens,
     combat,
     characters,
