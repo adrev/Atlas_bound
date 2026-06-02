@@ -15,6 +15,10 @@ import { safeHandler } from '../../utils/socketHelpers.js';
 import { emitToTokenViewers } from '../../utils/combatBroadcast.js';
 import { tokenConditionChanges } from '../../utils/conditionSources.js';
 import { tokenVisibleToPlayer } from '../../utils/tokenVisibility.js';
+import {
+  emitMultiTokenScopedChat,
+  multiTokenScopedChatIsPrivate,
+} from '../../utils/tokenScopedChat.js';
 
 /**
  * Reaction events: opportunity attacks, counterspell / Shield prompts,
@@ -77,17 +81,24 @@ export function registerCombatReactions(io: Server, socket: Socket): void {
       // Persist with attack_result so rehydrated history shows the
       // card on refresh instead of falling back to plain text.
       const attackResultJson = attackResult ? JSON.stringify(attackResult) : null;
+      const hidden = multiTokenScopedChatIsPrivate(ctx.room, [
+        parsed.data.attackerTokenId,
+        parsed.data.moverTokenId,
+      ]) ? 1 : 0;
       void ctx; // silences "ctx not used in the fallthrough" when we
       // persist inline; we already resolved it earlier in this handler.
       void import('../../db/connection.js').then(({ default: dbPool }) => {
         dbPool.query(
-          `INSERT INTO chat_messages (id, session_id, user_id, display_name, type, content, character_name, attack_result, created_at)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+          `INSERT INTO chat_messages (id, session_id, user_id, display_name, type, content, character_name, attack_result, hidden, created_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
           [msgId, ctx.room.sessionId, 'system', 'System', 'system',
-           result.messages.join('\n'), null, attackResultJson, createdAt],
+           result.messages.join('\n'), null, attackResultJson, hidden, createdAt],
         ).catch((e) => console.warn('[OA] persist failed:', e));
       });
-      io.to(ctx.room.sessionId).emit('chat:new-message', {
+      emitMultiTokenScopedChat(io, ctx.room, [
+        parsed.data.attackerTokenId,
+        parsed.data.moverTokenId,
+      ], {
         id: msgId,
         sessionId: ctx.room.sessionId,
         userId: 'system',
@@ -98,6 +109,7 @@ export function registerCombatReactions(io: Server, socket: Socket): void {
         whisperTo: null,
         rollData: null,
         attackResult,
+        hidden: hidden === 1,
         createdAt,
       });
     }

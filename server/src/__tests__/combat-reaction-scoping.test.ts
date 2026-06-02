@@ -24,8 +24,14 @@ import type { Token } from '@dnd-vtt/shared';
 
 // Stub the DB before importing handlers that transitively pull in the
 // combat services (which open a pg pool at module load).
-const { mockQuery } = vi.hoisted(() => ({ mockQuery: vi.fn() }));
+const { mockQuery, mockExecuteOpportunityAttack } = vi.hoisted(() => ({
+  mockQuery: vi.fn(),
+  mockExecuteOpportunityAttack: vi.fn(),
+}));
 vi.mock('../db/connection.js', () => ({ default: { query: mockQuery } }));
+vi.mock('../services/OpportunityAttackService.js', () => ({
+  executeOpportunityAttack: mockExecuteOpportunityAttack,
+}));
 
 import { registerCombatReactions } from '../socket/combat/reactionEvents.js';
 import {
@@ -72,6 +78,16 @@ function channels(emissions: Emission[]): string[] {
   return emissions.map((e) => e.channelId).sort();
 }
 
+function channelsFor(emissions: Emission[], event: string): string[] {
+  return emissions.filter((e) => e.event === event).map((e) => e.channelId).sort();
+}
+
+async function flushAsyncWork(): Promise<void> {
+  await Promise.resolve();
+  await Promise.resolve();
+  await new Promise(resolve => setTimeout(resolve, 0));
+}
+
 type Handler = (data: unknown) => Promise<void> | void;
 
 /** Register the reaction handlers against a fake socket; return event→handler. */
@@ -85,6 +101,7 @@ function handlersFor(io: never, socketId: string): Map<string, Handler> {
 beforeEach(() => {
   mockQuery.mockReset();
   mockQuery.mockResolvedValue({ rows: [] });
+  mockExecuteOpportunityAttack.mockReset();
   for (const id of Array.from(getAllRooms().keys())) getAllRooms().delete(id);
 });
 
@@ -137,5 +154,93 @@ describe('combat:attack-hit-attempt — Shield-prompt scoping', () => {
     const h = handlersFor(fakeIo(em), 'dm-sock');
     await h.get('combat:attack-hit-attempt')!({ attackId: 'a3', targetTokenId: 'ghost', attackTotal: 18, currentAC: 15 });
     expect(em).toHaveLength(0);
+  });
+});
+
+describe('combat:oa-execute — result-card scoping', () => {
+  it('does not leak hidden attacker OA chat to uninvolved players or history', async () => {
+    const em: Emission[] = [];
+    const room = seedRoom([
+      tok('hidden-attacker', {
+        visible: false,
+        faction: 'hostile',
+        name: 'Hidden Stalker',
+      }),
+      tok('pc-target', {
+        ownerUserId: 'player-user',
+        faction: 'friendly',
+        name: 'Pip',
+      }),
+    ]);
+    room.combatState = {
+      sessionId: SESSION,
+      active: true,
+      roundNumber: 1,
+      currentTurnIndex: 0,
+      combatants: [],
+      startedAt: new Date().toISOString(),
+    };
+    addPlayerToRoom(SESSION, {
+      userId: 'bystander-user',
+      displayName: 'Bystander',
+      socketId: 'bystander-sock',
+      role: 'player',
+      characterId: null,
+    });
+    mockExecuteOpportunityAttack.mockResolvedValue({
+      success: true,
+      messages: ['Hidden Stalker makes an Opportunity Attack on Pip'],
+    });
+
+    const h = handlersFor(fakeIo(em), 'dm-sock');
+    await h.get('combat:oa-execute')!({
+      attackerTokenId: 'hidden-attacker',
+      moverTokenId: 'pc-target',
+    });
+    await flushAsyncWork();
+
+    expect(channelsFor(em, 'chat:new-message')).toEqual(['dm-sock', 'player-sock']);
+    const chatInsert = mockQuery.mock.calls.find(([sql]) => String(sql).includes('INSERT INTO chat_messages'));
+    const params = chatInsert?.[1] as unknown[];
+    expect(params[8]).toBe(1);
+  });
+
+  it('keeps fully visible OA chat public and persisted as non-hidden', async () => {
+    const em: Emission[] = [];
+    const room = seedRoom([
+      tok('visible-attacker', {
+        faction: 'hostile',
+        name: 'Guard',
+      }),
+      tok('visible-target', {
+        ownerUserId: 'player-user',
+        faction: 'friendly',
+        name: 'Pip',
+      }),
+    ]);
+    room.combatState = {
+      sessionId: SESSION,
+      active: true,
+      roundNumber: 1,
+      currentTurnIndex: 0,
+      combatants: [],
+      startedAt: new Date().toISOString(),
+    };
+    mockExecuteOpportunityAttack.mockResolvedValue({
+      success: true,
+      messages: ['Guard makes an Opportunity Attack on Pip'],
+    });
+
+    const h = handlersFor(fakeIo(em), 'dm-sock');
+    await h.get('combat:oa-execute')!({
+      attackerTokenId: 'visible-attacker',
+      moverTokenId: 'visible-target',
+    });
+    await flushAsyncWork();
+
+    expect(channelsFor(em, 'chat:new-message')).toEqual([SESSION]);
+    const chatInsert = mockQuery.mock.calls.find(([sql]) => String(sql).includes('INSERT INTO chat_messages'));
+    const params = chatInsert?.[1] as unknown[];
+    expect(params[8]).toBe(0);
   });
 });
