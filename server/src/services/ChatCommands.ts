@@ -94,7 +94,7 @@ function scopedChatCommandIo(io: Server, ctx: PlayerContext): Server {
               const tokenId = tokenIdForScopedCommandEmit(ctx, event, payload);
               if (tokenId) {
                 emitToTokenViewers(io, ctx.room, tokenId, event, payload, {
-                  includeOwner: event === 'character:updated',
+                  includeOwner: event === 'character:updated' || event === 'combat:action-used',
                 });
                 return true;
               }
@@ -115,7 +115,11 @@ function tokenIdForScopedCommandEmit(
 ): string | null {
   if (typeof payload !== 'object' || payload === null) return null;
 
-  if (event === 'map:token-updated' || event === 'combat:hp-changed') {
+  if (
+    event === 'map:token-updated'
+    || event === 'combat:hp-changed'
+    || event === 'combat:action-used'
+  ) {
     const tokenId = (payload as { tokenId?: unknown }).tokenId;
     return typeof tokenId === 'string' ? tokenId : null;
   }

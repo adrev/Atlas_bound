@@ -89,6 +89,20 @@ beforeEach(() => {
     });
     return true;
   });
+  registerChatCommand('codex-action-fanout', (c) => {
+    c.io.to(c.ctx.room.sessionId).emit('combat:action-used', {
+      tokenId: c.rest,
+      actionType: 'bonusAction',
+      economy: {
+        action: false,
+        bonusAction: true,
+        movementRemaining: 30,
+        movementMax: 30,
+        reaction: false,
+      },
+    });
+    return true;
+  });
 });
 
 describe('chat command token fanout wrapper', () => {
@@ -132,5 +146,12 @@ describe('chat command token fanout wrapper', () => {
     const em: Emission[] = [];
     await tryHandleChatCommand(fakeIo(em), getPlayerBySocketId('dm-sock')!, '!codex-character-fanout unplaced-char');
     expect(channelsFor(em, 'character:updated')).toEqual([SESSION]);
+  });
+
+  it('scopes legacy room-wide action economy updates for hidden owned tokens', async () => {
+    seedRoom([tok('pc', { ownerUserId: 'player-user', visible: false })]);
+    const em: Emission[] = [];
+    await tryHandleChatCommand(fakeIo(em), getPlayerBySocketId('dm-sock')!, '!codex-action-fanout pc');
+    expect(channelsFor(em, 'combat:action-used')).toEqual(['dm-sock', 'player-sock']);
   });
 });
