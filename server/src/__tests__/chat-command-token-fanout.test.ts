@@ -9,8 +9,12 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import type { Token } from '@dnd-vtt/shared';
 
-const { mockQuery } = vi.hoisted(() => ({ mockQuery: vi.fn() }));
+const { mockQuery, mockApplyDamageSideEffects } = vi.hoisted(() => ({
+  mockQuery: vi.fn(),
+  mockApplyDamageSideEffects: vi.fn(),
+}));
 vi.mock('../db/connection.js', () => ({ default: { query: mockQuery } }));
+vi.mock('../services/damageEffects.js', () => ({ applyDamageSideEffects: mockApplyDamageSideEffects }));
 
 import { registerChatCommand, tryHandleChatCommand } from '../services/ChatCommands.js';
 import {
@@ -21,6 +25,7 @@ import {
   getPlayerBySocketId,
   type RoomState,
 } from '../utils/roomState.js';
+import '../services/chatCommands/hpHandlers.js';
 
 interface Emission { channelId: string; event: string; payload: unknown }
 
@@ -64,6 +69,8 @@ function seedRoom(tokens: Token[]): RoomState {
 beforeEach(() => {
   mockQuery.mockReset();
   mockQuery.mockResolvedValue({ rows: [] });
+  mockApplyDamageSideEffects.mockReset();
+  mockApplyDamageSideEffects.mockResolvedValue(undefined);
   for (const id of Array.from(getAllRooms().keys())) deleteRoom(id);
   registerChatCommand('codex-token-fanout', (c) => {
     c.io.to(c.ctx.room.sessionId).emit('map:token-updated', {
@@ -153,5 +160,36 @@ describe('chat command token fanout wrapper', () => {
     const em: Emission[] = [];
     await tryHandleChatCommand(fakeIo(em), getPlayerBySocketId('dm-sock')!, '!codex-action-fanout pc');
     expect(channelsFor(em, 'combat:action-used')).toEqual(['dm-sock', 'player-sock']);
+  });
+
+  it('scopes the real !damage HP helper and rich card for hidden targets', async () => {
+    seedRoom([tok('npc', { name: 'Hidden Goblin', characterId: 'char-npc', visible: false })]);
+    mockQuery.mockImplementation(async (sql: string) => {
+      if (sql.includes('SELECT hit_points FROM characters WHERE id = $1')) {
+        return { rows: [{ hit_points: 10 }] };
+      }
+      if (sql.includes('SELECT hit_points, max_hit_points, temp_hit_points FROM characters WHERE id = $1')) {
+        return { rows: [{ hit_points: 10, max_hit_points: 20, temp_hit_points: 0 }] };
+      }
+      return { rows: [] };
+    });
+    const em: Emission[] = [];
+
+    const handled = await tryHandleChatCommand(
+      fakeIo(em),
+      getPlayerBySocketId('dm-sock')!,
+      '!damage 5 Hidden Goblin',
+    );
+
+    expect(handled).toBe(true);
+    expect(channelsFor(em, 'combat:hp-changed')).toEqual(['dm-sock']);
+    expect(channelsFor(em, 'character:updated')).toEqual(['dm-sock']);
+    expect(channelsFor(em, 'chat:new-message')).toEqual(['dm-sock']);
+    const card = em.find((e) => e.event === 'chat:new-message')?.payload as {
+      hidden?: boolean;
+      content?: string;
+    };
+    expect(card.hidden).toBe(true);
+    expect(card.content).toContain('Hidden Goblin');
   });
 });

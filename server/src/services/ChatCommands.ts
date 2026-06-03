@@ -6,6 +6,7 @@ import { v4 as uuidv4 } from 'uuid';
 import pool from '../db/connection.js';
 import type { PlayerContext } from '../utils/roomState.js';
 import { emitToTokenViewers } from '../utils/combatBroadcast.js';
+import { emitTokenScopedChat, tokenScopedChatIsPrivate } from '../utils/tokenScopedChat.js';
 
 /**
  * Chat slash-command dispatcher. A single entry point for every
@@ -207,6 +208,53 @@ export function broadcastSystem(
     ],
   ).catch((e) => console.warn('[chat-commands] persist broadcast failed:', e));
   io.to(ctx.room.sessionId).emit('chat:new-message', message);
+}
+
+/**
+ * Broadcast a system chat card whose contents reveal a specific token.
+ * Public/visible tokens still go room-wide; hidden or invisible token
+ * cards only reach DMs, eligible viewers, and the token owner.
+ */
+export function broadcastTokenScopedSystem(
+  io: Server,
+  ctx: PlayerContext,
+  tokenId: string,
+  content: string,
+  structured?: ChatStructuredPayloads,
+): void {
+  const hidden = tokenScopedChatIsPrivate(ctx.room, tokenId);
+  const message: ChatMessage = {
+    id: uuidv4(),
+    sessionId: ctx.room.sessionId,
+    userId: 'system',
+    displayName: 'System',
+    type: 'system',
+    content,
+    characterName: null,
+    whisperTo: null,
+    rollData: null,
+    attackResult: structured?.attackResult ?? null,
+    spellResult: structured?.spellResult ?? null,
+    saveResult: structured?.saveResult ?? null,
+    actionResult: structured?.actionResult ?? null,
+    hidden,
+    createdAt: new Date().toISOString(),
+  };
+  const attackResultJson = structured?.attackResult ? JSON.stringify(structured.attackResult) : null;
+  const spellResultJson = structured?.spellResult ? JSON.stringify(structured.spellResult) : null;
+  const saveResultJson = structured?.saveResult ? JSON.stringify(structured.saveResult) : null;
+  const actionResultJson = structured?.actionResult ? JSON.stringify(structured.actionResult) : null;
+  pool.query(
+    `INSERT INTO chat_messages (id, session_id, user_id, display_name, type, content, character_name, attack_result, spell_result, save_result, action_result, hidden, created_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
+    [
+      message.id, message.sessionId, message.userId, message.displayName,
+      message.type, message.content, message.characterName,
+      attackResultJson, spellResultJson, saveResultJson, actionResultJson,
+      hidden ? 1 : 0, message.createdAt,
+    ],
+  ).catch((e) => console.warn('[chat-commands] persist token-scoped broadcast failed:', e));
+  emitTokenScopedChat(io, ctx.room, tokenId, message as unknown as Record<string, unknown>);
 }
 
 /** True if the caller is the DM of this session. */
