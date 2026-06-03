@@ -72,7 +72,7 @@ Each item below needs a verification pass. "Unit-testable" = I can pin it headle
 | T3.3 | Boot-time config validation warnings | ✅ | Merged/deployed in PR #64; warns on missing OAuth provider or invalid production `BASE_URL` without blocking boot |
 | T3.4 | Version/seq field for tokens + HP → detect concurrent writes | ⬜ | LWW currently silent |
 | T3.5 | Await DB writes in `CombatService.applyDamage` (no fire-and-forget) | ✅ | Done in PR #88 for async HP mutation paths; `applyDamage`/`applyHeal` await combat-state, token-condition, and concentration persistence |
-| T3.6 | Wrap character DDB import+merge in a transaction | 🔶 | CodeX touched DDB sync in `fe9a7d2` — verify if still needed |
+| T3.6 | Wrap character DDB import+merge in a transaction | ✅ | Done in PR #92; DDB import/sync and character JSON re-import lock existing rows with `FOR UPDATE` inside transactions, with rollback regression coverage |
 | T3.7 | Tag `/state` snapshot with explicit `mapId` | ✅ | Done in PR #67; state payload carries map scope and client no longer infers empty snapshots from current map |
 | T3.8 | Refactor opportunity-attack multi-tab fan-out logic | ⬜ | byzantine fallback path |
 

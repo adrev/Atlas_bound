@@ -4,9 +4,12 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 // ---------------------------------------------------------------------------
 // Shared mock for the DB pool. Hoisted so vi.mock can see it.
 // ---------------------------------------------------------------------------
-const { mockQuery } = vi.hoisted(() => ({ mockQuery: vi.fn() }));
+const { mockQuery, mockConnect } = vi.hoisted(() => ({
+  mockQuery: vi.fn(),
+  mockConnect: vi.fn(),
+}));
 vi.mock('../db/connection.js', () => ({
-  default: { query: mockQuery, connect: vi.fn() },
+  default: { query: mockQuery, connect: mockConnect },
 }));
 vi.mock('../services/DndBeyondService.js', () => ({
   parseCharacterJSON: vi.fn(() => ({
@@ -50,6 +53,7 @@ vi.mock('../services/DndBeyondService.js', () => ({
 
 beforeEach(() => {
   mockQuery.mockReset();
+  mockConnect.mockReset();
 });
 
 // ---------------------------------------------------------------------------
@@ -93,7 +97,10 @@ describe('proxy-image endpoint', () => {
     const { default: express } = await import('express');
     const dndbeyondRouter = (await import('../routes/dndbeyond.js')).default;
     const app = express();
-    app.use((req, _res, next) => { (req as any).user = { id: 'u1' }; next(); });
+    app.use((req, _res, next) => {
+      (req as any).user = { id: 'u1' };
+      next();
+    });
     app.use('/api/dndbeyond', dndbeyondRouter);
 
     return new Promise<{ status: number; body: any }>((resolve, reject) => {
@@ -102,11 +109,15 @@ describe('proxy-image endpoint', () => {
           const addr = server.address();
           if (!addr || typeof addr === 'string') throw new Error('no addr');
           const resp = await originalFetch(
-            `http://127.0.0.1:${addr.port}/api/dndbeyond/proxy-image?url=${encodeURIComponent(url)}`,
+            `http://127.0.0.1:${addr.port}/api/dndbeyond/proxy-image?url=${encodeURIComponent(url)}`
           );
           const text = await resp.text();
           let body: any;
-          try { body = JSON.parse(text); } catch { body = text; }
+          try {
+            body = JSON.parse(text);
+          } catch {
+            body = text;
+          }
           resolve({ status: resp.status, body });
         } catch (err) {
           reject(err);
@@ -130,17 +141,24 @@ describe('proxy-image endpoint', () => {
   });
 
   it('rejects image/svg (no +xml) variant with 403', async () => {
-    mockUpstream(new Response(new Uint8Array([1, 2, 3]), { status: 200, headers: { 'content-type': 'image/svg' } }));
+    mockUpstream(
+      new Response(new Uint8Array([1, 2, 3]), {
+        status: 200,
+        headers: { 'content-type': 'image/svg' },
+      })
+    );
     const res = await callProxy('https://www.dndbeyond.com/evil.svg');
     expect(res.status).toBe(403);
   });
 
   it('rejects responses whose content-length exceeds the 5MB cap', async () => {
     const huge = (6 * 1024 * 1024).toString();
-    mockUpstream(new Response(new Uint8Array([1]), {
-      status: 200,
-      headers: { 'content-type': 'image/png', 'content-length': huge },
-    }));
+    mockUpstream(
+      new Response(new Uint8Array([1]), {
+        status: 200,
+        headers: { 'content-type': 'image/png', 'content-length': huge },
+      })
+    );
     const res = await callProxy('https://www.dndbeyond.com/big.png');
     expect(res.status).toBe(413);
   });
@@ -152,7 +170,10 @@ describe('proxy-image endpoint', () => {
     let emitted = 0;
     const body = new ReadableStream<Uint8Array>({
       pull(controller) {
-        if (emitted >= 7) { controller.close(); return; }
+        if (emitted >= 7) {
+          controller.close();
+          return;
+        }
         emitted++;
         controller.enqueue(chunk);
       },
@@ -182,7 +203,10 @@ describe('DDB character sync endpoint', () => {
     const dndbeyondRouter = (await import('../routes/dndbeyond.js')).default;
     const app = express();
     app.use(express.json());
-    app.use((req, _res, next) => { (req as any).user = { id: userId }; next(); });
+    app.use((req, _res, next) => {
+      (req as any).user = { id: userId };
+      next();
+    });
     app.use('/api/dndbeyond', dndbeyondRouter);
 
     return new Promise<{ status: number; body: any }>((resolve, reject) => {
@@ -192,11 +216,15 @@ describe('DDB character sync endpoint', () => {
           if (!addr || typeof addr === 'string') throw new Error('no addr');
           const resp = await originalFetch(
             `http://127.0.0.1:${addr.port}/api/dndbeyond/sync/${characterId}`,
-            { method: 'POST' },
+            { method: 'POST' }
           );
           const text = await resp.text();
           let body: any;
-          try { body = JSON.parse(text); } catch { body = text; }
+          try {
+            body = JSON.parse(text);
+          } catch {
+            body = text;
+          }
           resolve({ status: resp.status, body });
         } catch (err) {
           reject(err);
@@ -229,27 +257,41 @@ describe('DDB character sync endpoint', () => {
   });
 
   it('uses the DDB merge helper so level-up sync refreshes totals while preserving usage', async () => {
+    const mockClientQuery = vi
+      .fn()
+      .mockResolvedValueOnce(undefined) // BEGIN
+      .mockResolvedValueOnce({ rows: [existingRow] }) // SELECT FOR UPDATE
+      .mockResolvedValueOnce(undefined) // UPDATE
+      .mockResolvedValueOnce({ rows: [{ ...existingRow, level: 4, hit_dice: '[]' }] }) // SELECT updated
+      .mockResolvedValueOnce(undefined); // COMMIT
+    const mockRelease = vi.fn();
+    mockConnect.mockResolvedValueOnce({ query: mockClientQuery, release: mockRelease });
     globalThis.fetch = vi.fn().mockResolvedValue(
       new Response(JSON.stringify({ ok: true }), {
         status: 200,
         headers: { 'content-type': 'application/json' },
-      }),
+      })
     ) as unknown as typeof fetch;
-    mockQuery
-      .mockResolvedValueOnce({ rows: [existingRow] })
-      .mockResolvedValueOnce({ rows: [] })
-      .mockResolvedValueOnce({ rows: [{ ...existingRow, level: 4, hit_dice: '[]' }] });
+    mockQuery.mockResolvedValueOnce({ rows: [existingRow] });
 
     const res = await callSync('char-1', 'owner-1');
 
     expect(res.status).toBe(200);
-    const updateParams = mockQuery.mock.calls[1][1] as unknown[];
-    const updateSql = mockQuery.mock.calls[1][0] as string;
+    const clientSqlCalls = mockClientQuery.mock.calls.map((call) => call[0] as string);
+    const updateParams = mockClientQuery.mock.calls[2][1] as unknown[];
+    const updateSql = mockClientQuery.mock.calls[2][0] as string;
+    expect(clientSqlCalls[0]).toBe('BEGIN');
+    expect(clientSqlCalls[1]).toMatch(/SELECT \* FROM characters[\s\S]+FOR UPDATE/);
+    expect(clientSqlCalls).toContain('COMMIT');
+    expect(clientSqlCalls).not.toContain('ROLLBACK');
     expect(updateSql).toContain('hit_dice');
     expect(updateSql).toContain('spell_slots');
     expect(updateParams).toContain(JSON.stringify([{ dieSize: 10, total: 4, used: 2 }]));
     expect(updateParams).toContain(JSON.stringify({ '1': { max: 3, used: 1 } }));
-    expect(updateParams).toContain(JSON.stringify([{ name: 'Second Wind', usesTotal: 1, usesRemaining: 0 }]));
+    expect(updateParams).toContain(
+      JSON.stringify([{ name: 'Second Wind', usesTotal: 1, usesRemaining: 0 }])
+    );
+    expect(mockRelease).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -326,7 +368,7 @@ describe('session:kick handler', () => {
     await kick({ targetUserId: '22222222-2222-2222-2222-222222222222' });
 
     expect(mockQuery).toHaveBeenCalledTimes(1);
-    expect(mockQuery.mock.calls.every(c => !/DELETE/i.test(c[0] as string))).toBe(true);
+    expect(mockQuery.mock.calls.every((c) => !/DELETE/i.test(c[0] as string))).toBe(true);
   });
 
   it('rejects kicking the session owner', async () => {
@@ -345,7 +387,7 @@ describe('session:kick handler', () => {
     await kick({ targetUserId: ownerId });
 
     expect(mockQuery).toHaveBeenCalledTimes(1);
-    expect(mockQuery.mock.calls.every(c => !/DELETE/i.test(c[0] as string))).toBe(true);
+    expect(mockQuery.mock.calls.every((c) => !/DELETE/i.test(c[0] as string))).toBe(true);
   });
 
   it('deletes the session_players row when kicking a regular player', async () => {
@@ -365,7 +407,7 @@ describe('session:kick handler', () => {
     await kick({ targetUserId: '33333333-3333-3333-3333-333333333333' });
 
     // The last call should be the DELETE.
-    const calls = mockQuery.mock.calls.map(c => c[0] as string);
-    expect(calls.some(sql => /DELETE\s+FROM\s+session_players/i.test(sql))).toBe(true);
+    const calls = mockQuery.mock.calls.map((c) => c[0] as string);
+    expect(calls.some((sql) => /DELETE\s+FROM\s+session_players/i.test(sql))).toBe(true);
   });
 });
