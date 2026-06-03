@@ -7,10 +7,11 @@ import {
   registerChatCommand,
   whisperToCaller,
   isDM,
-  broadcastSystem,
+  broadcastTokenScopedSystem,
   type ChatCommandContext,
 } from '../ChatCommands.js';
 import type { PlayerContext } from '../../utils/roomState.js';
+import { emitToTokenViewers } from '../../utils/combatBroadcast.js';
 
 /**
  * Emit a compact ActionResultCard summarising an `!damage` / `!heal`
@@ -53,7 +54,7 @@ function emitHpAdjustCard(
     }],
   };
   const text = `${verb === 'HP set' ? '⚙' : kind === 'damage' ? '🩸' : '💚'} ${c.ctx.player.displayName} — ${targetName}: HP ${hpBefore} → ${hpAfter}`;
-  broadcastSystem(c.io, c.ctx, text, { actionResult: card });
+  broadcastTokenScopedSystem(c.io, c.ctx, targetTokenId, text, { actionResult: card });
 }
 
 /**
@@ -148,7 +149,7 @@ function broadcastHpChange(
   change: number,
   type: 'damage' | 'heal',
 ): void {
-  io.to(ctx.room.sessionId).emit('combat:hp-changed', {
+  emitToTokenViewers(io, ctx.room, tokenId, 'combat:hp-changed', {
     tokenId,
     hp,
     tempHp,
@@ -156,10 +157,10 @@ function broadcastHpChange(
     type,
   });
   if (characterId) {
-    io.to(ctx.room.sessionId).emit('character:updated', {
+    emitToTokenViewers(io, ctx.room, tokenId, 'character:updated', {
       characterId,
       changes: { hitPoints: hp, tempHitPoints: tempHp },
-    });
+    }, { includeOwner: true });
   }
 }
 
