@@ -1,5 +1,6 @@
 import type { Server } from 'socket.io';
-import type { RoomState } from './roomState.js';
+import type { Token } from '@dnd-vtt/shared';
+import { type RoomState, socketRecipientsOnMap } from './roomState.js';
 import { tokenVisibleToPlayer } from './tokenVisibility.js';
 import { emitToTokenViewers } from './combatBroadcast.js';
 
@@ -12,6 +13,7 @@ function liveSocketIdsForUser(room: RoomState, userId: string, fallbackSocketId?
 export function tokenScopedChatIsPrivate(room: RoomState, tokenId: string): boolean {
   const token = room.tokens.get(tokenId);
   if (!token) return true;
+  if (token.mapId !== room.playerMapId) return true;
 
   for (const player of room.players.values()) {
     if (player.role === 'dm') continue;
@@ -23,6 +25,7 @@ export function tokenScopedChatIsPrivate(room: RoomState, tokenId: string): bool
 export function multiTokenScopedChatIsPrivate(room: RoomState, tokenIds: string[]): boolean {
   const tokens = tokenIds.map(tokenId => room.tokens.get(tokenId));
   if (tokens.some(token => !token)) return true;
+  if (tokens.some(token => token?.mapId !== room.playerMapId)) return true;
 
   for (const player of room.players.values()) {
     if (player.role === 'dm') continue;
@@ -37,11 +40,31 @@ export function emitTokenScopedChat(
   tokenId: string,
   payload: Record<string, unknown>,
 ): void {
+  const token = room.tokens.get(tokenId);
   if (tokenScopedChatIsPrivate(room, tokenId)) {
-    emitToTokenViewers(io, room, tokenId, 'chat:new-message', payload, { includeOwner: true });
+    emitToTokenViewers(io, room, tokenId, 'chat:new-message', payload, {
+      includeOwner: token?.mapId === room.playerMapId,
+    });
     return;
   }
   io.to(room.sessionId).emit('chat:new-message', payload);
+}
+
+function dmSocketIds(room: RoomState): string[] {
+  const recipients = new Set<string>();
+  for (const player of room.players.values()) {
+    if (player.role !== 'dm') continue;
+    for (const sid of liveSocketIdsForUser(room, player.userId, player.socketId)) {
+      recipients.add(sid);
+    }
+  }
+  return [...recipients];
+}
+
+function resolvedTokens(room: RoomState, tokenIds: string[]): Token[] {
+  return tokenIds
+    .map(tokenId => room.tokens.get(tokenId))
+    .filter((token): token is Token => Boolean(token));
 }
 
 export function emitMultiTokenScopedChat(
@@ -50,7 +73,7 @@ export function emitMultiTokenScopedChat(
   tokenIds: string[],
   payload: Record<string, unknown>,
 ): void {
-  const tokens = tokenIds.map(tokenId => room.tokens.get(tokenId)).filter(token => !!token);
+  const tokens = resolvedTokens(room, tokenIds);
 
   if (!multiTokenScopedChatIsPrivate(room, tokenIds)) {
     io.to(room.sessionId).emit('chat:new-message', payload);
@@ -58,18 +81,27 @@ export function emitMultiTokenScopedChat(
   }
 
   const recipients = new Set<string>();
-  for (const player of room.players.values()) {
-    if (player.role === 'dm') {
-      for (const sid of liveSocketIdsForUser(room, player.userId, player.socketId)) recipients.add(sid);
-      continue;
+  if (tokens.length !== tokenIds.length) {
+    for (const sid of dmSocketIds(room)) recipients.add(sid);
+  } else {
+    const mapIds = new Set(tokens.map(token => token.mapId));
+    for (const mapId of mapIds) {
+      for (const recipient of socketRecipientsOnMap(room, mapId)) {
+        if (recipient.role === 'dm') {
+          recipients.add(recipient.socketId);
+          continue;
+        }
+
+        // Players should only receive private token chat for tokens on the
+        // player ribbon. A visible prep-map token is DM-visible, not public.
+        if (mapId !== room.playerMapId) continue;
+
+        const ownsInvolvedToken = tokens.some(token => token.ownerUserId === recipient.userId);
+        const canSeeAllInvolvedTokens = tokens.every(token =>
+          token.mapId === room.playerMapId && tokenVisibleToPlayer(token, recipient.userId));
+        if (ownsInvolvedToken || canSeeAllInvolvedTokens) recipients.add(recipient.socketId);
+      }
     }
-
-    const ownsInvolvedToken = tokens.some(token => token.ownerUserId === player.userId);
-    const canSeeAllInvolvedTokens = tokens.length === tokenIds.length &&
-      tokens.every(token => tokenVisibleToPlayer(token, player.userId));
-    if (!ownsInvolvedToken && !canSeeAllInvolvedTokens) continue;
-
-    for (const sid of liveSocketIdsForUser(room, player.userId, player.socketId)) recipients.add(sid);
   }
 
   for (const sid of recipients) io.to(sid).emit('chat:new-message', payload);
