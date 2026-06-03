@@ -55,7 +55,7 @@ Each item below needs a verification pass. "Unit-testable" = I can pin it headle
 
 | # | Item | Status | Note |
 |---|---|---|---|
-| T2.1 | `TokenLayer` granular Zustand selectors (stop full re-render on any token change) | ✅ | Done in PR TBD; layer now renders from a shallow-compared visible token-id list and sprites subscribe to their own token state |
+| T2.1 | `TokenLayer` granular Zustand selectors (stop full re-render on any token change) | ✅ | Done in PR #89; layer now renders from a shallow-compared visible token-id list and sprites subscribe to their own token state |
 | T2.2 | Off-canvas culling for Konva grid/background layers | ⬜ | large maps |
 | T2.3 | Defer Three.js dice-box bundle until first roll | ✅ | `Dice3DOverlay` is lazy-loaded from `AppShell` and dynamically imports `@3d-dice/dice-box` on first roll |
 | T2.4 | Reduce `/state` poll churn when nothing changed | ✅ | heartbeat churn fixed in #3; `/state` ETag merged in #14 |
