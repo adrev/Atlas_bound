@@ -1,0 +1,12 @@
+node_modules
+dist
+coverage
+.venv
+
+client/dist
+server/dist
+shared/dist
+
+new-maps
+tmp-gemini-maps
+public/uploads
