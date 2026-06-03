@@ -56,7 +56,7 @@ Each item below needs a verification pass. "Unit-testable" = I can pin it headle
 | # | Item | Status | Note |
 |---|---|---|---|
 | T2.1 | `TokenLayer` granular Zustand selectors (stop full re-render on any token change) | ✅ | Done in PR #89; layer now renders from a shallow-compared visible token-id list and sprites subscribe to their own token state |
-| T2.2 | Off-canvas culling for Konva grid/background layers | ✅ | Done in PR TBD; `GridLayer` already culled grid lines, and `BackgroundLayer` now crops the image/fill to the visible map rect |
+| T2.2 | Off-canvas culling for Konva grid/background layers | ✅ | Done in PR #90; `GridLayer` already culled grid lines, and `BackgroundLayer` now crops the image/fill to the visible map rect |
 | T2.3 | Defer Three.js dice-box bundle until first roll | ✅ | `Dice3DOverlay` is lazy-loaded from `AppShell` and dynamically imports `@3d-dice/dice-box` on first roll |
 | T2.4 | Reduce `/state` poll churn when nothing changed | ✅ | heartbeat churn fixed in #3; `/state` ETag merged in #14 |
 | T2.5 | Collapse `assertCharacterOwnerOrDM` 4 sequential queries → one CTE | ✅ | Done in PR #66; replaced sequential checks with one authorization query |
