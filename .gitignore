@@ -4,6 +4,7 @@ node_modules/
 
 # Build outputs
 dist/
+coverage/
 
 # Database (regenerated on startup from Open5e API)
 server/data/*.db
