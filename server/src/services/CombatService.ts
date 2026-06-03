@@ -1118,11 +1118,19 @@ export interface ApplyDamageOptions {
   deathSaveFailures?: 1 | 2;
 }
 
+interface TokenConditionUpdateResult {
+  changed: boolean;
+  conditions: string[];
+  removed: string[];
+  added: string[];
+  persistPromise?: Promise<unknown>;
+}
+
 function setTokenConditions(
   room: RoomState,
   tokenId: string,
   updater: (conditions: string[]) => string[],
-): { changed: boolean; conditions: string[]; removed: string[]; added: string[] } {
+): TokenConditionUpdateResult {
   const token = room.tokens.get(tokenId);
   if (!token) return { changed: false, conditions: [], removed: [], added: [] };
 
@@ -1138,12 +1146,13 @@ function setTokenConditions(
   token.conditions = after as Condition[];
   const combatant = room.combatState?.combatants.find((c) => c.tokenId === tokenId);
   if (combatant) combatant.conditions = after as Condition[];
-  pool.query(
+  const persistPromise = pool.query(
     'UPDATE tokens SET conditions = $1 WHERE id = $2',
     [JSON.stringify(after), tokenId],
-  ).catch((e) => console.warn('[CombatService] token conditions persist failed:', e));
+  );
+  persistPromise.catch((e) => console.warn('[CombatService] token conditions persist failed:', e));
 
-  return { changed: true, conditions: after, removed, added };
+  return { changed: true, conditions: after, removed, added, persistPromise };
 }
 
 export function markStable(sessionId: string, tokenId: string): { conditions: string[]; added: string[] } {
@@ -1192,6 +1201,7 @@ export async function applyDamage(
   // we only auto-fail when the token was already down (not when the
   // damage is what's putting them down for the first time).
   const wasAlreadyDown = combatant.hp === 0 && combatant.maxHp > 0 && !!combatant.characterId;
+  const persistence: Promise<unknown>[] = [];
 
   let remaining = amount;
   if (combatant.tempHp > 0) {
@@ -1206,6 +1216,7 @@ export async function applyDamage(
     const conditionResult = setTokenConditions(room, tokenId, (conditions) => (
       conditions.filter((c) => c.toLowerCase() !== 'stable')
     ));
+    if (conditionResult.persistPromise) persistence.push(conditionResult.persistPromise);
     if (conditionResult.removed.length > 0) autoRemovedConditions = conditionResult.removed;
   }
 
@@ -1236,14 +1247,15 @@ export async function applyDamage(
         }
         return conditions;
       });
+      if (conditionResult.persistPromise) persistence.push(conditionResult.persistPromise);
       if (conditionResult.changed) autoAppliedConditions = conditionResult.conditions;
       // Drop any concentration the character was holding. Matches the
       // applyConditionWithMeta rule for incapacitating conditions.
       if (combatant.characterId) {
-        pool.query(
+        persistence.push(pool.query(
           'UPDATE characters SET concentrating_on = NULL WHERE id = $1 AND concentrating_on IS NOT NULL',
           [combatant.characterId],
-        ).catch((e) => console.warn('[applyDamage] concentration clear failed:', e));
+        ));
       }
       // Release any creature this PC was grappling — unconscious
       // automatically breaks the hold per RAW.
@@ -1258,7 +1270,8 @@ export async function applyDamage(
       [combatant.hp, combatant.tempHp, JSON.stringify(combatant.deathSaves ?? { successes: 0, failures: 0 }), combatant.characterId],
     );
   }
-  persistCombatState(room.combatState);
+  await Promise.all(persistence);
+  await persistCombatStateAsync(room.combatState);
   return {
     hp: combatant.hp,
     tempHp: combatant.tempHp,
@@ -1278,6 +1291,7 @@ export async function applyHeal(sessionId: string, tokenId: string, amount: numb
   const combatant = room.combatState.combatants.find(c => c.tokenId === tokenId);
   if (!combatant) throw new Error('Combatant not found');
 
+  const persistence: Promise<unknown>[] = [];
   combatant.hp = Math.min(combatant.maxHp, combatant.hp + amount);
   let autoRemovedConditions: string[] | undefined;
   if (combatant.hp > 0) {
@@ -1285,6 +1299,7 @@ export async function applyHeal(sessionId: string, tokenId: string, amount: numb
     const conditionResult = setTokenConditions(room, tokenId, (conditions) => (
       conditions.filter((c) => !['unconscious', 'stable'].includes(c.toLowerCase()))
     ));
+    if (conditionResult.persistPromise) persistence.push(conditionResult.persistPromise);
     if (conditionResult.removed.length > 0) autoRemovedConditions = conditionResult.removed;
   }
 
@@ -1294,7 +1309,8 @@ export async function applyHeal(sessionId: string, tokenId: string, amount: numb
       [combatant.hp, JSON.stringify(combatant.deathSaves ?? { successes: 0, failures: 0 }), combatant.characterId],
     );
   }
-  persistCombatState(room.combatState);
+  await Promise.all(persistence);
+  await persistCombatStateAsync(room.combatState);
   return {
     hp: combatant.hp,
     tempHp: combatant.tempHp,
@@ -1396,9 +1412,14 @@ export function getCombatant(sessionId: string, tokenId: string): Combatant | nu
   return room.combatState.combatants.find(c => c.tokenId === tokenId) ?? null;
 }
 
-function persistCombatState(state: CombatState): void {
-  pool.query(
+async function persistCombatStateAsync(state: CombatState): Promise<void> {
+  await pool.query(
     'UPDATE combat_state SET round_number = $1, current_turn_index = $2, combatants = $3 WHERE session_id = $4',
     [state.roundNumber, state.currentTurnIndex, JSON.stringify(state.combatants), state.sessionId],
-  ).catch(err => console.error('[CombatService] persistCombatState failed:', err));
+  );
+}
+
+function persistCombatState(state: CombatState): void {
+  persistCombatStateAsync(state)
+    .catch(err => console.error('[CombatService] persistCombatState failed:', err));
 }

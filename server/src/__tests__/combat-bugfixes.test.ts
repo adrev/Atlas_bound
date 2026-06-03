@@ -332,6 +332,48 @@ describe('CombatService death-save state helpers', () => {
     expect(result.autoDeathSaveFailure).toEqual({ successes: 0, failures: 3 });
     expect(combatant.deathSaves).toEqual({ successes: 0, failures: 3 });
   });
+
+  it('rejects applyDamage when combat-state persistence fails', async () => {
+    const sessionId = 's-damage-persist-fail';
+    seedRoom(sessionId, [makeToken('tNPC')], [makeCombatant('tNPC', { hp: 20 })]);
+    mockQuery.mockImplementation(async (sql: string) => {
+      if (sql.startsWith('UPDATE combat_state')) throw new Error('combat_state failed');
+      return { rows: [] };
+    });
+
+    await expect(CombatService.applyDamage(sessionId, 'tNPC', 3))
+      .rejects.toThrow('combat_state failed');
+  });
+
+  it('rejects applyDamage when token-condition persistence fails', async () => {
+    const sessionId = 's-damage-condition-persist-fail';
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const token = makeToken('tPC', {
+      ownerUserId: 'player-1',
+      characterId: 'char-1',
+      conditions: ['unconscious', 'stable'],
+    });
+    const combatant = makeCombatant('tPC', {
+      characterId: 'char-1',
+      hp: 0,
+      maxHp: 20,
+      isNPC: false,
+      conditions: ['unconscious', 'stable'],
+      deathSaves: { successes: 0, failures: 0 },
+    });
+    seedRoom(sessionId, [token], [combatant]);
+    mockQuery.mockImplementation(async (sql: string) => {
+      if (sql.startsWith('UPDATE tokens SET conditions')) throw new Error('conditions failed');
+      return { rows: [] };
+    });
+
+    try {
+      await expect(CombatService.applyDamage(sessionId, 'tPC', 3))
+        .rejects.toThrow('conditions failed');
+    } finally {
+      warn.mockRestore();
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------
