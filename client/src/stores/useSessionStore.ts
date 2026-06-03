@@ -66,6 +66,7 @@ interface SessionActions {
   setDisplayName: (name: string) => void;
   addPlayer: (player: Player) => void;
   removePlayer: (userId: string) => void;
+  setPlayerConnected: (userId: string, connected: boolean) => void;
   updateSettings: (settings: SessionSettings) => void;
   setGameMode: (mode: GameMode) => void;
   setCurrentMapId: (mapId: string | null) => void;
@@ -147,6 +148,13 @@ export const useSessionStore = create<SessionState & SessionActions>((set) => ({
   removePlayer: (userId) =>
     set((state) => ({
       players: state.players.filter((p) => p.userId !== userId),
+    })),
+
+  setPlayerConnected: (userId, connected) =>
+    set((state) => ({
+      players: state.players.map((p) =>
+        p.userId === userId ? { ...p, connected } : p,
+      ),
     })),
 
   updateSettings: (settings) => set({ settings }),

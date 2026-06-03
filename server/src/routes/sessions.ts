@@ -414,6 +414,7 @@ router.delete('/:id/leave', async (req: Request, res: Response) => {
         const sock = io.sockets.sockets.get(sid);
         if (sock) sock.leave(sessionId);
       }
+      io.to(sessionId).emit('session:player-removed', { userId });
     }
     removePlayerFromRoom(sessionId, userId);
   }
@@ -786,6 +787,7 @@ router.post('/:id/bans', async (req: Request, res: Response) => {
     let emitter = io.to(sessionId);
     for (const sid of allTargetSockets) emitter = emitter.except(sid);
     emitter.emit('session:bans-updated', { bans });
+    emitter.emit('session:player-removed', { userId: targetUserId });
 
     // Force every socket out of the Socket.IO room AND remove from
     // room state so they can't passively read broadcasts.

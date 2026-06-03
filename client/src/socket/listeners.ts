@@ -43,7 +43,15 @@ export function registerListeners(socket: Socket): () => void {
     useSessionStore.getState().addPlayer(player);
   });
 
+  socket.on('session:player-presence', (player) => {
+    useSessionStore.getState().addPlayer(player);
+  });
+
   socket.on('session:player-left', ({ userId }) => {
+    useSessionStore.getState().setPlayerConnected(userId, false);
+  });
+
+  socket.on('session:player-removed', ({ userId }) => {
     useSessionStore.getState().removePlayer(userId);
   });
 
@@ -660,7 +668,9 @@ export function registerListeners(socket: Socket): () => void {
   return () => {
     socket.off('session:state-sync');
     socket.off('session:player-joined');
+    socket.off('session:player-presence');
     socket.off('session:player-left');
+    socket.off('session:player-removed');
     socket.off('session:kicked');
     socket.off('session:settings-changed');
     socket.off('session:bans-updated');

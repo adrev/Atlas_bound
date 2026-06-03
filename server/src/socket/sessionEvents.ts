@@ -83,6 +83,7 @@ export function registerSessionEvents(io: Server, socket: Socket): void {
       room.gameMode = session.game_mode as GameMode;
     }
 
+    const wasPresentInRoom = room.players.has(userId);
     const roomPlayer: RoomPlayer = {
       userId, displayName, socketId: socket.id,
       role: isDM ? 'dm' : 'player', characterId: currentPlayer.character_id,
@@ -143,10 +144,14 @@ export function registerSessionEvents(io: Server, socket: Socket): void {
       bans,
     });
 
-    socket.to(session.id).emit('session:player-joined', {
+    const presencePayload = {
       userId, displayName, avatarUrl: currentPlayer.avatar_url,
       role: isDM ? 'dm' : 'player', characterId: currentPlayer.character_id, connected: true,
-    });
+    };
+    socket.to(session.id).emit(
+      wasPresentInRoom ? 'session:player-presence' : 'session:player-joined',
+      presencePayload,
+    );
 
     // Re-emit the currently playing track so a late joiner hears what
     // the DM is already playing. Only fires when a track is set —
@@ -437,7 +442,7 @@ export function registerSessionEvents(io: Server, socket: Socket): void {
       if (sock) sock.leave(ctx.room.sessionId);
     }
     removePlayerFromRoom(ctx.room.sessionId, targetUserId);
-    socket.to(ctx.room.sessionId).emit('session:player-left', { userId: targetUserId });
+    socket.to(ctx.room.sessionId).emit('session:player-removed', { userId: targetUserId });
   }));
 
   socket.on('session:update-settings', safeHandler(socket, async (data) => {
