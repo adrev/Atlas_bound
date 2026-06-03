@@ -1,6 +1,7 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Image as KonvaImage, Rect } from 'react-konva';
 import { theme } from '../../../styles/theme';
+import { getVisibleMapRect, type ViewportTransform } from '../../../utils/visibleMapRect';
 
 // NOTE on layer consolidation (2026-04): every visual unit in
 // client/src/components/canvas/layers/ used to mount its own Konva
@@ -14,6 +15,9 @@ interface BackgroundLayerProps {
   imageUrl: string | null;
   width: number;
   height: number;
+  viewport: ViewportTransform;
+  stageWidth: number;
+  stageHeight: number;
 }
 
 function shouldUseAnonymousCors(url: string): boolean {
@@ -67,17 +71,54 @@ function useImage(url: string | null): [HTMLImageElement | null, 'loading' | 'lo
   return [image, status];
 }
 
-export function BackgroundLayer({ imageUrl, width, height }: BackgroundLayerProps) {
+export function BackgroundLayer({
+  imageUrl,
+  width,
+  height,
+  viewport,
+  stageWidth,
+  stageHeight,
+}: BackgroundLayerProps) {
   const [image, status] = useImage(imageUrl);
+  const visibleRect = useMemo(
+    () => getVisibleMapRect(width, height, viewport, stageWidth, stageHeight),
+    [width, height, viewport.x, viewport.y, viewport.scaleX, viewport.scaleY, stageWidth, stageHeight],
+  );
+
+  if (!visibleRect) return null;
+
+  const imageCrop = image
+    ? {
+        x: (visibleRect.x / width) * image.width,
+        y: (visibleRect.y / height) * image.height,
+        width: (visibleRect.width / width) * image.width,
+        height: (visibleRect.height / height) * image.height,
+      }
+    : undefined;
 
   return (
     <>
       {/* Dark background fill */}
-      <Rect x={0} y={0} width={width} height={height} fill={theme.bg.base} listening={false} />
+      <Rect
+        x={visibleRect.x}
+        y={visibleRect.y}
+        width={visibleRect.width}
+        height={visibleRect.height}
+        fill={theme.bg.base}
+        listening={false}
+      />
 
       {/* Map image */}
-      {image && status === 'loaded' && (
-        <KonvaImage image={image} x={0} y={0} width={width} height={height} listening={false} />
+      {image && imageCrop && status === 'loaded' && (
+        <KonvaImage
+          image={image}
+          x={visibleRect.x}
+          y={visibleRect.y}
+          width={visibleRect.width}
+          height={visibleRect.height}
+          crop={imageCrop}
+          listening={false}
+        />
       )}
     </>
   );
