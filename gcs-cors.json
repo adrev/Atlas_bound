@@ -2,6 +2,7 @@
   {
     "origin": [
       "https://dnd.kbrt.ai",
+      "https://atlas-bound-396996689224.us-central1.run.app",
       "https://atlas-bound-2amlusuv5a-uc.a.run.app"
     ],
     "method": ["GET", "HEAD"],

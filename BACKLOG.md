@@ -97,7 +97,7 @@ Each item below needs a verification pass. "Unit-testable" = I can pin it headle
 | O.2 | `UPLOAD_DIR` writes to local FS on Cloud Run — user uploads may not persist | 🔶 | CodeX hardened upload *auth* in `fe9a7d2`; persistence (GCS vs fuse) still open |
 | O.3 | Move secrets to Google Secret Manager (`--set-secrets`) | ⬜ | currently plain env vars on the revision |
 | O.4 | Apple OAuth not plumbed through `deploy.sh` | ⬜ | defined in `.env.example`, decide if wanted |
-| O.5 | GCS bucket CORS for `dnd.kbrt.ai` on `atlas-bound-data-personal` (new bucket; I have Owner) + audit DB for old-bucket (`atlas-bound-data`) URLs | 🔶 | CodeX added a client fallback; CORS still cleaner |
+| O.5 | GCS bucket CORS for `dnd.kbrt.ai` on `atlas-bound-data-personal` (new bucket; I have Owner) + audit DB for old-bucket (`atlas-bound-data`) URLs | 🔶 | Personal-bucket CORS applied in PR #96; client still references legacy bucket, and GCP rejected conditional public `allUsers` access so public-read strategy needs explicit decision |
 
 ## Websocket QA — remaining matrix rows
 
