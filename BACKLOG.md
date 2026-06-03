@@ -83,7 +83,7 @@ Each item below needs a verification pass. "Unit-testable" = I can pin it headle
 | T4.1 | Split `TokenActionPanel.tsx` (4877 lines) by domain | ⬜ | big mechanical refactor |
 | T4.2 | Audit ~150 `as any` casts, add proper types | ⬜ | silent-failure risk |
 | T4.3 | Pre-commit hooks (prettier + husky + lint-staged) + `.editorconfig` | ✅ | Done in PR #91; staged TS/JS files run Prettier + ESLint, staged JSON/CSS run Prettier, and lint globs use cross-shell double quotes |
-| T4.4 | Vitest coverage thresholds on hot dirs (combat, dice, sockets) | ⬜ | |
+| T4.4 | Vitest coverage thresholds on hot dirs (combat, dice, sockets) | ✅ | Done in PR #95; `npm run coverage` gates socket/combat/dice hot areas with baseline V8 thresholds |
 | T4.5 | Enable `noUncheckedIndexedAccess` in `tsconfig.base.json` | ⬜ | |
 | T4.6 | Decide Express v5 vs pin to v4 | ✅ | Express v5 is GA; server uses `express ^5.1.0` with `express@5.2.1` installed |
 
