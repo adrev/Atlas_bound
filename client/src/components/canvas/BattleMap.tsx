@@ -542,6 +542,9 @@ export function BattleMap() {
                 imageUrl={currentMap.imageUrl}
                 width={currentMap.width}
                 height={currentMap.height}
+                viewport={stageProps}
+                stageWidth={dimensions.width}
+                stageHeight={dimensions.height}
               />
               <GridLayer
                 mapWidth={currentMap.width}
