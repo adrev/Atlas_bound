@@ -55,9 +55,9 @@ Each item below needs a verification pass. "Unit-testable" = I can pin it headle
 
 | # | Item | Status | Note |
 |---|---|---|---|
-| T2.1 | `TokenLayer` granular Zustand selectors (stop full re-render on any token change) | ⬜ | combat-jank source; client perf |
+| T2.1 | `TokenLayer` granular Zustand selectors (stop full re-render on any token change) | ⬜ | partially improved, but top-level `tokens` selector still re-renders the full layer on any token change |
 | T2.2 | Off-canvas culling for Konva grid/background layers | ⬜ | large maps |
-| T2.3 | Defer Three.js dice-box bundle until first roll | ⬜ | initial-paint win |
+| T2.3 | Defer Three.js dice-box bundle until first roll | ✅ | `Dice3DOverlay` is lazy-loaded from `AppShell` and dynamically imports `@3d-dice/dice-box` on first roll |
 | T2.4 | Reduce `/state` poll churn when nothing changed | ✅ | heartbeat churn fixed in #3; `/state` ETag merged in #14 |
 | T2.5 | Collapse `assertCharacterOwnerOrDM` 4 sequential queries → one CTE | ✅ | Done in PR #66; replaced sequential checks with one authorization query |
 | T2.6 | Batch token-move broadcasts (one frame, N moves) | 🔶 | fan-out scoping/visibility centralized in #7; batching still open |
@@ -85,7 +85,7 @@ Each item below needs a verification pass. "Unit-testable" = I can pin it headle
 | T4.3 | Pre-commit hooks (prettier + husky + lint-staged) + `.editorconfig` | ⬜ | also: lint npm script globs break on Windows bash (see below) |
 | T4.4 | Vitest coverage thresholds on hot dirs (combat, dice, sockets) | ⬜ | |
 | T4.5 | Enable `noUncheckedIndexedAccess` in `tsconfig.base.json` | ⬜ | |
-| T4.6 | Decide Express v5 (pre-release) vs pin to v4 | ⬜ | |
+| T4.6 | Decide Express v5 vs pin to v4 | ✅ | Express v5 is GA; server uses `express ^5.1.0` with `express@5.2.1` installed |
 
 ---
 
