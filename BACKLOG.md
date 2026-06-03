@@ -55,7 +55,7 @@ Each item below needs a verification pass. "Unit-testable" = I can pin it headle
 
 | # | Item | Status | Note |
 |---|---|---|---|
-| T2.1 | `TokenLayer` granular Zustand selectors (stop full re-render on any token change) | ⬜ | partially improved, but top-level `tokens` selector still re-renders the full layer on any token change |
+| T2.1 | `TokenLayer` granular Zustand selectors (stop full re-render on any token change) | ✅ | Done in PR TBD; layer now renders from a shallow-compared visible token-id list and sprites subscribe to their own token state |
 | T2.2 | Off-canvas culling for Konva grid/background layers | ⬜ | large maps |
 | T2.3 | Defer Three.js dice-box bundle until first roll | ✅ | `Dice3DOverlay` is lazy-loaded from `AppShell` and dynamically imports `@3d-dice/dice-box` on first roll |
 | T2.4 | Reduce `/state` poll churn when nothing changed | ✅ | heartbeat churn fixed in #3; `/state` ETag merged in #14 |
@@ -71,7 +71,7 @@ Each item below needs a verification pass. "Unit-testable" = I can pin it headle
 | T3.2 | `npm audit fix` — 5 moderate vulns (uuid, express-rate-limit, postcss, brace-expansion) | ✅ | Done in PR #8; CI now runs `npm audit --audit-level=moderate` green |
 | T3.3 | Boot-time config validation warnings | ✅ | Merged/deployed in PR #64; warns on missing OAuth provider or invalid production `BASE_URL` without blocking boot |
 | T3.4 | Version/seq field for tokens + HP → detect concurrent writes | ⬜ | LWW currently silent |
-| T3.5 | Await DB writes in `CombatService.applyDamage` (no fire-and-forget) | ⬜ | divergence risk on transient DB fail |
+| T3.5 | Await DB writes in `CombatService.applyDamage` (no fire-and-forget) | ✅ | Done in PR #88 for async HP mutation paths; `applyDamage`/`applyHeal` await combat-state, token-condition, and concentration persistence |
 | T3.6 | Wrap character DDB import+merge in a transaction | 🔶 | CodeX touched DDB sync in `fe9a7d2` — verify if still needed |
 | T3.7 | Tag `/state` snapshot with explicit `mapId` | ✅ | Done in PR #67; state payload carries map scope and client no longer infers empty snapshots from current map |
 | T3.8 | Refactor opportunity-attack multi-tab fan-out logic | ⬜ | byzantine fallback path |

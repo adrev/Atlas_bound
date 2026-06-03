@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState, useMemo } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Group, Circle, Rect, Text, Ring, Shape, Line, Arrow } from 'react-konva';
+import { useShallow } from 'zustand/react/shallow';
 import type { Token, TokenAura } from '@dnd-vtt/shared';
 import { colorForCondition } from '@dnd-vtt/shared';
 import { useMapStore } from '../../../stores/useMapStore';
@@ -212,42 +213,52 @@ function TokenImage({ url, size }: { url: string; size: number }) {
 }
 
 interface TokenSpriteProps {
-  token: Token;
-  isSelected: boolean;
-  isCurrentTurn: boolean;
+  tokenId: string;
   showTokenLabels: boolean;
 }
 
-function TokenSprite({ token, isSelected, isCurrentTurn, showTokenLabels }: TokenSpriteProps) {
-  const { draggable, onDragStart, onDragEnd, onDragMove } = useDragToken(token.id);
+function TokenSprite({ tokenId, showTokenLabels }: TokenSpriteProps) {
+  const token = useMapStore((s) => s.tokens[tokenId]);
+  const isSelected = useMapStore((s) => s.selectedTokenId === tokenId || s.selectedTokenIds.includes(tokenId));
+  const isCurrentTurn = useCombatStore((s) => s.active && s.combatants[s.currentTurnIndex]?.tokenId === tokenId);
+  const { draggable, onDragStart, onDragEnd, onDragMove } = useDragToken(tokenId);
   const selectToken = useMapStore((s) => s.selectToken);
   const setHoveredToken = useMapStore((s) => s.setHoveredToken);
   const gridSize = useMapStore((s) => s.currentMap?.gridSize ?? 70);
+  const isDM = useSessionStore((s) => s.isDM);
+  const userId = useSessionStore((s) => s.userId);
   // Hover lift — match the KBRT.html .portrait / .token-body
   // transform: scale(1.08) on hover. Konva has no CSS :hover so we
   // track it in React and feed the Group's scale props.
   const [isHovered, setIsHovered] = useState(false);
 
+  const charData = useCharacterStore((s) => {
+    const characterId = token?.characterId;
+    return characterId ? s.allCharacters[characterId] : null;
+  });
+
+  // Look up only this token's combatant instead of subscribing every
+  // token sprite to the full combatants array and deriving during render.
+  const combatant = useCombatStore((s) => s.combatants.find((c) => c.tokenId === tokenId));
+  const actionEconomy = useCombatStore((s) => {
+    const currentTurnTokenId = s.active
+      ? s.combatants[s.currentTurnIndex]?.tokenId ?? null
+      : null;
+    return currentTurnTokenId === tokenId ? s.actionEconomy : null;
+  });
+
+  if (!token) return null;
+
   const tokenSize = gridSize * token.size;
-  const allChars = useCharacterStore((s) => s.allCharacters);
 
   // Compute HP ratio from character store or combatant data
-  const charData = token.characterId ? allChars[token.characterId] : null;
   const charHp = charData?.hitPoints ?? null;
   const charMaxHp = charData?.maxHitPoints ?? null;
-
-  // Look up combatant HP
-  const combatants = useCombatStore((s) => s.combatants);
-  const combatant = useMemo(
-    () => combatants.find((c) => c.tokenId === token.id),
-    [combatants, token.id]
-  );
 
   // Action economy for the current-turn token only — drives the
   // movement pill rendered above the HP bar so the player can see
   // their feet remaining without opening the Combat sidebar tab.
-  const actionEconomy = useCombatStore((s) => s.actionEconomy);
-  const showMovement = isCurrentTurn && actionEconomy && actionEconomy.movementMax > 0;
+  const showMovement = !!actionEconomy && actionEconomy.movementMax > 0;
   const moveRemaining = actionEconomy?.movementRemaining ?? 0;
   const moveMax = actionEconomy?.movementMax ?? 0;
   const moveUsed = Math.max(0, moveMax - moveRemaining);
@@ -278,8 +289,6 @@ function TokenSprite({ token, isSelected, isCurrentTurn, showTokenLabels }: Toke
   // hand-maintained map — the shared helper is the source of truth
   // for both colors and mechanical effects.
 
-  const isDM = useSessionStore.getState().isDM;
-  const userId = useSessionStore.getState().userId;
   const isNPC = !token.ownerUserId;
 
   // HP bar visibility: DM sees all, players see own + visible creature bars
@@ -699,6 +708,58 @@ const isWithinVision = (tokenToCheck: Token, myTokens: Token[], gridSize: number
   return false;
 };
 
+function selectVisibleSortedTokenIds(
+  tokens: Record<string, Token>,
+  options: {
+    isDM: boolean;
+    userId: string | null;
+    enableFog: boolean;
+    gridSize: number;
+    selectedTokenId: string | null;
+  },
+) {
+  const { isDM, userId, enableFog, gridSize, selectedTokenId } = options;
+  const allTokens = Object.values(tokens);
+  const visibleTokens = isDM
+    ? allTokens
+    : allTokens.filter((t) => {
+        if (!t.visible) return false;
+        // Same-side tokens (your own characters) are always visible to you
+        // — Greater Invisibility doesn't hide an ally from yourself.
+        if (t.ownerUserId === userId) return true;
+        // Opposing-side tokens with the Invisible condition are hidden.
+        // Faerie Fire (the "outlined" condition) cancels this in RAW —
+        // we let outlined override invisibility.
+        const conds = (t.conditions || []) as string[];
+        const isInvisible = conds.includes('invisible');
+        const isOutlined = conds.includes('outlined');
+        if (isInvisible && !isOutlined) return false;
+        return true;
+      });
+
+  const base = !isDM && enableFog
+    ? (() => {
+        const myTokens = visibleTokens.filter((t) => t.ownerUserId === userId);
+        return visibleTokens.filter((token) => {
+          if (token.ownerUserId === userId) return true;
+          return isWithinVision(token, myTokens, gridSize);
+        });
+      })()
+    : visibleTokens;
+
+  // Stable render-order sort so Konva click resolution routes to the
+  // token the player most likely wants to interact with when two
+  // tokens overlap. Last in the array = on top in the stacking order.
+  const rank = (t: Token): number => {
+    if (t.id === selectedTokenId) return 3;
+    if (t.ownerUserId && t.ownerUserId === userId) return 2;
+    const isLoot = t.imageUrl?.includes('/uploads/items/') ?? false;
+    return isLoot ? 0 : 1;
+  };
+
+  return [...base].sort((a, b) => rank(a) - rank(b)).map((t) => t.id);
+}
+
 /**
  * Movement preview overlay — only renders while a token is being
  * actively dragged. Draws three things:
@@ -715,7 +776,7 @@ const isWithinVision = (tokenToCheck: Token, myTokens: Token[], gridSize: number
  */
 function MovementPreview() {
   const dragPreview = useMapStore((s) => s.dragPreview);
-  const tokens = useMapStore((s) => s.tokens);
+  const token = useMapStore((s) => dragPreview ? s.tokens[dragPreview.tokenId] : null);
   const gridSize = useMapStore((s) => s.currentMap?.gridSize ?? 70);
   const combat = useCombatStore((s) => s.actionEconomy);
   const isCombatActive = useCombatStore((s) => s.active);
@@ -724,7 +785,6 @@ function MovementPreview() {
   );
 
   if (!dragPreview) return null;
-  const token = tokens[dragPreview.tokenId];
   if (!token) return null;
 
   const tokenSize = gridSize * (token.size || 1);
@@ -945,12 +1005,6 @@ function StagedHeroGhost({
 }
 
 export function TokenLayer() {
-  const tokens = useMapStore((s) => s.tokens);
-  const selectedTokenId = useMapStore((s) => s.selectedTokenId);
-  const selectedTokenIds = useMapStore((s) => s.selectedTokenIds);
-  const combatActive = useCombatStore((s) => s.active);
-  const currentTurnIndex = useCombatStore((s) => s.currentTurnIndex);
-  const combatants = useCombatStore((s) => s.combatants);
   const isDM = useSessionStore((s) => s.isDM);
   const userId = useSessionStore((s) => s.userId);
   const enableFog = useSessionStore((s) => s.settings.enableFogOfWar);
@@ -959,75 +1013,20 @@ export function TokenLayer() {
   const currentMapId = useMapStore((s) => s.currentMap?.id ?? null);
   const stagedHeroesMap = useMapStore((s) => s.stagedHeroes);
   const stagedHeroes = (currentMapId && stagedHeroesMap[currentMapId]) || EMPTY_STAGED;
-
-  const currentTurnTokenId = combatActive
-    ? combatants[currentTurnIndex]?.tokenId ?? null
-    : null;
-
-  // DM sees all tokens (hidden ones rendered at low opacity).
-  // Players only see visible tokens AND can't see invisible enemies.
-  const allTokens = Object.values(tokens);
-  const visibleTokens = isDM
-    ? allTokens
-    : allTokens.filter((t) => {
-        if (!t.visible) return false;
-        // Same-side tokens (your own characters) are always visible to you
-        // — Greater Invisibility doesn't hide an ally from yourself.
-        if (t.ownerUserId === userId) return true;
-        // Opposing-side tokens with the Invisible condition are hidden.
-        // Faerie Fire (the "outlined" condition) cancels this in RAW —
-        // we let outlined override invisibility.
-        const conds = (t.conditions || []) as string[];
-        const isInvisible = conds.includes('invisible');
-        const isOutlined = conds.includes('outlined');
-        if (isInvisible && !isOutlined) return false;
-        return true;
-      });
-
-  // For non-DM players with fog enabled, filter tokens to only those within vision
-  const tokenList = useMemo(() => {
-    const base = !isDM && enableFog
-      ? (() => {
-          const myTokens = visibleTokens.filter((t) => t.ownerUserId === userId);
-          return visibleTokens.filter((token) => {
-            if (token.ownerUserId === userId) return true;
-            return isWithinVision(token, myTokens, gridSize);
-          });
-        })()
-      : visibleTokens;
-
-    // Stable render-order sort so Konva click resolution routes to the
-    // token the player most likely wants to interact with when two
-    // tokens overlap. Last in the array = on top in the stacking order.
-    //
-    //   0. Loot bags first (bottom) — they're small pickup markers
-    //      that shouldn't eat clicks from creatures standing on them.
-    //   1. Opposing-faction / unowned NPC tokens above loot.
-    //   2. The current player's own tokens above that — so a creature
-    //      standing on your hero never swallows the drag-to-move.
-    //   3. The selected token always last (on top) so re-selecting
-    //      and dragging the active token is reliable even in a pile.
-    //
-    // DMs effectively fall into bucket 1 (they don't own tokens) but
-    // still get the selected-token boost, which preserves the old
-    // behaviour of "click what you selected last" for DM workflows.
-    const rank = (t: Token): number => {
-      if (t.id === selectedTokenId) return 3;
-      if (t.ownerUserId && t.ownerUserId === userId) return 2;
-      const isLoot = t.imageUrl?.includes('/uploads/items/') ?? false;
-      return isLoot ? 0 : 1;
-    };
-    return [...base].sort((a, b) => rank(a) - rank(b));
-  }, [visibleTokens, isDM, enableFog, userId, gridSize, selectedTokenId]);
+  const tokenIds = useMapStore(useShallow((s) => selectVisibleSortedTokenIds(s.tokens, {
+    isDM,
+    userId,
+    enableFog,
+    gridSize: s.currentMap?.gridSize ?? 70,
+    selectedTokenId: s.selectedTokenId,
+  })));
 
   return (
     <>
-      {tokenList.map((token) => (
+      {tokenIds.map((tokenId) => (
         <TokenSprite
-          key={token.id}
-          token={token}
-          isSelected={token.id === selectedTokenId || selectedTokenIds.includes(token.id)}
-          isCurrentTurn={token.id === currentTurnTokenId}
+          key={tokenId}
+          tokenId={tokenId}
           showTokenLabels={showTokenLabels}
         />
       ))}
