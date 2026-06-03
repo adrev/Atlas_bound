@@ -7,9 +7,14 @@ if (process.env.NODE_ENV === 'production' || process.env.HUSKY === '0') {
 }
 
 const root = path.resolve(__dirname, '..');
-const huskyBin = process.platform === 'win32'
-  ? path.join(root, 'node_modules', '.bin', 'husky.cmd')
-  : path.join(root, 'node_modules', '.bin', 'husky');
+if (!fs.existsSync(path.join(root, '.git'))) {
+  process.exit(0);
+}
+
+const huskyBin =
+  process.platform === 'win32'
+    ? path.join(root, 'node_modules', '.bin', 'husky.cmd')
+    : path.join(root, 'node_modules', '.bin', 'husky');
 
 if (!fs.existsSync(huskyBin)) {
   process.exit(0);
