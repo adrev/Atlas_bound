@@ -9,7 +9,12 @@ vi.mock('../db/connection.js', () => ({
 
 import { tryHandleChatCommand } from '../services/ChatCommands.js';
 import '../services/chatCommands/maneuverHandlers.js';
-import { createRoom, getAllRooms, type PlayerContext } from '../utils/roomState.js';
+import {
+  addPlayerToRoom,
+  createRoom,
+  getAllRooms,
+  type PlayerContext,
+} from '../utils/roomState.js';
 
 interface Emission {
   channelId: string;
@@ -92,6 +97,20 @@ function seedContext(targetOverrides: Partial<Token> = {}): PlayerContext {
     movementRemaining: 30,
     movementMax: 30,
     reaction: false,
+  });
+  addPlayerToRoom(room.sessionId, {
+    userId: 'dm-user',
+    displayName: 'DM',
+    socketId: 'dm-sock',
+    role: 'dm',
+    characterId: null,
+  });
+  addPlayerToRoom(room.sessionId, {
+    userId: 'player-1',
+    displayName: 'Player',
+    socketId: 'player-sock',
+    role: 'player',
+    characterId: 'char-hero',
   });
   return {
     room,
