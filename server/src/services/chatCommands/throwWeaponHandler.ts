@@ -40,7 +40,7 @@ function resolveCallerToken(ctx: PlayerContext): Token | null {
 function resolveTargetByName(ctx: PlayerContext, name: string): Token | null {
   const needle = name.toLowerCase();
   const matches = Array.from(ctx.room.tokens.values()).filter(
-    (t) => t.name.toLowerCase() === needle,
+    (t) => t.name.toLowerCase() === needle
   );
   if (matches.length === 0) return null;
   matches.sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
@@ -66,17 +66,18 @@ async function handleThrow(c: ChatCommandContext): Promise<boolean> {
   const callerName = caller?.name ?? 'Someone';
 
   // Compute tile coordinates for DM reference. Tokens carry pixel x,y;
-  // we translate via the current map's gridSize when available so
-  // players see D&D-native "F4" style tile coordinates rather than
-  // raw pixel numbers. Fall back to pixel coords when the grid isn't
-  // resolvable (sessions without an active map loaded).
-  const gridSize = 70; // default. Room doesn't carry gridSize directly.
+  // we translate via the target map's actual grid pitch (cached in
+  // room.mapGridSizes when the map loads) so players see D&D-native
+  // tile coordinates rather than raw pixel numbers. Fall back to the
+  // standard 70px only when that map's grid size isn't known yet.
+  const gridSize = c.ctx.room.mapGridSizes.get(target.mapId) ?? 70;
   const tx = Math.round(target.x / gridSize);
   const ty = Math.round(target.y / gridSize);
 
   broadcastSystem(
-    c.io, c.ctx,
-    `🎯 **${callerName}** throws **${weaponName}** at **${target.name}** — the weapon lands at the target's feet (approx. tile ${tx}, ${ty}). Someone will have to spend an action to pick it up if they want it back.`,
+    c.io,
+    c.ctx,
+    `🎯 **${callerName}** throws **${weaponName}** at **${target.name}** — the weapon lands at the target's feet (approx. tile ${tx}, ${ty}). Someone will have to spend an action to pick it up if they want it back.`
   );
   return true;
 }
