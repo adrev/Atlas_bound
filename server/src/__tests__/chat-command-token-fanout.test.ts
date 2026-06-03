@@ -72,6 +72,23 @@ beforeEach(() => {
     });
     return true;
   });
+  registerChatCommand('codex-hp-fanout', (c) => {
+    c.io.to(c.ctx.room.sessionId).emit('combat:hp-changed', {
+      tokenId: c.rest,
+      hp: 3,
+      tempHp: 0,
+      change: -5,
+      type: 'damage',
+    });
+    return true;
+  });
+  registerChatCommand('codex-character-fanout', (c) => {
+    c.io.to(c.ctx.room.sessionId).emit('character:updated', {
+      characterId: c.rest,
+      changes: { hitPoints: 3 },
+    });
+    return true;
+  });
 });
 
 describe('chat command token fanout wrapper', () => {
@@ -94,5 +111,26 @@ describe('chat command token fanout wrapper', () => {
     const em: Emission[] = [];
     await tryHandleChatCommand(fakeIo(em), getPlayerBySocketId('dm-sock')!, '!codex-token-fanout pc');
     expect(channelsFor(em, 'map:token-updated')).toEqual(['dm-sock', 'player-sock']);
+  });
+
+  it('scopes legacy room-wide HP changes for hidden tokens', async () => {
+    seedRoom([tok('npc', { visible: false })]);
+    const em: Emission[] = [];
+    await tryHandleChatCommand(fakeIo(em), getPlayerBySocketId('dm-sock')!, '!codex-hp-fanout npc');
+    expect(channelsFor(em, 'combat:hp-changed')).toEqual(['dm-sock']);
+  });
+
+  it('scopes resolvable character updates through the owning token and owner', async () => {
+    seedRoom([tok('pc', { characterId: 'char-pc', ownerUserId: 'player-user', visible: false })]);
+    const em: Emission[] = [];
+    await tryHandleChatCommand(fakeIo(em), getPlayerBySocketId('dm-sock')!, '!codex-character-fanout char-pc');
+    expect(channelsFor(em, 'character:updated')).toEqual(['dm-sock', 'player-sock']);
+  });
+
+  it('leaves non-token character updates on the original room-wide path', async () => {
+    seedRoom([]);
+    const em: Emission[] = [];
+    await tryHandleChatCommand(fakeIo(em), getPlayerBySocketId('dm-sock')!, '!codex-character-fanout unplaced-char');
+    expect(channelsFor(em, 'character:updated')).toEqual([SESSION]);
   });
 });

@@ -91,14 +91,12 @@ function scopedChatCommandIo(io: Server, ctx: PlayerContext): Server {
           get(opTarget, opProp, opReceiver) {
             if (opProp !== 'emit') return Reflect.get(opTarget, opProp, opReceiver);
             return (event: string, payload?: unknown, ...args: unknown[]) => {
-              if (event === 'map:token-updated') {
-                const tokenId = typeof payload === 'object' && payload !== null
-                  ? (payload as { tokenId?: unknown }).tokenId
-                  : null;
-                if (typeof tokenId === 'string') {
-                  emitToTokenViewers(io, ctx.room, tokenId, event, payload);
-                  return true;
-                }
+              const tokenId = tokenIdForScopedCommandEmit(ctx, event, payload);
+              if (tokenId) {
+                emitToTokenViewers(io, ctx.room, tokenId, event, payload, {
+                  includeOwner: event === 'character:updated',
+                });
+                return true;
               }
               return (opTarget.emit as (...emitArgs: unknown[]) => unknown)
                 .call(opTarget, event, payload, ...args);
@@ -108,6 +106,28 @@ function scopedChatCommandIo(io: Server, ctx: PlayerContext): Server {
       };
     },
   }) as Server;
+}
+
+function tokenIdForScopedCommandEmit(
+  ctx: PlayerContext,
+  event: string,
+  payload: unknown,
+): string | null {
+  if (typeof payload !== 'object' || payload === null) return null;
+
+  if (event === 'map:token-updated' || event === 'combat:hp-changed') {
+    const tokenId = (payload as { tokenId?: unknown }).tokenId;
+    return typeof tokenId === 'string' ? tokenId : null;
+  }
+
+  if (event === 'character:updated') {
+    const characterId = (payload as { characterId?: unknown }).characterId;
+    if (typeof characterId !== 'string') return null;
+    const token = Array.from(ctx.room.tokens.values()).find((t) => t.characterId === characterId);
+    return token?.id ?? null;
+  }
+
+  return null;
 }
 
 // ── Helpers used by command handlers ───────────────────────────────
