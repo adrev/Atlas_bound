@@ -13,7 +13,7 @@
     "start": "npm run start --workspace=server",
     "lint": "eslint \"server/src/**/*.ts\" \"client/src/**/*.ts\" \"shared/src/**/*.ts\" --max-warnings 0",
     "format": "prettier --write \"**/*.{ts,tsx,js,jsx,json,css}\"",
-    "prepare": "husky",
+    "prepare": "node scripts/prepare-husky.cjs",
     "test": "vitest run"
   },
   "devDependencies": {
