@@ -8,6 +8,7 @@ WORKDIR /app
 
 # Copy package files for all workspaces
 COPY package*.json ./
+COPY scripts/prepare-husky.cjs ./scripts/prepare-husky.cjs
 COPY shared/package*.json ./shared/
 COPY server/package*.json ./server/
 COPY client/package*.json ./client/
@@ -30,6 +31,7 @@ RUN apk add --no-cache python3 make g++
 
 WORKDIR /app
 COPY package*.json ./
+COPY scripts/prepare-husky.cjs ./scripts/prepare-husky.cjs
 COPY shared/package*.json ./shared/
 COPY server/package*.json ./server/
 COPY client/package*.json ./client/
