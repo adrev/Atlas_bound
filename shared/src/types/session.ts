@@ -107,7 +107,17 @@ export interface SessionSettings {
    * 'fizban', 'witchlight') that introduced exotic races / feats.
    */
   ruleSources?: RuleSource[];
+  /**
+   * How strongly the rules engine should enforce 5e automation.
+   *
+   * manual   - preserve current VTT behavior; automate only explicit helpers.
+   * assisted - warn/explain and apply low-risk server-authoritative rules.
+   * strict   - reject invalid actions where the server has enough evidence.
+   */
+  rulesAssistMode?: RuleAssistMode;
 }
+
+export type RuleAssistMode = 'manual' | 'assisted' | 'strict';
 
 export type RuleSource =
   | 'phb' | 'dmg' | 'mm'
@@ -127,6 +137,31 @@ export interface RuleSourceInfo {
   name: string;
   description: string;
 }
+
+export interface RuleAssistModeInfo {
+  code: RuleAssistMode;
+  name: string;
+  description: string;
+}
+
+/** Canonical metadata for the rules-assist selector UI. */
+export const RULE_ASSIST_MODES: RuleAssistModeInfo[] = [
+  {
+    code: 'manual',
+    name: 'Manual',
+    description: 'Current behavior. Players and DM can use rule helpers, but the server avoids hard blocking edge cases.',
+  },
+  {
+    code: 'assisted',
+    name: 'Assisted',
+    description: 'The server applies safe 5e automation and explains likely rule issues without turning the table into a debugger.',
+  },
+  {
+    code: 'strict',
+    name: 'Strict',
+    description: 'Future stricter mode for campaigns that want server-side rejection of invalid rules actions where evidence is available.',
+  },
+];
 
 /** Canonical metadata for the rulebook selector UI. */
 export const RULE_SOURCES: RuleSourceInfo[] = [
@@ -166,6 +201,7 @@ export const DEFAULT_SESSION_SETTINGS: SessionSettings = {
   // PHB is implicitly always on; listing it here as the default lets
   // existing settings UI treat the set uniformly.
   ruleSources: ['phb'],
+  rulesAssistMode: 'manual',
 };
 
 export interface Player {

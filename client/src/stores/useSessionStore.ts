@@ -100,6 +100,8 @@ const initialState: SessionState = {
     gridOpacity: 0.15,
     enableFogOfWar: true,
     enableDynamicLighting: true,
+    ruleSources: ['phb'],
+    rulesAssistMode: 'manual',
   },
   currentMapId: null,
   dmIgnoreSpellSlots: false,
