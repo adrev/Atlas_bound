@@ -1026,6 +1026,28 @@ describe('sessionUpdateSettingsSchema', () => {
     const result = sessionUpdateSettingsSchema.safeParse({ gridType: 'triangle' });
     expect(result.success).toBe(false);
   });
+
+  it('accepts rule source updates and keeps PHB enabled', () => {
+    const result = sessionUpdateSettingsSchema.safeParse({ ruleSources: ['xge', 'tce'] });
+    expect(result.success).toBe(true);
+    expect(result.success && result.data.ruleSources).toEqual(['phb', 'xge', 'tce']);
+  });
+
+  it('rejects invalid rule sources', () => {
+    const result = sessionUpdateSettingsSchema.safeParse({ ruleSources: ['phb', 'homebrew-book'] });
+    expect(result.success).toBe(false);
+  });
+
+  it('accepts rules assist mode updates', () => {
+    expect(sessionUpdateSettingsSchema.safeParse({ rulesAssistMode: 'manual' }).success).toBe(true);
+    expect(sessionUpdateSettingsSchema.safeParse({ rulesAssistMode: 'assisted' }).success).toBe(true);
+    expect(sessionUpdateSettingsSchema.safeParse({ rulesAssistMode: 'strict' }).success).toBe(true);
+  });
+
+  it('rejects invalid rules assist modes', () => {
+    const result = sessionUpdateSettingsSchema.safeParse({ rulesAssistMode: 'arcade' });
+    expect(result.success).toBe(false);
+  });
 });
 
 // ---------------------------------------------------------------------------

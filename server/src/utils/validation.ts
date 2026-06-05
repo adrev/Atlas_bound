@@ -13,6 +13,12 @@ const colorHex = z.string().regex(/^#[0-9A-Fa-f]{3,8}$/).max(9);
 const pointsFlat = z.array(z.number().finite()).max(2000);
 const conditions = z.array(z.string().max(50)).max(30);
 const faction = z.enum(['friendly', 'hostile', 'neutral']);
+const ruleSource = z.enum([
+  'phb', 'dmg', 'mm', 'xge', 'tce', 'vgm', 'mmm', 'ua',
+  'eepc', 'mtof', 'eberron', 'theros', 'mpmm', 'strixhaven',
+  'fizban', 'witchlight',
+]);
+const rulesAssistMode = z.enum(['manual', 'assisted', 'strict']);
 
 // --- Session event schemas ---
 export const sessionJoinSchema = z.object({
@@ -78,6 +84,10 @@ export const sessionUpdateSettingsSchema = z.object({
   allowPlayerRest: z.boolean().optional(),
   showCreatureStatsToPlayers: z.boolean().optional(),
   showPlayersToPlayers: z.boolean().optional(),
+  ruleSources: z.array(ruleSource).min(1).max(20)
+    .transform((sources) => Array.from(new Set(['phb', ...sources])))
+    .optional(),
+  rulesAssistMode: rulesAssistMode.optional(),
 });
 
 // --- Map event schemas ---

@@ -2,8 +2,9 @@
 export type {
   Session, SessionSettings, Player, GameMode,
   SessionVisibility, SessionBan, RuleSource, RuleSourceInfo,
+  RuleAssistMode, RuleAssistModeInfo,
 } from './types/session.js';
-export { DEFAULT_SESSION_SETTINGS, RULE_SOURCES } from './types/session.js';
+export { DEFAULT_SESSION_SETTINGS, RULE_SOURCES, RULE_ASSIST_MODES } from './types/session.js';
 export type {
   AbilityScores, AbilityName, SkillProficiency, Skills, SpellSlot,
   Spell, InventoryItem, DeathSaves, Character, Feature, HitDicePool,

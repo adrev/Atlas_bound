@@ -15,7 +15,7 @@ import { Section, Button, NumberInput, FieldGroup, Divider } from '../ui';
 import { MusicPlayer } from './MusicPlayer';
 import { HandoutSender } from './HandoutSender';
 import { SessionPrivacyPanel } from './SessionPrivacyPanel';
-import { RULE_SOURCES, type RuleSource } from '@dnd-vtt/shared';
+import { RULE_ASSIST_MODES, RULE_SOURCES, type RuleAssistMode, type RuleSource } from '@dnd-vtt/shared';
 
 type DMView = 'maps' | 'creatures' | 'encounters' | 'settings' | 'handouts' | 'music' | 'homebrew';
 
@@ -198,10 +198,12 @@ function SettingsPanel({
     discordWebhookUrl?: string | null;
     fogVisionCells?: number;
     ruleSources?: RuleSource[];
+    rulesAssistMode?: RuleAssistMode;
   };
   currentMap: { id: string; ambientLight?: AmbientLight; ambientOpacity?: number } | null;
 }) {
   const visionCells = settings.fogVisionCells ?? 8;
+  const assistMode = settings.rulesAssistMode ?? 'manual';
   const activeSources = new Set<RuleSource>(settings.ruleSources ?? ['phb']);
   const toggleSource = (code: RuleSource) => {
     // PHB is always on — the core rules can't be opt-out.
@@ -356,6 +358,42 @@ function SettingsPanel({
           />
         </FieldGroup>
       )}
+
+      <Divider variant="ornate" marginY={theme.space.md} />
+
+      <h3 style={styles.settingsTitle}>Rules Assist</h3>
+      <p style={styles.hint}>
+        Controls how strongly Atlas Bound should automate and enforce 5e rules.
+        Manual preserves today's table-first behavior.
+      </p>
+      <div style={{ display: 'flex', flexDirection: 'column' as const, gap: 6 }}>
+        {RULE_ASSIST_MODES.map((mode) => {
+          const active = assistMode === mode.code;
+          return (
+            <button
+              key={mode.code}
+              type="button"
+              onClick={() => emitUpdateSettings({ rulesAssistMode: mode.code })}
+              style={{
+                textAlign: 'left' as const,
+                padding: '9px 10px',
+                borderRadius: theme.radius.sm,
+                border: `1px solid ${active ? theme.gold.border : theme.border.default}`,
+                background: active ? theme.gold.bg : theme.bg.deep,
+                color: theme.text.primary,
+                cursor: 'pointer',
+              }}
+            >
+              <div style={{ fontSize: 12, fontWeight: 700 }}>
+                {mode.name}
+              </div>
+              <div style={{ fontSize: 10, color: theme.text.muted, marginTop: 2, lineHeight: 1.35 }}>
+                {mode.description}
+              </div>
+            </button>
+          );
+        })}
+      </div>
 
       <Divider variant="ornate" marginY={theme.space.md} />
 
