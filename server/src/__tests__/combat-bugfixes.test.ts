@@ -74,6 +74,7 @@ function seedRoom(sessionId: string, tokens: Token[], combatants: Combatant[]): 
   room.currentMapId = 'map-1';
   room.playerMapId = 'map-1';
   for (const t of tokens) room.tokens.set(t.id, t);
+  if (combatants.length === 0) return;
   const state: CombatState = {
     sessionId,
     active: true,
@@ -129,10 +130,7 @@ describe('CombatService.nextTurn — skips downed combatants', () => {
     const sessionId = 's-all-dead';
     const tA = makeToken('tA');
     const tB = makeToken('tB');
-    const combatants = [
-      makeCombatant('tA', { hp: 0 }),
-      makeCombatant('tB', { hp: 0 }),
-    ];
+    const combatants = [makeCombatant('tA', { hp: 0 }), makeCombatant('tB', { hp: 0 })];
     seedRoom(sessionId, [tA, tB], combatants);
 
     // Must return within a finite amount of time — the implementation
@@ -147,10 +145,7 @@ describe('CombatService.nextTurn — skips downed combatants', () => {
     const sessionId = 's-pc-down';
     const tA = makeToken('tA');
     const tPC = makeToken('tPC', { ownerUserId: 'player-1' });
-    const combatants = [
-      makeCombatant('tA'),
-      makeCombatant('tPC', { hp: 0, isNPC: false }),
-    ];
+    const combatants = [makeCombatant('tA'), makeCombatant('tPC', { hp: 0, isNPC: false })];
     seedRoom(sessionId, [tA, tPC], combatants);
 
     const result = CombatService.nextTurn(sessionId);
@@ -168,7 +163,8 @@ describe('CombatService.nextTurn — skips downed combatants', () => {
     const combatants = [
       makeCombatant('tA'),
       makeCombatant('tPC', {
-        hp: 0, isNPC: false,
+        hp: 0,
+        isNPC: false,
         deathSaves: { successes: 0, failures: 3 },
       }),
       makeCombatant('tC'),
@@ -191,7 +187,8 @@ describe('CombatService.nextTurn — skips downed combatants', () => {
     const combatants = [
       makeCombatant('tA'),
       makeCombatant('tPC', {
-        hp: 0, isNPC: false,
+        hp: 0,
+        isNPC: false,
         deathSaves: { successes: 0, failures: 0 },
       }),
       makeCombatant('tC'),
@@ -341,8 +338,9 @@ describe('CombatService death-save state helpers', () => {
       return { rows: [] };
     });
 
-    await expect(CombatService.applyDamage(sessionId, 'tNPC', 3))
-      .rejects.toThrow('combat_state failed');
+    await expect(CombatService.applyDamage(sessionId, 'tNPC', 3)).rejects.toThrow(
+      'combat_state failed'
+    );
   });
 
   it('rejects applyDamage when token-condition persistence fails', async () => {
@@ -368,11 +366,135 @@ describe('CombatService death-save state helpers', () => {
     });
 
     try {
-      await expect(CombatService.applyDamage(sessionId, 'tPC', 3))
-        .rejects.toThrow('conditions failed');
+      await expect(CombatService.applyDamage(sessionId, 'tPC', 3)).rejects.toThrow(
+        'conditions failed'
+      );
     } finally {
       warn.mockRestore();
     }
+  });
+
+  it('applies server-side damage resistance before mutating HP', async () => {
+    const sessionId = 's-damage-fire-resistant';
+    const token = makeToken('tPC', {
+      ownerUserId: 'player-1',
+      characterId: 'char-1',
+    });
+    const combatant = makeCombatant('tPC', {
+      characterId: 'char-1',
+      hp: 20,
+      maxHp: 20,
+      isNPC: false,
+    });
+    seedRoom(sessionId, [token], [combatant]);
+    mockQuery.mockImplementation(async (sql: string) => {
+      if (sql.startsWith('SELECT defenses')) {
+        return {
+          rows: [
+            {
+              defenses: JSON.stringify({
+                resistances: ['fire'],
+                immunities: [],
+                vulnerabilities: [],
+              }),
+            },
+          ],
+        };
+      }
+      return { rows: [] };
+    });
+
+    const result = await CombatService.applyDamage(sessionId, 'tPC', 10, { damageType: 'fire' });
+
+    expect(result.rawAmount).toBe(10);
+    expect(result.appliedAmount).toBe(5);
+    expect(result.change).toBe(-5);
+    expect(result.hp).toBe(15);
+    expect(result.damageAdjustmentNote).toBe('resist fire');
+    expect(combatant.hp).toBe(15);
+  });
+
+  it('does not remove stable or add death-save failures when immunity reduces damage to zero', async () => {
+    const sessionId = 's-damage-fire-immune-stable';
+    const token = makeToken('tPC', {
+      ownerUserId: 'player-1',
+      characterId: 'char-1',
+      conditions: ['unconscious', 'stable'],
+    });
+    const combatant = makeCombatant('tPC', {
+      characterId: 'char-1',
+      hp: 0,
+      maxHp: 20,
+      isNPC: false,
+      conditions: ['unconscious', 'stable'],
+      deathSaves: { successes: 0, failures: 0 },
+    });
+    seedRoom(sessionId, [token], [combatant]);
+    mockQuery.mockImplementation(async (sql: string) => {
+      if (sql.startsWith('SELECT defenses')) {
+        return {
+          rows: [
+            {
+              defenses: JSON.stringify({
+                resistances: [],
+                immunities: ['fire'],
+                vulnerabilities: [],
+              }),
+            },
+          ],
+        };
+      }
+      return { rows: [] };
+    });
+
+    const result = await CombatService.applyDamage(sessionId, 'tPC', 10, { damageType: 'fire' });
+
+    expect(result.appliedAmount).toBe(0);
+    expect(result.change).toBe(0);
+    expect(result.autoDeathSaveFailure).toBeUndefined();
+    expect(result.autoRemovedConditions).toBeUndefined();
+    expect(token.conditions).toEqual(['unconscious', 'stable']);
+    expect(combatant.deathSaves).toEqual({ successes: 0, failures: 0 });
+  });
+
+  it('applies vulnerability before temp HP absorption', async () => {
+    const sessionId = 's-damage-fire-vulnerable-temp-hp';
+    const token = makeToken('tPC', {
+      ownerUserId: 'player-1',
+      characterId: 'char-1',
+    });
+    const combatant = makeCombatant('tPC', {
+      characterId: 'char-1',
+      hp: 20,
+      maxHp: 20,
+      tempHp: 3,
+      isNPC: false,
+    });
+    seedRoom(sessionId, [token], [combatant]);
+    mockQuery.mockImplementation(async (sql: string) => {
+      if (sql.startsWith('SELECT defenses')) {
+        return {
+          rows: [
+            {
+              defenses: JSON.stringify({
+                resistances: [],
+                immunities: [],
+                vulnerabilities: ['fire'],
+              }),
+            },
+          ],
+        };
+      }
+      return { rows: [] };
+    });
+
+    const result = await CombatService.applyDamage(sessionId, 'tPC', 5, { damageType: 'fire' });
+
+    expect(result.appliedAmount).toBe(10);
+    expect(result.tempHp).toBe(0);
+    expect(result.hp).toBe(13);
+    expect(result.change).toBe(-10);
+    expect(result.damageAdjustmentNote).toBe('vulnerable to fire');
   });
 });
 
@@ -386,16 +508,21 @@ describe('OpportunityAttackService.detectSpellCastingOA', () => {
   it('emits an OA for a hostile (different owner) within 5 feet of the caster', () => {
     const sessionId = 's-oa-adj';
     const caster = makeToken('tCaster', {
-      x: 0, y: 0, ownerUserId: 'player-1',
+      x: 0,
+      y: 0,
+      ownerUserId: 'player-1',
     });
     const enemy = makeToken('tEnemy', {
       // 1 grid square east of the caster — within reach.
-      x: GRID, y: 0, ownerUserId: null,
+      x: GRID,
+      y: 0,
+      ownerUserId: null,
     });
-    seedRoom(sessionId, [caster, enemy], [
-      makeCombatant('tCaster', { isNPC: false }),
-      makeCombatant('tEnemy'),
-    ]);
+    seedRoom(
+      sessionId,
+      [caster, enemy],
+      [makeCombatant('tCaster', { isNPC: false }), makeCombatant('tEnemy')]
+    );
 
     const ops = OAService.detectSpellCastingOA(sessionId, 'tCaster');
     expect(ops.length).toBe(1);
@@ -406,16 +533,21 @@ describe('OpportunityAttackService.detectSpellCastingOA', () => {
   it('does not emit an OA when no hostile is adjacent', () => {
     const sessionId = 's-oa-empty';
     const caster = makeToken('tCaster', {
-      x: 0, y: 0, ownerUserId: 'player-1',
+      x: 0,
+      y: 0,
+      ownerUserId: 'player-1',
     });
     const farEnemy = makeToken('tFar', {
       // 5 grid squares away — way outside melee reach.
-      x: GRID * 5, y: 0, ownerUserId: null,
+      x: GRID * 5,
+      y: 0,
+      ownerUserId: null,
     });
-    seedRoom(sessionId, [caster, farEnemy], [
-      makeCombatant('tCaster', { isNPC: false }),
-      makeCombatant('tFar'),
-    ]);
+    seedRoom(
+      sessionId,
+      [caster, farEnemy],
+      [makeCombatant('tCaster', { isNPC: false }), makeCombatant('tFar')]
+    );
 
     const ops = OAService.detectSpellCastingOA(sessionId, 'tCaster');
     expect(ops).toEqual([]);
@@ -424,15 +556,20 @@ describe('OpportunityAttackService.detectSpellCastingOA', () => {
   it('does not emit an OA from an allied (same side) adjacent token', () => {
     const sessionId = 's-oa-ally';
     const caster = makeToken('tCaster', {
-      x: 0, y: 0, ownerUserId: 'player-1',
+      x: 0,
+      y: 0,
+      ownerUserId: 'player-1',
     });
     const ally = makeToken('tAlly', {
-      x: GRID, y: 0, ownerUserId: 'player-2', // Also a PC → same side
+      x: GRID,
+      y: 0,
+      ownerUserId: 'player-2', // Also a PC → same side
     });
-    seedRoom(sessionId, [caster, ally], [
-      makeCombatant('tCaster', { isNPC: false }),
-      makeCombatant('tAlly', { isNPC: false }),
-    ]);
+    seedRoom(
+      sessionId,
+      [caster, ally],
+      [makeCombatant('tCaster', { isNPC: false }), makeCombatant('tAlly', { isNPC: false })]
+    );
 
     const ops = OAService.detectSpellCastingOA(sessionId, 'tCaster');
     expect(ops).toEqual([]);
@@ -441,16 +578,21 @@ describe('OpportunityAttackService.detectSpellCastingOA', () => {
   it('does not emit an OA when the enemy is incapacitated (unconscious)', () => {
     const sessionId = 's-oa-uncon';
     const caster = makeToken('tCaster', {
-      x: 0, y: 0, ownerUserId: 'player-1',
+      x: 0,
+      y: 0,
+      ownerUserId: 'player-1',
     });
     const enemy = makeToken('tEnemy', {
-      x: GRID, y: 0, ownerUserId: null,
+      x: GRID,
+      y: 0,
+      ownerUserId: null,
       conditions: ['unconscious'],
     });
-    seedRoom(sessionId, [caster, enemy], [
-      makeCombatant('tCaster', { isNPC: false }),
-      makeCombatant('tEnemy'),
-    ]);
+    seedRoom(
+      sessionId,
+      [caster, enemy],
+      [makeCombatant('tCaster', { isNPC: false }), makeCombatant('tEnemy')]
+    );
 
     const ops = OAService.detectSpellCastingOA(sessionId, 'tCaster');
     expect(ops).toEqual([]);
@@ -467,19 +609,22 @@ describe('Opportunity attacks honor token faction', () => {
   it('friendly moving away from hostile provokes OA', () => {
     const sessionId = 's-fac-move-hostile';
     const mover = makeToken('tMover', {
-      x: 0, y: 0, faction: 'friendly',
+      x: 0,
+      y: 0,
+      faction: 'friendly',
     });
     const enemy = makeToken('tEnemy', {
-      x: GRID, y: 0, faction: 'hostile',
+      x: GRID,
+      y: 0,
+      faction: 'hostile',
     });
-    seedRoom(sessionId, [mover, enemy], [
-      makeCombatant('tMover', { isNPC: false }),
-      makeCombatant('tEnemy'),
-    ]);
-
-    const ops = OAService.detectOpportunityAttacks(
-      sessionId, 'tMover', 0, 0, GRID * 5, 0,
+    seedRoom(
+      sessionId,
+      [mover, enemy],
+      [makeCombatant('tMover', { isNPC: false }), makeCombatant('tEnemy')]
     );
+
+    const ops = OAService.detectOpportunityAttacks(sessionId, 'tMover', 0, 0, GRID * 5, 0);
     expect(ops.length).toBe(1);
     expect(ops[0].attackerTokenId).toBe('tEnemy');
   });
@@ -487,39 +632,45 @@ describe('Opportunity attacks honor token faction', () => {
   it('friendly moving away from neutral does NOT provoke OA', () => {
     const sessionId = 's-fac-move-neutral';
     const mover = makeToken('tMover', {
-      x: 0, y: 0, faction: 'friendly',
+      x: 0,
+      y: 0,
+      faction: 'friendly',
     });
     const neutral = makeToken('tNeutral', {
-      x: GRID, y: 0, faction: 'neutral',
+      x: GRID,
+      y: 0,
+      faction: 'neutral',
     });
-    seedRoom(sessionId, [mover, neutral], [
-      makeCombatant('tMover', { isNPC: false }),
-      makeCombatant('tNeutral'),
-    ]);
-
-    const ops = OAService.detectOpportunityAttacks(
-      sessionId, 'tMover', 0, 0, GRID * 5, 0,
+    seedRoom(
+      sessionId,
+      [mover, neutral],
+      [makeCombatant('tMover', { isNPC: false }), makeCombatant('tNeutral')]
     );
+
+    const ops = OAService.detectOpportunityAttacks(sessionId, 'tMover', 0, 0, GRID * 5, 0);
     expect(ops).toEqual([]);
   });
 
   it('prone attackers can still make opportunity attacks', () => {
     const sessionId = 's-oa-prone-attacker';
     const mover = makeToken('tMover', {
-      x: 0, y: 0, faction: 'friendly',
+      x: 0,
+      y: 0,
+      faction: 'friendly',
     });
     const enemy = makeToken('tEnemy', {
-      x: GRID, y: 0, faction: 'hostile',
+      x: GRID,
+      y: 0,
+      faction: 'hostile',
       conditions: ['prone' as unknown as Condition],
     });
-    seedRoom(sessionId, [mover, enemy], [
-      makeCombatant('tMover', { isNPC: false }),
-      makeCombatant('tEnemy'),
-    ]);
-
-    const ops = OAService.detectOpportunityAttacks(
-      sessionId, 'tMover', 0, 0, GRID * 5, 0,
+    seedRoom(
+      sessionId,
+      [mover, enemy],
+      [makeCombatant('tMover', { isNPC: false }), makeCombatant('tEnemy')]
     );
+
+    const ops = OAService.detectOpportunityAttacks(sessionId, 'tMover', 0, 0, GRID * 5, 0);
     expect(ops.length).toBe(1);
     expect(ops[0].attackerTokenId).toBe('tEnemy');
   });
@@ -527,20 +678,23 @@ describe('Opportunity attacks honor token faction', () => {
   it('grappled attackers can still make opportunity attacks', () => {
     const sessionId = 's-oa-grappled-attacker';
     const mover = makeToken('tMover', {
-      x: 0, y: 0, faction: 'friendly',
+      x: 0,
+      y: 0,
+      faction: 'friendly',
     });
     const enemy = makeToken('tEnemy', {
-      x: GRID, y: 0, faction: 'hostile',
+      x: GRID,
+      y: 0,
+      faction: 'hostile',
       conditions: ['grappled' as unknown as Condition],
     });
-    seedRoom(sessionId, [mover, enemy], [
-      makeCombatant('tMover', { isNPC: false }),
-      makeCombatant('tEnemy'),
-    ]);
-
-    const ops = OAService.detectOpportunityAttacks(
-      sessionId, 'tMover', 0, 0, GRID * 5, 0,
+    seedRoom(
+      sessionId,
+      [mover, enemy],
+      [makeCombatant('tMover', { isNPC: false }), makeCombatant('tEnemy')]
     );
+
+    const ops = OAService.detectOpportunityAttacks(sessionId, 'tMover', 0, 0, GRID * 5, 0);
     expect(ops.length).toBe(1);
     expect(ops[0].attackerTokenId).toBe('tEnemy');
   });
@@ -548,15 +702,20 @@ describe('Opportunity attacks honor token faction', () => {
   it('hostile casting spell near friendly provokes OA', () => {
     const sessionId = 's-fac-cast-hostile';
     const caster = makeToken('tCaster', {
-      x: 0, y: 0, faction: 'hostile',
+      x: 0,
+      y: 0,
+      faction: 'hostile',
     });
     const enemy = makeToken('tEnemy', {
-      x: GRID, y: 0, faction: 'friendly',
+      x: GRID,
+      y: 0,
+      faction: 'friendly',
     });
-    seedRoom(sessionId, [caster, enemy], [
-      makeCombatant('tCaster'),
-      makeCombatant('tEnemy', { isNPC: false }),
-    ]);
+    seedRoom(
+      sessionId,
+      [caster, enemy],
+      [makeCombatant('tCaster'), makeCombatant('tEnemy', { isNPC: false })]
+    );
 
     const ops = OAService.detectSpellCastingOA(sessionId, 'tCaster');
     expect(ops.length).toBe(1);
@@ -566,15 +725,20 @@ describe('Opportunity attacks honor token faction', () => {
   it('friendly casting spell near hostile provokes OA', () => {
     const sessionId = 's-fac-cast-friendly';
     const caster = makeToken('tCaster', {
-      x: 0, y: 0, faction: 'friendly',
+      x: 0,
+      y: 0,
+      faction: 'friendly',
     });
     const enemy = makeToken('tEnemy', {
-      x: GRID, y: 0, faction: 'hostile',
+      x: GRID,
+      y: 0,
+      faction: 'hostile',
     });
-    seedRoom(sessionId, [caster, enemy], [
-      makeCombatant('tCaster', { isNPC: false }),
-      makeCombatant('tEnemy'),
-    ]);
+    seedRoom(
+      sessionId,
+      [caster, enemy],
+      [makeCombatant('tCaster', { isNPC: false }), makeCombatant('tEnemy')]
+    );
 
     const ops = OAService.detectSpellCastingOA(sessionId, 'tCaster');
     expect(ops.length).toBe(1);
@@ -584,15 +748,20 @@ describe('Opportunity attacks honor token faction', () => {
   it('friendly casting spell near friendly does NOT provoke OA', () => {
     const sessionId = 's-fac-cast-ally';
     const caster = makeToken('tCaster', {
-      x: 0, y: 0, faction: 'friendly',
+      x: 0,
+      y: 0,
+      faction: 'friendly',
     });
     const ally = makeToken('tAlly', {
-      x: GRID, y: 0, faction: 'friendly',
+      x: GRID,
+      y: 0,
+      faction: 'friendly',
     });
-    seedRoom(sessionId, [caster, ally], [
-      makeCombatant('tCaster', { isNPC: false }),
-      makeCombatant('tAlly', { isNPC: false }),
-    ]);
+    seedRoom(
+      sessionId,
+      [caster, ally],
+      [makeCombatant('tCaster', { isNPC: false }), makeCombatant('tAlly', { isNPC: false })]
+    );
 
     const ops = OAService.detectSpellCastingOA(sessionId, 'tCaster');
     expect(ops).toEqual([]);
@@ -601,15 +770,16 @@ describe('Opportunity attacks honor token faction', () => {
   it('hostile casting near neutral does NOT provoke OA', () => {
     const sessionId = 's-fac-cast-neutral';
     const caster = makeToken('tCaster', {
-      x: 0, y: 0, faction: 'hostile',
+      x: 0,
+      y: 0,
+      faction: 'hostile',
     });
     const neutral = makeToken('tNeutral', {
-      x: GRID, y: 0, faction: 'neutral',
+      x: GRID,
+      y: 0,
+      faction: 'neutral',
     });
-    seedRoom(sessionId, [caster, neutral], [
-      makeCombatant('tCaster'),
-      makeCombatant('tNeutral'),
-    ]);
+    seedRoom(sessionId, [caster, neutral], [makeCombatant('tCaster'), makeCombatant('tNeutral')]);
 
     const ops = OAService.detectSpellCastingOA(sessionId, 'tCaster');
     expect(ops).toEqual([]);
@@ -628,52 +798,63 @@ describe('OpportunityAttackService.detectOpportunityAttacks — Mobile feat', ()
   it('suppresses an OA from an enemy the mover melee-attacked this turn', async () => {
     const sessionId = 's-mobile';
     const mover = makeToken('tMover', {
-      x: 0, y: 0, ownerUserId: 'player-1',
+      x: 0,
+      y: 0,
+      ownerUserId: 'player-1',
     });
     const enemy = makeToken('tEnemy', {
-      x: GRID, y: 0, ownerUserId: null,
+      x: GRID,
+      y: 0,
+      ownerUserId: null,
     });
-    seedRoom(sessionId, [mover, enemy], [
-      makeCombatant('tMover', { isNPC: false }),
-      makeCombatant('tEnemy'),
-    ]);
+    seedRoom(
+      sessionId,
+      [mover, enemy],
+      [makeCombatant('tMover', { isNPC: false }), makeCombatant('tEnemy')]
+    );
     const { getRoom } = await import('../utils/roomState.js');
     const room = getRoom(sessionId)!;
     room.mobileMeleeTargets.set('tMover', new Set(['tEnemy']));
     room.mapGridSizes.set('map-1', GRID);
 
     // Mover steps 2 cells east → was in reach, now isn't.
-    const ops = OAService.detectOpportunityAttacks(
-      sessionId, 'tMover', 0, 0, GRID * 3, 0,
-    );
+    const ops = OAService.detectOpportunityAttacks(sessionId, 'tMover', 0, 0, GRID * 3, 0);
     expect(ops).toEqual([]);
   });
 
   it('still fires the OA for a separate enemy the mover never touched', async () => {
     const sessionId = 's-mobile-mixed';
     const mover = makeToken('tMover', {
-      x: 0, y: 0, ownerUserId: 'player-1',
+      x: 0,
+      y: 0,
+      ownerUserId: 'player-1',
     });
     const attackedEnemy = makeToken('tEnemyA', {
-      x: GRID, y: 0, ownerUserId: null,
+      x: GRID,
+      y: 0,
+      ownerUserId: null,
     });
     const innocentEnemy = makeToken('tEnemyB', {
-      x: -GRID, y: 0, ownerUserId: null,
+      x: -GRID,
+      y: 0,
+      ownerUserId: null,
     });
-    seedRoom(sessionId, [mover, attackedEnemy, innocentEnemy], [
-      makeCombatant('tMover', { isNPC: false }),
-      makeCombatant('tEnemyA'),
-      makeCombatant('tEnemyB'),
-    ]);
+    seedRoom(
+      sessionId,
+      [mover, attackedEnemy, innocentEnemy],
+      [
+        makeCombatant('tMover', { isNPC: false }),
+        makeCombatant('tEnemyA'),
+        makeCombatant('tEnemyB'),
+      ]
+    );
     const { getRoom } = await import('../utils/roomState.js');
     const room = getRoom(sessionId)!;
     // Only attacked tEnemyA — tEnemyB should still get their OA.
     room.mobileMeleeTargets.set('tMover', new Set(['tEnemyA']));
     room.mapGridSizes.set('map-1', GRID);
 
-    const ops = OAService.detectOpportunityAttacks(
-      sessionId, 'tMover', 0, 0, GRID * 3, 0,
-    );
+    const ops = OAService.detectOpportunityAttacks(sessionId, 'tMover', 0, 0, GRID * 3, 0);
     expect(ops.length).toBe(1);
     expect(ops[0].attackerTokenId).toBe('tEnemyB');
   });
@@ -691,15 +872,20 @@ describe('OpportunityAttackService — reach cache', () => {
   it('fires OA from a reach-2 attacker 10 ft away', async () => {
     const sessionId = 's-reach-2';
     const mover = makeToken('tMover', {
-      x: 0, y: 0, ownerUserId: 'player-1',
+      x: 0,
+      y: 0,
+      ownerUserId: 'player-1',
     });
     const enemy = makeToken('tEnemy', {
-      x: GRID * 2, y: 0, ownerUserId: null,
+      x: GRID * 2,
+      y: 0,
+      ownerUserId: null,
     });
-    seedRoom(sessionId, [mover, enemy], [
-      makeCombatant('tMover', { isNPC: false }),
-      makeCombatant('tEnemy'),
-    ]);
+    seedRoom(
+      sessionId,
+      [mover, enemy],
+      [makeCombatant('tMover', { isNPC: false }), makeCombatant('tEnemy')]
+    );
     const { getRoom } = await import('../utils/roomState.js');
     const room = getRoom(sessionId)!;
     room.tokenMeleeReach.set('tEnemy', 2);
@@ -708,9 +894,7 @@ describe('OpportunityAttackService — reach cache', () => {
     // Mover was 10 ft east (in reach for a polearm) → now far east
     // so the edge distance exceeds the 2-cell reach (140 px). Landing
     // at x = 8 cells east gives ~350 px edge distance, well outside.
-    const ops = OAService.detectOpportunityAttacks(
-      sessionId, 'tMover', 0, 0, GRID * 8, 0,
-    );
+    const ops = OAService.detectOpportunityAttacks(sessionId, 'tMover', 0, 0, GRID * 8, 0);
     expect(ops.length).toBe(1);
     expect(ops[0].attackerTokenId).toBe('tEnemy');
   });
@@ -719,15 +903,20 @@ describe('OpportunityAttackService — reach cache', () => {
     const sessionId = 's-pam-entry';
     const mover = makeToken('tMover', {
       // Start 4+ cells away so wasInReach is false for a reach-2 attacker.
-      x: -GRID * 3, y: 0, ownerUserId: 'player-1',
+      x: -GRID * 3,
+      y: 0,
+      ownerUserId: 'player-1',
     });
     const pam = makeToken('tPAM', {
-      x: GRID * 3, y: 0, ownerUserId: null,
+      x: GRID * 3,
+      y: 0,
+      ownerUserId: null,
     });
-    seedRoom(sessionId, [mover, pam], [
-      makeCombatant('tMover', { isNPC: false }),
-      makeCombatant('tPAM'),
-    ]);
+    seedRoom(
+      sessionId,
+      [mover, pam],
+      [makeCombatant('tMover', { isNPC: false }), makeCombatant('tPAM')]
+    );
     const { getRoom } = await import('../utils/roomState.js');
     const room = getRoom(sessionId)!;
     room.tokenMeleeReach.set('tPAM', 2);
@@ -735,9 +924,7 @@ describe('OpportunityAttackService — reach cache', () => {
     room.mapGridSizes.set('map-1', GRID);
 
     // Mover starts outside reach and steps to a square 2 cells from PAM.
-    const ops = OAService.detectOpportunityAttacks(
-      sessionId, 'tMover', -GRID * 3, 0, GRID, 0,
-    );
+    const ops = OAService.detectOpportunityAttacks(sessionId, 'tMover', -GRID * 3, 0, GRID, 0);
     expect(ops.length).toBe(1);
     expect(ops[0].attackerTokenId).toBe('tPAM');
   });
@@ -745,15 +932,20 @@ describe('OpportunityAttackService — reach cache', () => {
   it('does not fire Polearm Master OA when mover was already inside reach', async () => {
     const sessionId = 's-pam-no-entry';
     const mover = makeToken('tMover', {
-      x: GRID * 2, y: 0, ownerUserId: 'player-1',
+      x: GRID * 2,
+      y: 0,
+      ownerUserId: 'player-1',
     });
     const pam = makeToken('tPAM', {
-      x: GRID * 3, y: 0, ownerUserId: null,
+      x: GRID * 3,
+      y: 0,
+      ownerUserId: null,
     });
-    seedRoom(sessionId, [mover, pam], [
-      makeCombatant('tMover', { isNPC: false }),
-      makeCombatant('tPAM'),
-    ]);
+    seedRoom(
+      sessionId,
+      [mover, pam],
+      [makeCombatant('tMover', { isNPC: false }), makeCombatant('tPAM')]
+    );
     const { getRoom } = await import('../utils/roomState.js');
     const room = getRoom(sessionId)!;
     room.tokenMeleeReach.set('tPAM', 2);
@@ -763,7 +955,12 @@ describe('OpportunityAttackService — reach cache', () => {
     // Mover was already inside the 2-cell reach and shuffled to
     // another in-reach square. Neither entry nor exit — no OA.
     const ops = OAService.detectOpportunityAttacks(
-      sessionId, 'tMover', GRID * 2, 0, GRID * 2, GRID,
+      sessionId,
+      'tMover',
+      GRID * 2,
+      0,
+      GRID * 2,
+      GRID
     );
     expect(ops).toEqual([]);
   });
@@ -771,24 +968,27 @@ describe('OpportunityAttackService — reach cache', () => {
   it('does not fire OA from a reach-1 attacker when mover was 10 ft away', async () => {
     const sessionId = 's-reach-1';
     const mover = makeToken('tMover', {
-      x: 0, y: 0, ownerUserId: 'player-1',
+      x: 0,
+      y: 0,
+      ownerUserId: 'player-1',
     });
     const enemy = makeToken('tEnemy', {
-      x: GRID * 2, y: 0, ownerUserId: null,
+      x: GRID * 2,
+      y: 0,
+      ownerUserId: null,
     });
-    seedRoom(sessionId, [mover, enemy], [
-      makeCombatant('tMover', { isNPC: false }),
-      makeCombatant('tEnemy'),
-    ]);
+    seedRoom(
+      sessionId,
+      [mover, enemy],
+      [makeCombatant('tMover', { isNPC: false }), makeCombatant('tEnemy')]
+    );
     const { getRoom } = await import('../utils/roomState.js');
     const room = getRoom(sessionId)!;
     // Explicit reach-1 in the cache — standard short sword / rapier.
     room.tokenMeleeReach.set('tEnemy', 1);
     room.mapGridSizes.set('map-1', GRID);
 
-    const ops = OAService.detectOpportunityAttacks(
-      sessionId, 'tMover', 0, 0, GRID * 4, 0,
-    );
+    const ops = OAService.detectOpportunityAttacks(sessionId, 'tMover', 0, 0, GRID * 4, 0);
     expect(ops).toEqual([]);
   });
 });
@@ -803,21 +1003,24 @@ describe('ConditionService — grapple auto-release', () => {
     const sessionId = 's-grapple-release';
     const grappler = makeToken('tGrappler');
     const victim = makeToken('tVictim', { conditions: ['grappled' as unknown as Condition] });
-    seedRoom(sessionId, [grappler, victim], [
-      makeCombatant('tGrappler'),
-      makeCombatant('tVictim'),
-    ]);
+    seedRoom(sessionId, [grappler, victim], [makeCombatant('tGrappler'), makeCombatant('tVictim')]);
     const { getRoom } = await import('../utils/roomState.js');
     const room = getRoom(sessionId)!;
     // Seed the grapple meta — casterTokenId points at grappler.
-    room.conditionMeta.set('tVictim', new Map([
-      ['grappled', {
-        name: 'grappled',
-        source: 'tGrappler (!grapple)',
-        appliedRound: 1,
-        casterTokenId: 'tGrappler',
-      }],
-    ]));
+    room.conditionMeta.set(
+      'tVictim',
+      new Map([
+        [
+          'grappled',
+          {
+            name: 'grappled',
+            source: 'tGrappler (!grapple)',
+            appliedRound: 1,
+            casterTokenId: 'tGrappler',
+          },
+        ],
+      ])
+    );
 
     const freed = ConditionService.applyConditionWithMeta(sessionId, 'tGrappler', {
       name: 'stunned',
@@ -834,21 +1037,27 @@ describe('ConditionService — grapple auto-release', () => {
     const innocent = makeToken('tInnocent');
     const grappler = makeToken('tGrappler');
     const victim = makeToken('tVictim', { conditions: ['grappled' as unknown as Condition] });
-    seedRoom(sessionId, [innocent, grappler, victim], [
-      makeCombatant('tInnocent'),
-      makeCombatant('tGrappler'),
-      makeCombatant('tVictim'),
-    ]);
+    seedRoom(
+      sessionId,
+      [innocent, grappler, victim],
+      [makeCombatant('tInnocent'), makeCombatant('tGrappler'), makeCombatant('tVictim')]
+    );
     const { getRoom } = await import('../utils/roomState.js');
     const room = getRoom(sessionId)!;
-    room.conditionMeta.set('tVictim', new Map([
-      ['grappled', {
-        name: 'grappled',
-        source: 'tGrappler (!grapple)',
-        appliedRound: 1,
-        casterTokenId: 'tGrappler', // NOT tInnocent
-      }],
-    ]));
+    room.conditionMeta.set(
+      'tVictim',
+      new Map([
+        [
+          'grappled',
+          {
+            name: 'grappled',
+            source: 'tGrappler (!grapple)',
+            appliedRound: 1,
+            casterTokenId: 'tGrappler', // NOT tInnocent
+          },
+        ],
+      ])
+    );
 
     const freed = ConditionService.applyConditionWithMeta(sessionId, 'tInnocent', {
       name: 'stunned',
@@ -872,7 +1081,8 @@ describe('CombatService.startCombatAsync — manual-character feat bonuses', () 
   it('Tough adds 2*level HP and Defense adds 1 AC when no DDB id', async () => {
     const sessionId = 's-manual-bonuses';
     const tPC = makeToken('tPC', {
-      characterId: 'char-pc', ownerUserId: 'user-pc',
+      characterId: 'char-pc',
+      ownerUserId: 'user-pc',
     });
     seedRoom(sessionId, [tPC], []);
 
@@ -881,21 +1091,34 @@ describe('CombatService.startCombatAsync — manual-character feat bonuses', () 
     mockQuery.mockImplementation((sql: string) => {
       if (sql.includes('SELECT * FROM characters')) {
         return Promise.resolve({
-          rows: [{
-            hit_points: 20, max_hit_points: 20, temp_hit_points: 0,
-            armor_class: 15, speed: 30,
-            ability_scores: JSON.stringify({ str: 10, dex: 14, con: 14, int: 10, wis: 10, cha: 10 }),
-            saving_throws: JSON.stringify(['con']),
-            proficiency_bonus: 2, level: 3,
-            features: JSON.stringify([{ name: 'Tough' }, { name: 'Defense' }]),
-            dndbeyond_id: null,
-            user_id: 'user-pc',
-            portrait_url: null,
-            inventory: JSON.stringify([]),
-            extras: JSON.stringify({}),
-            initiative: 2,
-            exhaustion_level: 0,
-          }],
+          rows: [
+            {
+              hit_points: 20,
+              max_hit_points: 20,
+              temp_hit_points: 0,
+              armor_class: 15,
+              speed: 30,
+              ability_scores: JSON.stringify({
+                str: 10,
+                dex: 14,
+                con: 14,
+                int: 10,
+                wis: 10,
+                cha: 10,
+              }),
+              saving_throws: JSON.stringify(['con']),
+              proficiency_bonus: 2,
+              level: 3,
+              features: JSON.stringify([{ name: 'Tough' }, { name: 'Defense' }]),
+              dndbeyond_id: null,
+              user_id: 'user-pc',
+              portrait_url: null,
+              inventory: JSON.stringify([]),
+              extras: JSON.stringify({}),
+              initiative: 2,
+              exhaustion_level: 0,
+            },
+          ],
         });
       }
       return Promise.resolve({ rows: [] });
@@ -909,14 +1132,15 @@ describe('CombatService.startCombatAsync — manual-character feat bonuses', () 
     expect(combatant.armorClass).toBe(16);
   });
 
-  it('refills legendary actions on the legendary creature\'s own turn start', () => {
+  it("refills legendary actions on the legendary creature's own turn start", () => {
     const sessionId = 's-legendary';
     const tDragon = makeToken('tDragon');
     const tHero = makeToken('tHero');
-    seedRoom(sessionId, [tDragon, tHero], [
-      makeCombatant('tDragon', { initiative: 20 }),
-      makeCombatant('tHero', { initiative: 10 }),
-    ]);
+    seedRoom(
+      sessionId,
+      [tDragon, tHero],
+      [makeCombatant('tDragon', { initiative: 20 }), makeCombatant('tHero', { initiative: 10 })]
+    );
     const room = getAllRooms().get(sessionId)!;
     room.legendaryActions.set('tDragon', { max: 3, remaining: 1 });
 
@@ -929,14 +1153,15 @@ describe('CombatService.startCombatAsync — manual-character feat bonuses', () 
     expect(room.legendaryActions.get('tDragon')?.remaining).toBe(3);
   });
 
-  it('does not refill legendary actions when an unrelated combatant\'s turn starts', () => {
+  it("does not refill legendary actions when an unrelated combatant's turn starts", () => {
     const sessionId = 's-legendary-other';
     const tDragon = makeToken('tDragon');
     const tHero = makeToken('tHero');
-    seedRoom(sessionId, [tDragon, tHero], [
-      makeCombatant('tDragon', { initiative: 20 }),
-      makeCombatant('tHero', { initiative: 10 }),
-    ]);
+    seedRoom(
+      sessionId,
+      [tDragon, tHero],
+      [makeCombatant('tDragon', { initiative: 20 }), makeCombatant('tHero', { initiative: 10 })]
+    );
     const room = getAllRooms().get(sessionId)!;
     room.legendaryActions.set('tDragon', { max: 3, remaining: 1 });
 
@@ -951,28 +1176,42 @@ describe('CombatService.startCombatAsync — manual-character feat bonuses', () 
   it('skips bonuses when the character has a dndbeyond_id', async () => {
     const sessionId = 's-ddb-char';
     const tPC = makeToken('tPC', {
-      characterId: 'char-ddb', ownerUserId: 'user-pc',
+      characterId: 'char-ddb',
+      ownerUserId: 'user-pc',
     });
     seedRoom(sessionId, [tPC], []);
 
     mockQuery.mockImplementation((sql: string) => {
       if (sql.includes('SELECT * FROM characters')) {
         return Promise.resolve({
-          rows: [{
-            hit_points: 40, max_hit_points: 40, temp_hit_points: 0,
-            armor_class: 18, speed: 30,
-            ability_scores: JSON.stringify({ str: 10, dex: 14, con: 14, int: 10, wis: 10, cha: 10 }),
-            saving_throws: JSON.stringify(['con']),
-            proficiency_bonus: 2, level: 3,
-            features: JSON.stringify([{ name: 'Tough' }, { name: 'Defense' }]),
-            dndbeyond_id: 'beyond-42',
-            user_id: 'user-pc',
-            portrait_url: null,
-            inventory: JSON.stringify([]),
-            extras: JSON.stringify({}),
-            initiative: 2,
-            exhaustion_level: 0,
-          }],
+          rows: [
+            {
+              hit_points: 40,
+              max_hit_points: 40,
+              temp_hit_points: 0,
+              armor_class: 18,
+              speed: 30,
+              ability_scores: JSON.stringify({
+                str: 10,
+                dex: 14,
+                con: 14,
+                int: 10,
+                wis: 10,
+                cha: 10,
+              }),
+              saving_throws: JSON.stringify(['con']),
+              proficiency_bonus: 2,
+              level: 3,
+              features: JSON.stringify([{ name: 'Tough' }, { name: 'Defense' }]),
+              dndbeyond_id: 'beyond-42',
+              user_id: 'user-pc',
+              portrait_url: null,
+              inventory: JSON.stringify([]),
+              extras: JSON.stringify({}),
+              initiative: 2,
+              exhaustion_level: 0,
+            },
+          ],
         });
       }
       return Promise.resolve({ rows: [] });
@@ -997,36 +1236,51 @@ describe('CombatService.startCombatAsync — legendary + recharge auto-parse', (
   it('auto-populates legendary budget from extras.legendary_desc', async () => {
     const sessionId = 's-leg-auto';
     const tMonster = makeToken('tDragon', {
-      characterId: 'char-dragon', ownerUserId: null,
+      characterId: 'char-dragon',
+      ownerUserId: null,
     });
     seedRoom(sessionId, [tMonster], []);
 
     mockQuery.mockImplementation((sql: string) => {
       if (sql.includes('SELECT * FROM characters')) {
         return Promise.resolve({
-          rows: [{
-            hit_points: 200, max_hit_points: 200, temp_hit_points: 0,
-            armor_class: 20, speed: 40,
-            ability_scores: JSON.stringify({ str: 25, dex: 10, con: 25, int: 16, wis: 15, cha: 22 }),
-            saving_throws: JSON.stringify([]),
-            proficiency_bonus: 7, level: 1,
-            features: JSON.stringify([]),
-            dndbeyond_id: null,
-            user_id: 'npc',
-            portrait_url: null,
-            inventory: JSON.stringify([]),
-            extras: JSON.stringify({
-              legendary_desc: 'The dragon can take 3 legendary actions, choosing from the options below.',
-              legendary_actions: [
-                { name: 'Detect', desc: '...' },
-                { name: 'Tail Attack', desc: '...' },
-                { name: 'Wing Attack (Costs 2 Actions)', desc: '...' },
-              ],
-              actions: [],
-            }),
-            initiative: 0,
-            exhaustion_level: 0,
-          }],
+          rows: [
+            {
+              hit_points: 200,
+              max_hit_points: 200,
+              temp_hit_points: 0,
+              armor_class: 20,
+              speed: 40,
+              ability_scores: JSON.stringify({
+                str: 25,
+                dex: 10,
+                con: 25,
+                int: 16,
+                wis: 15,
+                cha: 22,
+              }),
+              saving_throws: JSON.stringify([]),
+              proficiency_bonus: 7,
+              level: 1,
+              features: JSON.stringify([]),
+              dndbeyond_id: null,
+              user_id: 'npc',
+              portrait_url: null,
+              inventory: JSON.stringify([]),
+              extras: JSON.stringify({
+                legendary_desc:
+                  'The dragon can take 3 legendary actions, choosing from the options below.',
+                legendary_actions: [
+                  { name: 'Detect', desc: '...' },
+                  { name: 'Tail Attack', desc: '...' },
+                  { name: 'Wing Attack (Costs 2 Actions)', desc: '...' },
+                ],
+                actions: [],
+              }),
+              initiative: 0,
+              exhaustion_level: 0,
+            },
+          ],
         });
       }
       return Promise.resolve({ rows: [] });
@@ -1044,34 +1298,48 @@ describe('CombatService.startCombatAsync — legendary + recharge auto-parse', (
   it('auto-populates recharge pool from action names with (Recharge N-6)', async () => {
     const sessionId = 's-recharge-auto';
     const tMonster = makeToken('tRedDragon', {
-      characterId: 'char-redragon', ownerUserId: null,
+      characterId: 'char-redragon',
+      ownerUserId: null,
     });
     seedRoom(sessionId, [tMonster], []);
 
     mockQuery.mockImplementation((sql: string) => {
       if (sql.includes('SELECT * FROM characters')) {
         return Promise.resolve({
-          rows: [{
-            hit_points: 250, max_hit_points: 250, temp_hit_points: 0,
-            armor_class: 19, speed: 40,
-            ability_scores: JSON.stringify({ str: 27, dex: 10, con: 25, int: 16, wis: 13, cha: 21 }),
-            saving_throws: JSON.stringify([]),
-            proficiency_bonus: 7, level: 1,
-            features: JSON.stringify([]),
-            dndbeyond_id: null,
-            user_id: 'npc',
-            portrait_url: null,
-            inventory: JSON.stringify([]),
-            extras: JSON.stringify({
-              actions: [
-                { name: 'Bite', desc: '...' },
-                { name: 'Fire Breath (Recharge 5-6)', desc: 'The dragon exhales fire...' },
-                { name: 'Frightful Presence', desc: '...' },
-              ],
-            }),
-            initiative: 0,
-            exhaustion_level: 0,
-          }],
+          rows: [
+            {
+              hit_points: 250,
+              max_hit_points: 250,
+              temp_hit_points: 0,
+              armor_class: 19,
+              speed: 40,
+              ability_scores: JSON.stringify({
+                str: 27,
+                dex: 10,
+                con: 25,
+                int: 16,
+                wis: 13,
+                cha: 21,
+              }),
+              saving_throws: JSON.stringify([]),
+              proficiency_bonus: 7,
+              level: 1,
+              features: JSON.stringify([]),
+              dndbeyond_id: null,
+              user_id: 'npc',
+              portrait_url: null,
+              inventory: JSON.stringify([]),
+              extras: JSON.stringify({
+                actions: [
+                  { name: 'Bite', desc: '...' },
+                  { name: 'Fire Breath (Recharge 5-6)', desc: 'The dragon exhales fire...' },
+                  { name: 'Frightful Presence', desc: '...' },
+                ],
+              }),
+              initiative: 0,
+              exhaustion_level: 0,
+            },
+          ],
         });
       }
       return Promise.resolve({ rows: [] });

@@ -18,7 +18,7 @@ import type { Combatant } from '@dnd-vtt/shared';
 function combatantsVisibleTo(
   sessionId: string,
   combatants: Combatant[],
-  recipient: { userId: string; role: 'dm' | 'player' },
+  recipient: { userId: string; role: 'dm' | 'player' }
 ): Combatant[] {
   if (recipient.role === 'dm') return combatants;
   const room = getRoom(sessionId);
@@ -42,10 +42,19 @@ function combatantsVisibleTo(
  * 1455-line monolith into per-concern modules under `socket/combat/*`.
  */
 export async function startCombat(
-  io: Server, sessionId: string, tokenIds: string[],
+  io: Server,
+  sessionId: string,
+  tokenIds: string[]
 ): Promise<void> {
-  const combatState = await CombatService.startCombatAsync(sessionId, tokenIds);
   const room = getRoom(sessionId);
+  if (room?.readyCheck?.timeout) {
+    clearTimeout(room.readyCheck.timeout);
+  }
+  if (room) {
+    room.readyCheck = null;
+  }
+
+  const combatState = await CombatService.startCombatAsync(sessionId, tokenIds);
 
   // Initiative review phase — combat is technically active on the
   // server so tokens / HP are locked in, but the DM gets to inspect
@@ -85,7 +94,8 @@ export async function startCombat(
     combatState.combatants.forEach((c, idx) => {
       const marker = idx === 0 ? '▶' : ' ';
       const tok = room?.tokens.get(c.tokenId);
-      const hidden = recipient.role === 'player' && (!tok || !tokenVisibleToPlayer(tok, recipient.userId));
+      const hidden =
+        recipient.role === 'player' && (!tok || !tokenVisibleToPlayer(tok, recipient.userId));
       if (hidden) {
         out.push(`   ${marker} ${idx + 1}. ??? — ??`);
       } else {
@@ -93,12 +103,13 @@ export async function startCombat(
         out.push(`   ${marker} ${idx + 1}. ${c.name}${tag} — ${c.initiative}`);
       }
     });
-    const firstVisibleName = recipient.role === 'player'
-      ? combatState.combatants.find((c) => {
-          const tok = room?.tokens.get(c.tokenId);
-          return tok ? tokenVisibleToPlayer(tok, recipient.userId) : false;
-        })?.name
-      : combatState.combatants[0]?.name;
+    const firstVisibleName =
+      recipient.role === 'player'
+        ? combatState.combatants.find((c) => {
+            const tok = room?.tokens.get(c.tokenId);
+            return tok ? tokenVisibleToPlayer(tok, recipient.userId) : false;
+          })?.name
+        : combatState.combatants[0]?.name;
     out.push(`   Round 1 — ${firstVisibleName ?? '???'}'s turn`);
     return out.join('\n');
   };

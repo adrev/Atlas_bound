@@ -1,4 +1,4 @@
-import type { Token } from '@dnd-vtt/shared';
+import type { Token, WeaponMaterial } from '@dnd-vtt/shared';
 import { getRoom } from '../utils/roomState.js';
 import pool from '../db/connection.js';
 import * as CombatService from './CombatService.js';
@@ -12,7 +12,11 @@ export interface OAOpportunity {
 }
 
 const CONDITIONS_THAT_PREVENT_OA = new Set([
-  'incapacitated', 'paralyzed', 'stunned', 'unconscious', 'petrified',
+  'incapacitated',
+  'paralyzed',
+  'stunned',
+  'unconscious',
+  'petrified',
 ]);
 
 /**
@@ -29,11 +33,16 @@ interface InventoryWeapon {
   damageType?: string | null;
   equipped?: boolean;
   magicBonus?: number;
+  material?: string | null;
 }
 
 export function detectOpportunityAttacks(
-  sessionId: string, moverTokenId: string,
-  oldX: number, oldY: number, newX: number, newY: number,
+  sessionId: string,
+  moverTokenId: string,
+  oldX: number,
+  oldY: number,
+  newX: number,
+  newY: number
 ): OAOpportunity[] {
   const room = getRoom(sessionId);
   if (!room) return [];
@@ -58,7 +67,10 @@ export function detectOpportunityAttacks(
     const attackerConds = new Set((enemy.conditions || []) as string[]);
     let prevented: string | null = null;
     for (const cond of CONDITIONS_THAT_PREVENT_OA) {
-      if (attackerConds.has(cond)) { prevented = cond; break; }
+      if (attackerConds.has(cond)) {
+        prevented = cond;
+        break;
+      }
     }
     if (prevented) continue;
 
@@ -76,23 +88,45 @@ export function detectOpportunityAttacks(
     const reachCells = meleeReachCells(sessionId, enemy);
     const reachPx = reachCells * gridSize;
 
-    const wasDist = edgeDistance(enemy.x, enemy.y, (enemy.size as number) || 1, oldX, oldY, (mover.size as number) || 1, gridSize);
-    const isDist = edgeDistance(enemy.x, enemy.y, (enemy.size as number) || 1, newX, newY, (mover.size as number) || 1, gridSize);
+    const wasDist = edgeDistance(
+      enemy.x,
+      enemy.y,
+      (enemy.size as number) || 1,
+      oldX,
+      oldY,
+      (mover.size as number) || 1,
+      gridSize
+    );
+    const isDist = edgeDistance(
+      enemy.x,
+      enemy.y,
+      (enemy.size as number) || 1,
+      newX,
+      newY,
+      (mover.size as number) || 1,
+      gridSize
+    );
     const wasInReach = wasDist <= reachPx + 0.5;
     const isInReach = isDist <= reachPx + 0.5;
 
     if (wasInReach && !isInReach) {
       opportunities.push({
-        attackerTokenId: enemy.id, attackerName: enemy.name,
-        attackerOwnerUserId: enemy.ownerUserId, moverTokenId, moverName: mover.name,
+        attackerTokenId: enemy.id,
+        attackerName: enemy.name,
+        attackerOwnerUserId: enemy.ownerUserId,
+        moverTokenId,
+        moverName: mover.name,
       });
     } else if (!wasInReach && isInReach && room.polearmMasters.has(enemy.id)) {
       // Polearm Master: "While you are wielding a glaive, halberd,
       // pike, quarterstaff, or spear, other creatures provoke an
       // opportunity attack from you when they enter your reach."
       opportunities.push({
-        attackerTokenId: enemy.id, attackerName: enemy.name,
-        attackerOwnerUserId: enemy.ownerUserId, moverTokenId, moverName: mover.name,
+        attackerTokenId: enemy.id,
+        attackerName: enemy.name,
+        attackerOwnerUserId: enemy.ownerUserId,
+        moverTokenId,
+        moverName: mover.name,
       });
     }
   }
@@ -115,10 +149,7 @@ export function detectOpportunityAttacks(
  * Mirrors the filters in `detectOpportunityAttacks` but without the
  * "was in reach, now isn't" distance delta — the caster hasn't moved.
  */
-export function detectSpellCastingOA(
-  sessionId: string,
-  casterTokenId: string,
-): OAOpportunity[] {
+export function detectSpellCastingOA(sessionId: string, casterTokenId: string): OAOpportunity[] {
   const room = getRoom(sessionId);
   if (!room) return [];
   const caster = room.tokens.get(casterTokenId);
@@ -141,7 +172,10 @@ export function detectSpellCastingOA(
     const attackerConds = new Set((enemy.conditions || []) as string[]);
     let prevented = false;
     for (const cond of CONDITIONS_THAT_PREVENT_OA) {
-      if (attackerConds.has(cond)) { prevented = true; break; }
+      if (attackerConds.has(cond)) {
+        prevented = true;
+        break;
+      }
     }
     if (prevented) continue;
 
@@ -155,15 +189,21 @@ export function detectSpellCastingOA(
     const reachPx = reachCells * gridSize;
 
     const dist = edgeDistance(
-      enemy.x, enemy.y, (enemy.size as number) || 1,
-      caster.x, caster.y, (caster.size as number) || 1,
-      gridSize,
+      enemy.x,
+      enemy.y,
+      (enemy.size as number) || 1,
+      caster.x,
+      caster.y,
+      (caster.size as number) || 1,
+      gridSize
     );
     if (dist <= reachPx + 0.5) {
       opportunities.push({
-        attackerTokenId: enemy.id, attackerName: enemy.name,
+        attackerTokenId: enemy.id,
+        attackerName: enemy.name,
         attackerOwnerUserId: enemy.ownerUserId,
-        moverTokenId: casterTokenId, moverName: caster.name,
+        moverTokenId: casterTokenId,
+        moverName: caster.name,
       });
     }
   }
@@ -189,7 +229,9 @@ export interface OAExecutionResult {
 }
 
 export async function executeOpportunityAttack(
-  sessionId: string, attackerTokenId: string, moverTokenId: string,
+  sessionId: string,
+  attackerTokenId: string,
+  moverTokenId: string
 ): Promise<OAExecutionResult> {
   const room = getRoom(sessionId);
   if (!room) return { success: false, messages: ['No room'] };
@@ -198,10 +240,15 @@ export async function executeOpportunityAttack(
   if (!attacker || !mover) return { success: false, messages: ['Missing token'] };
 
   const economy = room.actionEconomies.get(attacker.id);
-  if (economy?.reaction) return { success: false, messages: [`\u26A0 ${attacker.name} has already spent their reaction.`] };
+  if (economy?.reaction)
+    return {
+      success: false,
+      messages: [`\u26A0 ${attacker.name} has already spent their reaction.`],
+    };
 
   const attack = await findBestMeleeAttack(attacker);
-  if (!attack) return { success: false, messages: [`\u26A0 ${attacker.name} has no melee attack available.`] };
+  if (!attack)
+    return { success: false, messages: [`\u26A0 ${attacker.name} has no melee attack available.`] };
 
   // Cache the reach for the next sync detector pass. Keeps the map
   // warm when a token picks up / swaps weapons mid-combat, without
@@ -213,15 +260,20 @@ export async function executeOpportunityAttack(
   const attackerConds = (attacker.conditions || []) as string[];
   let adv = 'normal' as 'advantage' | 'disadvantage' | 'normal';
   if (moverConds.includes('prone')) adv = 'advantage';
-  if (attackerConds.includes('poisoned') || attackerConds.includes('frightened') ||
-      attackerConds.includes('blinded') || attackerConds.includes('restrained') ||
-      attackerConds.includes('prone')) {
+  if (
+    attackerConds.includes('poisoned') ||
+    attackerConds.includes('frightened') ||
+    attackerConds.includes('blinded') ||
+    attackerConds.includes('restrained') ||
+    attackerConds.includes('prone')
+  ) {
     adv = adv === 'advantage' ? 'normal' : 'disadvantage';
   }
 
   const r1 = Math.floor(Math.random() * 20) + 1;
   const r2 = Math.floor(Math.random() * 20) + 1;
-  const kept = adv === 'advantage' ? Math.max(r1, r2) : adv === 'disadvantage' ? Math.min(r1, r2) : r1;
+  const kept =
+    adv === 'advantage' ? Math.max(r1, r2) : adv === 'disadvantage' ? Math.min(r1, r2) : r1;
   const advTag = adv === 'advantage' ? ' (adv)' : adv === 'disadvantage' ? ' (disadv)' : '';
   const isCrit = kept === 20;
   const isFumble = kept === 1;
@@ -230,9 +282,12 @@ export async function executeOpportunityAttack(
   let moverAC = 10;
   {
     const combatant = room.combatState?.combatants.find((c) => c.tokenId === moverTokenId);
-    if (combatant) { moverAC = combatant.armorClass; }
-    else if (mover.characterId) {
-      const { rows } = await pool.query('SELECT armor_class FROM characters WHERE id = $1', [mover.characterId]);
+    if (combatant) {
+      moverAC = combatant.armorClass;
+    } else if (mover.characterId) {
+      const { rows } = await pool.query('SELECT armor_class FROM characters WHERE id = $1', [
+        mover.characterId,
+      ]);
       if (rows[0]) moverAC = rows[0].armor_class;
     }
   }
@@ -241,12 +296,22 @@ export async function executeOpportunityAttack(
   const messages: string[] = [];
   const rollStr = adv !== 'normal' ? `[${r1},${r2}]` : `${kept}`;
   const modStr = attack.attackBonus >= 0 ? `+${attack.attackBonus}` : `${attack.attackBonus}`;
-  messages.push(`\u26A1 ${attacker.name} makes an Opportunity Attack (${attack.name}) on ${mover.name}`);
-  messages.push(`   d20=${rollStr}${advTag}${modStr}=${total} vs AC ${moverAC} \u2192 ${isCrit ? '\uD83D\uDCA5 CRIT' : hit ? '\u2713 HIT' : isFumble ? '\u2717 FUMBLE' : '\u2717 MISS'}`);
+  messages.push(
+    `\u26A1 ${attacker.name} makes an Opportunity Attack (${attack.name}) on ${mover.name}`
+  );
+  messages.push(
+    `   d20=${rollStr}${advTag}${modStr}=${total} vs AC ${moverAC} \u2192 ${isCrit ? '\uD83D\uDCA5 CRIT' : hit ? '\u2713 HIT' : isFumble ? '\u2717 FUMBLE' : '\u2717 MISS'}`
+  );
 
   let eco = room.actionEconomies.get(attacker.id);
   if (!eco) {
-    eco = { action: false, bonusAction: false, movementRemaining: 30, movementMax: 30, reaction: false };
+    eco = {
+      action: false,
+      bonusAction: false,
+      movementRemaining: 30,
+      movementMax: 30,
+      reaction: false,
+    };
     room.actionEconomies.set(attacker.id, eco);
   }
   eco.reaction = true;
@@ -260,16 +325,24 @@ export async function executeOpportunityAttack(
 
   let hpAfter = hpBefore;
   let damage = 0;
+  let rawDamage = 0;
+  let damageAdjustmentNote: string | undefined;
 
   if (hit) {
     const rolledDamage = rollDamageString(attack.damageDice, isCrit);
-    damage = Math.max(0, rolledDamage);
+    rawDamage = Math.max(0, rolledDamage);
+    damage = rawDamage;
     let newHp: number | null = null;
     let tempHp = 0;
     if (damage > 0) {
       const damageResult = await CombatService.applyDamage(sessionId, moverTokenId, damage, {
         criticalHit: isCrit,
+        damageType: attack.damageType,
+        isMagical: attack.isMagical,
+        material: attack.material,
       });
+      damage = damageResult.appliedAmount ?? damage;
+      damageAdjustmentNote = damageResult.damageAdjustmentNote;
       newHp = damageResult.hp;
       tempHp = damageResult.tempHp;
       if (damageResult.characterId) {
@@ -286,7 +359,10 @@ export async function executeOpportunityAttack(
         };
       }
       const conditionTokenIds = new Set<string>();
-      if (damageResult.autoAppliedConditions || (damageResult.autoRemovedConditions && damageResult.autoRemovedConditions.length > 0)) {
+      if (
+        damageResult.autoAppliedConditions ||
+        (damageResult.autoRemovedConditions && damageResult.autoRemovedConditions.length > 0)
+      ) {
         conditionTokenIds.add(moverTokenId);
       }
       for (const freedId of damageResult.releasedGrappleTokenIds ?? []) {
@@ -295,11 +371,22 @@ export async function executeOpportunityAttack(
       if (conditionTokenIds.size > 0) result.conditionTokenIds = [...conditionTokenIds];
     }
     const dmgTypeWord = attack.damageType ? ` ${attack.damageType}` : '';
-    messages.push(`   ${damage}${dmgTypeWord} damage${isCrit ? ' [CRIT]' : ''}`);
+    const damageNote =
+      damage !== rawDamage
+        ? ` (${rawDamage}→${damage}${damageAdjustmentNote ? `, ${damageAdjustmentNote}` : ''})`
+        : damageAdjustmentNote
+          ? ` (${damageAdjustmentNote})`
+          : '';
+    messages.push(`   ${damage}${dmgTypeWord} damage${damageNote}${isCrit ? ' [CRIT]' : ''}`);
     if (newHp !== null) {
       hpAfter = newHp;
       messages.push(`   ${mover.name} HP \u2192 ${newHp}`);
-      result.hpChange = { tokenId: moverTokenId, hp: newHp, tempHp, change: -damage };
+      result.hpChange = {
+        tokenId: moverTokenId,
+        hp: newHp,
+        tempHp,
+        change: damage > 0 ? -damage : 0,
+      };
       if (newHp <= 0) messages.push(`   \uD83D\uDC80 ${mover.name} is DOWN`);
     }
 
@@ -310,22 +397,30 @@ export async function executeOpportunityAttack(
     if (attacker.characterId) {
       try {
         const { rows: featRows } = await pool.query(
-          'SELECT features FROM characters WHERE id = $1', [attacker.characterId],
+          'SELECT features FROM characters WHERE id = $1',
+          [attacker.characterId]
         );
         const featRow = featRows[0] as Record<string, unknown> | undefined;
         const raw = featRow?.features;
         const feats = typeof raw === 'string' ? JSON.parse(raw) : (raw ?? []);
-        const hasSentinel = Array.isArray(feats) && feats.some(
-          (f: { name?: string }) => typeof f?.name === 'string' && /^\s*sentinel\s*$/i.test(f.name),
-        );
+        const hasSentinel =
+          Array.isArray(feats) &&
+          feats.some(
+            (f: { name?: string }) =>
+              typeof f?.name === 'string' && /^\s*sentinel\s*$/i.test(f.name)
+          );
         if (hasSentinel) {
           const moverEco = room.actionEconomies.get(moverTokenId);
           if (moverEco) {
             moverEco.movementRemaining = 0;
           }
-          messages.push(`   \u26D4 Sentinel — ${mover.name}'s speed becomes 0 for the rest of this turn.`);
+          messages.push(
+            `   \u26D4 Sentinel — ${mover.name}'s speed becomes 0 for the rest of this turn.`
+          );
         }
-      } catch { /* ignore */ }
+      } catch {
+        /* ignore */
+      }
     }
   }
 
@@ -350,6 +445,10 @@ export async function executeOpportunityAttack(
   if (attackerConds.includes('blinded')) bdNotes.push('Attacker blinded (disadvantage)');
   if (attackerConds.includes('restrained')) bdNotes.push('Attacker restrained (disadvantage)');
   if (attackerConds.includes('prone')) bdNotes.push('Attacker prone (disadvantage)');
+  if (damageAdjustmentNote) {
+    const adjusted = rawDamage !== damage ? ` (${rawDamage}→${damage})` : '';
+    bdNotes.push(`Damage: ${damageAdjustmentNote}${adjusted}`);
+  }
 
   result.breakdown = {
     attacker: { name: attacker.name, tokenId: attacker.id },
@@ -372,15 +471,20 @@ export async function executeOpportunityAttack(
       isFumble,
     },
     hitResult: isCrit ? 'crit' : hit ? 'hit' : isFumble ? 'fumble' : 'miss',
-    damage: hit ? {
-      dice: attack.damageDice,
-      diceRolls: [],
-      mainRoll: damage,
-      bonuses: [],
-      finalDamage: damage,
-      targetHpBefore: hpBefore >= 0 ? hpBefore : 0,
-      targetHpAfter: hpAfter,
-    } : undefined,
+    damage: hit
+      ? {
+          dice: attack.damageDice,
+          diceRolls: [],
+          mainRoll: rawDamage,
+          bonuses: [],
+          weaponTotalPre: rawDamage,
+          weaponTotalPost: damage,
+          weaponResistanceNote: damageAdjustmentNote,
+          finalDamage: damage,
+          targetHpBefore: hpBefore >= 0 ? hpBefore : 0,
+          targetHpAfter: hpAfter,
+        }
+      : undefined,
     notes: bdNotes.slice(0, 16),
   };
 
@@ -418,8 +522,7 @@ function isHostileTo(attacker: Token, target: Token): boolean {
   const a = attacker.faction;
   const t = target.faction;
   if (a && t) {
-    return (a === 'friendly' && t === 'hostile') ||
-           (a === 'hostile' && t === 'friendly');
+    return (a === 'friendly' && t === 'hostile') || (a === 'hostile' && t === 'friendly');
   }
   // Backward compatibility: PC (ownerUserId) vs NPC (null) are opposed.
   const aIsPC = !!attacker.ownerUserId;
@@ -428,8 +531,13 @@ function isHostileTo(attacker: Token, target: Token): boolean {
 }
 
 function edgeDistance(
-  ax: number, ay: number, aSize: number,
-  bx: number, by: number, bSize: number, gridSize: number,
+  ax: number,
+  ay: number,
+  aSize: number,
+  bx: number,
+  by: number,
+  bSize: number,
+  gridSize: number
 ): number {
   const acx = ax + (gridSize * aSize) / 2;
   const acy = ay + (gridSize * aSize) / 2;
@@ -454,8 +562,13 @@ function meleeReachCells(sessionId: string, attacker: Token): number {
 }
 
 interface ResolvedMeleeAttack {
-  name: string; attackBonus: number; damageDice: string;
-  damageType: string | null; properties: string[];
+  name: string;
+  attackBonus: number;
+  damageDice: string;
+  damageType: string | null;
+  properties: string[];
+  isMagical: boolean;
+  material: WeaponMaterial;
 }
 
 /**
@@ -464,22 +577,38 @@ interface ResolvedMeleeAttack {
  * The actual attack resolution uses the async version.
  */
 function findBestMeleeAttackSync(_token: Token): ResolvedMeleeAttack | null {
-  return { name: 'Unarmed Strike', attackBonus: 0, damageDice: '1', damageType: 'bludgeoning', properties: [] };
+  return {
+    name: 'Unarmed Strike',
+    attackBonus: 0,
+    damageDice: '1',
+    damageType: 'bludgeoning',
+    properties: [],
+    isMagical: false,
+    material: null,
+  };
 }
 
 /**
  * Async version that actually loads character data.
  */
 async function findBestMeleeAttack(token: Token): Promise<ResolvedMeleeAttack | null> {
-  let strMod = 0, dexMod = 0, profBonus = 2;
+  let strMod = 0,
+    dexMod = 0,
+    profBonus = 2;
   let abilitiesLoaded = false;
 
   if (token.characterId) {
-    const { rows } = await pool.query('SELECT inventory, ability_scores, proficiency_bonus FROM characters WHERE id = $1', [token.characterId]);
+    const { rows } = await pool.query(
+      'SELECT inventory, ability_scores, proficiency_bonus FROM characters WHERE id = $1',
+      [token.characterId]
+    );
     const row = rows[0] as Record<string, unknown> | undefined;
     if (row) {
       try {
-        const abilities = JSON.parse((row.ability_scores as string) || '{}') as Record<string, number>;
+        const abilities = JSON.parse((row.ability_scores as string) || '{}') as Record<
+          string,
+          number
+        >;
         profBonus = (row.proficiency_bonus as number) || 2;
         strMod = Math.floor(((abilities.str ?? abilities.strength ?? 10) - 10) / 2);
         dexMod = Math.floor(((abilities.dex ?? abilities.dexterity ?? 10) - 10) / 2);
@@ -495,14 +624,21 @@ async function findBestMeleeAttack(token: Token): Promise<ResolvedMeleeAttack | 
         });
 
         const scoreWeapon = (w: InventoryWeapon) => {
-          const props = ((w.properties || []) as string[]).map((p: string) => String(p).toLowerCase());
+          const props = ((w.properties || []) as string[]).map((p: string) =>
+            String(p).toLowerCase()
+          );
           const isFinesse = props.includes('finesse');
           const abMod = isFinesse ? Math.max(strMod, dexMod) : strMod;
-          return { equippedScore: w.equipped ? 1 : 0, atkBonus: abMod + profBonus + (w.magicBonus ?? 0), dieSize: parseInt(String(w.damage || '1d4').match(/d(\d+)/)?.[1] || '4', 10) };
+          return {
+            equippedScore: w.equipped ? 1 : 0,
+            atkBonus: abMod + profBonus + (w.magicBonus ?? 0),
+            dieSize: parseInt(String(w.damage || '1d4').match(/d(\d+)/)?.[1] || '4', 10),
+          };
         };
 
         meleeWeapons.sort((a, b) => {
-          const sa = scoreWeapon(a), sb = scoreWeapon(b);
+          const sa = scoreWeapon(a),
+            sb = scoreWeapon(b);
           if (sa.equippedScore !== sb.equippedScore) return sb.equippedScore - sa.equippedScore;
           if (sa.atkBonus !== sb.atkBonus) return sb.atkBonus - sa.atkBonus;
           return sb.dieSize - sa.dieSize;
@@ -518,14 +654,26 @@ async function findBestMeleeAttack(token: Token): Promise<ResolvedMeleeAttack | 
           const baseMatch = baseRaw.match(/^\s*(\d+d\d+)/);
           const baseDice = baseMatch ? baseMatch[1] : '1d4';
           const dmgDice = `${baseDice}${abMod >= 0 ? `+${abMod}` : abMod}`;
-          return { name: w.name ?? 'Melee Weapon', attackBonus, damageDice: dmgDice, damageType: (w.damageType ?? null), properties: props };
+          return {
+            name: w.name ?? 'Melee Weapon',
+            attackBonus,
+            damageDice: dmgDice,
+            damageType: w.damageType ?? null,
+            properties: props,
+            isMagical: isMagicalWeapon(w, props),
+            material: weaponMaterial(w, props),
+          };
         }
-      } catch (err) { console.warn('[OA] inventory parse failed for', token.name, err); }
+      } catch (err) {
+        console.warn('[OA] inventory parse failed for', token.name, err);
+      }
     }
   }
 
   if (token.characterId) {
-    const { rows } = await pool.query('SELECT extras FROM characters WHERE id = $1', [token.characterId]);
+    const { rows } = await pool.query('SELECT extras FROM characters WHERE id = $1', [
+      token.characterId,
+    ]);
     const row = rows[0] as Record<string, unknown> | undefined;
     if (row?.extras) {
       try {
@@ -539,14 +687,47 @@ async function findBestMeleeAttack(token: Token): Promise<ResolvedMeleeAttack | 
             let damageType: string | null = null;
             const m = desc.match(/(\d+d\d+(?:\s*\+\s*\d+)?)\s+(\w+)\s+damage/);
             if (m) damageType = m[2];
-            return { name: String(action.name ?? 'Melee Attack'), attackBonus, damageDice, damageType, properties: [] };
+            return {
+              name: String(action.name ?? 'Melee Attack'),
+              attackBonus,
+              damageDice,
+              damageType,
+              properties: [],
+              isMagical: /\bmagical\b/.test(desc),
+              material: null,
+            };
           }
         }
-      } catch { /* ignore */ }
+      } catch {
+        /* ignore */
+      }
     }
   }
 
-  return { name: 'Unarmed Strike', attackBonus: abilitiesLoaded ? strMod + profBonus : 0, damageDice: abilitiesLoaded ? `1+${Math.max(0, strMod)}` : '1', damageType: 'bludgeoning', properties: [] };
+  return {
+    name: 'Unarmed Strike',
+    attackBonus: abilitiesLoaded ? strMod + profBonus : 0,
+    damageDice: abilitiesLoaded ? `1+${Math.max(0, strMod)}` : '1',
+    damageType: 'bludgeoning',
+    properties: [],
+    isMagical: false,
+    material: null,
+  };
+}
+
+function isMagicalWeapon(weapon: InventoryWeapon, properties: string[]): boolean {
+  if ((weapon.magicBonus ?? 0) > 0) return true;
+  const text = `${weapon.name ?? ''} ${properties.join(' ')}`.toLowerCase();
+  return /\+\d\b|magic(al)?\b/.test(text);
+}
+
+function weaponMaterial(weapon: InventoryWeapon, properties: string[]): WeaponMaterial {
+  const text =
+    `${weapon.material ?? ''} ${weapon.name ?? ''} ${properties.join(' ')}`.toLowerCase();
+  if (/\bsilvered\b|\bsilver\b/.test(text)) return 'silvered';
+  if (/\badamantine\b/.test(text)) return 'adamantine';
+  if (/cold[\s-]?iron/.test(text)) return 'cold-iron';
+  return null;
 }
 
 function rollDamageString(notation: string, isCrit: boolean): number {

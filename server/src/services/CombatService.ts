@@ -7,8 +7,15 @@ import type {
   InitiativeBreakdown,
   EquippedItem,
   EquipmentAbilityScores,
+  DefenseLists,
+  WeaponMaterial,
 } from '@dnd-vtt/shared';
-import { calculateEquipmentBonuses, speedMultiplierFor, traitsForRace } from '@dnd-vtt/shared';
+import {
+  applyDamageWithResist,
+  calculateEquipmentBonuses,
+  speedMultiplierFor,
+  traitsForRace,
+} from '@dnd-vtt/shared';
 import { getRoom, type RoomState } from '../utils/roomState.js';
 import pool from '../db/connection.js';
 import { releaseGrapplesByGrappler } from './ConditionService.js';
@@ -44,8 +51,9 @@ function finiteNumber(raw: unknown): number | undefined {
 
 function equipmentScores(raw: unknown): EquipmentAbilityScores {
   const parsed = safeJson(raw, {});
-  const src = (parsed && typeof parsed === 'object') ? parsed as Record<string, unknown> : {};
-  const score = (shortName: string, longName: string): number => finiteNumber(src[shortName] ?? src[longName]) ?? 10;
+  const src = parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : {};
+  const score = (shortName: string, longName: string): number =>
+    finiteNumber(src[shortName] ?? src[longName]) ?? 10;
   return {
     str: score('str', 'strength'),
     dex: score('dex', 'dexterity'),
@@ -82,7 +90,11 @@ function applyManualEquipmentSpeedPenalty(charRow: Record<string, unknown>, spee
   const inventory = equipmentItems(charRow.inventory);
   if (inventory.length === 0) return speed;
   const baseAC = finiteNumber(charRow.armor_class);
-  const bonuses = calculateEquipmentBonuses(inventory, equipmentScores(charRow.ability_scores), baseAC);
+  const bonuses = calculateEquipmentBonuses(
+    inventory,
+    equipmentScores(charRow.ability_scores),
+    baseAC
+  );
   return Math.max(0, speed + bonuses.speedPenalty);
 }
 
@@ -99,7 +111,12 @@ export function startCombat(sessionId: string, tokenIds: string[]): CombatState 
     if ((token.imageUrl ?? '').includes('/uploads/items/')) continue;
     if ((token.size as number) < 0.5 && !token.characterId) continue;
 
-    let hp = 10, maxHp = 10, tempHp = 0, ac = 10, speed = 30, initBonus = 0;
+    let hp = 10,
+      maxHp = 10,
+      tempHp = 0,
+      ac = 10,
+      speed = 30,
+      initBonus = 0;
     let portrait: string | null = null;
     let isNPC = !token.ownerUserId;
     const exhaustionLevel = 0;
@@ -113,9 +130,17 @@ export function startCombat(sessionId: string, tokenIds: string[]): CombatState 
     }
 
     combatants.push({
-      tokenId, characterId: token.characterId, name: token.name,
-      initiative: 0, initiativeBonus: initBonus,
-      hp, maxHp, tempHp, armorClass: ac, speed, isNPC,
+      tokenId,
+      characterId: token.characterId,
+      name: token.name,
+      initiative: 0,
+      initiativeBonus: initBonus,
+      hp,
+      maxHp,
+      tempHp,
+      armorClass: ac,
+      speed,
+      isNPC,
       conditions: [...token.conditions],
       deathSaves: { successes: 0, failures: 0 },
       portraitUrl: portrait ?? token.imageUrl,
@@ -148,23 +173,30 @@ export function startCombat(sessionId: string, tokenIds: string[]): CombatState 
   });
 
   const combatState: CombatState = {
-    sessionId, active: true, roundNumber: 1, currentTurnIndex: 0,
-    combatants, startedAt: new Date().toISOString(),
+    sessionId,
+    active: true,
+    roundNumber: 1,
+    currentTurnIndex: 0,
+    combatants,
+    startedAt: new Date().toISOString(),
   };
 
   room.combatState = combatState;
   room.gameMode = 'combat';
 
   // Persist to DB (fire-and-forget async)
-  pool.query(
-    `INSERT INTO combat_state (session_id, round_number, current_turn_index, combatants, started_at)
+  pool
+    .query(
+      `INSERT INTO combat_state (session_id, round_number, current_turn_index, combatants, started_at)
      VALUES ($1, $2, $3, $4, $5)
      ON CONFLICT (session_id) DO UPDATE SET round_number=$2, current_turn_index=$3, combatants=$4, started_at=$5`,
-    [sessionId, 1, 0, JSON.stringify(combatants), combatState.startedAt],
-  ).catch(err => console.error('[CombatService] persist combat_state failed:', err));
+      [sessionId, 1, 0, JSON.stringify(combatants), combatState.startedAt]
+    )
+    .catch((err) => console.error('[CombatService] persist combat_state failed:', err));
 
-  pool.query("UPDATE sessions SET combat_active = 1, game_mode = 'combat' WHERE id = $1", [sessionId])
-    .catch(err => console.error('[CombatService] update session failed:', err));
+  pool
+    .query("UPDATE sessions SET combat_active = 1, game_mode = 'combat' WHERE id = $1", [sessionId])
+    .catch((err) => console.error('[CombatService] update session failed:', err));
 
   room.actionEconomies.clear();
   return combatState;
@@ -173,9 +205,13 @@ export function startCombat(sessionId: string, tokenIds: string[]): CombatState 
 /**
  * Async version of startCombat that properly loads character data from Postgres.
  */
-export async function startCombatAsync(sessionId: string, tokenIds: string[]): Promise<CombatState> {
+export async function startCombatAsync(
+  sessionId: string,
+  tokenIds: string[]
+): Promise<CombatState> {
   const room = getRoom(sessionId);
   if (!room) throw new Error('Room not found');
+  if (room.combatState?.active) throw new Error('Combat already active');
 
   const combatants: Combatant[] = [];
   for (const tokenId of tokenIds) {
@@ -186,7 +222,12 @@ export async function startCombatAsync(sessionId: string, tokenIds: string[]): P
     if ((token.imageUrl ?? '').includes('/uploads/items/')) continue;
     if ((token.size as number) < 0.5 && !token.characterId) continue;
 
-    let hp = 10, maxHp = 10, tempHp = 0, ac = 10, speed = 30, initBonus = 0;
+    let hp = 10,
+      maxHp = 10,
+      tempHp = 0,
+      ac = 10,
+      speed = 30,
+      initBonus = 0;
     let portrait: string | null = null;
     let isNPC = !token.ownerUserId;
     let exhaustionLevel = 0;
@@ -204,7 +245,9 @@ export async function startCombatAsync(sessionId: string, tokenIds: string[]): P
     let initAdvantage: 'normal' | 'advantage' | 'disadvantage' = 'normal';
 
     if (token.characterId) {
-      const { rows } = await pool.query('SELECT * FROM characters WHERE id = $1', [token.characterId]);
+      const { rows } = await pool.query('SELECT * FROM characters WHERE id = $1', [
+        token.characterId,
+      ]);
       const charRow = rows[0] as Record<string, unknown> | undefined;
       if (charRow) {
         // Reach cache: look for a Reach property on any equipped melee
@@ -222,14 +265,24 @@ export async function startCombatAsync(sessionId: string, tokenIds: string[]): P
           const inv = typeof invRaw === 'string' ? JSON.parse(invRaw) : (invRaw ?? []);
           if (Array.isArray(inv)) {
             for (const item of inv) {
-              const type = String((item as Record<string, unknown>)?.type ?? (item as Record<string, unknown>)?.category ?? '').toLowerCase();
+              const type = String(
+                (item as Record<string, unknown>)?.type ??
+                  (item as Record<string, unknown>)?.category ??
+                  ''
+              ).toLowerCase();
               if (type !== 'weapon') continue;
-              const props = ((item as Record<string, unknown>)?.properties as string[] | undefined) ?? [];
+              const props =
+                ((item as Record<string, unknown>)?.properties as string[] | undefined) ?? [];
               const isMelee = !props.some((p) => /(range|ammunition)/i.test(String(p)));
               const hasReach = props.some((p) => /reach/i.test(String(p)));
-              if (isMelee && hasReach) { reachCells = 2; }
+              if (isMelee && hasReach) {
+                reachCells = 2;
+              }
               const name = String((item as Record<string, unknown>)?.name ?? '').toLowerCase();
-              if ((item as Record<string, unknown>)?.equipped && /glaive|halberd|pike|quarterstaff|spear/.test(name)) {
+              if (
+                (item as Record<string, unknown>)?.equipped &&
+                /glaive|halberd|pike|quarterstaff|spear/.test(name)
+              ) {
                 hasPolearm = true;
               }
             }
@@ -240,26 +293,40 @@ export async function startCombatAsync(sessionId: string, tokenIds: string[]): P
             try {
               const rawF = charRow.features;
               const feats = typeof rawF === 'string' ? JSON.parse(rawF) : (rawF ?? []);
-              if (Array.isArray(feats) && feats.some(
-                (f: { name?: string }) => typeof f?.name === 'string' && /^\s*polearm\s+master\s*$/i.test(f.name),
-              )) {
+              if (
+                Array.isArray(feats) &&
+                feats.some(
+                  (f: { name?: string }) =>
+                    typeof f?.name === 'string' && /^\s*polearm\s+master\s*$/i.test(f.name)
+                )
+              ) {
                 room.polearmMasters.add(tokenId);
               }
-            } catch { /* ignore */ }
+            } catch {
+              /* ignore */
+            }
           }
           if (reachCells === 1) {
             const exRaw = charRow.extras;
             const extras = typeof exRaw === 'string' ? JSON.parse(exRaw) : (exRaw ?? {});
             const actions = (extras?.actions ?? []) as Array<Record<string, unknown>>;
             for (const a of actions) {
-              const desc = String((a?.desc ?? a?.description ?? '')).toLowerCase();
+              const desc = String(a?.desc ?? a?.description ?? '').toLowerCase();
               if (!/melee\s+(weapon\s+)?attack/.test(desc)) continue;
-              if (/reach\s*10\s*ft/.test(desc)) { reachCells = 2; break; }
-              if (/reach\s*15\s*ft/.test(desc)) { reachCells = 3; break; }
+              if (/reach\s*10\s*ft/.test(desc)) {
+                reachCells = 2;
+                break;
+              }
+              if (/reach\s*15\s*ft/.test(desc)) {
+                reachCells = 3;
+                break;
+              }
             }
           }
           room.tokenMeleeReach.set(tokenId, reachCells);
-        } catch { room.tokenMeleeReach.set(tokenId, 1); }
+        } catch {
+          room.tokenMeleeReach.set(tokenId, 1);
+        }
 
         // Legendary actions auto-parse: if the character was imported
         // from a compendium monster with a non-empty legendary_actions
@@ -270,10 +337,12 @@ export async function startCombatAsync(sessionId: string, tokenIds: string[]): P
           if (!room.legendaryActions.has(tokenId)) {
             const exRaw = charRow.extras;
             const extras = typeof exRaw === 'string' ? JSON.parse(exRaw) : (exRaw ?? {});
-            const la = (extras as Record<string, unknown>)?.legendary_actions
-              ?? (extras as Record<string, unknown>)?.legendaryActions;
-            const ld = (extras as Record<string, unknown>)?.legendary_desc
-              ?? (extras as Record<string, unknown>)?.legendaryDesc;
+            const la =
+              (extras as Record<string, unknown>)?.legendary_actions ??
+              (extras as Record<string, unknown>)?.legendaryActions;
+            const ld =
+              (extras as Record<string, unknown>)?.legendary_desc ??
+              (extras as Record<string, unknown>)?.legendaryDesc;
             let max: number | null = null;
             if (typeof ld === 'string') {
               const m = ld.match(/(\d+)\s+legendary\s+actions?/i);
@@ -287,7 +356,9 @@ export async function startCombatAsync(sessionId: string, tokenIds: string[]): P
               room.legendaryActions.set(tokenId, { max, remaining: max });
             }
           }
-        } catch { /* ignore */ }
+        } catch {
+          /* ignore */
+        }
 
         // Legendary Resistance auto-parse: scan special_abilities for
         // the classic "Legendary Resistance (N/Day)" entry. Most
@@ -298,8 +369,9 @@ export async function startCombatAsync(sessionId: string, tokenIds: string[]): P
           if (!room.legendaryResistance.has(tokenId)) {
             const exRaw = charRow.extras;
             const extras = typeof exRaw === 'string' ? JSON.parse(exRaw) : (exRaw ?? {});
-            const sa = (extras as Record<string, unknown>)?.special_abilities
-              ?? (extras as Record<string, unknown>)?.specialAbilities;
+            const sa =
+              (extras as Record<string, unknown>)?.special_abilities ??
+              (extras as Record<string, unknown>)?.specialAbilities;
             if (Array.isArray(sa)) {
               for (const ability of sa as Array<Record<string, unknown>>) {
                 const name = String(ability?.name ?? '');
@@ -314,7 +386,9 @@ export async function startCombatAsync(sessionId: string, tokenIds: string[]): P
               }
             }
           }
-        } catch { /* ignore */ }
+        } catch {
+          /* ignore */
+        }
 
         // Recharge auto-parse: scan action names for "(Recharge N-6)"
         // and populate the recharge pool so the DM doesn't have to
@@ -339,14 +413,19 @@ export async function startCombatAsync(sessionId: string, tokenIds: string[]): P
                     // Strip the "(Recharge N-6)" suffix for the key — the
                     // DM / chat commands refer to the ability by its
                     // bare name.
-                    const bareName = name.replace(/\s*\(\s*Recharge[^)]+\)/i, '').trim().toLowerCase();
+                    const bareName = name
+                      .replace(/\s*\(\s*Recharge[^)]+\)/i, '')
+                      .trim()
+                      .toLowerCase();
                     pool.set(bareName, { min, available: true });
                   }
                 }
               }
             }
           }
-        } catch { /* ignore */ }
+        } catch {
+          /* ignore */
+        }
 
         hp = (charRow.hit_points as number) ?? 10;
         maxHp = (charRow.max_hit_points as number) ?? 10;
@@ -369,9 +448,9 @@ export async function startCombatAsync(sessionId: string, tokenIds: string[]): P
           if (!ddbId) {
             const classLower = String(charRow.class || '').toLowerCase();
             const rawAbilities = charRow.ability_scores;
-            const scores = (typeof rawAbilities === 'string'
-              ? JSON.parse(rawAbilities)
-              : (rawAbilities ?? {})) as Record<string, number>;
+            const scores = (
+              typeof rawAbilities === 'string' ? JSON.parse(rawAbilities) : (rawAbilities ?? {})
+            ) as Record<string, number>;
             const mod = (s: string): number => {
               const v = Number(scores?.[s] ?? scores?.[s.toLowerCase()] ?? 10);
               return Number.isFinite(v) ? Math.floor((v - 10) / 2) : 0;
@@ -392,10 +471,13 @@ export async function startCombatAsync(sessionId: string, tokenIds: string[]): P
                   const equipped = it?.equipped !== false; // default true when field absent
                   if (!equipped) continue;
                   if (/armor/.test(cat) && !/shield/.test(cat)) hasArmor = true;
-                  if (/shield/.test(cat) || /shield/i.test(String(it?.name ?? ''))) hasShield = true;
+                  if (/shield/.test(cat) || /shield/i.test(String(it?.name ?? '')))
+                    hasShield = true;
                 }
               }
-            } catch { /* inventory unparseable — fall through */ }
+            } catch {
+              /* inventory unparseable — fall through */
+            }
 
             if (!hasArmor) {
               // Barbarian: 10 + DEX + CON (shield allowed).
@@ -416,7 +498,9 @@ export async function startCombatAsync(sessionId: string, tokenIds: string[]): P
               }
             }
           }
-        } catch { /* unarmored-defense best-effort */ }
+        } catch {
+          /* unarmored-defense best-effort */
+        }
 
         // Race traits: merge race-granted resistances into the
         // character's defenses JSON so the damage resolver picks them
@@ -431,18 +515,24 @@ export async function startCombatAsync(sessionId: string, tokenIds: string[]): P
             const traits = traitsForRace(race);
             if (traits?.resistances && traits.resistances.length > 0) {
               const defRaw = (charRow as Record<string, unknown>)?.defenses;
-              const defenses = typeof defRaw === 'string'
-                ? JSON.parse(defRaw as string)
-                : (defRaw ?? { resistances: [], immunities: [], vulnerabilities: [] });
-              const existing: string[] = Array.isArray(defenses.resistances) ? defenses.resistances : [];
+              const defenses =
+                typeof defRaw === 'string'
+                  ? JSON.parse(defRaw as string)
+                  : (defRaw ?? { resistances: [], immunities: [], vulnerabilities: [] });
+              const existing: string[] = Array.isArray(defenses.resistances)
+                ? defenses.resistances
+                : [];
               const merged = Array.from(new Set([...existing, ...traits.resistances]));
               if (merged.length !== existing.length) {
                 defenses.resistances = merged;
                 // Persist the merge so the client + damage pipeline
                 // pick it up without extra plumbing.
-                await pool.query('UPDATE characters SET defenses = $1 WHERE id = $2',
-                  [JSON.stringify(defenses), token.characterId],
-                ).catch((e) => console.warn('[race-traits] defenses merge failed:', e));
+                await pool
+                  .query('UPDATE characters SET defenses = $1 WHERE id = $2', [
+                    JSON.stringify(defenses),
+                    token.characterId,
+                  ])
+                  .catch((e) => console.warn('[race-traits] defenses merge failed:', e));
               }
             }
             // Race speed override (halflings 25 ft etc.) — only lift
@@ -452,7 +542,9 @@ export async function startCombatAsync(sessionId: string, tokenIds: string[]): P
               // speed already. This branch is defensive.
             }
           }
-        } catch { /* race merge best-effort */ }
+        } catch {
+          /* race merge best-effort */
+        }
         exhaustionLevel = Math.max(0, Math.min(6, Number(charRow.exhaustion_level ?? 0) || 0));
         // 5e exhaustion L4: HP max halved. Apply here so the combat
         // tracker respects the cap from the start of the encounter;
@@ -474,19 +566,26 @@ export async function startCombatAsync(sessionId: string, tokenIds: string[]): P
         let rawAbilitiesCached: Record<string, number> = {};
         try {
           const rawAbilities = charRow.ability_scores;
-          rawAbilitiesCached = (typeof rawAbilities === 'string' ? JSON.parse(rawAbilities) : (rawAbilities ?? {})) as Record<string, number>;
+          rawAbilitiesCached = (
+            typeof rawAbilities === 'string' ? JSON.parse(rawAbilities) : (rawAbilities ?? {})
+          ) as Record<string, number>;
           const dex = Number(rawAbilitiesCached?.dex ?? rawAbilitiesCached?.dexterity ?? 10);
           baseFromDex = Number.isFinite(dex) ? Math.floor((dex - 10) / 2) : 0;
-        } catch { baseFromDex = 0; }
+        } catch {
+          baseFromDex = 0;
+        }
         // 1. DEX modifier — always the base line, even when 0.
         initModifiers.push({ label: 'DEX', value: baseFromDex, source: 'ability' });
 
         const classLower = String(charRow.class || '').toLowerCase();
         const level = Number(charRow.level) || 1;
-        const profBonus = Number(charRow.proficiency_bonus) || (level >= 17 ? 6 : level >= 13 ? 5 : level >= 9 ? 4 : level >= 5 ? 3 : 2);
+        const profBonus =
+          Number(charRow.proficiency_bonus) ||
+          (level >= 17 ? 6 : level >= 13 ? 5 : level >= 9 ? 4 : level >= 5 ? 3 : 2);
         try {
           const rawFeatures = charRow.features;
-          const features = typeof rawFeatures === 'string' ? JSON.parse(rawFeatures) : (rawFeatures ?? []);
+          const features =
+            typeof rawFeatures === 'string' ? JSON.parse(rawFeatures) : (rawFeatures ?? []);
           const featureList: Array<{ name?: string }> = Array.isArray(features) ? features : [];
           const hasFeature = (pattern: RegExp) =>
             featureList.some((f) => typeof f?.name === 'string' && pattern.test(f.name));
@@ -507,7 +606,8 @@ export async function startCombatAsync(sessionId: string, tokenIds: string[]): P
             if (jat > 0) {
               initModifiers.push({
                 label: `Jack of All Trades (+${jat})`,
-                value: jat, source: 'class',
+                value: jat,
+                source: 'class',
               });
             }
           }
@@ -516,25 +616,35 @@ export async function startCombatAsync(sessionId: string, tokenIds: string[]): P
           //    on ability checks NOT proficient in. Applies to initiative
           //    for the same reason as Jack of All Trades. Requires the
           //    Champion subclass (not vanilla Fighter).
-          if (classLower.includes('fighter') && level >= 7 && (classLower.includes('champion') || hasFeature(/remarkable\s+athlete/i))) {
+          if (
+            classLower.includes('fighter') &&
+            level >= 7 &&
+            (classLower.includes('champion') || hasFeature(/remarkable\s+athlete/i))
+          ) {
             const ra = Math.ceil(profBonus / 2);
             if (ra > 0) {
               initModifiers.push({
                 label: `Remarkable Athlete (+${ra})`,
-                value: ra, source: 'subclass',
+                value: ra,
+                source: 'subclass',
               });
             }
           }
 
           // 5. Rakish Audacity (Swashbuckler Rogue L3+) → +CHA mod to
           //    initiative rolls.
-          if (classLower.includes('rogue') && level >= 3 && (classLower.includes('swashbuckler') || hasFeature(/rakish\s+audacity/i))) {
+          if (
+            classLower.includes('rogue') &&
+            level >= 3 &&
+            (classLower.includes('swashbuckler') || hasFeature(/rakish\s+audacity/i))
+          ) {
             const cha = Number(rawAbilitiesCached?.cha ?? rawAbilitiesCached?.charisma ?? 10);
             const chaMod = Number.isFinite(cha) ? Math.floor((cha - 10) / 2) : 0;
             if (chaMod !== 0) {
               initModifiers.push({
                 label: 'Rakish Audacity (CHA)',
-                value: chaMod, source: 'subclass',
+                value: chaMod,
+                source: 'subclass',
               });
             }
           }
@@ -544,13 +654,18 @@ export async function startCombatAsync(sessionId: string, tokenIds: string[]): P
           //    is always round 1, we surface it here; the bonus gets
           //    baked into the stored Combatant.initiative at roll time
           //    and the DM can hand-edit in subsequent rounds.
-          if (classLower.includes('ranger') && level >= 3 && (classLower.includes('gloom') || hasFeature(/dread\s+ambusher/i))) {
+          if (
+            classLower.includes('ranger') &&
+            level >= 3 &&
+            (classLower.includes('gloom') || hasFeature(/dread\s+ambusher/i))
+          ) {
             const wis = Number(rawAbilitiesCached?.wis ?? rawAbilitiesCached?.wisdom ?? 10);
             const wisMod = Number.isFinite(wis) ? Math.floor((wis - 10) / 2) : 0;
             if (wisMod !== 0) {
               initModifiers.push({
                 label: 'Dread Ambusher (WIS)',
-                value: wisMod, source: 'subclass',
+                value: wisMod,
+                source: 'subclass',
               });
             }
           }
@@ -583,7 +698,7 @@ export async function startCombatAsync(sessionId: string, tokenIds: string[]): P
           // DDB heuristic as Tough — avoid double-counting when the
           // import already baked it in.
           const hasDefense = featureList.some(
-            (f) => typeof f?.name === 'string' && /defense/i.test(f.name),
+            (f) => typeof f?.name === 'string' && /defense/i.test(f.name)
           );
           if (hasDefense) {
             const ddbId = charRow.dndbeyond_id as string | null;
@@ -591,7 +706,9 @@ export async function startCombatAsync(sessionId: string, tokenIds: string[]): P
               ac += 1;
             }
           }
-        } catch { /* features blob unparseable — skip */ }
+        } catch {
+          /* features blob unparseable — skip */
+        }
         const charUserId = charRow.user_id as string | null;
         isNPC = !token.ownerUserId || charUserId === 'npc';
 
@@ -671,9 +788,17 @@ export async function startCombatAsync(sessionId: string, tokenIds: string[]): P
     }
 
     combatants.push({
-      tokenId, characterId: token.characterId, name: token.name,
-      initiative: 0, initiativeBonus: initBonus,
-      hp, maxHp, tempHp, armorClass: ac, speed, isNPC,
+      tokenId,
+      characterId: token.characterId,
+      name: token.name,
+      initiative: 0,
+      initiativeBonus: initBonus,
+      hp,
+      maxHp,
+      tempHp,
+      armorClass: ac,
+      speed,
+      isNPC,
       conditions: [...token.conditions],
       deathSaves: { successes: 0, failures: 0 },
       portraitUrl: portrait ?? token.imageUrl,
@@ -699,7 +824,9 @@ export async function startCombatAsync(sessionId: string, tokenIds: string[]): P
   //
   // `rollForAdvantage` rolls 2d20 and keeps the higher for advantage,
   // 2d20 keep lower for disadvantage, or just 1d20 for normal.
-  const rollForAdvantage = (adv: 'normal' | 'advantage' | 'disadvantage'): { kept: number; rolls: number[] } => {
+  const rollForAdvantage = (
+    adv: 'normal' | 'advantage' | 'disadvantage'
+  ): { kept: number; rolls: number[] } => {
     const a = Math.floor(Math.random() * 20) + 1;
     if (adv === 'normal') return { kept: a, rolls: [a] };
     const b = Math.floor(Math.random() * 20) + 1;
@@ -736,8 +863,11 @@ export async function startCombatAsync(sessionId: string, tokenIds: string[]): P
     }
   }
 
-  console.log('[COMBAT START] rolled initiatives:',
-    combatants.map((c) => `${c.name}${c.isNPC ? '' : ' (PC)'}=${c.initiative}(bonus ${c.initiativeBonus})`).join(', '),
+  console.log(
+    '[COMBAT START] rolled initiatives:',
+    combatants
+      .map((c) => `${c.name}${c.isNPC ? '' : ' (PC)'}=${c.initiative}(bonus ${c.initiativeBonus})`)
+      .join(', ')
   );
 
   combatants.sort((a, b) => {
@@ -746,8 +876,12 @@ export async function startCombatAsync(sessionId: string, tokenIds: string[]): P
   });
 
   const combatState: CombatState = {
-    sessionId, active: true, roundNumber: 1, currentTurnIndex: 0,
-    combatants, startedAt: new Date().toISOString(),
+    sessionId,
+    active: true,
+    roundNumber: 1,
+    currentTurnIndex: 0,
+    combatants,
+    startedAt: new Date().toISOString(),
   };
 
   room.combatState = combatState;
@@ -757,9 +891,11 @@ export async function startCombatAsync(sessionId: string, tokenIds: string[]): P
     `INSERT INTO combat_state (session_id, round_number, current_turn_index, combatants, started_at)
      VALUES ($1, $2, $3, $4, $5)
      ON CONFLICT (session_id) DO UPDATE SET round_number=$2, current_turn_index=$3, combatants=$4, started_at=$5`,
-    [sessionId, 1, 0, JSON.stringify(combatants), combatState.startedAt],
+    [sessionId, 1, 0, JSON.stringify(combatants), combatState.startedAt]
   );
-  await pool.query("UPDATE sessions SET combat_active = 1, game_mode = 'combat' WHERE id = $1", [sessionId]);
+  await pool.query("UPDATE sessions SET combat_active = 1, game_mode = 'combat' WHERE id = $1", [
+    sessionId,
+  ]);
 
   room.actionEconomies.clear();
   return combatState;
@@ -773,7 +909,10 @@ export async function startCombatAsync(sessionId: string, tokenIds: string[]): P
  * Returns the new combatant, or null if the token can't be added
  * (combat not active, token missing, or token already in combat).
  */
-export async function addCombatantAsync(sessionId: string, tokenId: string): Promise<Combatant | null> {
+export async function addCombatantAsync(
+  sessionId: string,
+  tokenId: string
+): Promise<Combatant | null> {
   const room = getRoom(sessionId);
   if (!room) return null;
   if (!room.combatState?.active) return null;
@@ -787,12 +926,19 @@ export async function addCombatantAsync(sessionId: string, tokenId: string): Pro
   // Same derivation as startCombatAsync — read HP / AC / init bonus
   // from the backing character row when there is one, else use
   // token defaults.
-  let hp = 10, maxHp = 10, tempHp = 0, ac = 10, speed = 30, initBonus = 0;
+  let hp = 10,
+    maxHp = 10,
+    tempHp = 0,
+    ac = 10,
+    speed = 30,
+    initBonus = 0;
   let portrait: string | null = null;
   let isNPC = !token.ownerUserId;
   let exhaustionLevel = 0;
   if (token.characterId) {
-    const { rows } = await pool.query('SELECT * FROM characters WHERE id = $1', [token.characterId]);
+    const { rows } = await pool.query('SELECT * FROM characters WHERE id = $1', [
+      token.characterId,
+    ]);
     const charRow = rows[0] as Record<string, unknown> | undefined;
     if (charRow) {
       hp = (charRow.hit_points as number) ?? 10;
@@ -815,10 +961,13 @@ export async function addCombatantAsync(sessionId: string, tokenId: string): Pro
       } else {
         try {
           const rawAbilities = charRow.ability_scores;
-          const abilities = typeof rawAbilities === 'string' ? JSON.parse(rawAbilities) : (rawAbilities ?? {});
+          const abilities =
+            typeof rawAbilities === 'string' ? JSON.parse(rawAbilities) : (rawAbilities ?? {});
           const dex = Number(abilities?.dex ?? abilities?.dexterity ?? 10);
           initBonus = Number.isFinite(dex) ? Math.floor((dex - 10) / 2) : 0;
-        } catch { initBonus = 0; }
+        } catch {
+          initBonus = 0;
+        }
       }
       const charUserId = charRow.user_id as string | null;
       isNPC = !token.ownerUserId || charUserId === 'npc';
@@ -826,10 +975,17 @@ export async function addCombatantAsync(sessionId: string, tokenId: string): Pro
   }
 
   const combatant: Combatant = {
-    tokenId, characterId: token.characterId, name: token.name,
+    tokenId,
+    characterId: token.characterId,
+    name: token.name,
     initiative: Math.floor(Math.random() * 20) + 1 + initBonus,
     initiativeBonus: initBonus,
-    hp, maxHp, tempHp, armorClass: ac, speed, isNPC,
+    hp,
+    maxHp,
+    tempHp,
+    armorClass: ac,
+    speed,
+    isNPC,
     conditions: [...token.conditions],
     deathSaves: { successes: 0, failures: 0 },
     portraitUrl: portrait ?? token.imageUrl,
@@ -853,7 +1009,7 @@ export async function addCombatantAsync(sessionId: string, tokenId: string): Pro
 
   await pool.query(
     'UPDATE combat_state SET combatants = $1, current_turn_index = $2 WHERE session_id = $3',
-    [JSON.stringify(room.combatState.combatants), room.combatState.currentTurnIndex, sessionId],
+    [JSON.stringify(room.combatState.combatants), room.combatState.currentTurnIndex, sessionId]
   );
   return combatant;
 }
@@ -867,13 +1023,15 @@ export async function endCombat(sessionId: string): Promise<void> {
   room.actionEconomies.clear();
 
   await pool.query('DELETE FROM combat_state WHERE session_id = $1', [sessionId]);
-  await pool.query("UPDATE sessions SET combat_active = 0, game_mode = 'free-roam' WHERE id = $1", [sessionId]);
+  await pool.query("UPDATE sessions SET combat_active = 0, game_mode = 'free-roam' WHERE id = $1", [
+    sessionId,
+  ]);
 }
 
 export function setInitiative(sessionId: string, tokenId: string, total: number): Combatant | null {
   const room = getRoom(sessionId);
   if (!room?.combatState) return null;
-  const combatant = room.combatState.combatants.find(c => c.tokenId === tokenId);
+  const combatant = room.combatState.combatants.find((c) => c.tokenId === tokenId);
   if (!combatant) return null;
   combatant.initiative = total;
   // Keep the breakdown's total in sync so the review modal renders
@@ -885,16 +1043,18 @@ export function setInitiative(sessionId: string, tokenId: string, total: number)
     const expected = combatant.initiativeBreakdown.d20 + modTotal;
     if (total !== expected) {
       // Drop any prior manual-adjust line so repeated edits don't stack.
-      combatant.initiativeBreakdown.modifiers = combatant.initiativeBreakdown.modifiers
-        .filter((m) => m.label !== 'Manual adjust');
+      combatant.initiativeBreakdown.modifiers = combatant.initiativeBreakdown.modifiers.filter(
+        (m) => m.label !== 'Manual adjust'
+      );
       combatant.initiativeBreakdown.modifiers.push({
         label: 'Manual adjust',
         value: total - expected,
         source: 'other',
       });
     } else {
-      combatant.initiativeBreakdown.modifiers = combatant.initiativeBreakdown.modifiers
-        .filter((m) => m.label !== 'Manual adjust');
+      combatant.initiativeBreakdown.modifiers = combatant.initiativeBreakdown.modifiers.filter(
+        (m) => m.label !== 'Manual adjust'
+      );
     }
     combatant.initiativeBreakdown.total = total;
   }
@@ -913,11 +1073,13 @@ export function setInitiative(sessionId: string, tokenId: string, total: number)
  * `null` return and surface "Alert feat: immune to surprise" in the UI.
  */
 export function setSurprise(
-  sessionId: string, tokenId: string, surprised: boolean,
+  sessionId: string,
+  tokenId: string,
+  surprised: boolean
 ): Combatant | null {
   const room = getRoom(sessionId);
   if (!room?.combatState) return null;
-  const combatant = room.combatState.combatants.find(c => c.tokenId === tokenId);
+  const combatant = room.combatState.combatants.find((c) => c.tokenId === tokenId);
   if (!combatant) return null;
   if (surprised && combatant.hasAlert) return null; // Alert feat immunity
   combatant.surprised = surprised;
@@ -939,12 +1101,15 @@ export function sortInitiative(sessionId: string): Combatant[] {
 export function allInitiativesRolled(sessionId: string): boolean {
   const room = getRoom(sessionId);
   if (!room?.combatState) return false;
-  return room.combatState.combatants.every(c => c.initiative !== 0);
+  return room.combatState.combatants.every((c) => c.initiative !== 0);
 }
 
 export function nextTurn(sessionId: string): {
-  currentTurnIndex: number; roundNumber: number; actionEconomy: ActionEconomy;
-  skippedTokenIds: string[]; currentCombatant: Combatant;
+  currentTurnIndex: number;
+  roundNumber: number;
+  actionEconomy: ActionEconomy;
+  skippedTokenIds: string[];
+  currentCombatant: Combatant;
   /** Ability names that just recharged on this turn start (breath weapons). */
   rechargedAbilities: string[];
 } {
@@ -975,30 +1140,42 @@ export function nextTurn(sessionId: string): {
     // If the token no longer exists in the room (removed mid-combat)
     // skip it entirely — nothing to take a turn.
     const token = room.tokens.get(candidate.tokenId);
-    if (!token) { skippedTokenIds.push(candidate.tokenId); continue; }
+    if (!token) {
+      skippedTokenIds.push(candidate.tokenId);
+      continue;
+    }
 
     const tokenConds = (token.conditions || []) as string[];
     const isExplicitlyDead = tokenConds.includes('dead');
     const isStable = tokenConds.includes('stable');
     const isDown = candidate.hp <= 0;
-    const hasDeathSaves = candidate.deathSaves && (candidate.deathSaves.successes > 0 || candidate.deathSaves.failures > 0);
+    const hasDeathSaves =
+      candidate.deathSaves &&
+      (candidate.deathSaves.successes > 0 || candidate.deathSaves.failures > 0);
     const isPlayerCharacter = !candidate.isNPC;
 
     // Explicit "dead" marker — skip regardless of PC/NPC.
-    if (isExplicitlyDead) { skippedTokenIds.push(candidate.tokenId); continue; }
+    if (isExplicitlyDead) {
+      skippedTokenIds.push(candidate.tokenId);
+      continue;
+    }
 
     // NPCs at 0 HP are simply dead and skipped.
-    if (isDown && !isPlayerCharacter) { skippedTokenIds.push(candidate.tokenId); continue; }
+    if (isDown && !isPlayerCharacter) {
+      skippedTokenIds.push(candidate.tokenId);
+      continue;
+    }
 
     // Dead PCs (3 death-save failures) and stable PCs stay in initiative
     // but do not act. A stable PC remains unconscious at 0 HP until
     // healed, so they should not keep receiving death-save turns.
-    if (isDown && isPlayerCharacter && hasDeathSaves &&
-        candidate.deathSaves.failures >= 3) {
-      skippedTokenIds.push(candidate.tokenId); continue;
+    if (isDown && isPlayerCharacter && hasDeathSaves && candidate.deathSaves.failures >= 3) {
+      skippedTokenIds.push(candidate.tokenId);
+      continue;
     }
     if (isDown && isPlayerCharacter && isStable) {
-      skippedTokenIds.push(candidate.tokenId); continue;
+      skippedTokenIds.push(candidate.tokenId);
+      continue;
     }
 
     // Surprise: during round 1, surprised combatants lose their turn
@@ -1026,8 +1203,11 @@ export function nextTurn(sessionId: string): {
   // in the turn doesn't refund the movement.
   const moveCap = computeMovementCap(currentCombatant, room);
   const economy: ActionEconomy = {
-    action: false, bonusAction: false, movementRemaining: moveCap,
-    movementMax: moveCap, reaction: false,
+    action: false,
+    bonusAction: false,
+    movementRemaining: moveCap,
+    movementMax: moveCap,
+    reaction: false,
   };
   room.actionEconomies.set(currentCombatant.tokenId, economy);
   // Mobile: clear the previous combatant's melee-target set when
@@ -1075,6 +1255,13 @@ export interface HpChangeResult {
   hp: number;
   tempHp: number;
   change: number;
+  /** Raw incoming damage before resistance / immunity / vulnerability. */
+  rawAmount?: number;
+  /** Damage actually applied to temp HP / HP after defenses. */
+  appliedAmount?: number;
+  damageType?: string;
+  damageMultiplier?: number;
+  damageAdjustmentNote?: string;
   /** Populated when the combatant is backed by a player character.
    *  Callers should fan out `character:updated` so character sheet
    *  views stay in sync with the combat tracker. */
@@ -1111,6 +1298,12 @@ export interface HpChangeResult {
 export interface ApplyDamageOptions {
   /** 5e: a critical hit against a creature at 0 HP causes two failures. */
   criticalHit?: boolean;
+  /** Optional 5e damage type. When present, server applies defenses before HP mutation. */
+  damageType?: string | null;
+  /** True for spell damage or magical weapons; false for mundane weapons. Defaults to true. */
+  isMagical?: boolean;
+  /** Weapon material for bypassing specific non-magical resistance clauses. */
+  material?: WeaponMaterial;
   /**
    * Explicit override for unusual damage sources. Defaults to 2 for a
    * critical hit and 1 for normal damage when the target is already at 0 HP.
@@ -1129,7 +1322,7 @@ interface TokenConditionUpdateResult {
 function setTokenConditions(
   room: RoomState,
   tokenId: string,
-  updater: (conditions: string[]) => string[],
+  updater: (conditions: string[]) => string[]
 ): TokenConditionUpdateResult {
   const token = room.tokens.get(tokenId);
   if (!token) return { changed: false, conditions: [], removed: [], added: [] };
@@ -1146,16 +1339,19 @@ function setTokenConditions(
   token.conditions = after as Condition[];
   const combatant = room.combatState?.combatants.find((c) => c.tokenId === tokenId);
   if (combatant) combatant.conditions = after as Condition[];
-  const persistPromise = pool.query(
-    'UPDATE tokens SET conditions = $1 WHERE id = $2',
-    [JSON.stringify(after), tokenId],
-  );
+  const persistPromise = pool.query('UPDATE tokens SET conditions = $1 WHERE id = $2', [
+    JSON.stringify(after),
+    tokenId,
+  ]);
   persistPromise.catch((e) => console.warn('[CombatService] token conditions persist failed:', e));
 
   return { changed: true, conditions: after, removed, added, persistPromise };
 }
 
-export function markStable(sessionId: string, tokenId: string): { conditions: string[]; added: string[] } {
+export function markStable(
+  sessionId: string,
+  tokenId: string
+): { conditions: string[]; added: string[] } {
   const room = getRoom(sessionId);
   if (!room?.combatState) throw new Error('No active combat');
   const combatant = room.combatState.combatants.find((c) => c.tokenId === tokenId);
@@ -1170,10 +1366,12 @@ export function markStable(sessionId: string, tokenId: string): { conditions: st
     return next;
   });
   if (combatant.characterId) {
-    pool.query(
-      'UPDATE characters SET hit_points = 0, death_saves = $1 WHERE id = $2',
-      [JSON.stringify(combatant.deathSaves), combatant.characterId],
-    ).catch((e) => console.warn('[CombatService] stable character persist failed:', e));
+    pool
+      .query('UPDATE characters SET hit_points = 0, death_saves = $1 WHERE id = $2', [
+        JSON.stringify(combatant.deathSaves),
+        combatant.characterId,
+      ])
+      .catch((e) => console.warn('[CombatService] stable character persist failed:', e));
   }
   persistCombatState(room.combatState);
 
@@ -1185,16 +1383,72 @@ export function persistSessionCombatState(sessionId: string): void {
   if (room?.combatState) persistCombatState(room.combatState);
 }
 
+function normalizeDefenseLists(raw: unknown): Partial<DefenseLists> {
+  const parsed = safeJson(raw, {});
+  const src = parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : {};
+  return {
+    resistances: Array.isArray(src.resistances) ? src.resistances.map(String) : [],
+    immunities: Array.isArray(src.immunities) ? src.immunities.map(String) : [],
+    vulnerabilities: Array.isArray(src.vulnerabilities) ? src.vulnerabilities.map(String) : [],
+  };
+}
+
+async function resolveIncomingDamage(
+  room: RoomState,
+  combatant: Combatant,
+  tokenId: string,
+  amount: number,
+  options: ApplyDamageOptions
+): Promise<{
+  amount: number;
+  damageType?: string;
+  rawAmount?: number;
+  multiplier?: number;
+  note?: string;
+}> {
+  const damageType = (options.damageType ?? '').trim().toLowerCase();
+  if (!damageType || amount <= 0) return { amount };
+
+  let defenses: Partial<DefenseLists> = {};
+  if (combatant.characterId) {
+    const { rows } = await pool.query('SELECT defenses FROM characters WHERE id = $1', [
+      combatant.characterId,
+    ]);
+    defenses = normalizeDefenseLists((rows[0] as Record<string, unknown> | undefined)?.defenses);
+  }
+
+  const token = room.tokens.get(tokenId);
+  const conditions = ((token?.conditions ?? combatant.conditions ?? []) as string[]).map(String);
+  const result = applyDamageWithResist(
+    amount,
+    damageType,
+    defenses,
+    conditions,
+    options.isMagical ?? true,
+    options.material ?? null
+  );
+
+  return {
+    amount: result.amount,
+    damageType,
+    rawAmount: amount,
+    multiplier: result.multiplier,
+    note: result.source || undefined,
+  };
+}
+
 export async function applyDamage(
   sessionId: string,
   tokenId: string,
   amount: number,
-  options: ApplyDamageOptions = {},
+  options: ApplyDamageOptions = {}
 ): Promise<HpChangeResult> {
   const room = getRoom(sessionId);
   if (!room?.combatState) throw new Error('No active combat');
-  const combatant = room.combatState.combatants.find(c => c.tokenId === tokenId);
+  const combatant = room.combatState.combatants.find((c) => c.tokenId === tokenId);
   if (!combatant) throw new Error('Combatant not found');
+  const resolvedDamage = await resolveIncomingDamage(room, combatant, tokenId, amount, options);
+  const appliedAmount = resolvedDamage.amount;
 
   // 5e: "If you take any damage while you have 0 HP, you suffer a
   // death saving throw failure." Track this BEFORE mutating hp so
@@ -1203,7 +1457,7 @@ export async function applyDamage(
   const wasAlreadyDown = combatant.hp === 0 && combatant.maxHp > 0 && !!combatant.characterId;
   const persistence: Promise<unknown>[] = [];
 
-  let remaining = amount;
+  let remaining = appliedAmount;
   if (combatant.tempHp > 0) {
     const tempAbsorbed = Math.min(combatant.tempHp, remaining);
     combatant.tempHp -= tempAbsorbed;
@@ -1212,17 +1466,17 @@ export async function applyDamage(
   combatant.hp = Math.max(0, combatant.hp - remaining);
 
   let autoRemovedConditions: string[] | undefined;
-  if (amount > 0) {
-    const conditionResult = setTokenConditions(room, tokenId, (conditions) => (
+  if (appliedAmount > 0) {
+    const conditionResult = setTokenConditions(room, tokenId, (conditions) =>
       conditions.filter((c) => c.toLowerCase() !== 'stable')
-    ));
+    );
     if (conditionResult.persistPromise) persistence.push(conditionResult.persistPromise);
     if (conditionResult.removed.length > 0) autoRemovedConditions = conditionResult.removed;
   }
 
   let autoDeathSaveFailure: { successes: number; failures: number } | undefined;
   let autoDeathSaveFailuresApplied: number | undefined;
-  if (wasAlreadyDown && combatant.hp === 0 && amount > 0) {
+  if (wasAlreadyDown && combatant.hp === 0 && appliedAmount > 0) {
     const failureCount = options.deathSaveFailures ?? (options.criticalHit ? 2 : 1);
     combatant.deathSaves = combatant.deathSaves ?? { successes: 0, failures: 0 };
     const failuresBefore = combatant.deathSaves.failures;
@@ -1252,10 +1506,12 @@ export async function applyDamage(
       // Drop any concentration the character was holding. Matches the
       // applyConditionWithMeta rule for incapacitating conditions.
       if (combatant.characterId) {
-        persistence.push(pool.query(
-          'UPDATE characters SET concentrating_on = NULL WHERE id = $1 AND concentrating_on IS NOT NULL',
-          [combatant.characterId],
-        ));
+        persistence.push(
+          pool.query(
+            'UPDATE characters SET concentrating_on = NULL WHERE id = $1 AND concentrating_on IS NOT NULL',
+            [combatant.characterId]
+          )
+        );
       }
       // Release any creature this PC was grappling — unconscious
       // automatically breaks the hold per RAW.
@@ -1267,7 +1523,12 @@ export async function applyDamage(
   if (combatant.characterId) {
     await pool.query(
       'UPDATE characters SET hit_points = $1, temp_hit_points = $2, death_saves = $3 WHERE id = $4',
-      [combatant.hp, combatant.tempHp, JSON.stringify(combatant.deathSaves ?? { successes: 0, failures: 0 }), combatant.characterId],
+      [
+        combatant.hp,
+        combatant.tempHp,
+        JSON.stringify(combatant.deathSaves ?? { successes: 0, failures: 0 }),
+        combatant.characterId,
+      ]
     );
   }
   await Promise.all(persistence);
@@ -1275,7 +1536,12 @@ export async function applyDamage(
   return {
     hp: combatant.hp,
     tempHp: combatant.tempHp,
-    change: -amount,
+    change: appliedAmount > 0 ? -appliedAmount : 0,
+    rawAmount: resolvedDamage.rawAmount,
+    appliedAmount,
+    damageType: resolvedDamage.damageType,
+    damageMultiplier: resolvedDamage.multiplier,
+    damageAdjustmentNote: resolvedDamage.note,
     characterId: combatant.characterId ?? null,
     autoDeathSaveFailure,
     autoDeathSaveFailuresApplied,
@@ -1285,10 +1551,14 @@ export async function applyDamage(
   };
 }
 
-export async function applyHeal(sessionId: string, tokenId: string, amount: number): Promise<HpChangeResult> {
+export async function applyHeal(
+  sessionId: string,
+  tokenId: string,
+  amount: number
+): Promise<HpChangeResult> {
   const room = getRoom(sessionId);
   if (!room?.combatState) throw new Error('No active combat');
-  const combatant = room.combatState.combatants.find(c => c.tokenId === tokenId);
+  const combatant = room.combatState.combatants.find((c) => c.tokenId === tokenId);
   if (!combatant) throw new Error('Combatant not found');
 
   const persistence: Promise<unknown>[] = [];
@@ -1296,18 +1566,19 @@ export async function applyHeal(sessionId: string, tokenId: string, amount: numb
   let autoRemovedConditions: string[] | undefined;
   if (combatant.hp > 0) {
     combatant.deathSaves = { successes: 0, failures: 0 };
-    const conditionResult = setTokenConditions(room, tokenId, (conditions) => (
+    const conditionResult = setTokenConditions(room, tokenId, (conditions) =>
       conditions.filter((c) => !['unconscious', 'stable'].includes(c.toLowerCase()))
-    ));
+    );
     if (conditionResult.persistPromise) persistence.push(conditionResult.persistPromise);
     if (conditionResult.removed.length > 0) autoRemovedConditions = conditionResult.removed;
   }
 
   if (combatant.characterId) {
-    await pool.query(
-      'UPDATE characters SET hit_points = $1, death_saves = $2 WHERE id = $3',
-      [combatant.hp, JSON.stringify(combatant.deathSaves ?? { successes: 0, failures: 0 }), combatant.characterId],
-    );
+    await pool.query('UPDATE characters SET hit_points = $1, death_saves = $2 WHERE id = $3', [
+      combatant.hp,
+      JSON.stringify(combatant.deathSaves ?? { successes: 0, failures: 0 }),
+      combatant.characterId,
+    ]);
   }
   await Promise.all(persistence);
   await persistCombatStateAsync(room.combatState);
@@ -1320,10 +1591,14 @@ export async function applyHeal(sessionId: string, tokenId: string, amount: numb
   };
 }
 
-export function addCondition(sessionId: string, tokenId: string, condition: Condition): Condition[] {
+export function addCondition(
+  sessionId: string,
+  tokenId: string,
+  condition: Condition
+): Condition[] {
   const room = getRoom(sessionId);
   if (!room?.combatState) throw new Error('No active combat');
-  const combatant = room.combatState.combatants.find(c => c.tokenId === tokenId);
+  const combatant = room.combatState.combatants.find((c) => c.tokenId === tokenId);
   if (!combatant) throw new Error('Combatant not found');
   if (!combatant.conditions.includes(condition)) combatant.conditions.push(condition);
   const token = room.tokens.get(tokenId);
@@ -1333,21 +1608,29 @@ export function addCondition(sessionId: string, tokenId: string, condition: Cond
   // or map reload. Without this, condition badges disappear on refresh
   // because the token row still has the old conditions array.
   const conditionsJson = JSON.stringify(combatant.conditions);
-  pool.query('UPDATE tokens SET conditions = $1 WHERE id = $2', [conditionsJson, tokenId]).catch(() => {});
+  pool
+    .query('UPDATE tokens SET conditions = $1 WHERE id = $2', [conditionsJson, tokenId])
+    .catch(() => {});
   return combatant.conditions;
 }
 
-export function removeCondition(sessionId: string, tokenId: string, condition: Condition): Condition[] {
+export function removeCondition(
+  sessionId: string,
+  tokenId: string,
+  condition: Condition
+): Condition[] {
   const room = getRoom(sessionId);
   if (!room?.combatState) throw new Error('No active combat');
-  const combatant = room.combatState.combatants.find(c => c.tokenId === tokenId);
+  const combatant = room.combatState.combatants.find((c) => c.tokenId === tokenId);
   if (!combatant) throw new Error('Combatant not found');
-  combatant.conditions = combatant.conditions.filter(c => c !== condition);
+  combatant.conditions = combatant.conditions.filter((c) => c !== condition);
   const token = room.tokens.get(tokenId);
-  if (token) token.conditions = token.conditions.filter(c => c !== condition);
+  if (token) token.conditions = token.conditions.filter((c) => c !== condition);
   persistCombatState(room.combatState);
   const conditionsJson = JSON.stringify(combatant.conditions);
-  pool.query('UPDATE tokens SET conditions = $1 WHERE id = $2', [conditionsJson, tokenId]).catch(() => {});
+  pool
+    .query('UPDATE tokens SET conditions = $1 WHERE id = $2', [conditionsJson, tokenId])
+    .catch(() => {});
   return combatant.conditions;
 }
 
@@ -1358,7 +1641,13 @@ export function useAction(sessionId: string, actionType: ActionType): ActionEcon
   if (!current) return null;
   let economy = room.actionEconomies.get(current.tokenId);
   if (!economy) {
-    economy = { action: false, bonusAction: false, movementRemaining: current.speed, movementMax: current.speed, reaction: false };
+    economy = {
+      action: false,
+      bonusAction: false,
+      movementRemaining: current.speed,
+      movementMax: current.speed,
+      reaction: false,
+    };
     room.actionEconomies.set(current.tokenId, economy);
   }
   economy[actionType] = true;
@@ -1372,7 +1661,13 @@ export function useDash(sessionId: string): ActionEconomy | null {
   if (!current) return null;
   let economy = room.actionEconomies.get(current.tokenId);
   if (!economy) {
-    economy = { action: false, bonusAction: false, movementRemaining: current.speed, movementMax: current.speed, reaction: false };
+    economy = {
+      action: false,
+      bonusAction: false,
+      movementRemaining: current.speed,
+      movementMax: current.speed,
+      reaction: false,
+    };
     room.actionEconomies.set(current.tokenId, economy);
   }
   if (economy.action) return economy;
@@ -1389,7 +1684,13 @@ export function useMovement(sessionId: string, feet: number): number {
   if (!current) return 0;
   let economy = room.actionEconomies.get(current.tokenId);
   if (!economy) {
-    economy = { action: false, bonusAction: false, movementRemaining: current.speed, movementMax: current.speed, reaction: false };
+    economy = {
+      action: false,
+      bonusAction: false,
+      movementRemaining: current.speed,
+      movementMax: current.speed,
+      reaction: false,
+    };
     room.actionEconomies.set(current.tokenId, economy);
   }
   economy.movementRemaining = Math.max(0, economy.movementRemaining - feet);
@@ -1401,25 +1702,32 @@ export function getActionEconomy(sessionId: string): ActionEconomy | null {
   if (!room?.combatState) return null;
   const current = room.combatState.combatants[room.combatState.currentTurnIndex];
   if (!current) return null;
-  return room.actionEconomies.get(current.tokenId) ?? {
-    action: false, bonusAction: false, movementRemaining: current.speed, movementMax: current.speed, reaction: false,
-  };
+  return (
+    room.actionEconomies.get(current.tokenId) ?? {
+      action: false,
+      bonusAction: false,
+      movementRemaining: current.speed,
+      movementMax: current.speed,
+      reaction: false,
+    }
+  );
 }
 
 export function getCombatant(sessionId: string, tokenId: string): Combatant | null {
   const room = getRoom(sessionId);
   if (!room?.combatState) return null;
-  return room.combatState.combatants.find(c => c.tokenId === tokenId) ?? null;
+  return room.combatState.combatants.find((c) => c.tokenId === tokenId) ?? null;
 }
 
 async function persistCombatStateAsync(state: CombatState): Promise<void> {
   await pool.query(
     'UPDATE combat_state SET round_number = $1, current_turn_index = $2, combatants = $3 WHERE session_id = $4',
-    [state.roundNumber, state.currentTurnIndex, JSON.stringify(state.combatants), state.sessionId],
+    [state.roundNumber, state.currentTurnIndex, JSON.stringify(state.combatants), state.sessionId]
   );
 }
 
 function persistCombatState(state: CombatState): void {
-  persistCombatStateAsync(state)
-    .catch(err => console.error('[CombatService] persistCombatState failed:', err));
+  persistCombatStateAsync(state).catch((err) =>
+    console.error('[CombatService] persistCombatState failed:', err)
+  );
 }
