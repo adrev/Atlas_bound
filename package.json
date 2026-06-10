@@ -33,7 +33,8 @@
     "helmet": "^8.1.0"
   },
   "overrides": {
-    "gaxios": "^7.1.4"
+    "gaxios": "^7.1.4",
+    "shell-quote": "1.8.4"
   },
   "lint-staged": {
     "*.{ts,tsx,js,jsx}": [
