@@ -18,9 +18,7 @@ const { mockQuery } = vi.hoisted(() => ({ mockQuery: vi.fn() }));
 vi.mock('../db/connection.js', () => ({ default: { query: mockQuery } }));
 
 import { registerCombatEvents } from '../socket/combatEvents.js';
-import {
-  addPlayerToRoom, createRoom, getAllRooms,
-} from '../utils/roomState.js';
+import { addPlayerToRoom, createRoom, getAllRooms } from '../utils/roomState.js';
 
 // \u2500\u2500 Fake io + socket ----------------------------------------------
 
@@ -44,7 +42,9 @@ function makeHarness() {
   } as never;
   const socket = {
     id: 'sock-1',
-    on: (event: string, handler: Handler) => { handlers[event] = handler; },
+    on: (event: string, handler: Handler) => {
+      handlers[event] = handler;
+    },
     emit: (event: string, payload: unknown) => {
       emissions.push({ channelId: 'sock-1', event, payload });
     },
@@ -59,8 +59,11 @@ function seedRoom(sessionId: string, tokens: Token[]): void {
   for (const t of tokens) room.tokens.set(t.id, t);
   // Wire a DM player so `getPlayerBySocketId('sock-1')` finds them.
   addPlayerToRoom(sessionId, {
-    userId: 'dm-user', displayName: 'DM',
-    socketId: 'sock-1', role: 'dm', characterId: null,
+    userId: 'dm-user',
+    displayName: 'DM',
+    socketId: 'sock-1',
+    role: 'dm',
+    characterId: null,
   });
 }
 
@@ -76,11 +79,23 @@ function addPlayer(sessionId: string, userId = 'player-user', socketId = 'player
 
 function tok(id: string, overrides: Partial<Token> = {}): Token {
   return {
-    id, mapId: 'map-1', characterId: null, name: id,
-    x: 0, y: 0, size: 1, imageUrl: null, color: '#000',
-    layer: 'token', visible: true, hasLight: false,
-    lightRadius: 0, lightDimRadius: 0, lightColor: '#fff',
-    conditions: [], ownerUserId: null,
+    id,
+    mapId: 'map-1',
+    characterId: null,
+    name: id,
+    x: 0,
+    y: 0,
+    size: 1,
+    imageUrl: null,
+    color: '#000',
+    layer: 'token',
+    visible: true,
+    hasLight: false,
+    lightRadius: 0,
+    lightDimRadius: 0,
+    lightColor: '#fff',
+    conditions: [],
+    ownerUserId: null,
     createdAt: new Date().toISOString(),
     ...overrides,
   };
@@ -95,10 +110,7 @@ beforeEach(() => {
 describe('combat:start end-to-end through split modules', () => {
   it('registers combat:start and emits combat:started + initiative rolls + all-initiatives-ready', async () => {
     const sessionId = 's-start';
-    seedRoom(sessionId, [
-      tok('tGoblin', { name: 'Goblin' }),
-      tok('tOrc', { name: 'Orc' }),
-    ]);
+    seedRoom(sessionId, [tok('tGoblin', { name: 'Goblin' }), tok('tOrc', { name: 'Orc' })]);
 
     const { io, socket, handlers, emissions } = makeHarness();
     registerCombatEvents(io, socket);
@@ -116,8 +128,7 @@ describe('combat:start end-to-end through split modules', () => {
     // System chat message announcing the initiative order.
     const chat = emissions.find((e) => e.event === 'chat:new-message');
     expect(chat).toBeDefined();
-    expect((chat!.payload as { content: string }).content)
-      .toMatch(/Combat begins/i);
+    expect((chat!.payload as { content: string }).content).toMatch(/Combat begins/i);
 
     // combat:initiative-set emitted per combatant.
     const initEvents = emissions.filter((e) => e.event === 'combat:initiative-set');
@@ -177,12 +188,17 @@ describe('combat:start end-to-end through split modules', () => {
 
     await handlers['combat:start']!({ tokenIds: ['tGuard', 'tStalker'] });
 
-    const playerStarted = emissions.find((e) => e.channelId === 'player-sock' && e.event === 'combat:started');
+    const playerStarted = emissions.find(
+      (e) => e.channelId === 'player-sock' && e.event === 'combat:started'
+    );
     expect(playerStarted).toBeDefined();
-    expect((playerStarted!.payload as { combatants: Combatant[] }).combatants.map((c) => c.tokenId))
-      .toEqual(['tGuard']);
+    expect(
+      (playerStarted!.payload as { combatants: Combatant[] }).combatants.map((c) => c.tokenId)
+    ).toEqual(['tGuard']);
 
-    const playerChat = emissions.find((e) => e.channelId === 'player-sock' && e.event === 'chat:new-message');
+    const playerChat = emissions.find(
+      (e) => e.channelId === 'player-sock' && e.event === 'chat:new-message'
+    );
     expect((playerChat!.payload as { content: string }).content).not.toContain('Invisible Stalker');
     expect((playerChat!.payload as { content: string }).content).toContain('???');
 
@@ -191,9 +207,12 @@ describe('combat:start end-to-end through split modules', () => {
       .map((e) => (e.payload as { tokenId: string }).tokenId);
     expect(playerInitTokenIds).not.toContain('tStalker');
 
-    const dmStarted = emissions.find((e) => e.channelId === 'sock-1' && e.event === 'combat:started');
-    expect((dmStarted!.payload as { combatants: Combatant[] }).combatants.map((c) => c.tokenId).sort())
-      .toEqual(['tGuard', 'tStalker']);
+    const dmStarted = emissions.find(
+      (e) => e.channelId === 'sock-1' && e.event === 'combat:started'
+    );
+    expect(
+      (dmStarted!.payload as { combatants: Combatant[] }).combatants.map((c) => c.tokenId).sort()
+    ).toEqual(['tGuard', 'tStalker']);
   });
 
   it('combat:end after combat:start clears state and emits combat:ended', async () => {
@@ -209,6 +228,49 @@ describe('combat:start end-to-end through split modules', () => {
     expect(emissions.map((e) => e.event)).toContain('combat:ended');
     const room = getAllRooms().get(sessionId)!;
     expect(room.combatState).toBeNull();
+  });
+
+  it('combat:start clears a pending ready-check timer before starting combat', async () => {
+    const sessionId = 's-start-clears-ready-check';
+    seedRoom(sessionId, [tok('tNpc', { name: 'Npc' })]);
+    const room = getAllRooms().get(sessionId)!;
+    const timeout = setTimeout(() => undefined, 15_000);
+    const clearSpy = vi.spyOn(globalThis, 'clearTimeout');
+    room.readyCheck = {
+      tokenIds: ['tNpc'],
+      responses: new Map(),
+      timeout,
+    };
+
+    const { io, socket, handlers } = makeHarness();
+    registerCombatEvents(io, socket);
+
+    await handlers['combat:start']!({ tokenIds: ['tNpc'] });
+
+    expect(clearSpy).toHaveBeenCalledWith(timeout);
+    expect(room.readyCheck).toBeNull();
+    expect(room.combatState?.active).toBe(true);
+    clearSpy.mockRestore();
+  });
+
+  it('rejects duplicate combat starts instead of replacing active combat', async () => {
+    const sessionId = 's-start-duplicate';
+    seedRoom(sessionId, [tok('tNpc', { name: 'Npc' })]);
+
+    const { io, socket, handlers, emissions } = makeHarness();
+    registerCombatEvents(io, socket);
+
+    await handlers['combat:start']!({ tokenIds: ['tNpc'] });
+    await handlers['combat:start']!({ tokenIds: ['tNpc'] });
+
+    expect(emissions.filter((e) => e.event === 'combat:started')).toHaveLength(1);
+    const duplicateError = emissions.find(
+      (e) =>
+        e.channelId === 'sock-1' &&
+        e.event === 'session:error' &&
+        /combat already active/i.test((e.payload as { message?: string }).message ?? '')
+    );
+    expect(duplicateError).toBeDefined();
   });
 });
 
