@@ -510,12 +510,69 @@ export function emitMusicAction(action: 'pause' | 'resume' | 'next' | 'prev') {
 }
 
 // --- Character ---
+
+/**
+ * True when the live socket is actually connected. The lobby never
+ * connects the socket (`autoConnect: false`), and socket.io silently
+ * BUFFERS emits on a disconnected socket — which is how lobby hero-sheet
+ * edits used to vanish: the optimistic UI said "saved" while the emit
+ * sat in a buffer that never flushed to a joined session.
+ */
+function isSocketConnected(): boolean {
+  try {
+    return getSocket().connected === true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * REST fallback for character mutations when no live socket exists
+ * (lobby hero sheet, brief mid-session disconnects). PUT /api/characters/:id
+ * accepts the same partial `changes` shape (updateCharacterSchema is a
+ * partial of the create schema). Failures surface as a toast instead of
+ * silent data loss.
+ */
+async function restPersistCharacter(characterId: string, changes: Record<string, unknown>) {
+  try {
+    const res = await fetch(`/api/characters/${characterId}`, {
+      method: 'PUT',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(changes),
+    });
+    if (!res.ok) throw new Error(`save failed (${res.status})`);
+  } catch {
+    import('../components/ui/Toast').then(({ showToast }) => {
+      showToast({
+        message: 'Could not save character changes — check your connection and retry.',
+        variant: 'danger',
+        duration: 6000,
+      });
+    });
+  }
+}
+
+/** Disconnected actions that the SERVER must resolve (dice rolls etc.). */
+function toastNeedsLiveSession(what: string) {
+  import('../components/ui/Toast').then(({ showToast }) => {
+    showToast({
+      message: `${what} is rolled by the server — join your session to use it.`,
+      variant: 'danger',
+      duration: 5000,
+    });
+  });
+}
+
 /**
  * Emit a character update to the server AND apply it locally so the UI
  * reflects the change immediately. The server broadcasts to OTHER clients
  * via socket.to(...).emit('character:updated', ...), which intentionally
  * excludes the sender — so without applying locally we'd otherwise show
  * stale data on the next render or panel reopen.
+ *
+ * With no live socket (lobby sheet, network blip) the update persists via
+ * REST instead of buffering into the void.
  *
  * Pass `{ skipLocal: true }` if you've already updated the store yourself
  * (e.g. via setAllCharacters with extra fields) and just want the network
@@ -526,7 +583,11 @@ export function emitCharacterUpdate(
   changes: Record<string, unknown>,
   opts: { skipLocal?: boolean } = {}
 ) {
-  getSocket().emit('character:update', { characterId, changes });
+  if (isSocketConnected()) {
+    getSocket().emit('character:update', { characterId, changes });
+  } else {
+    void restPersistCharacter(characterId, changes);
+  }
   if (!opts.skipLocal) {
     useCharacterStore.getState().applyRemoteUpdate(characterId, changes);
   }
@@ -537,16 +598,39 @@ export function emitCharacterUpdate(
 }
 
 export function emitCharacterRest(characterId: string, kind: 'short' | 'long') {
+  if (!isSocketConnected()) {
+    toastNeedsLiveSession(kind === 'short' ? 'A short rest' : 'A long rest');
+    return;
+  }
   getSocket().emit('character:rest', { characterId, kind });
   triggerSnapshot('character:rest');
 }
 
 export function emitSpendHitDie(characterId: string, dieSize: number) {
+  if (!isSocketConnected()) {
+    // The heal amount is a server-side roll — never fake it client-side.
+    toastNeedsLiveSession('Spending a Hit Die');
+    return;
+  }
   getSocket().emit('character:spend-hit-die', { characterId, dieSize });
   triggerSnapshot('character:spend-hit-die');
 }
 
 export function emitSpellSlotAdjust(characterId: string, level: number, delta: 1 | -1) {
+  if (!isSocketConnected()) {
+    // Pure counter math — compute the new slot state from the store,
+    // apply locally, and persist via REST (e.g. prepping slots between
+    // sessions from the lobby sheet).
+    const character = useCharacterStore.getState().allCharacters[characterId];
+    const slots = character?.spellSlots?.[level];
+    if (!slots) return;
+    const used = Math.min(slots.max, Math.max(0, slots.used + delta));
+    if (used === slots.used) return;
+    const spellSlots = { ...character.spellSlots, [level]: { ...slots, used } };
+    useCharacterStore.getState().applyRemoteUpdate(characterId, { spellSlots });
+    void restPersistCharacter(characterId, { spellSlots });
+    return;
+  }
   getSocket().emit('character:spell-slot-adjust', { characterId, level, delta });
   triggerSnapshot('character:spell-slot-adjust');
 }
