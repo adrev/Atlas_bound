@@ -1,6 +1,6 @@
 import { useSessionStore } from '../stores/useSessionStore';
 import { useMapStore } from '../stores/useMapStore';
-import { useCombatStore } from '../stores/useCombatStore';
+import { useCombatStore, resolveTurnIndex } from '../stores/useCombatStore';
 import { useCharacterStore } from '../stores/useCharacterStore';
 import type { Token, Combatant } from '@dnd-vtt/shared';
 import { recordEventId, getLastEventId } from './eventCursor';
@@ -147,6 +147,7 @@ export async function pullStateSnapshot(): Promise<{ ok: boolean; applied: boole
         active: boolean;
         roundNumber: number;
         currentTurnIndex: number;
+        currentTokenId?: string | null;
         combatants: Combatant[];
         startedAt: number;
       };
@@ -242,15 +243,24 @@ export async function pullStateSnapshot(): Promise<{ ok: boolean; applied: boole
     //    If server says combat is null (not active), clear locally.
     const combatStore = useCombatStore.getState();
     if (snap.combat) {
+      // The snapshot's combatant list is visibility-filtered for this
+      // client, so the raw index is wrong whenever hidden combatants
+      // precede the current one — resolve by tokenId against the
+      // filtered list (-1 = current combatant hidden from us).
+      const localTurnIndex = resolveTurnIndex(
+        snap.combat.combatants,
+        snap.combat.currentTokenId,
+        snap.combat.currentTurnIndex
+      );
       if (!combatStore.active) {
         // Combat genuinely started while we were desynced — full init.
         combatStore.startCombat(snap.combat.combatants, snap.combat.roundNumber);
-        // startCombat resets currentTurnIndex to 0 — force the server's
-        // value after, since it knows where the turn cursor actually is.
-        useCombatStore.setState({ currentTurnIndex: snap.combat.currentTurnIndex });
+        // startCombat resets currentTurnIndex to 0 — force the resolved
+        // value after, since the server knows where the cursor actually is.
+        useCombatStore.setState({ currentTurnIndex: localTurnIndex });
       } else if (
         combatStore.roundNumber !== snap.combat.roundNumber ||
-        combatStore.currentTurnIndex !== snap.combat.currentTurnIndex ||
+        combatStore.currentTurnIndex !== localTurnIndex ||
         combatantsChanged(combatStore.combatants, snap.combat.combatants)
       ) {
         // Mid-combat drift (hidden-token reveal growing the list, a
@@ -262,7 +272,7 @@ export async function pullStateSnapshot(): Promise<{ ok: boolean; applied: boole
         useCombatStore.setState({
           combatants: snap.combat.combatants,
           roundNumber: snap.combat.roundNumber,
-          currentTurnIndex: snap.combat.currentTurnIndex,
+          currentTurnIndex: localTurnIndex,
         });
       }
     } else if (combatStore.active) {
