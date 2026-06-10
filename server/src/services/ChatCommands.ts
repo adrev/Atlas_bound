@@ -1,6 +1,10 @@
 import type { Server } from 'socket.io';
 import type {
-  ChatMessage, AttackBreakdown, SpellCastBreakdown, SaveBreakdown, ActionBreakdown,
+  ChatMessage,
+  AttackBreakdown,
+  SpellCastBreakdown,
+  SaveBreakdown,
+  ActionBreakdown,
 } from '@dnd-vtt/shared';
 import { v4 as uuidv4 } from 'uuid';
 import pool from '../db/connection.js';
@@ -17,9 +21,17 @@ import { emitTokenScopedChat, tokenScopedChatIsPrivate } from '../utils/tokenSco
  * Handlers decide authorization and either:
  *   - emit zero or more chat messages and return `true` to suppress
  *     the default chat:new-message broadcast for the original input,
- *   - return `false` to let the caller fall through to normal chat
- *     (useful when the command is unknown / unauthorized and we
- *     want the user's input to show in chat as a regular line).
+ *   - return `false` to let the caller fall through to normal chat.
+ *
+ * UNKNOWN commands do NOT fall through to public chat. A typo'd
+ * command used to be persisted + broadcast room-wide as a regular
+ * line, which was both a silent failure (the player thinks `!firebolt`
+ * did something) and a leak vector (a DM typo'ing `!gmnotes <secret>`
+ * published the secret to every player's scrollback). Now anything
+ * that *looks* like a command attempt (`!` + a word) but matches no
+ * handler is suppressed and answered with a private whisper + nearest-
+ * name suggestion. Non-word `!` text ("!!!", "!?") still falls through
+ * as ordinary chat.
  *
  * The dispatcher intentionally never throws — individual handler
  * errors get caught and surfaced as a whispered system message to
@@ -42,12 +54,60 @@ export type ChatCommandHandler = (c: ChatCommandContext) => HandlerResult;
 
 const handlers: Record<string, ChatCommandHandler> = {};
 
-export function registerChatCommand(
-  names: string | string[],
-  handler: ChatCommandHandler,
-): void {
+export function registerChatCommand(names: string | string[], handler: ChatCommandHandler): void {
   const list = Array.isArray(names) ? names : [names];
   for (const n of list) handlers[n.toLowerCase()] = handler;
+}
+
+/** All registered command names (lowercased). Exposed for typo suggestions and the typeahead. */
+export function registeredCommandNames(): string[] {
+  return Object.keys(handlers);
+}
+
+/** A command *attempt* is `!` + a word-like token — not "!!!" or "!?". */
+const COMMAND_WORD = /^[a-z][a-z0-9-]*$/;
+
+/** Bounded Levenshtein distance — bails out early once > max. */
+function editDistance(a: string, b: string, max: number): number {
+  if (Math.abs(a.length - b.length) > max) return max + 1;
+  let prev = Array.from({ length: b.length + 1 }, (_, i) => i);
+  for (let i = 1; i <= a.length; i++) {
+    const curr = [i];
+    let rowMin = i;
+    for (let j = 1; j <= b.length; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      curr[j] = Math.min(prev[j] + 1, curr[j - 1] + 1, prev[j - 1] + cost);
+      if (curr[j] < rowMin) rowMin = curr[j];
+    }
+    if (rowMin > max) return max + 1;
+    prev = curr;
+  }
+  return prev[b.length];
+}
+
+/**
+ * Nearest registered command for a typo, or null. Prefers a unique
+ * prefix match (`!firebal` → `!fireball`), then the smallest edit
+ * distance ≤ 2 (≤ 1 for very short inputs, where 2 edits can morph
+ * into an unrelated command).
+ */
+export function suggestCommand(input: string): string | null {
+  const names = registeredCommandNames();
+  const prefixed = names.filter((n) => n.startsWith(input));
+  if (prefixed.length > 0) {
+    return prefixed.sort((a, b) => a.length - b.length)[0];
+  }
+  const maxDist = input.length <= 4 ? 1 : 2;
+  let best: string | null = null;
+  let bestDist = maxDist + 1;
+  for (const n of names) {
+    const d = editDistance(input, n, maxDist);
+    if (d < bestDist || (d === bestDist && best !== null && n.length < best.length)) {
+      best = n;
+      bestDist = d;
+    }
+  }
+  return bestDist <= maxDist ? best : null;
 }
 
 /**
@@ -57,7 +117,7 @@ export function registerChatCommand(
 export async function tryHandleChatCommand(
   io: Server,
   ctx: PlayerContext,
-  raw: string,
+  raw: string
 ): Promise<boolean> {
   if (!raw.startsWith('!')) return false;
   const trimmed = raw.slice(1).trim();
@@ -68,7 +128,20 @@ export async function tryHandleChatCommand(
   const rest = firstSpace === -1 ? '' : trimmed.slice(firstSpace + 1).trim();
 
   const handler = handlers[command];
-  if (!handler) return false;
+  if (!handler) {
+    // Looks like a command attempt but matches nothing — suppress the
+    // public broadcast (no silent failure, no `!gmnotes` secret leak)
+    // and tell the sender privately. Non-word `!` text ("!!!") is not
+    // a command attempt and falls through to normal chat.
+    if (!COMMAND_WORD.test(command)) return false;
+    const suggestion = suggestCommand(command);
+    whisperToCaller(
+      io,
+      ctx,
+      `Unknown command \`!${command}\`${suggestion ? ` — did you mean \`!${suggestion}\`?` : ''} Type \`!help\` for the catalog. (Your message was not posted.)`
+    );
+    return true;
+  }
 
   try {
     return await handler({ io: scopedChatCommandIo(io, ctx), ctx, raw, command, rest });
@@ -99,8 +172,12 @@ function scopedChatCommandIo(io: Server, ctx: PlayerContext): Server {
                 });
                 return true;
               }
-              return (opTarget.emit as (...emitArgs: unknown[]) => unknown)
-                .call(opTarget, event, payload, ...args);
+              return (opTarget.emit as (...emitArgs: unknown[]) => unknown).call(
+                opTarget,
+                event,
+                payload,
+                ...args
+              );
             };
           },
         });
@@ -112,14 +189,14 @@ function scopedChatCommandIo(io: Server, ctx: PlayerContext): Server {
 function tokenIdForScopedCommandEmit(
   ctx: PlayerContext,
   event: string,
-  payload: unknown,
+  payload: unknown
 ): string | null {
   if (typeof payload !== 'object' || payload === null) return null;
 
   if (
-    event === 'map:token-updated'
-    || event === 'combat:hp-changed'
-    || event === 'combat:action-used'
+    event === 'map:token-updated' ||
+    event === 'combat:hp-changed' ||
+    event === 'combat:action-used'
   ) {
     const tokenId = (payload as { tokenId?: unknown }).tokenId;
     return typeof tokenId === 'string' ? tokenId : null;
@@ -173,7 +250,7 @@ export function broadcastSystem(
   io: Server,
   ctx: PlayerContext,
   content: string,
-  structured?: ChatStructuredPayloads,
+  structured?: ChatStructuredPayloads
 ): void {
   const message: ChatMessage = {
     id: uuidv4(),
@@ -193,20 +270,34 @@ export function broadcastSystem(
   };
   // Persist so history shows the command result on refresh, including
   // the structured breakdowns so cards rehydrate correctly.
-  const attackResultJson = structured?.attackResult ? JSON.stringify(structured.attackResult) : null;
+  const attackResultJson = structured?.attackResult
+    ? JSON.stringify(structured.attackResult)
+    : null;
   const spellResultJson = structured?.spellResult ? JSON.stringify(structured.spellResult) : null;
   const saveResultJson = structured?.saveResult ? JSON.stringify(structured.saveResult) : null;
-  const actionResultJson = structured?.actionResult ? JSON.stringify(structured.actionResult) : null;
-  pool.query(
-    `INSERT INTO chat_messages (id, session_id, user_id, display_name, type, content, character_name, attack_result, spell_result, save_result, action_result, created_at)
+  const actionResultJson = structured?.actionResult
+    ? JSON.stringify(structured.actionResult)
+    : null;
+  pool
+    .query(
+      `INSERT INTO chat_messages (id, session_id, user_id, display_name, type, content, character_name, attack_result, spell_result, save_result, action_result, created_at)
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
-    [
-      message.id, message.sessionId, message.userId, message.displayName,
-      message.type, message.content, message.characterName,
-      attackResultJson, spellResultJson, saveResultJson, actionResultJson,
-      message.createdAt,
-    ],
-  ).catch((e) => console.warn('[chat-commands] persist broadcast failed:', e));
+      [
+        message.id,
+        message.sessionId,
+        message.userId,
+        message.displayName,
+        message.type,
+        message.content,
+        message.characterName,
+        attackResultJson,
+        spellResultJson,
+        saveResultJson,
+        actionResultJson,
+        message.createdAt,
+      ]
+    )
+    .catch((e) => console.warn('[chat-commands] persist broadcast failed:', e));
   io.to(ctx.room.sessionId).emit('chat:new-message', message);
 }
 
@@ -220,7 +311,7 @@ export function broadcastTokenScopedSystem(
   ctx: PlayerContext,
   tokenId: string,
   content: string,
-  structured?: ChatStructuredPayloads,
+  structured?: ChatStructuredPayloads
 ): void {
   const hidden = tokenScopedChatIsPrivate(ctx.room, tokenId);
   const message: ChatMessage = {
@@ -240,20 +331,35 @@ export function broadcastTokenScopedSystem(
     hidden,
     createdAt: new Date().toISOString(),
   };
-  const attackResultJson = structured?.attackResult ? JSON.stringify(structured.attackResult) : null;
+  const attackResultJson = structured?.attackResult
+    ? JSON.stringify(structured.attackResult)
+    : null;
   const spellResultJson = structured?.spellResult ? JSON.stringify(structured.spellResult) : null;
   const saveResultJson = structured?.saveResult ? JSON.stringify(structured.saveResult) : null;
-  const actionResultJson = structured?.actionResult ? JSON.stringify(structured.actionResult) : null;
-  pool.query(
-    `INSERT INTO chat_messages (id, session_id, user_id, display_name, type, content, character_name, attack_result, spell_result, save_result, action_result, hidden, created_at)
+  const actionResultJson = structured?.actionResult
+    ? JSON.stringify(structured.actionResult)
+    : null;
+  pool
+    .query(
+      `INSERT INTO chat_messages (id, session_id, user_id, display_name, type, content, character_name, attack_result, spell_result, save_result, action_result, hidden, created_at)
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
-    [
-      message.id, message.sessionId, message.userId, message.displayName,
-      message.type, message.content, message.characterName,
-      attackResultJson, spellResultJson, saveResultJson, actionResultJson,
-      hidden ? 1 : 0, message.createdAt,
-    ],
-  ).catch((e) => console.warn('[chat-commands] persist token-scoped broadcast failed:', e));
+      [
+        message.id,
+        message.sessionId,
+        message.userId,
+        message.displayName,
+        message.type,
+        message.content,
+        message.characterName,
+        attackResultJson,
+        spellResultJson,
+        saveResultJson,
+        actionResultJson,
+        hidden ? 1 : 0,
+        message.createdAt,
+      ]
+    )
+    .catch((e) => console.warn('[chat-commands] persist token-scoped broadcast failed:', e));
   emitTokenScopedChat(io, ctx.room, tokenId, message as unknown as Record<string, unknown>);
 }
 
