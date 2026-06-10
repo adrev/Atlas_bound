@@ -3,7 +3,7 @@ import { useMapStore } from '../stores/useMapStore';
 import { useCombatStore } from '../stores/useCombatStore';
 import { useCharacterStore } from '../stores/useCharacterStore';
 import type { Token, Combatant } from '@dnd-vtt/shared';
-import { recordEventId } from './eventCursor';
+import { recordEventId, getLastEventId } from './eventCursor';
 
 /**
  * Debounced snapshot trigger. Callers (UI actions, socket listeners)
@@ -95,10 +95,10 @@ export async function pullStateSnapshot(): Promise<{ ok: boolean; applied: boole
   try {
     const headers: Record<string, string> = {};
     if (lastStateEtag) headers['If-None-Match'] = lastStateEtag;
-    const resp = await fetch(
-      `/api/sessions/${sessionId}/state`,
-      { credentials: 'include', headers },
-    );
+    const resp = await fetch(`/api/sessions/${sessionId}/state`, {
+      credentials: 'include',
+      headers,
+    });
 
     // 304 Not Modified — nothing changed since our last pull. Keep the
     // cached state, skip the parse + reconcile entirely.
@@ -126,6 +126,17 @@ export async function pullStateSnapshot(): Promise<{ ok: boolean; applied: boole
       roundNumber: number;
     };
 
+    // STALENESS GUARD: a /state response can land AFTER live socket
+    // events that the server read happened BEFORE (HTTP overtaken by
+    // websocket). nextEventId is the room's monotonic event counter at
+    // snapshot time; if we've already applied newer live events, this
+    // snapshot is provably older than our state — applying it would
+    // rubber-band token positions and rewind combat (turn indicator
+    // jumping backwards). Discard; the next poll re-converges.
+    if (typeof snap.nextEventId === 'number' && snap.nextEventId < getLastEventId()) {
+      return { ok: true, applied: false };
+    }
+
     // Guard against a non-authoritative "no room on this instance"
     // snapshot wiping real local state. The server returns an empty
     // snapshot with nextEventId 0 when getRoom() is null — e.g. a Cloud
@@ -137,11 +148,10 @@ export async function pullStateSnapshot(): Promise<{ ok: boolean; applied: boole
     // a stale source — skip it; the socket and the next poll to the
     // authoritative instance self-heal.
     if (
-      snap.nextEventId === 0
-      && snap.tokens.length === 0
-      && !snap.combat
-      && (Object.keys(useMapStore.getState().tokens).length > 0
-        || useCombatStore.getState().active)
+      snap.nextEventId === 0 &&
+      snap.tokens.length === 0 &&
+      !snap.combat &&
+      (Object.keys(useMapStore.getState().tokens).length > 0 || useCombatStore.getState().active)
     ) {
       return { ok: true, applied: false };
     }
@@ -165,34 +175,66 @@ export async function pullStateSnapshot(): Promise<{ ok: boolean; applied: boole
       // whole token layer every 15 s if nothing changed.
       const currentIds = Object.keys(mapStore.tokens).sort().join(',');
       const nextIds = Object.keys(nextTokens).sort().join(',');
-      const changed = currentIds !== nextIds || Object.values(nextTokens).some((t) => {
-        const existing = mapStore.tokens[t.id];
-        if (!existing) return true;
-        // Cheap shallow comparison on the fields that actually drive
-        // re-renders. Pos / size / image / conditions / hp-ish.
-        return existing.x !== t.x || existing.y !== t.y
-          || existing.size !== t.size || existing.imageUrl !== t.imageUrl
-          || existing.visible !== t.visible
-          || JSON.stringify(existing.conditions) !== JSON.stringify(t.conditions);
-      });
+      const changed =
+        currentIds !== nextIds ||
+        Object.values(nextTokens).some((t) => {
+          const existing = mapStore.tokens[t.id];
+          if (!existing) return true;
+          // Shallow comparison on every render-relevant field. This used
+          // to check only pos/size/image/visible/conditions, which meant
+          // a missed map:token-updated that changed lights, name, layer,
+          // or ownership NEVER self-healed — the diff declared
+          // "unchanged" forever (e.g. a torch lit during a socket gap
+          // left that player in darkness for the rest of the scene).
+          return (
+            existing.x !== t.x ||
+            existing.y !== t.y ||
+            existing.size !== t.size ||
+            existing.imageUrl !== t.imageUrl ||
+            existing.visible !== t.visible ||
+            existing.name !== t.name ||
+            existing.layer !== t.layer ||
+            existing.ownerUserId !== t.ownerUserId ||
+            existing.characterId !== t.characterId ||
+            existing.hasLight !== t.hasLight ||
+            existing.lightRadius !== t.lightRadius ||
+            existing.lightDimRadius !== t.lightDimRadius ||
+            existing.lightColor !== t.lightColor ||
+            existing.color !== t.color ||
+            JSON.stringify(existing.conditions) !== JSON.stringify(t.conditions)
+          );
+        });
       if (changed) {
         useMapStore.setState({ tokens: nextTokens });
       }
     }
 
-    // ── Combat: server is authoritative. If the server says we're
-    //    in a round, adopt round / turn / combatants. If server says
-    //    combat is null (not active), clear locally.
+    // ── Combat: server is authoritative for round / turn / combatants.
+    //    If server says combat is null (not active), clear locally.
     const combatStore = useCombatStore.getState();
     if (snap.combat) {
-      if (!combatStore.active
-        || combatStore.roundNumber !== snap.combat.roundNumber
-        || combatStore.currentTurnIndex !== snap.combat.currentTurnIndex
-        || combatStore.combatants.length !== snap.combat.combatants.length) {
+      if (!combatStore.active) {
+        // Combat genuinely started while we were desynced — full init.
         combatStore.startCombat(snap.combat.combatants, snap.combat.roundNumber);
         // startCombat resets currentTurnIndex to 0 — force the server's
         // value after, since it knows where the turn cursor actually is.
         useCombatStore.setState({ currentTurnIndex: snap.combat.currentTurnIndex });
+      } else if (
+        combatStore.roundNumber !== snap.combat.roundNumber ||
+        combatStore.currentTurnIndex !== snap.combat.currentTurnIndex ||
+        combatStore.combatants.length !== snap.combat.combatants.length
+      ) {
+        // Mid-combat drift (hidden-token reveal growing the list, a
+        // reinforcement, a missed turn-advance): MERGE the authoritative
+        // trio. This used to call startCombat(), which also reset the
+        // damage log (killing the end-of-battle recap), the action-
+        // economy pills, the review phase, and the combat clock — every
+        // time the DM revealed an ambusher or added a goblin.
+        useCombatStore.setState({
+          combatants: snap.combat.combatants,
+          roundNumber: snap.combat.roundNumber,
+          currentTurnIndex: snap.combat.currentTurnIndex,
+        });
       }
     } else if (combatStore.active) {
       combatStore.endCombat();
