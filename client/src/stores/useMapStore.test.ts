@@ -68,3 +68,55 @@ describe('useMapStore.selectToken', () => {
     expect(useMapStore.getState().selectedTokenId).toBeNull();
   });
 });
+
+// Regression: applyMapLoad rebuilt `currentMap` field-by-field and DROPPED
+// ambientLight/ambientOpacity — every join / refresh / ribbon move rendered
+// dark or dim maps fully bright (FogLayer treats undefined as 'bright')
+// until the DM re-touched lighting. Found independently by two audits.
+describe('useMapStore.applyMapLoad', () => {
+  const baseMap = {
+    id: 'm1',
+    name: 'Cavern',
+    imageUrl: null,
+    width: 1400,
+    height: 1400,
+    gridSize: 70,
+    gridType: 'square' as const,
+    gridOffsetX: 0,
+    gridOffsetY: 0,
+    walls: [],
+    fogState: [],
+  };
+
+  beforeEach(() => {
+    useMapStore.setState({ currentMap: null, playerMapId: null, tokens: {} });
+  });
+
+  it('preserves ambient lighting through a ribbon map load', () => {
+    useMapStore.getState().applyMapLoad({
+      map: { ...baseMap, ambientLight: 'dark', ambientOpacity: 0.85 },
+      tokens: [],
+    });
+    const m = useMapStore.getState().currentMap!;
+    expect(m.ambientLight).toBe('dark');
+    expect(m.ambientOpacity).toBe(0.85);
+  });
+
+  it('preserves ambient lighting through a DM preview load (ribbon untouched)', () => {
+    useMapStore.setState({ playerMapId: 'ribbon-map' });
+    useMapStore.getState().applyMapLoad({
+      map: { ...baseMap, id: 'preview-map', ambientLight: 'dim' },
+      tokens: [],
+      isPreview: true,
+    });
+    expect(useMapStore.getState().currentMap!.ambientLight).toBe('dim');
+    expect(useMapStore.getState().playerMapId).toBe('ribbon-map');
+  });
+
+  it('leaves legacy maps without ambient fields as undefined (renders bright)', () => {
+    useMapStore.getState().applyMapLoad({ map: { ...baseMap }, tokens: [] });
+    const m = useMapStore.getState().currentMap!;
+    expect(m.ambientLight).toBeUndefined();
+    expect(m.ambientOpacity).toBeUndefined();
+  });
+});
