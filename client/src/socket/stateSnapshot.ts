@@ -35,6 +35,35 @@ const MIN_INTERVAL_MS = 80;
 let lastStateEtag: string | null = null;
 let lastStateEtagSessionId: string | null = null;
 
+function combatantsChanged(current: Combatant[], next: Combatant[]): boolean {
+  if (current.length !== next.length) return true;
+  return next.some((n, index) => {
+    const c = current[index];
+    if (!c) return true;
+    return (
+      c.tokenId !== n.tokenId ||
+      c.characterId !== n.characterId ||
+      c.name !== n.name ||
+      c.initiative !== n.initiative ||
+      c.initiativeBonus !== n.initiativeBonus ||
+      c.hp !== n.hp ||
+      c.maxHp !== n.maxHp ||
+      c.tempHp !== n.tempHp ||
+      c.armorClass !== n.armorClass ||
+      c.speed !== n.speed ||
+      c.isNPC !== n.isNPC ||
+      c.portraitUrl !== n.portraitUrl ||
+      c.exhaustionLevel !== n.exhaustionLevel ||
+      c.hasAlert !== n.hasAlert ||
+      c.surprised !== n.surprised ||
+      c.deathSaveRolledRound !== n.deathSaveRolledRound ||
+      JSON.stringify(c.conditions) !== JSON.stringify(n.conditions) ||
+      JSON.stringify(c.deathSaves) !== JSON.stringify(n.deathSaves) ||
+      JSON.stringify(c.initiativeBreakdown) !== JSON.stringify(n.initiativeBreakdown)
+    );
+  });
+}
+
 /**
  * Schedule an authoritative state resync from the server. Safe to
  * call from anywhere — event listeners, UI handlers, imperative
@@ -222,7 +251,7 @@ export async function pullStateSnapshot(): Promise<{ ok: boolean; applied: boole
       } else if (
         combatStore.roundNumber !== snap.combat.roundNumber ||
         combatStore.currentTurnIndex !== snap.combat.currentTurnIndex ||
-        combatStore.combatants.length !== snap.combat.combatants.length
+        combatantsChanged(combatStore.combatants, snap.combat.combatants)
       ) {
         // Mid-combat drift (hidden-token reveal growing the list, a
         // reinforcement, a missed turn-advance): MERGE the authoritative

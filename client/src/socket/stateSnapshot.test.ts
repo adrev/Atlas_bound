@@ -273,6 +273,37 @@ describe('pullStateSnapshot — non-destructive combat merge', () => {
     expect(cs.damageLog).toHaveLength(1);
   });
 
+  it('adopts same-count combatant changes without wiping the log', async () => {
+    useCombatStore.setState({
+      active: true,
+      roundNumber: 3,
+      currentTurnIndex: 1,
+      combatants: [combatant('a'), combatant('b')],
+      damageLog: [{ round: 2 }] as never,
+    } as never);
+    mockState(
+      {
+        mapId: 'map-1',
+        tokens: [],
+        combat: {
+          active: true,
+          roundNumber: 3,
+          currentTurnIndex: 1,
+          combatants: [combatant('a'), { ...combatant('b'), hp: 4 }],
+          startedAt: 0,
+        },
+        characters: {},
+        nextEventId: 9,
+        roundNumber: 3,
+      },
+      'W/"m2b"'
+    );
+    await pullStateSnapshot();
+    const cs = useCombatStore.getState();
+    expect(cs.combatants[1].hp).toBe(4);
+    expect(cs.damageLog).toHaveLength(1);
+  });
+
   it('still does a full startCombat when combat begins while desynced', async () => {
     useCombatStore.setState({ active: false, damageLog: [{ round: 1 }] as never } as never);
     mockState(
