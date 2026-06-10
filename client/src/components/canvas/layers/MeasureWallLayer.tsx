@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect } from 'react';
 import { Line, Text, Circle, Group } from 'react-konva';
 import type { WallSegment } from '@dnd-vtt/shared';
 import { useMapStore } from '../../../stores/useMapStore';
@@ -92,40 +92,32 @@ export function MeasureWallLayer() {
     y: (y1 + y2) / 2,
   });
 
-  const [draggingWall, setDraggingWall] = useState<{ wallIndex: number; endpoint: 'start' | 'end' } | null>(null);
-
   return (
     <Group listening={true}>
       {/* Existing walls with interactive endpoints (wall tool only) */}
-      {isWall && walls.map((w, i) => (
-        <WallSegmentDisplay
-          key={`wall-${i}`}
-          wall={w}
-          index={i}
-          gridSize={gridSize}
-          onDeleteWall={(idx) => {
-            // Remove wall via socket
-            import('../../../socket/emitters').then(({ emitWallRemove }) => {
-              emitWallRemove(idx);
-            });
-          }}
-          onDragEndpoint={(idx, endpoint, newX, newY) => {
-            // Update wall by removing old and adding new
-            import('../../../socket/emitters').then(({ emitWallRemove, emitWallAdd }) => {
-              const old = walls[idx];
-              emitWallRemove(idx);
-              // Small delay to avoid race condition
-              setTimeout(() => {
-                if (endpoint === 'start') {
-                  emitWallAdd({ x1: newX, y1: newY, x2: old.x2, y2: old.y2 });
-                } else {
-                  emitWallAdd({ x1: old.x1, y1: old.y1, x2: newX, y2: newY });
-                }
-              }, 50);
-            });
-          }}
-        />
-      ))}
+      {isWall &&
+        walls.map((w, i) => (
+          <WallSegmentDisplay
+            key={`wall-${i}`}
+            wall={w}
+            index={i}
+            onDragEndpoint={(idx, endpoint, newX, newY) => {
+              // Update wall by removing old and adding new
+              import('../../../socket/emitters').then(({ emitWallRemove, emitWallAdd }) => {
+                const old = walls[idx];
+                emitWallRemove(idx);
+                // Small delay to avoid race condition
+                setTimeout(() => {
+                  if (endpoint === 'start') {
+                    emitWallAdd({ x1: newX, y1: newY, x2: old.x2, y2: old.y2 });
+                  } else {
+                    emitWallAdd({ x1: old.x1, y1: old.y1, x2: newX, y2: newY });
+                  }
+                }, 50);
+              });
+            }}
+          />
+        ))}
 
       {/* Preview line while drawing */}
       {startPoint && currentPoint && (
@@ -159,51 +151,63 @@ export function MeasureWallLayer() {
           />
 
           {/* Distance label */}
-          {isMeasure && (() => {
-            const dist = getDistanceFt(startPoint.x, startPoint.y, currentPoint.x, currentPoint.y);
-            const mid = getMidpoint(startPoint.x, startPoint.y, currentPoint.x, currentPoint.y);
-            const cells = Math.round(dist / 5);
-            return (
-              <>
-                {/* Background for text */}
+          {isMeasure &&
+            (() => {
+              const dist = getDistanceFt(
+                startPoint.x,
+                startPoint.y,
+                currentPoint.x,
+                currentPoint.y
+              );
+              const mid = getMidpoint(startPoint.x, startPoint.y, currentPoint.x, currentPoint.y);
+              const cells = Math.round(dist / 5);
+              return (
+                <>
+                  {/* Background for text */}
+                  <Text
+                    x={mid.x - 40}
+                    y={mid.y - 22}
+                    width={80}
+                    height={20}
+                    text={`${dist} ft (${cells} cells)`}
+                    fontSize={18}
+                    fontStyle="bold"
+                    fill="#d4a843"
+                    align="center"
+                    shadowColor="#000"
+                    shadowBlur={4}
+                    shadowEnabled
+                  />
+                </>
+              );
+            })()}
+
+          {/* Wall length label */}
+          {isWall &&
+            (() => {
+              const dist = getDistanceFt(
+                startPoint.x,
+                startPoint.y,
+                currentPoint.x,
+                currentPoint.y
+              );
+              const mid = getMidpoint(startPoint.x, startPoint.y, currentPoint.x, currentPoint.y);
+              return (
                 <Text
-                  x={mid.x - 40}
-                  y={mid.y - 22}
-                  width={80}
-                  height={20}
-                  text={`${dist} ft (${cells} cells)`}
-                  fontSize={18}
+                  x={mid.x - 30}
+                  y={mid.y - 20}
+                  width={60}
+                  text={`${dist} ft`}
+                  fontSize={16}
                   fontStyle="bold"
-                  fill="#d4a843"
+                  fill="#c53131"
                   align="center"
                   shadowColor="#000"
                   shadowBlur={4}
                   shadowEnabled
                 />
-              </>
-            );
-          })()}
-
-          {/* Wall length label */}
-          {isWall && (() => {
-            const dist = getDistanceFt(startPoint.x, startPoint.y, currentPoint.x, currentPoint.y);
-            const mid = getMidpoint(startPoint.x, startPoint.y, currentPoint.x, currentPoint.y);
-            return (
-              <Text
-                x={mid.x - 30}
-                y={mid.y - 20}
-                width={60}
-                text={`${dist} ft`}
-                fontSize={16}
-                fontStyle="bold"
-                fill="#c53131"
-                align="center"
-                shadowColor="#000"
-                shadowBlur={4}
-                shadowEnabled
-              />
-            );
-          })()}
+              );
+            })()}
         </>
       )}
 
@@ -212,7 +216,11 @@ export function MeasureWallLayer() {
         <Text
           x={10}
           y={10}
-          text={isMeasure ? 'Click to set start point (Esc to cancel)' : 'Click to set wall start (Esc to cancel)'}
+          text={
+            isMeasure
+              ? 'Click to set start point (Esc to cancel)'
+              : 'Click to set wall start (Esc to cancel)'
+          }
           fontSize={16}
           fill={isMeasure ? '#d4a843' : '#c53131'}
           opacity={0.8}
@@ -226,7 +234,11 @@ export function MeasureWallLayer() {
         <Text
           x={10}
           y={10}
-          text={isMeasure ? 'Click to measure (Esc to cancel)' : 'Click to place wall end (Esc to cancel)'}
+          text={
+            isMeasure
+              ? 'Click to measure (Esc to cancel)'
+              : 'Click to place wall end (Esc to cancel)'
+          }
           fontSize={16}
           fill={isMeasure ? '#d4a843' : '#c53131'}
           opacity={0.8}
@@ -241,12 +253,12 @@ export function MeasureWallLayer() {
 
 /** Interactive wall segment with draggable endpoints and right-click context menu */
 function WallSegmentDisplay({
-  wall, index, gridSize, onDeleteWall, onDragEndpoint,
+  wall,
+  index,
+  onDragEndpoint,
 }: {
   wall: WallSegment;
   index: number;
-  gridSize: number;
-  onDeleteWall: (index: number) => void;
   onDragEndpoint: (index: number, endpoint: 'start' | 'end', x: number, y: number) => void;
 }) {
   const [hovered, setHovered] = useState(false);
@@ -255,8 +267,12 @@ function WallSegmentDisplay({
   const endpointRadius = 10;
 
   // Sync with prop changes
-  useEffect(() => { setLiveStart({ x: wall.x1, y: wall.y1 }); }, [wall.x1, wall.y1]);
-  useEffect(() => { setLiveEnd({ x: wall.x2, y: wall.y2 }); }, [wall.x2, wall.y2]);
+  useEffect(() => {
+    setLiveStart({ x: wall.x1, y: wall.y1 });
+  }, [wall.x1, wall.y1]);
+  useEffect(() => {
+    setLiveEnd({ x: wall.x2, y: wall.y2 });
+  }, [wall.x2, wall.y2]);
 
   return (
     <Group>
@@ -279,13 +295,15 @@ function WallSegmentDisplay({
           const pointer = stage.getPointerPosition();
           if (!pointer) return;
           const container = stage.container().getBoundingClientRect();
-          window.dispatchEvent(new CustomEvent('wall-context-menu', {
-            detail: {
-              screenX: pointer.x + container.left,
-              screenY: pointer.y + container.top,
-              wallIndex: index,
-            }
-          }));
+          window.dispatchEvent(
+            new CustomEvent('wall-context-menu', {
+              detail: {
+                screenX: pointer.x + container.left,
+                screenY: pointer.y + container.top,
+                wallIndex: index,
+              },
+            })
+          );
         }}
       />
 
@@ -354,7 +372,9 @@ function WallSegmentDisplay({
 
 /** Wall right-click context menu (delete / toggle visibility) */
 export function WallContextMenu() {
-  const [menu, setMenu] = useState<{ screenX: number; screenY: number; wallIndex: number } | null>(null);
+  const [menu, setMenu] = useState<{ screenX: number; screenY: number; wallIndex: number } | null>(
+    null
+  );
 
   useEffect(() => {
     const handler = (e: Event) => {
@@ -371,27 +391,51 @@ export function WallContextMenu() {
 
   return (
     <>
-      <div style={{ position: 'fixed', inset: 0, zIndex: 9998 }}
-        onClick={e => { e.stopPropagation(); e.preventDefault(); close(); }}
-        onMouseDown={e => { e.stopPropagation(); e.preventDefault(); }}
-        onMouseUp={e => e.stopPropagation()}
-        onContextMenu={e => { e.preventDefault(); e.stopPropagation(); close(); }}
+      <div
+        style={{ position: 'fixed', inset: 0, zIndex: 9998 }}
+        onClick={(e) => {
+          e.stopPropagation();
+          e.preventDefault();
+          close();
+        }}
+        onMouseDown={(e) => {
+          e.stopPropagation();
+          e.preventDefault();
+        }}
+        onMouseUp={(e) => e.stopPropagation()}
+        onContextMenu={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          close();
+        }}
       />
       <div
-        onMouseDown={e => e.stopPropagation()}
-        onClick={e => e.stopPropagation()}
+        onMouseDown={(e) => e.stopPropagation()}
+        onClick={(e) => e.stopPropagation()}
         style={{
           position: 'fixed',
           left: Math.min(menu.screenX, window.innerWidth - 180),
           top: Math.min(menu.screenY, window.innerHeight - 100),
           zIndex: 9999,
-          background: theme.bg.deep, border: `1px solid ${theme.border.default}`, borderRadius: theme.radius.md,
-          boxShadow: theme.shadow.lg, minWidth: 160,
-          fontFamily: theme.font.body, fontSize: 13, color: theme.text.primary,
+          background: theme.bg.deep,
+          border: `1px solid ${theme.border.default}`,
+          borderRadius: theme.radius.md,
+          boxShadow: theme.shadow.lg,
+          minWidth: 160,
+          fontFamily: theme.font.body,
+          fontSize: 13,
+          color: theme.text.primary,
           overflow: 'hidden',
         }}
       >
-        <div style={{ padding: '6px 12px', borderBottom: `1px solid ${theme.border.default}`, fontSize: 10, color: theme.text.muted }}>
+        <div
+          style={{
+            padding: '6px 12px',
+            borderBottom: `1px solid ${theme.border.default}`,
+            fontSize: 10,
+            color: theme.text.muted,
+          }}
+        >
           Wall #{menu.wallIndex + 1}
         </div>
         <div
@@ -401,9 +445,15 @@ export function WallContextMenu() {
             });
             close();
           }}
-          style={{ padding: '8px 12px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8 }}
-          onMouseEnter={e => (e.currentTarget.style.background = '#2a2a2a')}
-          onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
+          style={{
+            padding: '8px 12px',
+            cursor: 'pointer',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 8,
+          }}
+          onMouseEnter={(e) => (e.currentTarget.style.background = '#2a2a2a')}
+          onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
         >
           <span>🗑️</span>
           <span style={{ color: '#c53131' }}>Delete Wall</span>
