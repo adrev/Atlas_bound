@@ -40,9 +40,6 @@ import {
   Swords,
   ScrollText,
   X,
-  BookOpen,
-  Map as MapIcon,
-  Settings,
   Lightbulb,
   Shield,
   UserPlus,
@@ -76,13 +73,13 @@ const PREBUILT_MAP_THUMB_BY_NAME: Record<string, string> = (() => {
 // Profile modal is large (avatar uploader, password change). Lazy-load
 // so it only joins the bundle when a user opens the Account quick action.
 const ProfileModal = lazy(() =>
-  import('../auth/ProfileModal').then((m) => ({ default: m.ProfileModal })),
+  import('../auth/ProfileModal').then((m) => ({ default: m.ProfileModal }))
 );
 // CharacterSheetFull is a sizable component (stat blocks, spell book,
 // inventory, notes, BG tab). Lazy-loaded so the lobby's initial bundle
 // doesn't pay for it until a user actually clicks a hero.
 const CharacterSheetFull = lazy(() =>
-  import('../character/CharacterSheetFull').then((m) => ({ default: m.CharacterSheetFull })),
+  import('../character/CharacterSheetFull').then((m) => ({ default: m.CharacterSheetFull }))
 );
 
 /**
@@ -240,7 +237,10 @@ function bannerGradient(seed: string): string {
  *      and the client derives the URL).
  *   3. null — caller falls back to the deterministic biome gradient.
  */
-function resolveBannerUrl(g: { bannerUrl?: string | null; currentMapName?: string | null }): string | null {
+function resolveBannerUrl(g: {
+  bannerUrl?: string | null;
+  currentMapName?: string | null;
+}): string | null {
   if (g.bannerUrl) return g.bannerUrl;
   if (g.currentMapName && PREBUILT_MAP_THUMB_BY_NAME[g.currentMapName]) {
     return PREBUILT_MAP_THUMB_BY_NAME[g.currentMapName];
@@ -268,7 +268,11 @@ function heroTint(seed: string): string {
  * shouldn't accidentally match "literally". Order entities longest-
  * first so "Briar Hollow" is wrapped before "Briar" alone.
  */
-function renderRecapWithEntities(text: string, entities: string[], key: string | number): React.ReactNode {
+function renderRecapWithEntities(
+  text: string,
+  entities: string[],
+  key: string | number
+): React.ReactNode {
   if (!entities || entities.length === 0) return text;
   const sorted = [...entities].sort((a, b) => b.length - a.length);
   // Build a single regex that matches any entity as a whole word.
@@ -367,7 +371,10 @@ export function SessionLobby() {
   const [createOpen, setCreateOpen] = useState(false);
   const [joinOpen, setJoinOpen] = useState(false);
   const [feedbackOpen, setFeedbackOpen] = useState(false);
-  const [banModal, setBanModal] = useState<{ reason: string | null; bannedBy: string | null } | null>(null);
+  const [banModal, setBanModal] = useState<{
+    reason: string | null;
+    bannedBy: string | null;
+  } | null>(null);
 
   // Forge a New Campaign form
   const [createName, setCreateName] = useState('');
@@ -384,13 +391,18 @@ export function SessionLobby() {
 
   // Fetch state
   const [error, setError] = useState<string | null>(null);
+  // Informational banner (e.g. "coming soon") — kept separate from
+  // `error` so notices don't wear danger styling or stomp real errors.
+  const [notice, setNotice] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [myGames, setMyGames] = useState<ServerGame[]>([]);
   const [myGamesLoading, setMyGamesLoading] = useState(false);
   const [myCharacters, setMyCharacters] = useState<MyCharacter[]>([]);
   const [myCharsLoading, setMyCharsLoading] = useState(false);
   const [syncingCharacterId, setSyncingCharacterId] = useState<string | null>(null);
-  const [heroSyncMessage, setHeroSyncMessage] = useState<{ text: string; isError: boolean } | null>(null);
+  const [heroSyncMessage, setHeroSyncMessage] = useState<{ text: string; isError: boolean } | null>(
+    null
+  );
 
   // Filter tab state for My Campaigns: All / DMing / Playing
   const [gameFilter, setGameFilter] = useState<'all' | 'dm' | 'player'>('all');
@@ -498,9 +510,7 @@ export function SessionLobby() {
         isError: false,
       });
       setTimeout(() => {
-        setHeroSyncMessage((current) => (
-          current?.isError === false ? null : current
-        ));
+        setHeroSyncMessage((current) => (current?.isError === false ? null : current));
       }, 5000);
     } catch (err) {
       setHeroSyncMessage({
@@ -566,11 +576,12 @@ export function SessionLobby() {
    *  from `incoming` to `friends`). */
   const friendAction = async (
     friendshipId: string,
-    verb: 'accept' | 'decline' | 'cancel' | 'block',
+    verb: 'accept' | 'decline' | 'cancel' | 'block'
   ) => {
     try {
       const res = await fetch(`/api/friends/${friendshipId}/${verb}`, {
-        method: 'POST', credentials: 'include',
+        method: 'POST',
+        credentials: 'include',
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
@@ -586,7 +597,8 @@ export function SessionLobby() {
   const unfriend = async (friendshipId: string) => {
     try {
       const res = await fetch(`/api/friends/${friendshipId}`, {
-        method: 'DELETE', credentials: 'include',
+        method: 'DELETE',
+        credentials: 'include',
       });
       if (!res.ok) return;
       await fetchFriends();
@@ -636,12 +648,13 @@ export function SessionLobby() {
     const code = searchParams.get('roomCode');
     if (code) {
       setJoinCode(code.toUpperCase());
-      setJoinOpen(true);
+      openJoin();
       searchParams.delete('roomCode');
       setSearchParams(searchParams, { replace: true });
     }
-    // run once on mount only
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // run once on mount only (the react-hooks plugin isn't installed,
+    // so its disable directive errors under the per-file lint; restore
+    // the directive when the plugin lands)
   }, []);
 
   // ── Derived view data ─────────────────────────────────────────
@@ -684,6 +697,28 @@ export function SessionLobby() {
     setJoinPassword('');
     setJoinRequiresPassword(false);
     setJoinHeroId('');
+  };
+
+  // Modal open/close helpers — clear any stale error so (a) a failure
+  // from a previous attempt doesn't greet the next open, and (b) a
+  // modal-scoped error doesn't linger on the page banner after close.
+  // They intentionally do NOT reset the form fields (the ?roomCode
+  // prefill sets joinCode before opening).
+  const openCreate = () => {
+    setError(null);
+    setCreateOpen(true);
+  };
+  const closeCreate = () => {
+    setError(null);
+    setCreateOpen(false);
+  };
+  const openJoin = () => {
+    setError(null);
+    setJoinOpen(true);
+  };
+  const closeJoin = () => {
+    setError(null);
+    setJoinOpen(false);
   };
 
   const handleCreate = async () => {
@@ -750,8 +785,9 @@ export function SessionLobby() {
   };
 
   // Quick Action stubs — wire to real routes when the views land.
+  // Informational, not a failure — so it uses the notice banner.
   const showSoon = (label: string) =>
-    setError(`${label} is coming soon — focused on the lobby for now.`);
+    setNotice(`${label} is coming soon — focused on the lobby for now.`);
 
   const enterGame = (roomCode: string) => navigate(`/session/${roomCode}`);
 
@@ -779,7 +815,11 @@ export function SessionLobby() {
         <div className="spacer" />
         <button
           className="icon-btn bell-btn"
-          title={unreadTidings > 0 ? `${unreadTidings} new ${unreadTidings === 1 ? 'tiding' : 'tidings'}` : 'Tidings'}
+          title={
+            unreadTidings > 0
+              ? `${unreadTidings} new ${unreadTidings === 1 ? 'tiding' : 'tidings'}`
+              : 'Tidings'
+          }
           onClick={() => {
             // Scroll the right-rail Tidings into view + clear the badge.
             // The list itself is always rendered in the rail, so this
@@ -842,7 +882,13 @@ export function SessionLobby() {
         <aside className="rail">
           <div className="me-card">
             <div className="ring">
-              <svg className="frame" viewBox="0 0 140 140" fill="none" stroke="currentColor" strokeWidth={1}>
+              <svg
+                className="frame"
+                viewBox="0 0 140 140"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth={1}
+              >
                 <circle cx="70" cy="70" r="68" />
                 <path d="M70 0 L72 8 L70 12 L68 8 Z" fill="currentColor" />
                 <path d="M70 140 L72 132 L70 128 L68 132 Z" fill="currentColor" />
@@ -926,7 +972,11 @@ export function SessionLobby() {
                   >
                     <RefreshCw
                       size={13}
-                      style={syncingCharacterId === c.id ? { animation: 'spin 1s linear infinite' } : undefined}
+                      style={
+                        syncingCharacterId === c.id
+                          ? { animation: 'spin 1s linear infinite' }
+                          : undefined
+                      }
                     />
                     <span>{syncingCharacterId === c.id ? 'Syncing' : 'Sync'}</span>
                   </button>
@@ -961,7 +1011,12 @@ export function SessionLobby() {
           <div className="crest-rule">
             <svg viewBox="0 0 24 24" fill="currentColor">
               <circle cx="12" cy="12" r="3" />
-              <path d="M12 2v4M12 18v4M2 12h4M18 12h4" stroke="currentColor" strokeWidth={1.5} fill="none" />
+              <path
+                d="M12 2v4M12 18v4M2 12h4M18 12h4"
+                stroke="currentColor"
+                strokeWidth={1.5}
+                fill="none"
+              />
             </svg>
           </div>
 
@@ -969,6 +1024,19 @@ export function SessionLobby() {
             <div className="error-banner" role="alert">
               {error}
               <button className="error-x" onClick={() => setError(null)} aria-label="Dismiss">
+                <X size={12} />
+              </button>
+            </div>
+          )}
+          {notice && (
+            <div className="notice-banner" role="status">
+              {notice}
+              <button
+                className="error-x"
+                onClick={() => setNotice(null)}
+                aria-label="Dismiss"
+                style={{ color: 'var(--accent)' }}
+              >
                 <X size={12} />
               </button>
             </div>
@@ -995,7 +1063,9 @@ export function SessionLobby() {
                 style={(() => {
                   const url = resumeGame ? resolveBannerUrl(resumeGame) : null;
                   return url
-                    ? { backgroundImage: `linear-gradient(90deg, var(--bg-panel) 0%, transparent 30%), url("${url}")` }
+                    ? {
+                        backgroundImage: `linear-gradient(90deg, var(--bg-panel) 0%, transparent 30%), url("${url}")`,
+                      }
                     : undefined;
                 })()}
               />
@@ -1011,7 +1081,7 @@ export function SessionLobby() {
               <div className="arr">▸ {resumeGame ? 'Resume Adventure' : 'Begin'}</div>
             </div>
 
-            <div className="cta-card create" onClick={() => setCreateOpen(true)} role="button" tabIndex={0}>
+            <div className="cta-card create" onClick={openCreate} role="button" tabIndex={0}>
               <p className="label">Begin Anew</p>
               <h3>
                 <Swords size={16} />
@@ -1021,7 +1091,7 @@ export function SessionLobby() {
               <div className="arr">▸ Create Game</div>
             </div>
 
-            <div className="cta-card join" onClick={() => setJoinOpen(true)} role="button" tabIndex={0}>
+            <div className="cta-card join" onClick={openJoin} role="button" tabIndex={0}>
               <p className="label">By Invitation</p>
               <h3>
                 <ChevronRight size={16} />
@@ -1069,13 +1139,24 @@ export function SessionLobby() {
             </div>
           ) : filteredGames.length === 0 ? (
             <p className="empty-prose">
-              No campaigns {gameFilter === 'dm' ? 'you are running' : gameFilter === 'player' ? 'you are playing in' : 'yet'}.
-              {gameFilter === 'all' && ' Forge a new campaign or join one with a code.'}
+              No campaigns{' '}
+              {gameFilter === 'dm'
+                ? 'you are running'
+                : gameFilter === 'player'
+                  ? 'you are playing in'
+                  : 'yet'}
+              .{gameFilter === 'all' && ' Forge a new campaign or join one with a code.'}
             </p>
           ) : (
             <div className="games-grid">
               {filteredGames.map((g) => (
-                <div key={g.id} className="game-tile" onClick={() => enterGame(g.roomCode)} role="button" tabIndex={0}>
+                <div
+                  key={g.id}
+                  className="game-tile"
+                  onClick={() => enterGame(g.roomCode)}
+                  role="button"
+                  tabIndex={0}
+                >
                   {(() => {
                     const url = resolveBannerUrl(g);
                     return (
@@ -1088,12 +1169,18 @@ export function SessionLobby() {
                            filenames with parens/spaces don't break CSS. */
                         style={
                           url
-                            ? { backgroundImage: `url("${url}")`, backgroundSize: 'cover', backgroundPosition: 'center' }
+                            ? {
+                                backgroundImage: `url("${url}")`,
+                                backgroundSize: 'cover',
+                                backgroundPosition: 'center',
+                              }
                             : { background: bannerGradient(g.id) }
                         }
                         title={g.currentMapName ?? undefined}
                       >
-                        <span className={`role-pill ${g.role}`}>{g.role === 'dm' ? 'DM' : 'PLAYER'}</span>
+                        <span className={`role-pill ${g.role}`}>
+                          {g.role === 'dm' ? 'DM' : 'PLAYER'}
+                        </span>
                         {g.isLive && <span className="live-dot">Live</span>}
                       </div>
                     );
@@ -1102,29 +1189,46 @@ export function SessionLobby() {
                     <p className="name">{g.name}</p>
                     <div className="meta">
                       <span className="item">
-                        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.7}>
+                        <svg
+                          width="11"
+                          height="11"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth={1.7}
+                        >
                           <circle cx="9" cy="8" r="3" />
                           <path d="M3 20c0-3.3 2.7-6 6-6s6 2.7 6 6" />
                         </svg>
                         {g.playerCount}
                       </span>
                       <span className="code">{g.roomCode}</span>
-                      {g.role === 'player' && g.characterName && <span className="item">{g.characterName}</span>}
+                      {g.role === 'player' && g.characterName && (
+                        <span className="item">{g.characterName}</span>
+                      )}
                       {typeof g.onlineCount === 'number' && g.onlineCount > 0 && (
                         <span className="item online-count">{g.onlineCount} online</span>
                       )}
-                      {!g.isLive && g.lastActiveAt && <span className="item">{formatRelative(g.lastActiveAt)}</span>}
+                      {!g.isLive && g.lastActiveAt && (
+                        <span className="item">{formatRelative(g.lastActiveAt)}</span>
+                      )}
                     </div>
                     <div className="actions">
                       <button
                         className="btn primary full"
-                        onClick={(e) => { e.stopPropagation(); enterGame(g.roomCode); }}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          enterGame(g.roomCode);
+                        }}
                       >
                         Enter
                       </button>
                       <button
                         className="btn ghost"
-                        onClick={(e) => { e.stopPropagation(); enterGame(g.roomCode); }}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          enterGame(g.roomCode);
+                        }}
                       >
                         {g.role === 'dm' ? 'Manage' : 'Sheet'}
                       </button>
@@ -1147,7 +1251,8 @@ export function SessionLobby() {
             <div className="chron-empty">
               <ScrollText size={20} />
               <p>
-                Your chronicle is empty. When a DM ends a session and forges a recap, the tale will appear here.
+                Your chronicle is empty. When a DM ends a session and forges a recap, the tale will
+                appear here.
               </p>
             </div>
           ) : (
@@ -1157,7 +1262,12 @@ export function SessionLobby() {
                   <div className="chron-time">
                     <div className="chron-day">{formatRelative(c.publishedAt) || '—'}</div>
                     <div className="chron-clock">
-                      {c.publishedAt ? new Date(c.publishedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}
+                      {c.publishedAt
+                        ? new Date(c.publishedAt).toLocaleTimeString([], {
+                            hour: '2-digit',
+                            minute: '2-digit',
+                          })
+                        : ''}
                     </div>
                   </div>
                   <div className="chron-dot" />
@@ -1211,7 +1321,8 @@ export function SessionLobby() {
             </div>
             {tidings.length === 0 ? (
               <div className="news-empty">
-                The Loremasters have been quiet of late. Patch notes will appear here when there is news to share.
+                The Loremasters have been quiet of late. Patch notes will appear here when there is
+                news to share.
               </div>
             ) : (
               tidings.slice(0, 5).map((t) => (
@@ -1256,7 +1367,11 @@ export function SessionLobby() {
               {incoming.map((req) => (
                 <div className="friend-row request" key={req.friendshipId}>
                   <div className="av" style={{ background: heroTint(req.userId) }}>
-                    {req.avatarUrl ? <img src={req.avatarUrl} alt="" /> : <span>{initial(req.displayName)}</span>}
+                    {req.avatarUrl ? (
+                      <img src={req.avatarUrl} alt="" />
+                    ) : (
+                      <span>{initial(req.displayName)}</span>
+                    )}
                   </div>
                   <div className="info">
                     <p className="n">{req.displayName}</p>
@@ -1283,14 +1398,21 @@ export function SessionLobby() {
 
           {friends.length === 0 ? (
             <p className="rr-empty">
-              No companions yet. Click <strong>Add</strong> above to send a request by display name or email.
+              No companions yet. Click <strong>Add</strong> above to send a request by display name
+              or email.
             </p>
           ) : (
             friends.map((f) => (
               <div className="friend-row" key={f.friendshipId}>
                 <div className="av" style={{ background: heroTint(f.userId) }}>
-                  {f.avatarUrl ? <img src={f.avatarUrl} alt="" /> : <span>{initial(f.displayName)}</span>}
-                  <span className={`pres ${f.presence.status === 'in-game' ? 'in-game' : 'offline'}`} />
+                  {f.avatarUrl ? (
+                    <img src={f.avatarUrl} alt="" />
+                  ) : (
+                    <span>{initial(f.displayName)}</span>
+                  )}
+                  <span
+                    className={`pres ${f.presence.status === 'in-game' ? 'in-game' : 'offline'}`}
+                  />
                 </div>
                 <div className="info">
                   <p className="n">{f.displayName}</p>
@@ -1377,16 +1499,29 @@ export function SessionLobby() {
 
       {/* Forge a New Campaign */}
       {createOpen && (
-        <div className="scrim open" onClick={(e) => { if (e.target === e.currentTarget) setCreateOpen(false); }}>
+        <div
+          className="scrim open"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) closeCreate();
+          }}
+        >
           <div className="modal">
             <div className="modal-head">
               <Swords size={20} color="var(--accent)" />
               <h3>Forge a New Campaign</h3>
-              <button className="icon-btn" onClick={() => setCreateOpen(false)} aria-label="Close">
+              <button className="icon-btn" onClick={closeCreate} aria-label="Close">
                 <X size={14} />
               </button>
             </div>
             <div className="modal-body">
+              {error && (
+                <div className="error-banner" role="alert">
+                  {error}
+                  <button className="error-x" onClick={() => setError(null)} aria-label="Dismiss">
+                    <X size={12} />
+                  </button>
+                </div>
+              )}
               <div className="field">
                 <label>Campaign Name</label>
                 <input
@@ -1455,7 +1590,9 @@ export function SessionLobby() {
               </div>
             </div>
             <div className="modal-foot">
-              <button className="btn ghost" onClick={() => setCreateOpen(false)}>Cancel</button>
+              <button className="btn ghost" onClick={closeCreate}>
+                Cancel
+              </button>
               <button
                 className="btn primary"
                 onClick={handleCreate}
@@ -1470,16 +1607,29 @@ export function SessionLobby() {
 
       {/* Break the Seal */}
       {joinOpen && (
-        <div className="scrim open" onClick={(e) => { if (e.target === e.currentTarget) setJoinOpen(false); }}>
+        <div
+          className="scrim open"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) closeJoin();
+          }}
+        >
           <div className="modal" style={{ width: 440 }}>
             <div className="modal-head">
               <ChevronRight size={20} color="var(--accent)" />
               <h3>Break the Seal</h3>
-              <button className="icon-btn" onClick={() => setJoinOpen(false)} aria-label="Close">
+              <button className="icon-btn" onClick={closeJoin} aria-label="Close">
                 <X size={14} />
               </button>
             </div>
             <div className="modal-body">
+              {error && (
+                <div className="error-banner" role="alert">
+                  {error}
+                  <button className="error-x" onClick={() => setError(null)} aria-label="Dismiss">
+                    <X size={12} />
+                  </button>
+                </div>
+              )}
               <p className="modal-tag">Speak the room sigil delivered by your DM.</p>
               <input
                 className="input code"
@@ -1524,7 +1674,9 @@ export function SessionLobby() {
               )}
             </div>
             <div className="modal-foot">
-              <button className="btn ghost" onClick={() => setJoinOpen(false)}>Cancel</button>
+              <button className="btn ghost" onClick={closeJoin}>
+                Cancel
+              </button>
               <button
                 className="btn primary"
                 onClick={handleJoin}
@@ -1543,23 +1695,33 @@ export function SessionLobby() {
           <div className="modal banned">
             <div className="modal-head">
               <h3 style={{ color: 'var(--blood-400)' }}>You have been banned</h3>
-              <button className="icon-btn" onClick={() => { setBanModal(null); resetJoinForm(); }}>
+              <button
+                className="icon-btn"
+                onClick={() => {
+                  setBanModal(null);
+                  resetJoinForm();
+                }}
+              >
                 <X size={14} />
               </button>
             </div>
             <div className="modal-body">
-              {banModal.bannedBy && (
-                <p className="bm-meta">Banned by {banModal.bannedBy}</p>
-              )}
-              {banModal.reason && (
-                <p className="bm-reason">"{banModal.reason}"</p>
-              )}
+              {banModal.bannedBy && <p className="bm-meta">Banned by {banModal.bannedBy}</p>}
+              {banModal.reason && <p className="bm-reason">"{banModal.reason}"</p>}
               {!banModal.reason && !banModal.bannedBy && (
                 <p className="bm-meta">No reason was provided.</p>
               )}
             </div>
             <div className="modal-foot">
-              <button className="btn primary" onClick={() => { setBanModal(null); resetJoinForm(); }}>OK</button>
+              <button
+                className="btn primary"
+                onClick={() => {
+                  setBanModal(null);
+                  resetJoinForm();
+                }}
+              >
+                OK
+              </button>
             </div>
           </div>
         </div>
@@ -1588,7 +1750,12 @@ export function SessionLobby() {
           inventory still persist via REST and show up next time the
           DM loads the campaign. */}
       {openCharacter !== null && (
-        <div style={lobbySheetOverlayStyle} onMouseDown={(e) => { if (e.target === e.currentTarget) setOpenCharacter(null); }}>
+        <div
+          style={lobbySheetOverlayStyle}
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget) setOpenCharacter(null);
+          }}
+        >
           <div style={lobbySheetContainerStyle}>
             <button
               type="button"
@@ -1598,11 +1765,20 @@ export function SessionLobby() {
             >
               <X size={16} />
             </button>
-            <Suspense fallback={
-              <div style={{ padding: 32, textAlign: 'center', color: '#a89271', fontStyle: 'italic' }}>
-                Unfurling the sheet…
-              </div>
-            }>
+            <Suspense
+              fallback={
+                <div
+                  style={{
+                    padding: 32,
+                    textAlign: 'center',
+                    color: '#a89271',
+                    fontStyle: 'italic',
+                  }}
+                >
+                  Unfurling the sheet…
+                </div>
+              }
+            >
               <CharacterSheetFull
                 /* eslint-disable-next-line @typescript-eslint/no-explicit-any */
                 character={openCharacter as any}
@@ -1652,10 +1828,9 @@ function AddFriendModal({
     setSearching(true);
     const timer = setTimeout(async () => {
       try {
-        const res = await fetch(
-          `/api/friends/search?q=${encodeURIComponent(trimmed)}`,
-          { credentials: 'include' },
-        );
+        const res = await fetch(`/api/friends/search?q=${encodeURIComponent(trimmed)}`, {
+          credentials: 'include',
+        });
         if (res.ok) {
           const data = await res.json();
           setResults(Array.isArray(data.users) ? data.users : []);
@@ -1697,7 +1872,8 @@ function AddFriendModal({
   const cancelRequest = async (friendshipId: string) => {
     try {
       const res = await fetch(`/api/friends/${friendshipId}/cancel`, {
-        method: 'POST', credentials: 'include',
+        method: 'POST',
+        credentials: 'include',
       });
       if (res.ok) await onChange();
     } catch {
@@ -1706,7 +1882,12 @@ function AddFriendModal({
   };
 
   return (
-    <div className="scrim open" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+    <div
+      className="scrim open"
+      onClick={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+    >
       <div className="modal" style={{ width: 480 }}>
         <div className="modal-head">
           <UserPlus size={20} color="var(--accent)" />
@@ -1721,10 +1902,17 @@ function AddFriendModal({
           <div className="field">
             <label>Search</label>
             <div style={{ position: 'relative' }}>
-              <Search size={14} style={{
-                position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)',
-                color: 'var(--text-muted)', pointerEvents: 'none',
-              }} />
+              <Search
+                size={14}
+                style={{
+                  position: 'absolute',
+                  left: 12,
+                  top: '50%',
+                  transform: 'translateY(-50%)',
+                  color: 'var(--text-muted)',
+                  pointerEvents: 'none',
+                }}
+              />
               <input
                 className="input"
                 placeholder="Display name or email"
@@ -1755,7 +1943,11 @@ function AddFriendModal({
               {results.map((u) => (
                 <div className="search-row" key={u.id}>
                   <div className="av small" style={{ background: heroTint(u.id) }}>
-                    {u.avatarUrl ? <img src={u.avatarUrl} alt="" /> : <span>{initial(u.displayName)}</span>}
+                    {u.avatarUrl ? (
+                      <img src={u.avatarUrl} alt="" />
+                    ) : (
+                      <span>{initial(u.displayName)}</span>
+                    )}
                   </div>
                   <div className="info">
                     <p className="n">{u.displayName}</p>
@@ -1764,8 +1956,8 @@ function AddFriendModal({
                         {u.friendshipStatus === 'accepted'
                           ? 'Already a companion'
                           : u.friendshipStatus === 'pending'
-                          ? 'Request pending'
-                          : 'Blocked'}
+                            ? 'Request pending'
+                            : 'Blocked'}
                       </p>
                     )}
                   </div>
@@ -1774,7 +1966,13 @@ function AddFriendModal({
                     onClick={() => sendRequest({ id: u.id })}
                     disabled={u.friendshipStatus !== null || sending === u.id}
                   >
-                    {sending === u.id ? '…' : u.friendshipStatus === 'pending' ? 'Pending' : u.friendshipStatus === 'accepted' ? 'Friends' : 'Send Request'}
+                    {sending === u.id
+                      ? '…'
+                      : u.friendshipStatus === 'pending'
+                        ? 'Pending'
+                        : u.friendshipStatus === 'accepted'
+                          ? 'Friends'
+                          : 'Send Request'}
                   </button>
                 </div>
               ))}
@@ -1787,7 +1985,11 @@ function AddFriendModal({
               {outgoing.map((req) => (
                 <div className="search-row" key={req.friendshipId}>
                   <div className="av small" style={{ background: heroTint(req.userId) }}>
-                    {req.avatarUrl ? <img src={req.avatarUrl} alt="" /> : <span>{initial(req.displayName)}</span>}
+                    {req.avatarUrl ? (
+                      <img src={req.avatarUrl} alt="" />
+                    ) : (
+                      <span>{initial(req.displayName)}</span>
+                    )}
                   </div>
                   <div className="info">
                     <p className="n">{req.displayName}</p>
@@ -1805,21 +2007,25 @@ function AddFriendModal({
           )}
 
           {error && (
-            <div style={{
-              marginTop: 12,
-              padding: 10,
-              background: 'rgba(201,66,58,.18)',
-              border: '1px solid var(--blood-400)',
-              borderRadius: 3,
-              color: 'var(--blood-400)',
-              fontSize: 12,
-            }}>
+            <div
+              style={{
+                marginTop: 12,
+                padding: 10,
+                background: 'rgba(201,66,58,.18)',
+                border: '1px solid var(--blood-400)',
+                borderRadius: 3,
+                color: 'var(--blood-400)',
+                fontSize: 12,
+              }}
+            >
               {error}
             </div>
           )}
         </div>
         <div className="modal-foot">
-          <button className="btn ghost" onClick={onClose}>Done</button>
+          <button className="btn ghost" onClick={onClose}>
+            Done
+          </button>
         </div>
       </div>
     </div>
@@ -1833,24 +2039,42 @@ function AddFriendModal({
 // existing in-session sheet styling renders identically here.
 // ────────────────────────────────────────────────────────────────
 const lobbySheetOverlayStyle: React.CSSProperties = {
-  position: 'fixed', inset: 0, background: 'rgba(4, 2, 1, .85)',
-  backdropFilter: 'blur(4px)', zIndex: 1100,
-  display: 'flex', alignItems: 'center', justifyContent: 'center',
+  position: 'fixed',
+  inset: 0,
+  background: 'rgba(4, 2, 1, .85)',
+  backdropFilter: 'blur(4px)',
+  zIndex: 1100,
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'center',
   padding: 24,
 };
 const lobbySheetContainerStyle: React.CSSProperties = {
   position: 'relative',
-  width: '95%', maxWidth: 1100, maxHeight: '92vh',
+  width: '95%',
+  maxWidth: 1100,
+  maxHeight: '92vh',
   overflow: 'auto',
-  background: '#140e07', border: '1px solid rgba(199,150,50,.55)',
-  borderRadius: 6, boxShadow: '0 30px 80px rgba(0,0,0,.8)',
+  background: '#140e07',
+  border: '1px solid rgba(199,150,50,.55)',
+  borderRadius: 6,
+  boxShadow: '0 30px 80px rgba(0,0,0,.8)',
 };
 const lobbySheetCloseStyle: React.CSSProperties = {
-  position: 'absolute', top: 12, right: 12, zIndex: 10,
-  display: 'flex', alignItems: 'center', justifyContent: 'center',
-  width: 32, height: 32, borderRadius: '50%',
-  background: '#1e1509', border: '1px solid rgba(199,150,50,.55)',
-  color: '#a89271', cursor: 'pointer',
+  position: 'absolute',
+  top: 12,
+  right: 12,
+  zIndex: 10,
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  width: 32,
+  height: 32,
+  borderRadius: '50%',
+  background: '#1e1509',
+  border: '1px solid rgba(199,150,50,.55)',
+  color: '#a89271',
+  cursor: 'pointer',
 };
 
 // ────────────────────────────────────────────────────────────────
@@ -2151,6 +2375,12 @@ const LOBBY_CSS = `
 .kbrt-lobby .error-x {
   margin-left:auto; background:transparent; border:none; color: var(--blood-400);
   cursor:pointer; padding:2px;
+}
+.kbrt-lobby .notice-banner {
+  display:flex; align-items:center; gap:8px;
+  padding:10px 12px; margin-bottom:18px;
+  background: rgba(212,168,67,.12); border:1px solid var(--accent); border-radius:3px;
+  color: var(--accent); font-size:13px;
 }
 
 /* Hero CTA */
