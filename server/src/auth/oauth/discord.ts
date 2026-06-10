@@ -38,7 +38,7 @@ router.get('/discord', (req: Request, res: Response) => {
   // Optional post-login destination (e.g. an invite link the user was
   // on when they hit the login wall). Validated to same-origin paths.
   const next = sanitizeReturnPath(req.query.next);
-  if (next) cookies.push(returnPathSetCookie(next, secure));
+  cookies.push(next ? returnPathSetCookie(next, secure) : returnPathClearCookie());
   res.setHeader('Set-Cookie', cookies);
   res.redirect(url.toString());
 });
@@ -55,6 +55,10 @@ router.get('/discord/callback', async (req: Request, res: Response) => {
   const storedState = cookies['discord_oauth_state'];
 
   if (!code || !state || !storedState || state !== storedState) {
+    res.setHeader('Set-Cookie', [
+      `discord_oauth_state=; Path=/; HttpOnly; Max-Age=0`,
+      returnPathClearCookie(),
+    ]);
     res.redirect('/?auth=error&reason=invalid_state');
     return;
   }
@@ -66,6 +70,10 @@ router.get('/discord/callback', async (req: Request, res: Response) => {
       headers: { Authorization: `Bearer ${accessToken}` },
     });
     if (!userResponse.ok) {
+      res.setHeader('Set-Cookie', [
+        `discord_oauth_state=; Path=/; HttpOnly; Max-Age=0`,
+        returnPathClearCookie(),
+      ]);
       res.redirect('/?auth=error&reason=discord_api_failed');
       return;
     }
@@ -101,6 +109,10 @@ router.get('/discord/callback', async (req: Request, res: Response) => {
     res.redirect(returnTo ?? '/?auth=success');
   } catch (err) {
     console.error('[discord-oauth] Callback error:', err);
+    res.setHeader('Set-Cookie', [
+      `discord_oauth_state=; Path=/; HttpOnly; Max-Age=0`,
+      returnPathClearCookie(),
+    ]);
     res.redirect('/?auth=error&reason=server_error');
   }
 });

@@ -43,7 +43,7 @@ router.get('/google', async (req: Request, res: Response) => {
   ];
   // Optional post-login destination (e.g. an invite link) — same-origin only.
   const next = sanitizeReturnPath(req.query.next);
-  if (next) cookies.push(returnPathSetCookie(next, secure !== ''));
+  cookies.push(next ? returnPathSetCookie(next, secure !== '') : returnPathClearCookie());
   res.setHeader('Set-Cookie', cookies);
 
   res.redirect(url.toString());
@@ -65,6 +65,11 @@ router.get('/google/callback', async (req: Request, res: Response) => {
   const codeVerifier = cookies['google_code_verifier'];
 
   if (!code || !state || !storedState || state !== storedState || !codeVerifier) {
+    res.setHeader('Set-Cookie', [
+      `google_oauth_state=; Path=/; HttpOnly; Max-Age=0`,
+      `google_code_verifier=; Path=/; HttpOnly; Max-Age=0`,
+      returnPathClearCookie(),
+    ]);
     res.redirect('/?auth=error&reason=invalid_state');
     return;
   }
@@ -79,6 +84,11 @@ router.get('/google/callback', async (req: Request, res: Response) => {
     });
 
     if (!userResponse.ok) {
+      res.setHeader('Set-Cookie', [
+        `google_oauth_state=; Path=/; HttpOnly; Max-Age=0`,
+        `google_code_verifier=; Path=/; HttpOnly; Max-Age=0`,
+        returnPathClearCookie(),
+      ]);
       res.redirect('/?auth=error&reason=google_api_failed');
       return;
     }
@@ -112,6 +122,11 @@ router.get('/google/callback', async (req: Request, res: Response) => {
     res.redirect(returnTo ?? '/?auth=success');
   } catch (err) {
     console.error('[google-oauth] Callback error:', err);
+    res.setHeader('Set-Cookie', [
+      `google_oauth_state=; Path=/; HttpOnly; Max-Age=0`,
+      `google_code_verifier=; Path=/; HttpOnly; Max-Age=0`,
+      returnPathClearCookie(),
+    ]);
     res.redirect('/?auth=error&reason=server_error');
   }
 });

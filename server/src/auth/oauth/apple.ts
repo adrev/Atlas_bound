@@ -45,7 +45,7 @@ router.get('/apple', (req: Request, res: Response) => {
   ];
   // Optional post-login destination (e.g. an invite link) — same-origin only.
   const next = sanitizeReturnPath(req.query.next);
-  if (next) cookies.push(returnPathSetCookie(next, secure !== ''));
+  cookies.push(next ? returnPathSetCookie(next, secure !== '') : returnPathClearCookie());
   res.setHeader('Set-Cookie', cookies);
 
   res.redirect(url.toString());
@@ -70,6 +70,10 @@ router.post(
     const storedState = cookies['apple_oauth_state'];
 
     if (!code || !state || !storedState || state !== storedState) {
+      res.setHeader('Set-Cookie', [
+        `apple_oauth_state=; Path=/; HttpOnly; Max-Age=0`,
+        returnPathClearCookie(),
+      ]);
       res.redirect('/?auth=error&reason=invalid_state');
       return;
     }
@@ -132,6 +136,10 @@ router.post(
       res.redirect(returnTo ?? '/?auth=success');
     } catch (err) {
       console.error('[apple-oauth] Callback error:', err);
+      res.setHeader('Set-Cookie', [
+        `apple_oauth_state=; Path=/; HttpOnly; Max-Age=0`,
+        returnPathClearCookie(),
+      ]);
       res.redirect('/?auth=error&reason=server_error');
     }
   }
