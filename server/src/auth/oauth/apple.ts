@@ -4,13 +4,14 @@ import { Apple } from 'arctic';
 import { v4 as uuidv4 } from 'uuid';
 import { lucia } from '../lucia.js';
 import { findOrCreateOAuthUser, parseCookies } from './discord.js';
-import {
-  APPLE_CLIENT_ID,
-  APPLE_TEAM_ID,
-  APPLE_KEY_ID,
-  APPLE_PRIVATE_KEY,
-} from '../../config.js';
+import { APPLE_CLIENT_ID, APPLE_TEAM_ID, APPLE_KEY_ID, APPLE_PRIVATE_KEY } from '../../config.js';
 import { getOAuthOrigin } from './origin.js';
+import {
+  sanitizeReturnPath,
+  returnPathSetCookie,
+  returnPathClearCookie,
+  readReturnPath,
+} from './returnPath.js';
 
 const router = Router();
 
@@ -23,7 +24,7 @@ function getApple(req: Request): Apple | null {
     APPLE_TEAM_ID,
     APPLE_KEY_ID,
     privateKeyBytes,
-    `${getOAuthOrigin(req)}/api/auth/apple/callback`,
+    `${getOAuthOrigin(req)}/api/auth/apple/callback`
   );
 }
 
@@ -39,9 +40,13 @@ router.get('/apple', (req: Request, res: Response) => {
   const url = apple.createAuthorizationURL(state, ['name', 'email']);
 
   const secure = process.env.NODE_ENV === 'production' ? '; Secure' : '';
-  res.setHeader('Set-Cookie', [
+  const cookies = [
     `apple_oauth_state=${state}; Path=/; HttpOnly; SameSite=Lax; Max-Age=600${secure}`,
-  ]);
+  ];
+  // Optional post-login destination (e.g. an invite link) — same-origin only.
+  const next = sanitizeReturnPath(req.query.next);
+  if (next) cookies.push(returnPathSetCookie(next, secure !== ''));
+  res.setHeader('Set-Cookie', cookies);
 
   res.redirect(url.toString());
 });
@@ -97,9 +102,10 @@ router.post(
       // Apple's ID token is a JWT; we only need to decode (not verify here
       // since we just received it from Apple's token endpoint over HTTPS)
       const idToken = tokens.idToken();
-      const payload = JSON.parse(
-        Buffer.from(idToken.split('.')[1], 'base64url').toString(),
-      ) as { sub: string; email?: string };
+      const payload = JSON.parse(Buffer.from(idToken.split('.')[1], 'base64url').toString()) as {
+        sub: string;
+        email?: string;
+      };
 
       const appleUserId = payload.sub;
       const email = appleUserEmail ?? payload.email ?? null;
@@ -116,17 +122,19 @@ router.post(
       const session = await lucia.createSession(userId, {});
       const sessionCookie = lucia.createSessionCookie(session.id);
 
+      const returnTo = readReturnPath(cookies);
       res.setHeader('Set-Cookie', [
         sessionCookie.serialize(),
         `apple_oauth_state=; Path=/; HttpOnly; Max-Age=0`,
+        returnPathClearCookie(),
       ]);
 
-      res.redirect('/?auth=success');
+      res.redirect(returnTo ?? '/?auth=success');
     } catch (err) {
       console.error('[apple-oauth] Callback error:', err);
       res.redirect('/?auth=error&reason=server_error');
     }
-  },
+  }
 );
 
 export default router;
