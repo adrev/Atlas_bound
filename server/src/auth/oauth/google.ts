@@ -4,9 +4,12 @@ import { v4 as uuidv4 } from 'uuid';
 import { lucia } from '../lucia.js';
 import { findOrCreateOAuthUser, parseCookies } from './discord.js';
 import {
-  GOOGLE_CLIENT_ID,
-  GOOGLE_CLIENT_SECRET,
-} from '../../config.js';
+  sanitizeReturnPath,
+  returnPathSetCookie,
+  returnPathClearCookie,
+  readReturnPath,
+} from './returnPath.js';
+import { GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET } from '../../config.js';
 import { getOAuthOrigin } from './origin.js';
 
 const router = Router();
@@ -16,7 +19,7 @@ function getGoogle(req: Request): Google | null {
   return new Google(
     GOOGLE_CLIENT_ID,
     GOOGLE_CLIENT_SECRET,
-    `${getOAuthOrigin(req)}/api/auth/google/callback`,
+    `${getOAuthOrigin(req)}/api/auth/google/callback`
   );
 }
 
@@ -34,10 +37,14 @@ router.get('/google', async (req: Request, res: Response) => {
 
   // Store state and code verifier in httpOnly cookies
   const secure = process.env.NODE_ENV === 'production' ? '; Secure' : '';
-  res.setHeader('Set-Cookie', [
+  const cookies = [
     `google_oauth_state=${state}; Path=/; HttpOnly; SameSite=Lax; Max-Age=600${secure}`,
     `google_code_verifier=${codeVerifier}; Path=/; HttpOnly; SameSite=Lax; Max-Age=600${secure}`,
-  ]);
+  ];
+  // Optional post-login destination (e.g. an invite link) — same-origin only.
+  const next = sanitizeReturnPath(req.query.next);
+  cookies.push(next ? returnPathSetCookie(next, secure !== '') : returnPathClearCookie());
+  res.setHeader('Set-Cookie', cookies);
 
   res.redirect(url.toString());
 });
@@ -58,6 +65,11 @@ router.get('/google/callback', async (req: Request, res: Response) => {
   const codeVerifier = cookies['google_code_verifier'];
 
   if (!code || !state || !storedState || state !== storedState || !codeVerifier) {
+    res.setHeader('Set-Cookie', [
+      `google_oauth_state=; Path=/; HttpOnly; Max-Age=0`,
+      `google_code_verifier=; Path=/; HttpOnly; Max-Age=0`,
+      returnPathClearCookie(),
+    ]);
     res.redirect('/?auth=error&reason=invalid_state');
     return;
   }
@@ -72,6 +84,11 @@ router.get('/google/callback', async (req: Request, res: Response) => {
     });
 
     if (!userResponse.ok) {
+      res.setHeader('Set-Cookie', [
+        `google_oauth_state=; Path=/; HttpOnly; Max-Age=0`,
+        `google_code_verifier=; Path=/; HttpOnly; Max-Age=0`,
+        returnPathClearCookie(),
+      ]);
       res.redirect('/?auth=error&reason=google_api_failed');
       return;
     }
@@ -94,15 +111,22 @@ router.get('/google/callback', async (req: Request, res: Response) => {
     const session = await lucia.createSession(userId, {});
     const sessionCookie = lucia.createSessionCookie(session.id);
 
+    const returnTo = readReturnPath(cookies);
     res.setHeader('Set-Cookie', [
       sessionCookie.serialize(),
       `google_oauth_state=; Path=/; HttpOnly; Max-Age=0`,
       `google_code_verifier=; Path=/; HttpOnly; Max-Age=0`,
+      returnPathClearCookie(),
     ]);
 
-    res.redirect('/?auth=success');
+    res.redirect(returnTo ?? '/?auth=success');
   } catch (err) {
     console.error('[google-oauth] Callback error:', err);
+    res.setHeader('Set-Cookie', [
+      `google_oauth_state=; Path=/; HttpOnly; Max-Age=0`,
+      `google_code_verifier=; Path=/; HttpOnly; Max-Age=0`,
+      returnPathClearCookie(),
+    ]);
     res.redirect('/?auth=error&reason=server_error');
   }
 });

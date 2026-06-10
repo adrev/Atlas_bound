@@ -1,0 +1,60 @@
+import { describe, it, expect } from 'vitest';
+import {
+  sanitizeReturnPath,
+  readReturnPath,
+  returnPathSetCookie,
+} from '../auth/oauth/returnPath.js';
+
+/**
+ * Open-redirect safety for the OAuth ?next= return path. Only
+ * same-origin absolute-path references may pass — anything that could
+ * navigate off-origin (schemes, protocol-relative, backslash tricks,
+ * control characters) must be rejected, falling back to the lobby.
+ */
+describe('sanitizeReturnPath', () => {
+  it('accepts ordinary same-origin paths', () => {
+    expect(sanitizeReturnPath('/join/abc123')).toBe('/join/abc123');
+    expect(sanitizeReturnPath('/session/NZ933AEB')).toBe('/session/NZ933AEB');
+    expect(sanitizeReturnPath('/join/tok-en_1?x=1&y=2')).toBe('/join/tok-en_1?x=1&y=2');
+    expect(sanitizeReturnPath('/')).toBe('/');
+  });
+
+  it('rejects absolute URLs and scheme smuggling', () => {
+    expect(sanitizeReturnPath('https://evil.com/phish')).toBeNull();
+    expect(sanitizeReturnPath('http://evil.com')).toBeNull();
+    expect(sanitizeReturnPath('javascript:alert(1)')).toBeNull();
+    expect(sanitizeReturnPath('/redirect?u=https://evil.com')).toBeNull();
+  });
+
+  it('rejects protocol-relative and backslash-confusable references', () => {
+    expect(sanitizeReturnPath('//evil.com/phish')).toBeNull();
+    expect(sanitizeReturnPath('/\\evil.com')).toBeNull();
+  });
+
+  it('rejects non-strings, empties, and oversized values', () => {
+    expect(sanitizeReturnPath(undefined)).toBeNull();
+    expect(sanitizeReturnPath(42)).toBeNull();
+    expect(sanitizeReturnPath('')).toBeNull();
+    expect(sanitizeReturnPath('/' + 'a'.repeat(600))).toBeNull();
+  });
+
+  it('rejects control characters (header-splitting class)', () => {
+    expect(sanitizeReturnPath('/join/a\r\nSet-Cookie: x=1')).toBeNull();
+    expect(sanitizeReturnPath('/join/a\u0000b')).toBeNull();
+  });
+});
+
+describe('readReturnPath (cookie round-trip)', () => {
+  it('round-trips a valid path through the cookie encoding', () => {
+    const cookieLine = returnPathSetCookie('/join/abc?x=1', false);
+    const value = cookieLine.split(';')[0].split('=').slice(1).join('=');
+    expect(readReturnPath({ oauth_return_to: value })).toBe('/join/abc?x=1');
+  });
+
+  it('re-validates on read — a tampered cookie cannot smuggle a redirect', () => {
+    expect(readReturnPath({ oauth_return_to: encodeURIComponent('https://evil.com') })).toBeNull();
+    expect(readReturnPath({ oauth_return_to: encodeURIComponent('//evil.com') })).toBeNull();
+    expect(readReturnPath({ oauth_return_to: '%' })).toBeNull();
+    expect(readReturnPath({})).toBeNull();
+  });
+});
