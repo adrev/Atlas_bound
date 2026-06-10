@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { ChevronUp, ChevronDown, Minus, Eye, EyeOff, Settings, X, Plus, Trash2 } from 'lucide-react';
+import { ChevronUp, ChevronDown, Minus, Eye, EyeOff, Settings, X, Plus } from 'lucide-react';
 import { startPhysicalRoll } from '../../socket/emitters';
 import { useDiceStore } from '../../stores/useDiceStore';
 import { useDicePresetStore } from '../../stores/useDicePresetStore';
@@ -102,9 +102,9 @@ export function DiceTray() {
       lastResult.dice.length >= 1 &&
       lastResult.notation?.toLowerCase().includes(`d${rollingDie.sides}`);
     if (!matches) return;
-    setRollingDie((prev) => prev
-      ? { ...prev, finalValue: lastResult.total, displayValue: lastResult.total }
-      : prev);
+    setRollingDie((prev) =>
+      prev ? { ...prev, finalValue: lastResult.total, displayValue: lastResult.total } : prev
+    );
     settleTimeoutRef.current = window.setTimeout(() => setRollingDie(null), 900);
     return () => {
       if (settleTimeoutRef.current) window.clearTimeout(settleTimeoutRef.current);
@@ -123,17 +123,20 @@ export function DiceTray() {
 
   const handleDiceClick = (sides: number) => {
     // Advantage / disadvantage only matters for d20 rolls — doubled to
-    // 2d20 so the 3D tray animates two dice, and the server picks the
-    // higher or lower value based on `advantage` in the reason string.
-    // The earlier version embedded the word "(advantage)" directly in
-    // the notation (e.g. "2d20 (advantage)") which then bombed out in
-    // parseDiceNotation with "No dice found in notation" because the
-    // regex couldn't match a parenthesised suffix. Keep the notation
-    // pure and surface the modifier through `reason` instead.
+    // 2d20 so the 3D tray animates two dice. The ADV/DIS flag travels
+    // as its own field end-to-end: the overlay computes the total from
+    // the KEPT die (max/min), and the server validator enforces
+    // total == kept + modifier. (The old version smuggled the mode in
+    // `reason` and nothing ever consumed it — both d20s were SUMMED,
+    // producing rules-illegal 2–40 totals.)
     const isAdvRoll = sides === 20 && advantage !== 'normal';
     const notation = isAdvRoll ? '2d20' : `1d${sides}`;
-    const reason = isAdvRoll ? advantage : undefined;
-    startPhysicalRoll(notation, reason, hiddenRoll || undefined);
+    startPhysicalRoll(
+      notation,
+      undefined,
+      hiddenRoll || undefined,
+      isAdvRoll ? advantage : undefined
+    );
   };
 
   const handleCustomRoll = () => {
@@ -142,20 +145,29 @@ export function DiceTray() {
     setCustomNotation('');
   };
 
-  const handlePresetClick = useCallback((notation: string, label: string) => {
-    startPhysicalRoll(notation, label, hiddenRoll || undefined);
-  }, [hiddenRoll]);
+  const handlePresetClick = useCallback(
+    (notation: string, label: string) => {
+      startPhysicalRoll(notation, label, hiddenRoll || undefined);
+    },
+    [hiddenRoll]
+  );
 
-  const handlePresetContextMenu = useCallback((e: React.MouseEvent, presetId: string) => {
-    e.preventDefault();
-    if (myCharacter?.id) removePreset(myCharacter.id, presetId);
-  }, [myCharacter?.id, removePreset]);
+  const handlePresetContextMenu = useCallback(
+    (e: React.MouseEvent, presetId: string) => {
+      e.preventDefault();
+      if (myCharacter?.id) removePreset(myCharacter.id, presetId);
+    },
+    [myCharacter?.id, removePreset]
+  );
 
-  const handleAddPreset = useCallback((label: string, notation: string) => {
-    if (!myCharacter?.id || !label.trim() || !notation.trim()) return;
-    addPreset(myCharacter.id, { label: label.trim(), notation: notation.trim() });
-    setShowPresetForm(false);
-  }, [myCharacter?.id, addPreset]);
+  const handleAddPreset = useCallback(
+    (label: string, notation: string) => {
+      if (!myCharacter?.id || !label.trim() || !notation.trim()) return;
+      addPreset(myCharacter.id, { label: label.trim(), notation: notation.trim() });
+      setShowPresetForm(false);
+    },
+    [myCharacter?.id, addPreset]
+  );
 
   return (
     <>
@@ -277,10 +289,7 @@ export function DiceTray() {
       )}
 
       {showPresetForm && (
-        <PresetFormModal
-          onAdd={handleAddPreset}
-          onClose={() => setShowPresetForm(false)}
-        />
+        <PresetFormModal onAdd={handleAddPreset} onClose={() => setShowPresetForm(false)} />
       )}
     </>
   );
@@ -300,8 +309,14 @@ interface AdvancedDiceModalProps {
 
 function AdvancedDiceModal(props: AdvancedDiceModalProps) {
   const {
-    customNotation, setCustomNotation, handleCustomRoll,
-    advantage, setAdvantage, lastResult, rollHistory, onClose,
+    customNotation,
+    setCustomNotation,
+    handleCustomRoll,
+    advantage,
+    setAdvantage,
+    lastResult,
+    rollHistory,
+    onClose,
   } = props;
 
   return (
@@ -340,7 +355,9 @@ function AdvancedDiceModal(props: AdvancedDiceModalProps) {
               <AdvButton
                 active={advantage === 'disadvantage'}
                 variant="disadvantage"
-                onClick={() => setAdvantage(advantage === 'disadvantage' ? 'normal' : 'disadvantage')}
+                onClick={() =>
+                  setAdvantage(advantage === 'disadvantage' ? 'normal' : 'disadvantage')
+                }
                 title="Disadvantage (roll 2d20 keep lower)"
               >
                 <ChevronDown size={12} />
@@ -368,7 +385,10 @@ function AdvancedDiceModal(props: AdvancedDiceModalProps) {
               />
               <button
                 style={styles.rollBtn}
-                onClick={() => { handleCustomRoll(); onClose(); }}
+                onClick={() => {
+                  handleCustomRoll();
+                  onClose();
+                }}
               >
                 Roll
               </button>
@@ -400,9 +420,7 @@ function AdvancedDiceModal(props: AdvancedDiceModalProps) {
                     <span style={{ color: theme.text.muted, fontFamily: 'monospace' }}>
                       {roll.notation}
                     </span>
-                    <span style={{ color: theme.gold.primary, fontWeight: 700 }}>
-                      {roll.total}
-                    </span>
+                    <span style={{ color: theme.gold.primary, fontWeight: 700 }}>{roll.total}</span>
                   </div>
                 ))}
               </div>
@@ -472,8 +490,16 @@ function PresetFormModal({
 
 // ── Individual die — renders an SVG polygon shape ──────────
 function DieTile({
-  sides, label, onClick, size = 38,
-}: { sides: number; label: string; onClick: () => void; size?: number }) {
+  sides,
+  label,
+  onClick,
+  size = 38,
+}: {
+  sides: number;
+  label: string;
+  onClick: () => void;
+  size?: number;
+}) {
   const points = DIE_POLYGONS[sides] ?? DIE_POLYGONS[20];
   // d100 shows "100" instead of the "d100" string; other dice show just
   // the number ("4", "6", etc.) which reads more like a real die face.
@@ -492,12 +518,7 @@ function DieTile({
         if (svg) svg.style.transform = 'translateY(0) rotate(0deg)';
       }}
     >
-      <svg
-        width={size}
-        height={size}
-        viewBox="0 0 100 100"
-        style={styles.dieSvg}
-      >
+      <svg width={size} height={size} viewBox="0 0 100 100" style={styles.dieSvg}>
         <defs>
           <linearGradient id={`die-grad-${sides}`} x1="0" y1="0" x2="0" y2="1">
             <stop offset="0%" stopColor={theme.parchmentEdge} />
@@ -619,13 +640,17 @@ function AdvButton({
   title: string;
 }) {
   const activeColor =
-    variant === 'advantage' ? theme.state.success :
-    variant === 'disadvantage' ? theme.state.danger :
-    theme.gold.primary;
+    variant === 'advantage'
+      ? theme.state.success
+      : variant === 'disadvantage'
+        ? theme.state.danger
+        : theme.gold.primary;
   const activeBg =
-    variant === 'advantage' ? theme.state.successBg :
-    variant === 'disadvantage' ? theme.state.dangerBg :
-    theme.gold.bg;
+    variant === 'advantage'
+      ? theme.state.successBg
+      : variant === 'disadvantage'
+        ? theme.state.dangerBg
+        : theme.gold.bg;
   return (
     <button
       onClick={onClick}

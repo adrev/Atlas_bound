@@ -161,21 +161,52 @@ export function Dice3DOverlay() {
           try {
             const results = await box.roll(next.notation);
             // `sides` may come back as 'd20' or 20 — normalise.
-            const dice = (Array.isArray(results) ? results : []).map((r) => ({
-              type: typeof r.sides === 'number'
-                ? r.sides
-                : parseInt(String(r.sides).replace(/[^0-9]/g, ''), 10) || 0,
-              value: r.value,
-            })).filter((d) => d.type > 0);
+            const dice = (Array.isArray(results) ? results : [])
+              .map((r) => ({
+                type:
+                  typeof r.sides === 'number'
+                    ? r.sides
+                    : parseInt(String(r.sides).replace(/[^0-9]/g, ''), 10) || 0,
+                value: r.value,
+              }))
+              .filter((d) => d.type > 0);
 
-            const diceSum = dice.reduce((s, d) => s + d.value, 0);
             const modifier = parseNotationModifier(next.notation);
-            const total = diceSum + modifier;
+            // ADV/DIS keeps the higher/lower of the two d20s; everything
+            // else totals the plain sum. The server validates the same
+            // equation, so a summed advantage total can no longer land.
+            const d20s = dice.filter((d) => d.type === 20).map((d) => d.value);
+            const kept =
+              next.advantage && d20s.length === 2
+                ? next.advantage === 'advantage'
+                  ? Math.max(...d20s)
+                  : Math.min(...d20s)
+                : null;
+            const diceSum = dice.reduce((s, d) => s + d.value, 0);
+            const total = (kept ?? diceSum) + modifier;
 
-            emitPhysicalRoll(next.notation, next.reason, next.hidden, dice, total);
+            emitPhysicalRoll(
+              next.notation,
+              next.reason,
+              next.hidden,
+              dice,
+              total,
+              undefined,
+              next.advantage
+            );
           } catch (err) {
             console.warn('[dice-box] physical roll failed', err);
-            emitPhysicalRoll(next.notation, next.reason, next.hidden, [], 0);
+            // Empty report fails validation server-side → the server
+            // re-rolls authoritatively (advantage-aware via the flag).
+            emitPhysicalRoll(
+              next.notation,
+              next.reason,
+              next.hidden,
+              [],
+              0,
+              undefined,
+              next.advantage
+            );
           }
 
           // Hold on the landed face. Only clear the box IF there's no
@@ -183,8 +214,8 @@ export function Dice3DOverlay() {
           // clear-then-roll itself and we avoid a visible blank frame.
           await new Promise<void>((r) => window.setTimeout(r, 1800));
           const followUp = useDiceAnimationStore
-            .getState().active
-            .some((a) => !processedIdsRef.current.has(a.id));
+            .getState()
+            .active.some((a) => !processedIdsRef.current.has(a.id));
           if (!followUp) box.clear();
           completeAnim(next.id);
         }

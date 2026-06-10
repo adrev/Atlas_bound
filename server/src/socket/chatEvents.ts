@@ -61,6 +61,27 @@ import '../services/chatCommands/environmentHandler.js';
 import '../services/chatCommands/downtimeHandler.js';
 import '../services/chatCommands/checkHandler.js';
 
+/**
+ * Server-authoritative roll fallback for chat:roll (no/invalid client
+ * report). Advantage-aware: rolls 2d20-keep-one via DiceService.rollAdvantage
+ * (carrying the notation's flat modifier) instead of summing a raw 2d20.
+ */
+function serverRoll(
+  notation: string,
+  reason: string | undefined,
+  advantage: 'advantage' | 'disadvantage' | undefined
+) {
+  if (!advantage) return DiceService.roll(notation, reason);
+  const modifier = (() => {
+    try {
+      return parseDiceNotation(notation).modifier;
+    } catch {
+      return 0;
+    }
+  })();
+  return DiceService.rollAdvantage(modifier, advantage, reason);
+}
+
 export function registerChatEvents(io: Server, socket: Socket): void {
   socket.on(
     'chat:message',
@@ -236,7 +257,7 @@ export function registerChatEvents(io: Server, socket: Socket): void {
       if (!checkRateLimit(socket.id, 'chat:roll', 10, 5000)) return;
 
       const hidden = parsed.data.hidden && ctx.player.role === 'dm';
-      const { notation, reason, reported, template } = parsed.data;
+      const { notation, reason, reported, template, advantage } = parsed.data;
 
       try {
         // Prefer the client-reported result from the 3D dice (see
@@ -264,14 +285,17 @@ export function registerChatEvents(io: Server, socket: Socket): void {
               return null;
             }
           })();
-          const valid = validateReportedRoll(parsed, reported);
+          // With the advantage flag the validator additionally enforces
+          // total == KEPT d20 (max/min of the pair) + modifier — never
+          // the sum of both dice.
+          const valid = validateReportedRoll(parsed, reported, advantage);
           if (valid && parsed) {
             rollData = {
               notation,
               dice: reported.dice,
               modifier: parsed.modifier,
               total: reported.total,
-              advantage: 'normal' as const,
+              advantage: advantage ?? ('normal' as const),
               reason,
               // Flag so consumers (DM chat UI, Discord relay) know the
               // total came from the client's dice-box animation and
@@ -281,20 +305,21 @@ export function registerChatEvents(io: Server, socket: Socket): void {
               ...(template ? { template } : {}),
             };
           } else {
-            rollData = DiceService.roll(notation, reason);
+            rollData = serverRoll(notation, reason, advantage);
             if (template) rollData = { ...rollData, template };
           }
         } else {
-          rollData = DiceService.roll(notation, reason);
+          rollData = serverRoll(notation, reason, advantage);
           if (template) rollData = { ...rollData, template };
         }
         const messageId = uuidv4();
         const now = new Date().toISOString();
 
         const hiddenLabel = hidden ? ' (hidden)' : '';
+        const advLabel = advantage ? ` (${advantage})` : '';
         const displayContent = reason
-          ? `rolled ${notation} for ${reason}${hiddenLabel}: **${rollData.total}**`
-          : `rolled ${notation}${hiddenLabel}: **${rollData.total}**`;
+          ? `rolled ${notation}${advLabel} for ${reason}${hiddenLabel}: **${rollData.total}**`
+          : `rolled ${notation}${advLabel}${hiddenLabel}: **${rollData.total}**`;
 
         const message: ChatMessage = {
           id: messageId,

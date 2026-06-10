@@ -72,7 +72,14 @@ export function emitPreviewLoadMap(mapId: string) {
  */
 export function emitActivateMapForPlayers(
   mapId: string,
-  stagedPositions?: Array<{ characterId: string; name: string; x: number; y: number; imageUrl: string | null; ownerUserId: string }>,
+  stagedPositions?: Array<{
+    characterId: string;
+    name: string;
+    x: number;
+    y: number;
+    imageUrl: string | null;
+    ownerUserId: string;
+  }>
 ) {
   getSocket().emit('map:activate-for-players', { mapId, stagedPositions });
 }
@@ -119,7 +126,7 @@ export function emitUpdateMapLighting(
   payload: {
     ambientLight?: 'bright' | 'dim' | 'dark' | 'custom';
     ambientOpacity?: number | null;
-  },
+  }
 ) {
   getSocket().emit('map:update-lighting', { mapId, ...payload });
 }
@@ -148,7 +155,7 @@ export function emitUpdateTokenVisionOverrides(
     blindsight?: number;
     truesight?: number;
     tremorsense?: number;
-  } | null,
+  } | null
 ) {
   getSocket().emit('token:update-vision-overrides', { tokenId, visionOverrides });
 }
@@ -177,7 +184,7 @@ export function emitTokenRemove(tokenId: string) {
 export function emitTokenUpdate(
   tokenId: string,
   changes: Partial<Token>,
-  opts: { skipLocal?: boolean } = {},
+  opts: { skipLocal?: boolean } = {}
 ) {
   getSocket().emit('map:token-update', { tokenId, changes });
   if (!opts.skipLocal) {
@@ -207,11 +214,24 @@ export function emitPing(x: number, y: number) {
 }
 
 // --- Encounter spawn zones (DM-only) ---
-export function emitZoneAdd(zone: { name: string; x: number; y: number; width: number; height: number }) {
+export function emitZoneAdd(zone: {
+  name: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}) {
   getSocket().emit('map:zone-add', zone);
 }
 
-export function emitZoneUpdate(patch: { zoneId: string; name?: string; x?: number; y?: number; width?: number; height?: number }) {
+export function emitZoneUpdate(patch: {
+  zoneId: string;
+  name?: string;
+  x?: number;
+  y?: number;
+  width?: number;
+  height?: number;
+}) {
   getSocket().emit('map:zone-update', patch);
 }
 
@@ -292,7 +312,11 @@ export function emitNextTurn() {
   triggerSnapshot('combat:next-turn');
 }
 
-export function emitDamage(tokenId: string, amount: number, options: { criticalHit?: boolean } = {}) {
+export function emitDamage(
+  tokenId: string,
+  amount: number,
+  options: { criticalHit?: boolean } = {}
+) {
   getSocket().emit('combat:damage', { tokenId, amount, ...options });
   triggerSnapshot('combat:damage');
 }
@@ -432,7 +456,11 @@ export interface ConditionApplyOptions {
   casterTokenId?: string;
   /** Combat round AFTER which the condition auto-expires */
   expiresAfterRound?: number;
-  saveAtEndOfTurn?: { ability: 'str' | 'dex' | 'con' | 'int' | 'wis' | 'cha'; dc: number; advantage?: boolean };
+  saveAtEndOfTurn?: {
+    ability: 'str' | 'dex' | 'con' | 'int' | 'wis' | 'cha';
+    dc: number;
+    advantage?: boolean;
+  };
   endsOnDamage?: boolean;
 }
 
@@ -496,7 +524,7 @@ export function emitMusicAction(action: 'pause' | 'resume' | 'next' | 'prev') {
 export function emitCharacterUpdate(
   characterId: string,
   changes: Record<string, unknown>,
-  opts: { skipLocal?: boolean } = {},
+  opts: { skipLocal?: boolean } = {}
 ) {
   getSocket().emit('character:update', { characterId, changes });
   if (!opts.skipLocal) {
@@ -542,11 +570,7 @@ export function emitViewing(tab: string) {
 }
 
 // --- Chat ---
-export function emitChatMessage(
-  type: 'ic' | 'ooc',
-  content: string,
-  characterName?: string
-) {
+export function emitChatMessage(type: 'ic' | 'ooc', content: string, characterName?: string) {
   getSocket().emit('chat:message', { type, content, characterName });
 }
 
@@ -558,7 +582,7 @@ export function emitRoll(
   notation: string,
   reason?: string,
   hidden?: boolean,
-  template?: import('@dnd-vtt/shared').RollTemplate,
+  template?: import('@dnd-vtt/shared').RollTemplate
 ) {
   const payload: Record<string, unknown> = { notation, reason, hidden };
   if (template) payload.template = template;
@@ -582,12 +606,17 @@ export function emitPhysicalRoll(
   dice: Array<{ type: number; value: number }>,
   total: number,
   template?: import('@dnd-vtt/shared').RollTemplate,
+  advantage?: 'advantage' | 'disadvantage'
 ) {
   const payload: Record<string, unknown> = {
-    notation, reason, hidden,
+    notation,
+    reason,
+    hidden,
     reported: { dice, total },
   };
   if (template) payload.template = template;
+  // ADV/DIS: the server validates total == kept d20 + modifier (not the sum).
+  if (advantage) payload.advantage = advantage;
   getSocket().emit('chat:roll', payload);
 }
 
@@ -597,8 +626,13 @@ export function emitPhysicalRoll(
  * Dice3DOverlay reads the result and calls `emitPhysicalRoll` above.
  * No socket message goes out yet — that happens after the 3D settle.
  */
-export function startPhysicalRoll(notation: string, reason?: string, hidden?: boolean) {
-  useDiceAnimationStore.getState().playPhysical(notation, reason, hidden);
+export function startPhysicalRoll(
+  notation: string,
+  reason?: string,
+  hidden?: boolean,
+  advantage?: 'advantage' | 'disadvantage'
+) {
+  useDiceAnimationStore.getState().playPhysical(notation, reason, hidden, advantage);
 }
 
 /**
@@ -615,10 +649,12 @@ export function startPhysicalRoll(notation: string, reason?: string, hidden?: bo
  */
 export function emitSystemMessage(
   content: string,
-  structured?: {
-    attackResult?: import('@dnd-vtt/shared').AttackBreakdown;
-    spellResult?: import('@dnd-vtt/shared').SpellCastBreakdown;
-  } | import('@dnd-vtt/shared').AttackBreakdown,
+  structured?:
+    | {
+        attackResult?: import('@dnd-vtt/shared').AttackBreakdown;
+        spellResult?: import('@dnd-vtt/shared').SpellCastBreakdown;
+      }
+    | import('@dnd-vtt/shared').AttackBreakdown
 ) {
   // Backwards-compat: the weapon resolver still passes a bare
   // AttackBreakdown as the second arg. Detect that shape by the

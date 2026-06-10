@@ -7,16 +7,32 @@ import { safeImageUrlSchema } from './imageUrlValidator.js';
 // off-map tokens, snapshots, and future growth without letting callers send
 // arbitrary Infinity / 1e308 values.
 const coord = z.number().finite().min(-10000).max(20000);
-const colorHex = z.string().regex(/^#[0-9A-Fa-f]{3,8}$/).max(9);
+const colorHex = z
+  .string()
+  .regex(/^#[0-9A-Fa-f]{3,8}$/)
+  .max(9);
 // `pointsFlat` as a flat [x0, y0, x1, y1, …] number array (used by fog / walls
 // legacy shape). Bounded to 2000 numbers = 1000 points, same DoS ceiling.
 const pointsFlat = z.array(z.number().finite()).max(2000);
 const conditions = z.array(z.string().max(50)).max(30);
 const faction = z.enum(['friendly', 'hostile', 'neutral']);
 const ruleSource = z.enum([
-  'phb', 'dmg', 'mm', 'xge', 'tce', 'vgm', 'mmm', 'ua',
-  'eepc', 'mtof', 'eberron', 'theros', 'mpmm', 'strixhaven',
-  'fizban', 'witchlight',
+  'phb',
+  'dmg',
+  'mm',
+  'xge',
+  'tce',
+  'vgm',
+  'mmm',
+  'ua',
+  'eepc',
+  'mtof',
+  'eberron',
+  'theros',
+  'mpmm',
+  'strixhaven',
+  'fizban',
+  'witchlight',
 ]);
 const rulesAssistMode = z.enum(['manual', 'assisted', 'strict']);
 
@@ -72,19 +88,25 @@ export const sessionUpdateSettingsSchema = z.object({
    * major rolls). Null clears it. Must start with https://discord.com/
    * or https://discordapp.com/ to prevent SSRF abuse.
    */
-  discordWebhookUrl: z.union([
-    z.string()
-      .max(500)
-      .refine((u) => /^https:\/\/(discord|discordapp)\.com\/api\/webhooks\//.test(u), {
-        message: 'Must be a discord.com/api/webhooks URL',
-      }),
-    z.literal(''),
-    z.null(),
-  ]).optional(),
+  discordWebhookUrl: z
+    .union([
+      z
+        .string()
+        .max(500)
+        .refine((u) => /^https:\/\/(discord|discordapp)\.com\/api\/webhooks\//.test(u), {
+          message: 'Must be a discord.com/api/webhooks URL',
+        }),
+      z.literal(''),
+      z.null(),
+    ])
+    .optional(),
   allowPlayerRest: z.boolean().optional(),
   showCreatureStatsToPlayers: z.boolean().optional(),
   showPlayersToPlayers: z.boolean().optional(),
-  ruleSources: z.array(ruleSource).min(1).max(20)
+  ruleSources: z
+    .array(ruleSource)
+    .min(1)
+    .max(20)
     .transform((sources) => Array.from(new Set(['phb', ...sources])))
     .optional(),
   rulesAssistMode: rulesAssistMode.optional(),
@@ -143,12 +165,15 @@ export const tokenUpdateSchema = z.object({
     conditions: conditions.optional(),
     ownerUserId: z.string().nullable().optional(),
     faction: faction.optional(),
-    aura: z.object({
-      radiusFeet: z.number().finite().min(5).max(120),
-      color: colorHex,
-      opacity: z.number().finite().min(0).max(1),
-      shape: z.enum(['circle', 'square']),
-    }).nullable().optional(),
+    aura: z
+      .object({
+        radiusFeet: z.number().finite().min(5).max(120),
+        color: colorHex,
+        opacity: z.number().finite().min(0).max(1),
+        shape: z.enum(['circle', 'square']),
+      })
+      .nullable()
+      .optional(),
   }),
 });
 
@@ -216,51 +241,81 @@ export const mapReorderSchema = z.object({
 // --- Drawing event schemas ---
 
 const drawingKindSchema = z.enum([
-  'freehand', 'rect', 'circle', 'line', 'arrow', 'text', 'ephemeral',
+  'freehand',
+  'rect',
+  'circle',
+  'line',
+  'arrow',
+  'text',
+  'ephemeral',
   // Filled AoE footprints written by the AoE palette. The renderer
   // draws them via Konva.Wedge / filled Line so cones and 5-ft-wide
   // lines actually look like cones and lines instead of hollow
   // circles-for-cones.
-  'aoe-sphere', 'aoe-cone', 'aoe-cube', 'aoe-line',
+  'aoe-sphere',
+  'aoe-cone',
+  'aoe-cube',
+  'aoe-line',
 ]);
 const drawingVisibilitySchema = z.enum(['shared', 'dm-only', 'player-only']);
 
 const drawingGeometrySchema = z.object({
   points: pointsFlat.optional(),
-  rect: z.object({
-    x: coord,
-    y: coord,
-    width: z.number().finite().min(0).max(30000),
-    height: z.number().finite().min(0).max(30000),
-  }).optional(),
-  circle: z.object({
-    x: coord,
-    y: coord,
-    radius: z.number().finite().min(0).max(30000),
-  }).optional(),
-  text: z.object({
-    x: coord,
-    y: coord,
-    content: z.string().max(500),
-    fontSize: z.number().finite().min(6).max(120),
-  }).optional(),
-  cone: z.object({
-    x: coord,
-    y: coord,
-    radius: z.number().finite().min(0).max(30000),
-    rotation: z.number().finite().min(-720).max(720),
-  }).optional(),
-  orientedRect: z.object({
-    x: coord,
-    y: coord,
-    width: z.number().finite().min(0).max(30000),
-    height: z.number().finite().min(0).max(30000),
-    rotation: z.number().finite().min(-720).max(720),
-  }).optional(),
-  element: z.enum([
-    'fire', 'cold', 'lightning', 'acid', 'poison', 'radiant',
-    'necrotic', 'thunder', 'force', 'psychic', 'neutral',
-  ]).optional(),
+  rect: z
+    .object({
+      x: coord,
+      y: coord,
+      width: z.number().finite().min(0).max(30000),
+      height: z.number().finite().min(0).max(30000),
+    })
+    .optional(),
+  circle: z
+    .object({
+      x: coord,
+      y: coord,
+      radius: z.number().finite().min(0).max(30000),
+    })
+    .optional(),
+  text: z
+    .object({
+      x: coord,
+      y: coord,
+      content: z.string().max(500),
+      fontSize: z.number().finite().min(6).max(120),
+    })
+    .optional(),
+  cone: z
+    .object({
+      x: coord,
+      y: coord,
+      radius: z.number().finite().min(0).max(30000),
+      rotation: z.number().finite().min(-720).max(720),
+    })
+    .optional(),
+  orientedRect: z
+    .object({
+      x: coord,
+      y: coord,
+      width: z.number().finite().min(0).max(30000),
+      height: z.number().finite().min(0).max(30000),
+      rotation: z.number().finite().min(-720).max(720),
+    })
+    .optional(),
+  element: z
+    .enum([
+      'fire',
+      'cold',
+      'lightning',
+      'acid',
+      'poison',
+      'radiant',
+      'necrotic',
+      'thunder',
+      'force',
+      'psychic',
+      'neutral',
+    ])
+    .optional(),
 });
 
 export const drawingCreateSchema = z.object({
@@ -345,9 +400,22 @@ export const combatHealSchema = z.object({
 export const combatConditionSchema = z.object({
   tokenId: z.string().min(1),
   condition: z.enum([
-    'blinded', 'charmed', 'deafened', 'frightened', 'grappled',
-    'incapacitated', 'invisible', 'paralyzed', 'petrified', 'poisoned',
-    'prone', 'restrained', 'stunned', 'unconscious', 'stable', 'exhaustion',
+    'blinded',
+    'charmed',
+    'deafened',
+    'frightened',
+    'grappled',
+    'incapacitated',
+    'invisible',
+    'paralyzed',
+    'petrified',
+    'poisoned',
+    'prone',
+    'restrained',
+    'stunned',
+    'unconscious',
+    'stable',
+    'exhaustion',
   ]),
 });
 
@@ -364,11 +432,13 @@ export const conditionWithMetaSchema = z.object({
   source: z.string().min(1).max(80),
   casterTokenId: z.string().optional(),
   expiresAfterRound: z.number().int().optional(),
-  saveAtEndOfTurn: z.object({
-    ability: z.enum(['str', 'dex', 'con', 'int', 'wis', 'cha']),
-    dc: z.number().int().min(1).max(40),
-    advantage: z.boolean().optional(),
-  }).optional(),
+  saveAtEndOfTurn: z
+    .object({
+      ability: z.enum(['str', 'dex', 'con', 'int', 'wis', 'cha']),
+      dc: z.number().int().min(1).max(40),
+      advantage: z.boolean().optional(),
+    })
+    .optional(),
   endsOnDamage: z.boolean().optional(),
 });
 
@@ -475,7 +545,7 @@ export const mapActivateSchema = z.object({
 
 // --- Music sync schema ---
 export const musicChangeSchema = z.object({
-  track: z.string().max(50).nullable(),  // null = stop
+  track: z.string().max(50).nullable(), // null = stop
   fileIndex: z.number().int().min(0).max(20).optional(),
 });
 
@@ -509,7 +579,9 @@ export const sessionViewingSchema = z.object({
 const attackBreakdownModifierSchema = z.object({
   label: z.string().min(1).max(60),
   value: z.number().int().min(-100).max(100),
-  source: z.enum(['ability', 'proficiency', 'feat', 'fighting-style', 'condition', 'magic', 'other']).optional(),
+  source: z
+    .enum(['ability', 'proficiency', 'feat', 'fighting-style', 'condition', 'magic', 'other'])
+    .optional(),
 });
 
 const attackBreakdownDamageSourceSchema = z.object({
@@ -546,18 +618,20 @@ export const attackBreakdownSchema = z.object({
     isFumble: z.boolean(),
   }),
   hitResult: z.enum(['hit', 'miss', 'crit', 'fumble']),
-  damage: z.object({
-    dice: z.string().min(1).max(40),
-    diceRolls: z.array(z.number().int().min(0).max(200)).max(40),
-    mainRoll: z.number().int().min(0).max(9999),
-    bonuses: z.array(attackBreakdownDamageSourceSchema).max(12),
-    weaponTotalPre: z.number().int().min(0).max(9999).optional(),
-    weaponTotalPost: z.number().int().min(0).max(9999).optional(),
-    weaponResistanceNote: z.string().max(120).optional(),
-    finalDamage: z.number().int().min(0).max(9999),
-    targetHpBefore: z.number().int().min(-9999).max(9999),
-    targetHpAfter: z.number().int().min(-9999).max(9999),
-  }).optional(),
+  damage: z
+    .object({
+      dice: z.string().min(1).max(40),
+      diceRolls: z.array(z.number().int().min(0).max(200)).max(40),
+      mainRoll: z.number().int().min(0).max(9999),
+      bonuses: z.array(attackBreakdownDamageSourceSchema).max(12),
+      weaponTotalPre: z.number().int().min(0).max(9999).optional(),
+      weaponTotalPost: z.number().int().min(0).max(9999).optional(),
+      weaponResistanceNote: z.string().max(120).optional(),
+      finalDamage: z.number().int().min(0).max(9999),
+      targetHpBefore: z.number().int().min(-9999).max(9999),
+      targetHpAfter: z.number().int().min(-9999).max(9999),
+    })
+    .optional(),
   notes: z.array(z.string().max(120)).max(16),
   shieldSpell: z.enum(['miss', 'still-hit']).optional(),
 });
@@ -570,48 +644,56 @@ const spellTargetOutcomeSchema = z.object({
   name: z.string().min(1).max(100),
   tokenId: z.string().max(100).optional(),
   kind: z.enum(['attack', 'save', 'heal', 'damage-flat', 'buff', 'utility']),
-  attack: z.object({
-    d20: z.number().int().min(0).max(40),
-    d20Rolls: z.array(z.number().int().min(0).max(40)).max(4).optional(),
-    advantage: z.enum(['normal', 'advantage', 'disadvantage']),
-    modifiers: z.array(attackBreakdownModifierSchema).max(16),
-    total: z.number().int().min(-20).max(99),
-    targetAc: z.number().int().min(0).max(99),
-    baseAc: z.number().int().min(0).max(99).optional(),
-    acNotes: z.array(z.string().max(80)).max(12).optional(),
-    hitResult: z.enum(['hit', 'miss', 'crit', 'fumble']),
-  }).optional(),
-  save: z.object({
-    d20: z.number().int().min(0).max(40),
-    d20Rolls: z.array(z.number().int().min(0).max(40)).max(4).optional(),
-    advantage: z.enum(['normal', 'advantage', 'disadvantage']),
-    ability: z.enum(['str', 'dex', 'con', 'int', 'wis', 'cha']),
-    modifiers: z.array(attackBreakdownModifierSchema).max(16),
-    /** Widened min to -999 so the rollSaveWithModifiers auto-fail
-     *  sentinel (Paralyzed/Stunned/Unconscious) round-trips. */
-    total: z.number().int().min(-1000).max(99),
-    dc: z.number().int().min(0).max(99),
-    saved: z.boolean(),
-    autoFailed: z.boolean().optional(),
-    autoSucceeded: z.boolean().optional(),
-  }).optional(),
-  damage: z.object({
-    dice: z.string().min(1).max(40),
-    diceRolls: z.array(z.number().int().min(0).max(200)).max(40),
-    mainRoll: z.number().int().min(0).max(9999),
-    bonuses: z.array(attackBreakdownDamageSourceSchema).max(12),
-    halfDamage: z.boolean().optional(),
-    finalDamage: z.number().int().min(0).max(9999),
-    targetHpBefore: z.number().int().min(-9999).max(9999),
-    targetHpAfter: z.number().int().min(-9999).max(9999),
-  }).optional(),
-  healing: z.object({
-    dice: z.string().min(1).max(40),
-    diceRolls: z.array(z.number().int().min(0).max(200)).max(40),
-    mainRoll: z.number().int().min(0).max(9999),
-    targetHpBefore: z.number().int().min(-9999).max(9999),
-    targetHpAfter: z.number().int().min(-9999).max(9999),
-  }).optional(),
+  attack: z
+    .object({
+      d20: z.number().int().min(0).max(40),
+      d20Rolls: z.array(z.number().int().min(0).max(40)).max(4).optional(),
+      advantage: z.enum(['normal', 'advantage', 'disadvantage']),
+      modifiers: z.array(attackBreakdownModifierSchema).max(16),
+      total: z.number().int().min(-20).max(99),
+      targetAc: z.number().int().min(0).max(99),
+      baseAc: z.number().int().min(0).max(99).optional(),
+      acNotes: z.array(z.string().max(80)).max(12).optional(),
+      hitResult: z.enum(['hit', 'miss', 'crit', 'fumble']),
+    })
+    .optional(),
+  save: z
+    .object({
+      d20: z.number().int().min(0).max(40),
+      d20Rolls: z.array(z.number().int().min(0).max(40)).max(4).optional(),
+      advantage: z.enum(['normal', 'advantage', 'disadvantage']),
+      ability: z.enum(['str', 'dex', 'con', 'int', 'wis', 'cha']),
+      modifiers: z.array(attackBreakdownModifierSchema).max(16),
+      /** Widened min to -999 so the rollSaveWithModifiers auto-fail
+       *  sentinel (Paralyzed/Stunned/Unconscious) round-trips. */
+      total: z.number().int().min(-1000).max(99),
+      dc: z.number().int().min(0).max(99),
+      saved: z.boolean(),
+      autoFailed: z.boolean().optional(),
+      autoSucceeded: z.boolean().optional(),
+    })
+    .optional(),
+  damage: z
+    .object({
+      dice: z.string().min(1).max(40),
+      diceRolls: z.array(z.number().int().min(0).max(200)).max(40),
+      mainRoll: z.number().int().min(0).max(9999),
+      bonuses: z.array(attackBreakdownDamageSourceSchema).max(12),
+      halfDamage: z.boolean().optional(),
+      finalDamage: z.number().int().min(0).max(9999),
+      targetHpBefore: z.number().int().min(-9999).max(9999),
+      targetHpAfter: z.number().int().min(-9999).max(9999),
+    })
+    .optional(),
+  healing: z
+    .object({
+      dice: z.string().min(1).max(40),
+      diceRolls: z.array(z.number().int().min(0).max(200)).max(40),
+      mainRoll: z.number().int().min(0).max(9999),
+      targetHpBefore: z.number().int().min(-9999).max(9999),
+      targetHpAfter: z.number().int().min(-9999).max(9999),
+    })
+    .optional(),
   conditionsApplied: z.array(z.string().max(40)).max(16).optional(),
   notes: z.array(z.string().max(120)).max(8).optional(),
 });
@@ -659,20 +741,24 @@ export const saveBreakdownSchema = z.object({
   dc: z.number().int().min(0).max(99).optional(),
   passed: z.boolean(),
   notes: z.array(z.string().max(120)).max(8).optional(),
-  deathSave: z.object({
-    successes: z.number().int().min(0).max(3),
-    failures: z.number().int().min(0).max(3),
-    stabilized: z.boolean().optional(),
-    dead: z.boolean().optional(),
-    critSuccess: z.boolean().optional(),
-    critFailure: z.boolean().optional(),
-  }).optional(),
-  concentration: z.object({
-    spellName: z.string().min(1).max(80),
-    damageAmount: z.number().int().min(0).max(9999),
-    dropped: z.boolean(),
-    warCaster: z.boolean().optional(),
-  }).optional(),
+  deathSave: z
+    .object({
+      successes: z.number().int().min(0).max(3),
+      failures: z.number().int().min(0).max(3),
+      stabilized: z.boolean().optional(),
+      dead: z.boolean().optional(),
+      critSuccess: z.boolean().optional(),
+      critFailure: z.boolean().optional(),
+    })
+    .optional(),
+  concentration: z
+    .object({
+      spellName: z.string().min(1).max(80),
+      damageAmount: z.number().int().min(0).max(9999),
+      dropped: z.boolean(),
+      warCaster: z.boolean().optional(),
+    })
+    .optional(),
 });
 
 /**
@@ -688,30 +774,46 @@ export const actionBreakdownSchema = z.object({
   action: z.object({
     name: z.string().min(1).max(100),
     category: z.enum([
-      'legendary', 'lair', 'magic-item', 'class-feature',
-      'racial', 'environment', 'downtime', 'chase', 'other',
+      'legendary',
+      'lair',
+      'magic-item',
+      'class-feature',
+      'racial',
+      'environment',
+      'downtime',
+      'chase',
+      'other',
     ]),
     icon: z.string().max(8).optional(),
     cost: z.string().max(40).optional(),
   }),
   effect: z.string().min(1).max(400),
-  targets: z.array(z.object({
-    name: z.string().min(1).max(100),
-    tokenId: z.string().max(100).optional(),
-    effect: z.string().max(200).optional(),
-    conditionsApplied: z.array(z.string().max(40)).max(8).optional(),
-    damage: z.object({
-      amount: z.number().int().min(0).max(9999),
-      damageType: z.string().min(1).max(40),
-      hpBefore: z.number().int().min(-9999).max(9999).optional(),
-      hpAfter: z.number().int().min(-9999).max(9999).optional(),
-    }).optional(),
-    healing: z.object({
-      amount: z.number().int().min(0).max(9999),
-      hpBefore: z.number().int().min(-9999).max(9999).optional(),
-      hpAfter: z.number().int().min(-9999).max(9999).optional(),
-    }).optional(),
-  })).max(20).optional(),
+  targets: z
+    .array(
+      z.object({
+        name: z.string().min(1).max(100),
+        tokenId: z.string().max(100).optional(),
+        effect: z.string().max(200).optional(),
+        conditionsApplied: z.array(z.string().max(40)).max(8).optional(),
+        damage: z
+          .object({
+            amount: z.number().int().min(0).max(9999),
+            damageType: z.string().min(1).max(40),
+            hpBefore: z.number().int().min(-9999).max(9999).optional(),
+            hpAfter: z.number().int().min(-9999).max(9999).optional(),
+          })
+          .optional(),
+        healing: z
+          .object({
+            amount: z.number().int().min(0).max(9999),
+            hpBefore: z.number().int().min(-9999).max(9999).optional(),
+            hpAfter: z.number().int().min(-9999).max(9999).optional(),
+          })
+          .optional(),
+      })
+    )
+    .max(20)
+    .optional(),
   notes: z.array(z.string().max(120)).max(8).optional(),
 });
 
@@ -778,19 +880,30 @@ export const chatRollSchema = z.object({
   notation: z.string().min(1).max(200),
   reason: z.string().max(200).optional(),
   hidden: z.boolean().optional(),
+  // Advantage/disadvantage d20 roll. The tray rolls 2d20 physically;
+  // the TOTAL must be built from the kept (higher/lower) die, not the
+  // sum — the validator enforces this when the flag is present.
+  advantage: z.enum(['advantage', 'disadvantage']).optional(),
   // Client-reported result from the 3D dice animation. If present,
   // the server trusts it instead of re-rolling randomly — this is what
   // keeps the 3D dice face in sync with the chat card (dice-box can't
   // be forced to land on a predetermined value, so we let it be
   // authoritative instead). Omitted for server-initiated rolls (NPC
   // actions, auto-rolls, offline clients).
-  reported: z.object({
-    dice: z.array(z.object({
-      type: z.number().int().min(2).max(1000),
-      value: z.number().int().min(0).max(1000),
-    })).min(1).max(100),
-    total: z.number().int().min(-10000).max(10000),
-  }).optional(),
+  reported: z
+    .object({
+      dice: z
+        .array(
+          z.object({
+            type: z.number().int().min(2).max(1000),
+            value: z.number().int().min(0).max(1000),
+          })
+        )
+        .min(1)
+        .max(100),
+      total: z.number().int().min(-10000).max(10000),
+    })
+    .optional(),
   template: rollTemplateSchema.optional(),
 });
 
@@ -851,67 +964,83 @@ export const transferOwnershipSchema = z.object({
   newOwnerId: userIdField,
 });
 
-const backgroundSchema = z.object({
-  name: z.string(),
-  description: z.string(),
-  feature: z.string(),
-}).optional();
+const backgroundSchema = z
+  .object({
+    name: z.string(),
+    description: z.string(),
+    feature: z.string(),
+  })
+  .optional();
 
-const characteristicsSchema = z.object({
-  alignment: z.string(),
-  gender: z.string(),
-  eyes: z.string(),
-  hair: z.string(),
-  skin: z.string(),
-  height: z.string(),
-  weight: z.string(),
-  age: z.string(),
-  faith: z.string(),
-  size: z.string(),
-}).optional();
+const characteristicsSchema = z
+  .object({
+    alignment: z.string(),
+    gender: z.string(),
+    eyes: z.string(),
+    hair: z.string(),
+    skin: z.string(),
+    height: z.string(),
+    weight: z.string(),
+    age: z.string(),
+    faith: z.string(),
+    size: z.string(),
+  })
+  .optional();
 
-const personalitySchema = z.object({
-  traits: z.string(),
-  ideals: z.string(),
-  bonds: z.string(),
-  flaws: z.string(),
-}).optional();
+const personalitySchema = z
+  .object({
+    traits: z.string(),
+    ideals: z.string(),
+    bonds: z.string(),
+    flaws: z.string(),
+  })
+  .optional();
 
-const notesSchema = z.object({
-  organizations: z.string(),
-  allies: z.string(),
-  enemies: z.string(),
-  backstory: z.string(),
-  other: z.string(),
-}).optional();
+const notesSchema = z
+  .object({
+    organizations: z.string(),
+    allies: z.string(),
+    enemies: z.string(),
+    backstory: z.string(),
+    other: z.string(),
+  })
+  .optional();
 
-const proficienciesSchema = z.object({
-  armor: z.array(z.string()),
-  weapons: z.array(z.string()),
-  tools: z.array(z.string()),
-  languages: z.array(z.string()),
-}).optional();
+const proficienciesSchema = z
+  .object({
+    armor: z.array(z.string()),
+    weapons: z.array(z.string()),
+    tools: z.array(z.string()),
+    languages: z.array(z.string()),
+  })
+  .optional();
 
-const sensesSchema = z.object({
-  passivePerception: z.number(),
-  passiveInvestigation: z.number(),
-  passiveInsight: z.number(),
-  darkvision: z.number(),
-}).optional();
+const sensesSchema = z
+  .object({
+    passivePerception: z.number(),
+    passiveInvestigation: z.number(),
+    passiveInsight: z.number(),
+    darkvision: z.number(),
+  })
+  .optional();
 
-const defensesSchema = z.object({
-  resistances: z.array(z.string()),
-  immunities: z.array(z.string()),
-  vulnerabilities: z.array(z.string()),
-}).optional();
+const defensesSchema = z
+  .object({
+    resistances: z.array(z.string()),
+    immunities: z.array(z.string()),
+    vulnerabilities: z.array(z.string()),
+  })
+  .optional();
 
-const currencySchema = z.object({
-  cp: z.number(),
-  sp: z.number(),
-  ep: z.number(),
-  gp: z.number(),
-  pp: z.number(),
-}).optional();
+const currencySchema = z
+  .object({
+    cp: z.number(),
+    sp: z.number(),
+    ep: z.number(),
+    gp: z.number(),
+    pp: z.number(),
+  })
+  .optional();
 
 export const createCharacterSchema = z.object({
   name: z.string().min(1).max(100),
@@ -923,14 +1052,16 @@ export const createCharacterSchema = z.object({
   tempHitPoints: z.number().int().min(0).optional(),
   armorClass: z.number().int().min(0).default(10),
   speed: z.number().int().min(0).default(30),
-  abilityScores: z.object({
-    str: z.number().int().min(1).max(30),
-    dex: z.number().int().min(1).max(30),
-    con: z.number().int().min(1).max(30),
-    int: z.number().int().min(1).max(30),
-    wis: z.number().int().min(1).max(30),
-    cha: z.number().int().min(1).max(30),
-  }).optional(),
+  abilityScores: z
+    .object({
+      str: z.number().int().min(1).max(30),
+      dex: z.number().int().min(1).max(30),
+      con: z.number().int().min(1).max(30),
+      int: z.number().int().min(1).max(30),
+      wis: z.number().int().min(1).max(30),
+      cha: z.number().int().min(1).max(30),
+    })
+    .optional(),
   savingThrows: z.array(z.string()).optional(),
   skills: z.record(z.string()).optional(),
   spellSlots: z.record(z.any()).optional(),
@@ -953,11 +1084,15 @@ export const createCharacterSchema = z.object({
   spellAttackBonus: z.number().int().optional(),
   spellSaveDC: z.number().int().optional(),
   initiative: z.number().int().optional(),
-  hitDice: z.array(z.object({
-    dieSize: z.number().int(),
-    total: z.number().int(),
-    used: z.number().int(),
-  })).optional(),
+  hitDice: z
+    .array(
+      z.object({
+        dieSize: z.number().int(),
+        total: z.number().int(),
+        used: z.number().int(),
+      })
+    )
+    .optional(),
   concentratingOn: z.string().nullable().optional(),
   exhaustionLevel: z.number().int().min(0).max(6).optional(),
   compendiumSlug: z.string().nullable().optional(),
@@ -974,7 +1109,9 @@ export const createLootSchema = z.object({
   itemName: z.string().min(1).max(200),
   itemSlug: z.string().max(200).optional(),
   customItemId: z.string().max(100).nullable().optional(),
-  itemRarity: z.enum(['common', 'uncommon', 'rare', 'very rare', 'legendary', 'artifact']).optional(),
+  itemRarity: z
+    .enum(['common', 'uncommon', 'rare', 'very rare', 'legendary', 'artifact'])
+    .optional(),
   quantity: z.number().int().positive().max(9999).default(1),
 });
 
@@ -982,32 +1119,36 @@ export const createLootSchema = z.object({
 // Action/ability shape matches what CreateMonsterForm sends. Keep loose
 // on the inside (descriptions can be long) and capped on the outside
 // (can't flood the DB with a 10k-item action list).
-const customActionEntrySchema = z.object({
-  name: z.string().min(1).max(200),
-  desc: z.string().max(10000).optional(),
-  attackBonus: z.number().int().min(-20).max(30).optional(),
-  damageDice: z.string().max(50).optional(),
-  damageType: z.string().max(50).optional(),
-}).passthrough();
+const customActionEntrySchema = z
+  .object({
+    name: z.string().min(1).max(200),
+    desc: z.string().max(10000).optional(),
+    attackBonus: z.number().int().min(-20).max(30).optional(),
+    damageDice: z.string().max(50).optional(),
+    damageType: z.string().max(50).optional(),
+  })
+  .passthrough();
 
 // Standard 5e ability score block. Individual scores can legitimately
 // reach 30 for artifacts and epic-tier monsters.
-const customAbilityScoresSchema = z.object({
-  str: z.number().int().min(0).max(30).optional(),
-  dex: z.number().int().min(0).max(30).optional(),
-  con: z.number().int().min(0).max(30).optional(),
-  int: z.number().int().min(0).max(30).optional(),
-  wis: z.number().int().min(0).max(30).optional(),
-  cha: z.number().int().min(0).max(30).optional(),
-}).passthrough();
+const customAbilityScoresSchema = z
+  .object({
+    str: z.number().int().min(0).max(30).optional(),
+    dex: z.number().int().min(0).max(30).optional(),
+    con: z.number().int().min(0).max(30).optional(),
+    int: z.number().int().min(0).max(30).optional(),
+    wis: z.number().int().min(0).max(30).optional(),
+    cha: z.number().int().min(0).max(30).optional(),
+  })
+  .passthrough();
 
 // Speed block: keys like walk/fly/climb/swim/burrow. Stringly-typed
 // values ("30 ft.") also accepted because some DDB-imported monsters
 // ship them that way.
-const customSpeedSchema = z.record(z.string().max(20), z.union([
-  z.number().min(0).max(1000),
-  z.string().max(50),
-]));
+const customSpeedSchema = z.record(
+  z.string().max(20),
+  z.union([z.number().min(0).max(1000), z.string().max(50)])
+);
 
 export const createCustomMonsterSchema = z.object({
   sessionId: z.string().min(1),
@@ -1025,8 +1166,12 @@ export const createCustomMonsterSchema = z.object({
   challengeRating: z.string().max(20).optional(),
   crNumeric: z.number().min(0).max(30).optional(),
   actions: z.union([z.string().max(10000), z.array(customActionEntrySchema).max(40)]).optional(),
-  specialAbilities: z.union([z.string().max(10000), z.array(customActionEntrySchema).max(40)]).optional(),
-  legendaryActions: z.union([z.string().max(10000), z.array(customActionEntrySchema).max(40)]).optional(),
+  specialAbilities: z
+    .union([z.string().max(10000), z.array(customActionEntrySchema).max(40)])
+    .optional(),
+  legendaryActions: z
+    .union([z.string().max(10000), z.array(customActionEntrySchema).max(40)])
+    .optional(),
   description: z.string().max(5000).optional(),
   imageUrl: safeImageUrlSchema.nullable().optional(),
   senses: z.string().max(500).optional(),
@@ -1036,7 +1181,9 @@ export const createCustomMonsterSchema = z.object({
   conditionImmunities: z.string().max(500).optional(),
 });
 
-export const updateCustomMonsterSchema = createCustomMonsterSchema.partial().omit({ sessionId: true });
+export const updateCustomMonsterSchema = createCustomMonsterSchema
+  .partial()
+  .omit({ sessionId: true });
 
 export const createCustomSpellSchema = z.object({
   sessionId: z.string().min(1),
@@ -1092,11 +1239,16 @@ export const updateCustomItemSchema = createCustomItemSchema.partial().omit({ se
 // --- Encounter preset schemas ---
 export const createEncounterSchema = z.object({
   name: z.string().min(1).max(100),
-  creatures: z.array(z.object({
-    slug: z.string().min(1),
-    name: z.string().min(1).max(200),
-    count: z.number().int().min(1).max(20),
-  })).min(1).max(50),
+  creatures: z
+    .array(
+      z.object({
+        slug: z.string().min(1),
+        name: z.string().min(1).max(200),
+        count: z.number().int().min(1).max(20),
+      })
+    )
+    .min(1)
+    .max(50),
 });
 
 export const createMapSchema = z.object({

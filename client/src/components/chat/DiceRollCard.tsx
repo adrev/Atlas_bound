@@ -4,15 +4,27 @@ import { theme } from '../../styles/theme';
 
 // ── Skills list for detection ────────────────────────────────────
 const SKILLS = [
-  'acrobatics', 'animal handling', 'arcana', 'athletics', 'deception',
-  'history', 'insight', 'intimidation', 'investigation', 'medicine',
-  'nature', 'perception', 'performance', 'persuasion', 'religion',
-  'sleight of hand', 'stealth', 'survival',
+  'acrobatics',
+  'animal handling',
+  'arcana',
+  'athletics',
+  'deception',
+  'history',
+  'insight',
+  'intimidation',
+  'investigation',
+  'medicine',
+  'nature',
+  'perception',
+  'performance',
+  'persuasion',
+  'religion',
+  'sleight of hand',
+  'stealth',
+  'survival',
 ];
 
-const ABILITIES = [
-  'strength', 'dexterity', 'constitution', 'intelligence', 'wisdom', 'charisma',
-];
+const ABILITIES = ['strength', 'dexterity', 'constitution', 'intelligence', 'wisdom', 'charisma'];
 
 // Structured template wins over keyword heuristics when present (R3).
 // Keeps the type label in sync with the metadata actually carried on
@@ -20,14 +32,22 @@ const ABILITIES = [
 // card chrome rendered below.
 function labelFromTemplate(tpl: RollTemplate): { label: string; sub?: string } {
   switch (tpl.kind) {
-    case 'attack': return { label: 'ATTACK', sub: 'ROLL' };
-    case 'save': return { label: tpl.ability.toUpperCase(), sub: 'SAVE' };
-    case 'check': return {
-      label: (tpl.skill ?? tpl.ability).toUpperCase(),
-      sub: 'CHECK',
-    };
-    case 'damage': return { label: 'DAMAGE', sub: tpl.damageType.toUpperCase() };
-    case 'spell': return { label: tpl.spellName.toUpperCase(), sub: tpl.spellLevel === 0 ? 'CANTRIP' : `LVL ${tpl.spellLevel}` };
+    case 'attack':
+      return { label: 'ATTACK', sub: 'ROLL' };
+    case 'save':
+      return { label: tpl.ability.toUpperCase(), sub: 'SAVE' };
+    case 'check':
+      return {
+        label: (tpl.skill ?? tpl.ability).toUpperCase(),
+        sub: 'CHECK',
+      };
+    case 'damage':
+      return { label: 'DAMAGE', sub: tpl.damageType.toUpperCase() };
+    case 'spell':
+      return {
+        label: tpl.spellName.toUpperCase(),
+        sub: tpl.spellLevel === 0 ? 'CANTRIP' : `LVL ${tpl.spellLevel}`,
+      };
   }
 }
 
@@ -52,7 +72,8 @@ function detectRollType(content: string, rollData: DiceRollData): { label: strin
   }
 
   if (combined.includes('attack')) return { label: 'ATTACK', sub: 'ROLL' };
-  if (combined.includes('save') || combined.includes('saving')) return { label: 'SAVING', sub: 'THROW' };
+  if (combined.includes('save') || combined.includes('saving'))
+    return { label: 'SAVING', sub: 'THROW' };
   if (combined.includes('initiative')) return { label: 'INITIATIVE', sub: 'ROLL' };
   if (combined.includes('death')) return { label: 'DEATH', sub: 'SAVE' };
   // Only label a roll as DAMAGE when the reason explicitly says so —
@@ -126,13 +147,13 @@ function injectKeyframes() {
 // metadata when present. Falls back to gold for anything unrecognised.
 function typeAccentColor(
   rollType: { label: string; sub?: string },
-  rollData: DiceRollData,
+  rollData: DiceRollData
 ): string {
-  if (rollData.template?.kind === 'attack') return '#3498db';       // blue
-  if (rollData.template?.kind === 'damage') return '#e67e22';       // orange
-  if (rollData.template?.kind === 'save') return '#9b59b6';         // purple
+  if (rollData.template?.kind === 'attack') return '#3498db'; // blue
+  if (rollData.template?.kind === 'damage') return '#e67e22'; // orange
+  if (rollData.template?.kind === 'save') return '#9b59b6'; // purple
   if (rollData.template?.kind === 'check') return theme.gold.primary;
-  if (rollData.template?.kind === 'spell') return '#3498db';        // blue (same as attack rolls)
+  if (rollData.template?.kind === 'spell') return '#3498db'; // blue (same as attack rolls)
   const label = rollType.label;
   const sub = rollType.sub ?? '';
   if (label === 'ATTACK') return '#3498db';
@@ -143,10 +164,7 @@ function typeAccentColor(
   return theme.gold.primary;
 }
 
-function typeAccentBg(
-  rollType: { label: string; sub?: string },
-  rollData: DiceRollData,
-): string {
+function typeAccentBg(rollType: { label: string; sub?: string }, rollData: DiceRollData): string {
   const c = typeAccentColor(rollType, rollData);
   // 0x10 alpha over the card backdrop — subtle tint, not a fill.
   if (c === '#3498db') return 'rgba(52,152,219,0.08)';
@@ -158,7 +176,10 @@ function typeAccentBg(
 
 // ── Template chip (R3 roll-template chrome) ──────────────────────
 function TemplateChip({
-  template, total, isNat20, isNat1,
+  template,
+  total,
+  isNat20,
+  isNat1,
 }: {
   template: RollTemplate;
   total: number;
@@ -179,14 +200,33 @@ function TemplateChip({
     background: 'rgba(255,255,255,0.04)',
     color: theme.text.secondary,
   };
-  const hitStyle = { ...chipBase, background: 'rgba(39,174,96,0.18)', color: '#2ecc71', border: '1px solid rgba(39,174,96,0.4)' };
-  const missStyle = { ...chipBase, background: 'rgba(192,57,43,0.18)', color: '#e74c3c', border: '1px solid rgba(192,57,43,0.4)' };
+  const hitStyle = {
+    ...chipBase,
+    background: 'rgba(39,174,96,0.18)',
+    color: '#2ecc71',
+    border: '1px solid rgba(39,174,96,0.4)',
+  };
+  const missStyle = {
+    ...chipBase,
+    background: 'rgba(192,57,43,0.18)',
+    color: '#e74c3c',
+    border: '1px solid rgba(192,57,43,0.4)',
+  };
 
   if (template.kind === 'attack') {
     // AC target + hit/miss indicator. Crit/fumble override the AC comparison.
     const isHit = typeof template.ac === 'number' ? total >= template.ac : undefined;
-    const resolved = isNat20 ? 'HIT' : isNat1 ? 'MISS' : isHit === undefined ? null : isHit ? 'HIT' : 'MISS';
-    const resolvedStyle = resolved === 'HIT' ? hitStyle : resolved === 'MISS' ? missStyle : chipBase;
+    const resolved = isNat20
+      ? 'HIT'
+      : isNat1
+        ? 'MISS'
+        : isHit === undefined
+          ? null
+          : isHit
+            ? 'HIT'
+            : 'MISS';
+    const resolvedStyle =
+      resolved === 'HIT' ? hitStyle : resolved === 'MISS' ? missStyle : chipBase;
     return (
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginBottom: 6 }}>
         {template.target && <span style={chipBase}>→ {template.target}</span>}
@@ -199,7 +239,8 @@ function TemplateChip({
   if (template.kind === 'save') {
     const passed = typeof template.dc === 'number' ? total >= template.dc : undefined;
     const resolved = passed === undefined ? null : passed ? 'PASS' : 'FAIL';
-    const resolvedStyle = resolved === 'PASS' ? hitStyle : resolved === 'FAIL' ? missStyle : chipBase;
+    const resolvedStyle =
+      resolved === 'PASS' ? hitStyle : resolved === 'FAIL' ? missStyle : chipBase;
     return (
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginBottom: 6 }}>
         {typeof template.dc === 'number' && <span style={chipBase}>DC {template.dc}</span>}
@@ -213,7 +254,11 @@ function TemplateChip({
     return (
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginBottom: 6 }}>
         <span style={chipBase}>{template.damageType}</span>
-        {template.critical && <span style={{ ...chipBase, color: '#f1c40f', border: '1px solid rgba(241,196,15,0.4)' }}>CRIT</span>}
+        {template.critical && (
+          <span style={{ ...chipBase, color: '#f1c40f', border: '1px solid rgba(241,196,15,0.4)' }}>
+            CRIT
+          </span>
+        )}
         {template.target && <span style={chipBase}>→ {template.target}</span>}
       </div>
     );
@@ -231,7 +276,9 @@ function TemplateChip({
   // spell
   return (
     <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginBottom: 6 }}>
-      <span style={chipBase}>{template.spellLevel === 0 ? 'CANTRIP' : `LEVEL ${template.spellLevel}`}</span>
+      <span style={chipBase}>
+        {template.spellLevel === 0 ? 'CANTRIP' : `LEVEL ${template.spellLevel}`}
+      </span>
     </div>
   );
 }
@@ -247,18 +294,40 @@ interface DiceRollCardProps {
 export function DiceRollCard({ rollData, content, displayName, isHidden }: DiceRollCardProps) {
   injectKeyframes();
 
-  const hasD20 = rollData.dice.some((d) => d.type === 20);
-  const d20Value = rollData.dice.find((d) => d.type === 20)?.value;
+  // ADV/DIS rolls show two d20s but only the KEPT one counts — crit /
+  // fumble detection and the formula must use that die, not the first
+  // one in the array (dice [3, 20] used to miss the crit while [20, 3]
+  // announced one regardless of which die was kept).
+  const adv =
+    rollData.advantage === 'advantage' || rollData.advantage === 'disadvantage'
+      ? rollData.advantage
+      : null;
+  const d20Values = rollData.dice.filter((d) => d.type === 20).map((d) => d.value);
+  const keptD20 =
+    adv && d20Values.length === 2
+      ? adv === 'advantage'
+        ? Math.max(...d20Values)
+        : Math.min(...d20Values)
+      : null;
+
+  const hasD20 = d20Values.length > 0;
+  const d20Value = keptD20 ?? rollData.dice.find((d) => d.type === 20)?.value;
   const isNat20 = hasD20 && d20Value === 20;
   const isNat1 = hasD20 && d20Value === 1;
 
   const rollType = detectRollType(content, rollData);
 
-  // Build the formula: "14 + 5 = 19"
+  // Build the formula: "14 + 5 = 19" — or for ADV/DIS, "[14, 8] keep 14".
   const diceSum = rollData.dice.reduce((s, d) => s + d.value, 0);
   const mod = rollData.modifier;
   let formulaParts: string;
-  if (mod !== 0) {
+  if (keptD20 !== null) {
+    const keepLabel = `[${d20Values.join(', ')}] keep ${keptD20}`;
+    formulaParts =
+      mod !== 0
+        ? `${keepLabel} ${mod > 0 ? '+' : '-'} ${Math.abs(mod)} = ${rollData.total}`
+        : `${keepLabel} = ${rollData.total}`;
+  } else if (mod !== 0) {
     formulaParts = `${diceSum} ${mod > 0 ? '+' : '-'} ${Math.abs(mod)} = ${rollData.total}`;
   } else {
     formulaParts = `${rollData.total}`;
@@ -273,30 +342,24 @@ export function DiceRollCard({ rollData, content, displayName, isHidden }: DiceR
   const accentColor = isHidden
     ? theme.purple
     : isNat20
-    ? '#f1c40f'
-    : isNat1
-    ? theme.danger
-    : typeAccent;
+      ? '#f1c40f'
+      : isNat1
+        ? theme.danger
+        : typeAccent;
 
-  const totalColor = isHidden
-    ? theme.purple
-    : isNat20
-    ? '#f1c40f'
-    : isNat1
-    ? '#e74c3c'
-    : '#fff';
+  const totalColor = isHidden ? theme.purple : isNat20 ? '#f1c40f' : isNat1 ? '#e74c3c' : '#fff';
 
   const cardBg = isNat20
     ? 'rgba(241,196,15,0.08)'
     : isNat1
-    ? 'rgba(192,57,43,0.08)'
-    : typeAccentBg(rollType, rollData);
+      ? 'rgba(192,57,43,0.08)'
+      : typeAccentBg(rollType, rollData);
 
   const cardAnimation = isNat20
     ? 'diceCardGoldPulse 2s ease-in-out 1, diceCardSlideIn 0.25s ease'
     : isNat1
-    ? 'diceCardRedPulse 2s ease-in-out 1, diceCardSlideIn 0.25s ease'
-    : 'diceCardSlideIn 0.25s ease';
+      ? 'diceCardRedPulse 2s ease-in-out 1, diceCardSlideIn 0.25s ease'
+      : 'diceCardSlideIn 0.25s ease';
 
   return (
     <div
@@ -323,9 +386,7 @@ export function DiceRollCard({ rollData, content, displayName, isHidden }: DiceR
         >
           {rollType.label}
           {rollType.sub && (
-            <span style={{ color: theme.text.muted, marginLeft: 4 }}>
-              {rollType.sub}
-            </span>
+            <span style={{ color: theme.text.muted, marginLeft: 4 }}>{rollType.sub}</span>
           )}
         </span>
         {isHidden && (
@@ -350,7 +411,12 @@ export function DiceRollCard({ rollData, content, displayName, isHidden }: DiceR
 
       {/* Template-specific chrome (R3) — structured context chip. */}
       {rollData.template && (
-        <TemplateChip template={rollData.template} total={rollData.total} isNat20={isNat20} isNat1={isNat1} />
+        <TemplateChip
+          template={rollData.template}
+          total={rollData.total}
+          isNat20={isNat20}
+          isNat1={isNat1}
+        />
       )}
 
       {/* Critical hit / miss label */}
@@ -411,7 +477,9 @@ export function DiceRollCard({ rollData, content, displayName, isHidden }: DiceR
       </div>
 
       {/* Dice breakdown: notation + individual dice badges */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', marginBottom: 6 }}>
+      <div
+        style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', marginBottom: 6 }}
+      >
         <span
           style={{
             fontSize: 11,
@@ -423,14 +491,19 @@ export function DiceRollCard({ rollData, content, displayName, isHidden }: DiceR
         </span>
         <div style={{ display: 'flex', gap: 3, flexWrap: 'wrap' }}>
           {rollData.dice.map((d, i) => {
-            const isCritValue = d.type === 20 && d.value === 20;
-            const isFumbleValue = d.type === 20 && d.value === 1;
+            // Under ADV/DIS, dim the dropped d20 so the kept die reads
+            // at a glance. Crit/fumble chrome only applies to the kept die.
+            const isDropped = keptD20 !== null && d.type === 20 && d.value !== keptD20;
+            const isCritValue = d.type === 20 && d.value === 20 && !isDropped;
+            const isFumbleValue = d.type === 20 && d.value === 1 && !isDropped;
             const isMax = d.value === d.type;
             const isMin = d.value === 1;
             return (
               <span
                 key={i}
                 style={{
+                  opacity: isDropped ? 0.35 : 1,
+                  textDecoration: isDropped ? 'line-through' : undefined,
                   display: 'inline-flex',
                   alignItems: 'center',
                   justifyContent: 'center',
@@ -444,27 +517,27 @@ export function DiceRollCard({ rollData, content, displayName, isHidden }: DiceR
                   background: isCritValue
                     ? 'rgba(241,196,15,0.25)'
                     : isFumbleValue
-                    ? 'rgba(192,57,43,0.25)'
-                    : isMax
-                    ? 'rgba(39,174,96,0.2)'
-                    : isMin
-                    ? 'rgba(192,57,43,0.15)'
-                    : 'rgba(255,255,255,0.07)',
+                      ? 'rgba(192,57,43,0.25)'
+                      : isMax
+                        ? 'rgba(39,174,96,0.2)'
+                        : isMin
+                          ? 'rgba(192,57,43,0.15)'
+                          : 'rgba(255,255,255,0.07)',
                   color: isCritValue
                     ? '#f1c40f'
                     : isFumbleValue
-                    ? '#e74c3c'
-                    : isMax
-                    ? '#2ecc71'
-                    : isMin
-                    ? '#e74c3c'
-                    : theme.text.secondary,
+                      ? '#e74c3c'
+                      : isMax
+                        ? '#2ecc71'
+                        : isMin
+                          ? '#e74c3c'
+                          : theme.text.secondary,
                   border: `1px solid ${
                     isCritValue
                       ? 'rgba(241,196,15,0.4)'
                       : isFumbleValue
-                      ? 'rgba(192,57,43,0.4)'
-                      : 'rgba(255,255,255,0.08)'
+                        ? 'rgba(192,57,43,0.4)'
+                        : 'rgba(255,255,255,0.08)'
                   }`,
                 }}
               >
