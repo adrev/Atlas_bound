@@ -28,11 +28,33 @@ export type ReportedRoll = {
   total: number;
 };
 
+/**
+ * With `advantage` set, the roll must be exactly two positive d20s and
+ * the total must equal the KEPT die (max for advantage, min for
+ * disadvantage) plus the notation modifier — never the sum of both.
+ * This is the server-side check that stops a 2d20 advantage roll from
+ * validating an illegal summed total (2–40).
+ */
 export function validateReportedRoll(
   parsed: ParsedRoll | null,
   reported: ReportedRoll,
+  advantage?: 'advantage' | 'disadvantage'
 ): boolean {
   if (!parsed) return false;
+
+  if (advantage) {
+    // Shape: exactly two reported d20s, notation declaring two positive d20s.
+    if (reported.dice.length !== 2) return false;
+    if (!reported.dice.every((d) => d.type === 20 && d.value >= 1 && d.value <= 20)) return false;
+    const declared = parsed.dice.reduce(
+      (n, d) => (d.sides === 20 && d.count > 0 ? n + d.count : NaN),
+      0
+    );
+    if (declared !== 2) return false;
+    const [a, b] = reported.dice.map((d) => d.value);
+    const kept = advantage === 'advantage' ? Math.max(a, b) : Math.min(a, b);
+    return kept + parsed.modifier === reported.total;
+  }
 
   // (2) face-count sanity
   for (const d of reported.dice) {

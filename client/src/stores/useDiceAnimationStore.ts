@@ -18,6 +18,8 @@ export interface PhysicalDiceRoll {
   reason?: string;
   /** Hidden rolls go only to the DM socket once the server builds the card. */
   hidden?: boolean;
+  /** ADV/DIS d20 roll — 2d20 animate, the kept die makes the total. */
+  advantage?: 'advantage' | 'disadvantage';
   /** Wall-clock start so consumers can compute elapsed animation time. */
   startedAt: number;
 }
@@ -29,7 +31,12 @@ interface DiceAnimationState {
 interface DiceAnimationActions {
   /** Queue a physical roll. The overlay will pick it up, run dice-box,
    *  and (once settled) emit chat:roll with the reported values. */
-  playPhysical: (notation: string, reason?: string, hidden?: boolean) => void;
+  playPhysical: (
+    notation: string,
+    reason?: string,
+    hidden?: boolean,
+    advantage?: 'advantage' | 'disadvantage'
+  ) => void;
   /** Remove a roll from the queue — called by the overlay after its
    *  post-settle hold + fade. */
   complete: (id: number) => void;
@@ -40,10 +47,15 @@ let seq = 0;
 
 export const useDiceAnimationStore = create<DiceAnimationState & DiceAnimationActions>((set) => ({
   active: [],
-  playPhysical: (notation, reason, hidden) => {
+  playPhysical: (notation, reason, hidden, advantage) => {
     seq += 1;
     const entry: PhysicalDiceRoll = {
-      id: seq, notation, reason, hidden, startedAt: performance.now(),
+      id: seq,
+      notation,
+      reason,
+      hidden,
+      advantage,
+      startedAt: performance.now(),
     };
     // Cap the queue at 3 — rapid-fire tray clicks shouldn't pile up.
     set((state) => ({ active: [...state.active.slice(-2), entry] }));
