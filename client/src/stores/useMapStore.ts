@@ -114,14 +114,17 @@ interface MapState {
    * Keyed by mapId so staging tokens on one preview map doesn't
    * bleed into other maps.
    */
-  stagedHeroes: Record<string, Array<{
-    characterId: string;
-    name: string;
-    portraitUrl: string | null;
-    x: number;
-    y: number;
-    ownerUserId: string;
-  }>>;
+  stagedHeroes: Record<
+    string,
+    Array<{
+      characterId: string;
+      name: string;
+      portraitUrl: string | null;
+      x: number;
+      y: number;
+      ownerUserId: string;
+    }>
+  >;
   /**
    * The id of the map the PLAYERS are currently on ("yellow ribbon").
    * For players this is always equal to `currentMap?.id`. For DMs it
@@ -235,10 +238,7 @@ export const useMapStore = create<MapState & MapActions>((set) => ({
 
   setTokens: (tokens) =>
     set({
-      tokens: tokens.reduce(
-        (acc, t) => ({ ...acc, [t.id]: t }),
-        {} as Record<string, Token>
-      ),
+      tokens: tokens.reduce((acc, t) => ({ ...acc, [t.id]: t }), {} as Record<string, Token>),
     }),
 
   moveToken: (tokenId, x, y) =>
@@ -262,8 +262,7 @@ export const useMapStore = create<MapState & MapActions>((set) => ({
       const selectedTokenIds = state.selectedTokenIds.filter((id) => id !== tokenId);
       return {
         tokens: rest,
-        selectedTokenId:
-          state.selectedTokenId === tokenId ? null : state.selectedTokenId,
+        selectedTokenId: state.selectedTokenId === tokenId ? null : state.selectedTokenId,
         selectedTokenIds,
       };
     }),
@@ -278,25 +277,27 @@ export const useMapStore = create<MapState & MapActions>((set) => ({
         : state.tokens,
     })),
 
-  selectToken: (tokenId, additive = false) => set((state) => {
-    if (tokenId === null) return { selectedTokenId: null, selectedTokenIds: [] };
-    if (!additive) {
-      return { selectedTokenId: tokenId, selectedTokenIds: [tokenId] };
-    }
-    // Additive (shift-click) — XOR into the current selection.
-    const exists = state.selectedTokenIds.includes(tokenId);
-    const nextIds = exists
-      ? state.selectedTokenIds.filter((id) => id !== tokenId)
-      : [...state.selectedTokenIds, tokenId];
-    // Primary stays pinned to the oldest selected token so the
-    // TokenActionPanel doesn't thrash as the user builds a group.
-    const primary = nextIds.length === 0
-      ? null
-      : state.selectedTokenId && nextIds.includes(state.selectedTokenId)
-        ? state.selectedTokenId
-        : nextIds[0];
-    return { selectedTokenId: primary, selectedTokenIds: nextIds };
-  }),
+  selectToken: (tokenId, additive = false) =>
+    set((state) => {
+      if (tokenId === null) return { selectedTokenId: null, selectedTokenIds: [] };
+      if (!additive) {
+        return { selectedTokenId: tokenId, selectedTokenIds: [tokenId] };
+      }
+      // Additive (shift-click) — XOR into the current selection.
+      const exists = state.selectedTokenIds.includes(tokenId);
+      const nextIds = exists
+        ? state.selectedTokenIds.filter((id) => id !== tokenId)
+        : [...state.selectedTokenIds, tokenId];
+      // Primary stays pinned to the oldest selected token so the
+      // TokenActionPanel doesn't thrash as the user builds a group.
+      const primary =
+        nextIds.length === 0
+          ? null
+          : state.selectedTokenId && nextIds.includes(state.selectedTokenId)
+            ? state.selectedTokenId
+            : nextIds[0];
+      return { selectedTokenId: primary, selectedTokenIds: nextIds };
+    }),
 
   setTool: (tool) => set({ activeTool: tool }),
 
@@ -348,7 +349,8 @@ export const useMapStore = create<MapState & MapActions>((set) => ({
       // Lazy import avoids pulling the UI bundle into the store.
       import('../components/ui/Toast').then(({ showToast }) => {
         showToast({
-          message: 'Cannot cast spells while previewing a different map. Move the players here first.',
+          message:
+            'Cannot cast spells while previewing a different map. Move the players here first.',
           variant: 'warning',
           emoji: '\u26A0\uFE0F',
           duration: 5000,
@@ -363,9 +365,7 @@ export const useMapStore = create<MapState & MapActions>((set) => ({
   beginDragPreview: (preview) => set({ dragPreview: preview }),
   updateDragPreview: (currentX, currentY) =>
     set((state) =>
-      state.dragPreview
-        ? { dragPreview: { ...state.dragPreview, currentX, currentY } }
-        : state,
+      state.dragPreview ? { dragPreview: { ...state.dragPreview, currentX, currentY } } : state
     ),
   endDragPreview: () => set({ dragPreview: null }),
 
@@ -378,7 +378,7 @@ export const useMapStore = create<MapState & MapActions>((set) => ({
       stagedHeroes: {
         ...state.stagedHeroes,
         [mapId]: (state.stagedHeroes[mapId] ?? []).map((h) =>
-          h.characterId === characterId ? { ...h, x, y } : h,
+          h.characterId === characterId ? { ...h, x, y } : h
         ),
       },
     })),
@@ -407,8 +407,7 @@ export const useMapStore = create<MapState & MapActions>((set) => ({
       // Recompute the preview flag: true when we're looking at
       // something OTHER than the ribbon. Both must be non-null for
       // a "different map" condition to be meaningful.
-      isDmPreviewingDifferentMap:
-        !!state.currentMap && !!mapId && state.currentMap.id !== mapId,
+      isDmPreviewingDifferentMap: !!state.currentMap && !!mapId && state.currentMap.id !== mapId,
     })),
 
   applyMapLoad: ({ map, tokens, isPreview }) => {
@@ -428,17 +427,19 @@ export const useMapStore = create<MapState & MapActions>((set) => ({
           gridType: map.gridType,
           gridOffsetX: map.gridOffsetX,
           gridOffsetY: map.gridOffsetY,
+          // Ambient lighting must survive every map:loaded — dropping it
+          // here made dark/dim maps render fully BRIGHT for anyone who
+          // joined, refreshed, or followed a ribbon move (FogLayer treats
+          // undefined as 'bright'), until the DM re-touched lighting.
+          ambientLight: map.ambientLight,
+          ambientOpacity: map.ambientOpacity,
         },
-        tokens: tokens.reduce(
-          (acc, t) => ({ ...acc, [t.id]: t }),
-          {} as Record<string, Token>,
-        ),
+        tokens: tokens.reduce((acc, t) => ({ ...acc, [t.id]: t }), {} as Record<string, Token>),
         walls: map.walls ?? [],
         fogRegions: map.fogState ?? [],
         zones: map.zones ?? [],
         playerMapId: nextPlayerMapId,
-        isDmPreviewingDifferentMap:
-          !!nextPlayerMapId && map.id !== nextPlayerMapId,
+        isDmPreviewingDifferentMap: !!nextPlayerMapId && map.id !== nextPlayerMapId,
       };
     });
   },
