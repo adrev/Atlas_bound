@@ -62,7 +62,7 @@ interface DiceBoxInstance {
 export function Dice3DOverlay() {
   const active = useDiceAnimationStore((s) => s.active);
   const completeAnim = useDiceAnimationStore((s) => s.complete);
-  const list = Array.isArray(active) ? active : [];
+  const list = active;
 
   const boxRef = useRef<DiceBoxInstance | null>(null);
   const initPromiseRef = useRef<Promise<void> | null>(null);

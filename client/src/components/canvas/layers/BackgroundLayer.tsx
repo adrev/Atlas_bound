@@ -80,18 +80,17 @@ export function BackgroundLayer({
   stageHeight,
 }: BackgroundLayerProps) {
   const [image, status] = useImage(imageUrl);
+  const { x: viewportX, y: viewportY, scaleX, scaleY } = viewport;
   const visibleRect = useMemo(
-    () => getVisibleMapRect(width, height, viewport, stageWidth, stageHeight),
-    [
-      width,
-      height,
-      viewport.x,
-      viewport.y,
-      viewport.scaleX,
-      viewport.scaleY,
-      stageWidth,
-      stageHeight,
-    ]
+    () =>
+      getVisibleMapRect(
+        width,
+        height,
+        { x: viewportX, y: viewportY, scaleX, scaleY },
+        stageWidth,
+        stageHeight
+      ),
+    [width, height, viewportX, viewportY, scaleX, scaleY, stageWidth, stageHeight]
   );
 
   if (!visibleRect) return null;
