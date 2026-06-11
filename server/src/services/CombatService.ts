@@ -18,7 +18,10 @@ import {
 } from '@dnd-vtt/shared';
 import { getRoom, type RoomState } from '../utils/roomState.js';
 import pool from '../db/connection.js';
-import { releaseGrapplesByGrappler } from './ConditionService.js';
+import {
+  releaseGrapplesByGrappler,
+  removeCondition as removeConditionEverywhere,
+} from './ConditionService.js';
 
 /**
  * 5e movement cap for a combatant's turn. Pulls base speed from the
@@ -1623,14 +1626,13 @@ export function removeCondition(
   if (!room?.combatState) throw new Error('No active combat');
   const combatant = room.combatState.combatants.find((c) => c.tokenId === tokenId);
   if (!combatant) throw new Error('Combatant not found');
-  combatant.conditions = combatant.conditions.filter((c) => c !== condition);
-  const token = room.tokens.get(tokenId);
-  if (token) token.conditions = token.conditions.filter((c) => c !== condition);
+  // Delegate the mutation to the canonical ConditionService path, which
+  // clears token + tokens row + conditionMeta + combatant in one place.
+  // This wrapper used to duplicate the token/combatant cleanup but skip
+  // conditionMeta — so a DM clearing Hold Person from the tracker left
+  // stale meta rolling phantom end-of-turn saves in chat forever.
+  removeConditionEverywhere(sessionId, tokenId, condition);
   persistCombatState(room.combatState);
-  const conditionsJson = JSON.stringify(combatant.conditions);
-  pool
-    .query('UPDATE tokens SET conditions = $1 WHERE id = $2', [conditionsJson, tokenId])
-    .catch(() => {});
   return combatant.conditions;
 }
 

@@ -10,7 +10,10 @@ function metaForToken(sessionId: string, tokenId: string): Map<string, Condition
   const room = getRoom(sessionId);
   if (!room) return new Map();
   let map = room.conditionMeta.get(tokenId);
-  if (!map) { map = new Map(); room.conditionMeta.set(tokenId, map); }
+  if (!map) {
+    map = new Map();
+    room.conditionMeta.set(tokenId, map);
+  }
   return map;
 }
 
@@ -31,7 +34,9 @@ function dropsConcentrationOnApply(conditionName: string): boolean {
  * Empty array when no side-effect fired.
  */
 export function applyConditionWithMeta(
-  sessionId: string, tokenId: string, meta: ConditionMetadata,
+  sessionId: string,
+  tokenId: string,
+  meta: ConditionMetadata
 ): string[] {
   const room = getRoom(sessionId);
   if (!room) return [];
@@ -40,11 +45,23 @@ export function applyConditionWithMeta(
 
   if (!(token.conditions as string[]).includes(meta.name)) {
     (token.conditions as string[]).push(meta.name);
-    pool.query('UPDATE tokens SET conditions = $1 WHERE id = $2', [JSON.stringify(token.conditions), tokenId])
-      .catch(err => console.warn('[applyConditionWithMeta] DB update failed:', err));
+    pool
+      .query('UPDATE tokens SET conditions = $1 WHERE id = $2', [
+        JSON.stringify(token.conditions),
+        tokenId,
+      ])
+      .catch((err) => console.warn('[applyConditionWithMeta] DB update failed:', err));
   }
 
   metaForToken(sessionId, tokenId).set(meta.name.toLowerCase(), meta);
+
+  // Keep the combat tracker in lockstep. This used to update only the
+  // token, so meta-applied conditions (Hold Person, !cond, spell fails)
+  // never showed on the combatant entry players' trackers render.
+  const applyCombatant = room.combatState?.combatants.find((c) => c.tokenId === tokenId);
+  if (applyCombatant && !(applyCombatant.conditions as string[]).includes(meta.name)) {
+    (applyCombatant.conditions as string[]).push(meta.name);
+  }
 
   const freedTokenIds: string[] = [];
 
@@ -56,10 +73,12 @@ export function applyConditionWithMeta(
   // breaks focus needs only a data edit.
   if (dropsConcentrationOnApply(meta.name)) {
     if (token.characterId) {
-      pool.query(
-        'UPDATE characters SET concentrating_on = NULL WHERE id = $1 AND concentrating_on IS NOT NULL',
-        [token.characterId],
-      ).catch((err) => console.warn('[applyConditionWithMeta] concentration drop failed:', err));
+      pool
+        .query(
+          'UPDATE characters SET concentrating_on = NULL WHERE id = $1 AND concentrating_on IS NOT NULL',
+          [token.characterId]
+        )
+        .catch((err) => console.warn('[applyConditionWithMeta] concentration drop failed:', err));
     }
     // Auto-release any grapple this token was holding. RAW: "the
     // grappled condition ends if the grappler is incapacitated."
@@ -71,21 +90,45 @@ export function applyConditionWithMeta(
   return freedTokenIds;
 }
 
+/**
+ * Canonical condition removal — the ONE place a condition comes off.
+ * Clears the token, the tokens row, the conditionMeta entry (so duration
+ * ticks and end-of-turn save retries stop), and the combatant entry in
+ * active combat (so the tracker badge clears too). Both the tick paths
+ * and CombatService.removeCondition route through here; previously they
+ * each cleaned a different subset and the leftovers caused phantom
+ * end-of-turn saves (stale meta) or stuck tracker badges (stale
+ * combatant.conditions).
+ */
 export function removeCondition(sessionId: string, tokenId: string, conditionName: string): void {
   const room = getRoom(sessionId);
   if (!room) return;
   const token = room.tokens.get(tokenId);
   if (!token) return;
   const lower = conditionName.toLowerCase();
-  token.conditions = ((token.conditions as string[]).filter(c => c.toLowerCase() !== lower)) as never;
-  pool.query('UPDATE tokens SET conditions = $1 WHERE id = $2', [JSON.stringify(token.conditions), tokenId])
-    .catch(err => console.warn('[removeCondition] DB update failed:', err));
+  token.conditions = (token.conditions as string[]).filter(
+    (c) => c.toLowerCase() !== lower
+  ) as never;
+  pool
+    .query('UPDATE tokens SET conditions = $1 WHERE id = $2', [
+      JSON.stringify(token.conditions),
+      tokenId,
+    ])
+    .catch((err) => console.warn('[removeCondition] DB update failed:', err));
   const map = room.conditionMeta.get(tokenId);
   if (map) map.delete(lower);
+  const combatant = room.combatState?.combatants.find((c) => c.tokenId === tokenId);
+  if (combatant) {
+    combatant.conditions = combatant.conditions.filter(
+      (c) => (c as string).toLowerCase() !== lower
+    );
+  }
 }
 
 export function tickStartOfTurnConditions(
-  sessionId: string, tokenId: string, currentRound: number,
+  sessionId: string,
+  tokenId: string,
+  currentRound: number
 ): { removed: string[]; messages: string[] } {
   const room = getRoom(sessionId);
   if (!room) return { removed: [], messages: [] };
@@ -108,7 +151,8 @@ export function tickStartOfTurnConditions(
 }
 
 export async function tickEndOfTurnConditions(
-  sessionId: string, tokenId: string,
+  sessionId: string,
+  tokenId: string
 ): Promise<{ removed: string[]; messages: string[] }> {
   const room = getRoom(sessionId);
   if (!room) return { removed: [], messages: [] };
@@ -128,16 +172,25 @@ export async function tickEndOfTurnConditions(
     const charId = token.characterId;
     if (charId) {
       const { rows } = await pool.query(
-        'SELECT ability_scores, saving_throws, proficiency_bonus FROM characters WHERE id = $1', [charId],
+        'SELECT ability_scores, saving_throws, proficiency_bonus FROM characters WHERE id = $1',
+        [charId]
       );
       const row = rows[0] as Record<string, unknown> | undefined;
       if (row) {
         try {
-          const scores = safeParseJSON<Record<string, number>>(row.ability_scores, DEFAULT_ABILITY_SCORES, 'character.ability_scores');
-          const profSet = new Set(safeParseJSON<string[]>(row.saving_throws, [], 'character.saving_throws'));
+          const scores = safeParseJSON<Record<string, number>>(
+            row.ability_scores,
+            DEFAULT_ABILITY_SCORES,
+            'character.ability_scores'
+          );
+          const profSet = new Set(
+            safeParseJSON<string[]>(row.saving_throws, [], 'character.saving_throws')
+          );
           saveMod = Math.floor((scores[ability] - 10) / 2);
           if (profSet.has(ability)) saveMod += (row.proficiency_bonus as number) || 2;
-        } catch { /* ignore */ }
+        } catch {
+          /* ignore */
+        }
       }
     }
 
@@ -151,17 +204,23 @@ export async function tickEndOfTurnConditions(
 
     if (success) {
       removed.push(name);
-      messages.push(`\u2713 ${token.name} \u2014 ${meta.source}: ${ability.toUpperCase()} save d20=${kept}${advTag}${modStr}=${total} vs DC ${dc} \u2192 SAVED, effect ends`);
+      messages.push(
+        `\u2713 ${token.name} \u2014 ${meta.source}: ${ability.toUpperCase()} save d20=${kept}${advTag}${modStr}=${total} vs DC ${dc} \u2192 SAVED, effect ends`
+      );
       removeCondition(sessionId, tokenId, name);
     } else {
-      messages.push(`\u2717 ${token.name} \u2014 ${meta.source}: ${ability.toUpperCase()} save d20=${kept}${advTag}${modStr}=${total} vs DC ${dc} \u2192 still affected`);
+      messages.push(
+        `\u2717 ${token.name} \u2014 ${meta.source}: ${ability.toUpperCase()} save d20=${kept}${advTag}${modStr}=${total} vs DC ${dc} \u2192 still affected`
+      );
     }
   }
   return { removed, messages };
 }
 
 export function tickConditionsForToken(
-  _sessionId: string, _tokenId: string, _currentRound: number,
+  _sessionId: string,
+  _tokenId: string,
+  _currentRound: number
 ): { removed: string[]; messages: string[] } {
   // Sync wrapper for backward compat - returns empty for async tick
   // The actual logic runs in tickEndOfTurnConditions (async)
@@ -182,7 +241,9 @@ export interface DamageSideEffectsResult {
 }
 
 export async function processDamageSideEffects(
-  sessionId: string, tokenId: string, damageAmount: number,
+  sessionId: string,
+  tokenId: string,
+  damageAmount: number
 ): Promise<DamageSideEffectsResult> {
   const room = getRoom(sessionId);
   if (!room) return { affectedTokens: [], messages: [] };
@@ -195,19 +256,30 @@ export async function processDamageSideEffects(
   if (token.characterId) {
     const { rows } = await pool.query(
       'SELECT concentrating_on, ability_scores, saving_throws, proficiency_bonus, features, name FROM characters WHERE id = $1',
-      [token.characterId],
+      [token.characterId]
     );
     const charRow = rows[0] as Record<string, unknown> | undefined;
     const concentratingOn = charRow?.concentrating_on as string | null | undefined;
     if (concentratingOn) {
       const dc = Math.max(10, Math.floor(damageAmount / 2));
-      let conMod = 0, isProficient = false;
+      let conMod = 0,
+        isProficient = false;
       try {
-        const scores = safeParseJSON<Record<string, number>>(charRow!.ability_scores, DEFAULT_ABILITY_SCORES, 'character.ability_scores');
+        const scores = safeParseJSON<Record<string, number>>(
+          charRow!.ability_scores,
+          DEFAULT_ABILITY_SCORES,
+          'character.ability_scores'
+        );
         conMod = Math.floor(((scores.con ?? 10) - 10) / 2);
-        const profSaves = safeParseJSON<string[]>(charRow!.saving_throws, [], 'character.saving_throws');
+        const profSaves = safeParseJSON<string[]>(
+          charRow!.saving_throws,
+          [],
+          'character.saving_throws'
+        );
         isProficient = profSaves.includes('con');
-      } catch { /* ignore */ }
+      } catch {
+        /* ignore */
+      }
       const profBonus = (charRow!.proficiency_bonus as number) || 2;
       const totalMod = conMod + (isProficient ? profBonus : 0);
 
@@ -219,8 +291,12 @@ export async function processDamageSideEffects(
         const raw = charRow!.features;
         const features = typeof raw === 'string' ? JSON.parse(raw) : (raw ?? []);
         const list: Array<{ name?: string }> = Array.isArray(features) ? features : [];
-        hasWarCaster = list.some((f) => typeof f?.name === 'string' && /^\s*war\s*caster\s*$/i.test(f.name));
-      } catch { /* ignore */ }
+        hasWarCaster = list.some(
+          (f) => typeof f?.name === 'string' && /^\s*war\s*caster\s*$/i.test(f.name)
+        );
+      } catch {
+        /* ignore */
+      }
 
       const r1 = Math.floor(Math.random() * 20) + 1;
       const r2 = Math.floor(Math.random() * 20) + 1;
@@ -232,10 +308,16 @@ export async function processDamageSideEffects(
       const tokenName = (charRow!.name as string) || token.name;
 
       if (success) {
-        result.messages.push(`\uD83C\uDFAF ${tokenName} CON save d20=${roll}${modStr}=${total} vs DC ${dc}${advTag} \u2192 SAVED, concentration on ${concentratingOn} maintained`);
+        result.messages.push(
+          `\uD83C\uDFAF ${tokenName} CON save d20=${roll}${modStr}=${total} vs DC ${dc}${advTag} \u2192 SAVED, concentration on ${concentratingOn} maintained`
+        );
       } else {
-        result.messages.push(`\u26A1 ${tokenName} CON save d20=${roll}${modStr}=${total} vs DC ${dc}${advTag} \u2192 FAILED, concentration on ${concentratingOn} dropped!`);
-        await pool.query('UPDATE characters SET concentrating_on = NULL WHERE id = $1', [token.characterId]);
+        result.messages.push(
+          `\u26A1 ${tokenName} CON save d20=${roll}${modStr}=${total} vs DC ${dc}${advTag} \u2192 FAILED, concentration on ${concentratingOn} dropped!`
+        );
+        await pool.query('UPDATE characters SET concentrating_on = NULL WHERE id = $1', [
+          token.characterId,
+        ]);
         result.droppedConcentration = { spellName: concentratingOn };
         const cleared = clearConcentrationConditions(sessionId, tokenId, concentratingOn);
         for (const { tokenId: tid } of cleared) {
@@ -243,7 +325,9 @@ export async function processDamageSideEffects(
         }
         if (cleared.length > 0) {
           const total = cleared.reduce((sum, c) => sum + c.removed.length, 0);
-          result.messages.push(`   \u2934 ${total} condition${total !== 1 ? 's' : ''} cleared from ${cleared.length} target${cleared.length !== 1 ? 's' : ''}`);
+          result.messages.push(
+            `   \u2934 ${total} condition${total !== 1 ? 's' : ''} cleared from ${cleared.length} target${cleared.length !== 1 ? 's' : ''}`
+          );
         }
       }
 
@@ -255,7 +339,11 @@ export async function processDamageSideEffects(
         saveModifiers.push({ label: 'CON modifier', value: conMod, source: 'ability' });
       }
       if (isProficient) {
-        saveModifiers.push({ label: 'Proficient in CON save', value: profBonus, source: 'proficiency' });
+        saveModifiers.push({
+          label: 'Proficient in CON save',
+          value: profBonus,
+          source: 'proficiency',
+        });
       }
       result.concentrationSave = {
         roller: {
@@ -299,7 +387,7 @@ export async function processDamageSideEffects(
         if (token.characterId) {
           const { rows } = await pool.query(
             'SELECT ability_scores, saving_throws, proficiency_bonus FROM characters WHERE id = $1',
-            [token.characterId],
+            [token.characterId]
           );
           const row = rows[0] as Record<string, unknown> | undefined;
           if (row) {
@@ -308,7 +396,9 @@ export async function processDamageSideEffects(
               const profSet = new Set(JSON.parse(row.saving_throws as string) as string[]);
               saveMod = Math.floor((scores[ability] - 10) / 2);
               if (profSet.has(ability)) saveMod += (row.proficiency_bonus as number) || 2;
-            } catch { /* ignore */ }
+            } catch {
+              /* ignore */
+            }
           }
         }
         const r1 = Math.floor(Math.random() * 20) + 1;
@@ -320,9 +410,13 @@ export async function processDamageSideEffects(
         if (success) {
           removeCondition(sessionId, tokenId, name);
           if (!result.affectedTokens.includes(tokenId)) result.affectedTokens.push(tokenId);
-          result.messages.push(`\u2713 ${token.name} \u2014 ${meta.source}: ${ability.toUpperCase()} save (adv) d20=${kept}${modStr}=${total} vs DC ${dc} \u2192 SAVED, effect ends`);
+          result.messages.push(
+            `\u2713 ${token.name} \u2014 ${meta.source}: ${ability.toUpperCase()} save (adv) d20=${kept}${modStr}=${total} vs DC ${dc} \u2192 SAVED, effect ends`
+          );
         } else {
-          result.messages.push(`\u2717 ${token.name} \u2014 ${meta.source}: ${ability.toUpperCase()} save (adv) d20=${kept}${modStr}=${total} vs DC ${dc} \u2192 still affected`);
+          result.messages.push(
+            `\u2717 ${token.name} \u2014 ${meta.source}: ${ability.toUpperCase()} save (adv) d20=${kept}${modStr}=${total} vs DC ${dc} \u2192 still affected`
+          );
         }
       }
     }
@@ -336,9 +430,7 @@ export async function processDamageSideEffects(
  * grappler becomes incapacitated (or is removed / dead). Returns the
  * tokenIds that were freed so callers can broadcast map:token-updated.
  */
-export function releaseGrapplesByGrappler(
-  sessionId: string, grapplerTokenId: string,
-): string[] {
+export function releaseGrapplesByGrappler(sessionId: string, grapplerTokenId: string): string[] {
   const room = getRoom(sessionId);
   if (!room) return [];
   const freed: string[] = [];
@@ -347,18 +439,25 @@ export function releaseGrapplesByGrappler(
     if (!grappleMeta || grappleMeta.casterTokenId !== grapplerTokenId) continue;
     const other = room.tokens.get(otherTokenId);
     if (!other) continue;
-    other.conditions = ((other.conditions as string[]).filter((c) => c.toLowerCase() !== 'grappled')) as never;
+    other.conditions = (other.conditions as string[]).filter(
+      (c) => c.toLowerCase() !== 'grappled'
+    ) as never;
     otherMeta.delete('grappled');
-    pool.query('UPDATE tokens SET conditions = $1 WHERE id = $2',
-      [JSON.stringify(other.conditions), otherTokenId],
-    ).catch((e) => console.warn('[releaseGrapplesByGrappler] DB update failed:', e));
+    pool
+      .query('UPDATE tokens SET conditions = $1 WHERE id = $2', [
+        JSON.stringify(other.conditions),
+        otherTokenId,
+      ])
+      .catch((e) => console.warn('[releaseGrapplesByGrappler] DB update failed:', e));
     freed.push(otherTokenId);
   }
   return freed;
 }
 
 export function clearConcentrationConditions(
-  sessionId: string, casterTokenId: string, spellName: string,
+  sessionId: string,
+  casterTokenId: string,
+  spellName: string
 ): { tokenId: string; removed: string[] }[] {
   const room = getRoom(sessionId);
   if (!room) return [];
