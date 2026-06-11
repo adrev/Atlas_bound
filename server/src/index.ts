@@ -30,7 +30,14 @@ import { backfillTokenSnaps } from './services/backfillTokenSnaps.js';
 import { registerSocketHandler } from './socket/handler.js';
 import { setIO } from './socket/ioInstance.js';
 import { setupStaticServing } from './static.js';
-import { tokenUpload, portraitUpload, handoutUpload, validateAndSaveUpload } from './routes/uploads.js';
+import {
+  tokenUpload,
+  portraitUpload,
+  handoutUpload,
+  validateAndSaveUpload,
+  tryServeUploadFromGcs,
+  isUploadStorageError,
+} from './routes/uploads.js';
 import rateLimit from 'express-rate-limit';
 import authRouter from './auth/routes.js';
 import discordAuth from './auth/oauth/discord.js';
@@ -52,12 +59,15 @@ console.log('Database initialized');
 // module-level flag when done so /api/health can distinguish
 // "process is alive" from "ready to serve reads that hit the compendium".
 let compendiumReady = false;
-isCompendiumSeeded().then(seeded => {
+isCompendiumSeeded().then((seeded) => {
   if (!seeded) {
     console.log('Seeding D&D 5E compendium from open5e API...');
     seedCompendium()
-      .then(() => { compendiumReady = true; console.log('Compendium seeded!'); })
-      .catch(err => console.error('Seed failed:', err));
+      .then(() => {
+        compendiumReady = true;
+        console.log('Compendium seeded!');
+      })
+      .catch((err) => console.error('Seed failed:', err));
   } else {
     compendiumReady = true;
     console.log('Compendium already seeded');
@@ -97,40 +107,53 @@ app.set('trust proxy', 1);
 
 // Security headers
 app.disable('x-powered-by');
-app.use(helmet({
-  contentSecurityPolicy: {
-    directives: {
-      defaultSrc: ["'self'"],
-      // 'wasm-unsafe-eval' lets us instantiate WebAssembly modules
-      // (Ammo.js physics powering the 3D dice). blob: is needed so
-      // @3d-dice/dice-box can spawn its Babylon.js render worker from
-      // a generated blob URL — without it the dice never appear and
-      // the browser logs a CSP violation the moment a roll fires.
-      scriptSrc: ["'self'", "'wasm-unsafe-eval'", 'blob:'],
-      // Explicit worker-src so the browser doesn't fall through to
-      // the script-src fallback and still block the blob worker.
-      workerSrc: ["'self'", 'blob:'],
-      // Google Fonts sends its CSS from fonts.googleapis.com and
-      // pulls the actual font files from fonts.gstatic.com. Without
-      // the first, every @font-face link in index.html gets blocked
-      // and the UI falls back to system fonts mid-session.
-      styleSrc: ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com'],
-      fontSrc: ["'self'", 'data:', 'https://fonts.gstatic.com'],
-      imgSrc: ["'self'", 'data:', 'blob:', '*.dndbeyond.com', '*.discordapp.com', '*.discord.com', '*.googleusercontent.com', 'https://storage.googleapis.com'],
-      connectSrc: ["'self'", 'wss:', 'ws:', 'blob:', 'https://storage.googleapis.com'],
-      mediaSrc: ["'self'", 'https://storage.googleapis.com'],
+app.use(
+  helmet({
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc: ["'self'"],
+        // 'wasm-unsafe-eval' lets us instantiate WebAssembly modules
+        // (Ammo.js physics powering the 3D dice). blob: is needed so
+        // @3d-dice/dice-box can spawn its Babylon.js render worker from
+        // a generated blob URL — without it the dice never appear and
+        // the browser logs a CSP violation the moment a roll fires.
+        scriptSrc: ["'self'", "'wasm-unsafe-eval'", 'blob:'],
+        // Explicit worker-src so the browser doesn't fall through to
+        // the script-src fallback and still block the blob worker.
+        workerSrc: ["'self'", 'blob:'],
+        // Google Fonts sends its CSS from fonts.googleapis.com and
+        // pulls the actual font files from fonts.gstatic.com. Without
+        // the first, every @font-face link in index.html gets blocked
+        // and the UI falls back to system fonts mid-session.
+        styleSrc: ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com'],
+        fontSrc: ["'self'", 'data:', 'https://fonts.gstatic.com'],
+        imgSrc: [
+          "'self'",
+          'data:',
+          'blob:',
+          '*.dndbeyond.com',
+          '*.discordapp.com',
+          '*.discord.com',
+          '*.googleusercontent.com',
+          'https://storage.googleapis.com',
+        ],
+        connectSrc: ["'self'", 'wss:', 'ws:', 'blob:', 'https://storage.googleapis.com'],
+        mediaSrc: ["'self'", 'https://storage.googleapis.com'],
+      },
     },
-  },
-  hsts: IS_PRODUCTION,
-  noSniff: true,
-  referrerPolicy: { policy: 'strict-origin-when-cross-origin' },
-}));
+    hsts: IS_PRODUCTION,
+    noSniff: true,
+    referrerPolicy: { policy: 'strict-origin-when-cross-origin' },
+  })
+);
 
 // Middleware
-app.use(cors({
-  origin: CORS_ORIGINS,
-  credentials: true,
-}));
+app.use(
+  cors({
+    origin: CORS_ORIGINS,
+    credentials: true,
+  })
+);
 app.use(express.json({ limit: '10mb' }));
 
 // Static file serving for uploads (authenticated + scoped, with nosniff).
@@ -143,93 +166,109 @@ app.use(express.json({ limit: '10mb' }));
 // could harvest maps/portraits from other users' sessions by guessing
 // filenames. The lookup is imperfect (file renames etc. are not tracked)
 // but it stops cross-session scraping in the common case.
-app.use('/uploads', async (req, res, next) => {
-  const sessionCookie = lucia.readSessionCookie(req.headers.cookie ?? '');
-  if (!sessionCookie) {
-    res.status(401).json({ error: 'Authentication required' });
-    return;
-  }
-  const { session, user } = await lucia.validateSession(sessionCookie);
-  if (!session || !user) {
-    res.status(401).json({ error: 'Invalid session' });
-    return;
-  }
-
-  const reqPath = req.path;
-
-  // Reject any path traversal attempts (belt-and-suspenders in addition
-  // to express.static's own protection).
-  if (reqPath.includes('..')) {
-    res.status(400).json({ error: 'Invalid path' });
-    return;
-  }
-
-  // Public compendium art — no per-user scoping needed.
-  if (
-    reqPath.startsWith('/tokens/') ||
-    reqPath.startsWith('/spells/') ||
-    reqPath.startsWith('/items/')
-  ) {
-    next();
-    return;
-  }
-
-  // Maps: DMs can read every map asset in their session; players can
-  // only read the active player-ribbon map asset. Two distinct asset
-  // namespaces share this prefix:
-  //   /uploads/maps/{file}                       — full-resolution map
-  //   /uploads/maps/thumbnails/{file}            — 480-px JPEG thumbnail
-  // Both check the maps table; the thumbnail variant matches against
-  // `thumbnail_url` so the same membership rule applies without
-  // letting an attacker enumerate thumbnails for sessions they
-  // aren't in.
-  if (reqPath.startsWith('/maps/')) {
-    const url = `/uploads${reqPath}`;
-    const isThumbnail = reqPath.startsWith('/maps/thumbnails/');
-    const column = isThumbnail ? 'thumbnail_url' : 'image_url';
-    if (!(await canReadUploadedMapAsset(url, user.id, column))) {
-      res.status(403).json({ error: 'Forbidden' });
+app.use(
+  '/uploads',
+  async (req, res, next) => {
+    const sessionCookie = lucia.readSessionCookie(req.headers.cookie ?? '');
+    if (!sessionCookie) {
+      res.status(401).json({ error: 'Authentication required' });
       return;
     }
-    next();
-    return;
-  }
+    const { session, user } = await lucia.validateSession(sessionCookie);
+    if (!session || !user) {
+      res.status(401).json({ error: 'Invalid session' });
+      return;
+    }
 
-  // Portraits: caller must own the character that uses the portrait,
-  // or share a session with a character that uses it.
-  if (reqPath.startsWith('/portraits/')) {
-    const filename = reqPath.slice('/portraits/'.length);
-    const url = `/uploads/portraits/${filename}`;
-    const { rows } = await pool.query(
-      `SELECT 1 FROM characters c
+    const reqPath = req.path;
+    const serveAuthorizedUpload = async () => {
+      if (await tryServeUploadFromGcs(reqPath, res)) return;
+      next();
+    };
+
+    // Reject any path traversal attempts (belt-and-suspenders in addition
+    // to express.static's own protection).
+    if (reqPath.includes('..')) {
+      res.status(400).json({ error: 'Invalid path' });
+      return;
+    }
+
+    // Public compendium art — no per-user scoping needed.
+    if (
+      reqPath.startsWith('/tokens/') ||
+      reqPath.startsWith('/spells/') ||
+      reqPath.startsWith('/items/')
+    ) {
+      await serveAuthorizedUpload();
+      return;
+    }
+
+    // Handout images are auth-required. The handout text itself controls
+    // who sees the URL; if a logged-in user has the URL we allow the image
+    // fetch so historic handouts/notes render correctly.
+    if (reqPath.startsWith('/handouts/')) {
+      await serveAuthorizedUpload();
+      return;
+    }
+
+    // Maps: DMs can read every map asset in their session; players can
+    // only read the active player-ribbon map asset. Two distinct asset
+    // namespaces share this prefix:
+    //   /uploads/maps/{file}                       — full-resolution map
+    //   /uploads/maps/thumbnails/{file}            — 480-px JPEG thumbnail
+    // Both check the maps table; the thumbnail variant matches against
+    // `thumbnail_url` so the same membership rule applies without
+    // letting an attacker enumerate thumbnails for sessions they
+    // aren't in.
+    if (reqPath.startsWith('/maps/')) {
+      const url = `/uploads${reqPath}`;
+      const isThumbnail = reqPath.startsWith('/maps/thumbnails/');
+      const column = isThumbnail ? 'thumbnail_url' : 'image_url';
+      if (!(await canReadUploadedMapAsset(url, user.id, column))) {
+        res.status(403).json({ error: 'Forbidden' });
+        return;
+      }
+      await serveAuthorizedUpload();
+      return;
+    }
+
+    // Portraits: caller must own the character that uses the portrait,
+    // or share a session with a character that uses it.
+    if (reqPath.startsWith('/portraits/')) {
+      const filename = reqPath.slice('/portraits/'.length);
+      const url = `/uploads/portraits/${filename}`;
+      const { rows } = await pool.query(
+        `SELECT 1 FROM characters c
        LEFT JOIN session_players sp1 ON sp1.character_id = c.id
        LEFT JOIN session_players sp2 ON sp2.session_id = sp1.session_id
        WHERE c.portrait_url = $1
          AND (c.user_id = $2 OR sp2.user_id = $2)
        LIMIT 1`,
-      [url, user.id],
-    );
-    if (rows.length === 0) {
-      res.status(403).json({ error: 'Forbidden' });
+        [url, user.id]
+      );
+      if (rows.length === 0) {
+        res.status(403).json({ error: 'Forbidden' });
+        return;
+      }
+      await serveAuthorizedUpload();
       return;
     }
-    next();
-    return;
-  }
 
-  // Default-deny any /uploads subpath we don't recognise. Adding a new
-  // upload folder must be an explicit decision — otherwise a future
-  // /uploads/private/ folder (e.g. for handout images scoped to a
-  // specific player) would be silently readable by every logged-in
-  // user.
-  res.status(404).json({ error: 'Not found' });
-  return;
-}, express.static(UPLOAD_DIR, {
-  maxAge: '1h',
-  setHeaders: (res) => {
-    res.setHeader('X-Content-Type-Options', 'nosniff');
+    // Default-deny any /uploads subpath we don't recognise. Adding a new
+    // upload folder must be an explicit decision — otherwise a future
+    // /uploads/private/ folder (e.g. for handout images scoped to a
+    // specific player) would be silently readable by every logged-in
+    // user.
+    res.status(404).json({ error: 'Not found' });
+    return;
   },
-}));
+  express.static(UPLOAD_DIR, {
+    maxAge: '1h',
+    setHeaders: (res) => {
+      res.setHeader('X-Content-Type-Options', 'nosniff');
+    },
+  })
+);
 
 // Auth routes (unauthenticated)
 app.use('/api/auth', authRouter);
@@ -254,7 +293,11 @@ app.get('/healthz', (_req, res) => {
 });
 const readinessHandler = async (_req: express.Request, res: express.Response) => {
   let db: 'ok' | 'down' = 'ok';
-  try { await pool.query('SELECT 1'); } catch { db = 'down'; }
+  try {
+    await pool.query('SELECT 1');
+  } catch {
+    db = 'down';
+  }
   const ready = db === 'ok' && compendiumReady;
   res.status(ready ? 200 : 503).json({
     status: ready ? 'ready' : 'starting',
@@ -321,26 +364,54 @@ const uploadLimiter = rateLimit({
   legacyHeaders: false,
   message: { error: 'Too many uploads — try again in a few minutes' },
 });
-app.post('/api/uploads/token-image', requireAuth, uploadLimiter, tokenUpload.single('image'), (req, res) => {
-  if (!req.file) { res.status(400).json({ error: 'No image file' }); return; }
-  try {
-    const filename = validateAndSaveUpload(req.file, 'tokens');
-    res.json({ url: `/uploads/tokens/${filename}` });
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : 'Invalid image file';
-    res.status(400).json({ error: msg });
+app.post(
+  '/api/uploads/token-image',
+  requireAuth,
+  uploadLimiter,
+  tokenUpload.single('image'),
+  async (req, res) => {
+    if (!req.file) {
+      res.status(400).json({ error: 'No image file' });
+      return;
+    }
+    try {
+      const filename = await validateAndSaveUpload(req.file, 'tokens');
+      res.json({ url: `/uploads/tokens/${filename}` });
+    } catch (err) {
+      if (isUploadStorageError(err)) {
+        console.error('[uploads:token-image] storage failed:', err);
+        res.status(500).json({ error: 'Upload storage is temporarily unavailable' });
+        return;
+      }
+      const msg = err instanceof Error ? err.message : 'Invalid image file';
+      res.status(400).json({ error: msg });
+    }
   }
-});
-app.post('/api/uploads/portrait', requireAuth, uploadLimiter, portraitUpload.single('image'), (req, res) => {
-  if (!req.file) { res.status(400).json({ error: 'No image file' }); return; }
-  try {
-    const filename = validateAndSaveUpload(req.file, 'portraits');
-    res.json({ url: `/uploads/portraits/${filename}` });
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : 'Invalid image file';
-    res.status(400).json({ error: msg });
+);
+app.post(
+  '/api/uploads/portrait',
+  requireAuth,
+  uploadLimiter,
+  portraitUpload.single('image'),
+  async (req, res) => {
+    if (!req.file) {
+      res.status(400).json({ error: 'No image file' });
+      return;
+    }
+    try {
+      const filename = await validateAndSaveUpload(req.file, 'portraits');
+      res.json({ url: `/uploads/portraits/${filename}` });
+    } catch (err) {
+      if (isUploadStorageError(err)) {
+        console.error('[uploads:portrait] storage failed:', err);
+        res.status(500).json({ error: 'Upload storage is temporarily unavailable' });
+        return;
+      }
+      const msg = err instanceof Error ? err.message : 'Invalid image file';
+      res.status(400).json({ error: msg });
+    }
   }
-});
+);
 
 /**
  * Handout image upload endpoint — DM picks a file in HandoutSender
@@ -350,16 +421,30 @@ app.post('/api/uploads/portrait', requireAuth, uploadLimiter, portraitUpload.sin
  * Saved alongside the auto-created note so players can browse past
  * handouts + their images in the Notes tab.
  */
-app.post('/api/uploads/handout', requireAuth, uploadLimiter, handoutUpload.single('image'), (req, res) => {
-  if (!req.file) { res.status(400).json({ error: 'No image file' }); return; }
-  try {
-    const filename = validateAndSaveUpload(req.file, 'handouts');
-    res.json({ url: `/uploads/handouts/${filename}` });
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : 'Invalid image file';
-    res.status(400).json({ error: msg });
+app.post(
+  '/api/uploads/handout',
+  requireAuth,
+  uploadLimiter,
+  handoutUpload.single('image'),
+  async (req, res) => {
+    if (!req.file) {
+      res.status(400).json({ error: 'No image file' });
+      return;
+    }
+    try {
+      const filename = await validateAndSaveUpload(req.file, 'handouts');
+      res.json({ url: `/uploads/handouts/${filename}` });
+    } catch (err) {
+      if (isUploadStorageError(err)) {
+        console.error('[uploads:handout] storage failed:', err);
+        res.status(500).json({ error: 'Upload storage is temporarily unavailable' });
+        return;
+      }
+      const msg = err instanceof Error ? err.message : 'Invalid image file';
+      res.status(400).json({ error: msg });
+    }
   }
-});
+);
 
 // Serve client build in production (static files + SPA fallback)
 setupStaticServing(app);
@@ -379,8 +464,8 @@ const io = new Server<ClientToServerEvents, ServerToClientEvents>(httpServer, {
     credentials: true,
   },
   maxHttpBufferSize: 5 * 1024 * 1024, // 5MB for larger payloads
-  pingInterval: 15_000,   // server→client ping every 15 s (default 25 s)
-  pingTimeout: 10_000,    // disconnect after 10 s without pong (default 20 s)
+  pingInterval: 15_000, // server→client ping every 15 s (default 25 s)
+  pingTimeout: 10_000, // disconnect after 10 s without pong (default 20 s)
 });
 
 // Expose io to non-socket modules (HTTP routes) that need to broadcast.
@@ -390,13 +475,15 @@ setIO(io);
 registerSocketHandler(io);
 
 // Global error handler — catches thrown errors from async routes and authorization helpers
-app.use((err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
-  const e = err as { status?: number; message?: string } | null;
-  const status = e?.status ?? 500;
-  const message = status < 500 ? (e?.message ?? 'Bad request') : 'Internal server error';
-  if (status >= 500) console.error('[Server Error]', err);
-  res.status(status).json({ error: message });
-});
+app.use(
+  (err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+    const e = err as { status?: number; message?: string } | null;
+    const status = e?.status ?? 500;
+    const message = status < 500 ? (e?.message ?? 'Bad request') : 'Internal server error';
+    if (status >= 500) console.error('[Server Error]', err);
+    res.status(status).json({ error: message });
+  }
+);
 
 // Surface likely production misconfigurations at boot (warnings only —
 // never fatal; the hard-required DB connection is enforced in db/connection).
