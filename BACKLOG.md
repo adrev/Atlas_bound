@@ -26,7 +26,7 @@ specific file/line.
 | P1 | OAuth + Chronicle migration verification | Claude | OAuth/Chronicle code landed in PR #8; verify Discord/Google login and Chronicle worker polling on the personal project |
 | P1 | Browser websocket QA | Andrew/Claude desktop, coordinated by CodeX | Run the remaining browser-only rows: player ribbon refresh, reconnect/background tabs, kick/ban stale sockets |
 | P2 | Server-side socket/combat QA tests | Claude | Add tests for combat/spell recipients, chat whisper/hidden-roll visibility, and music late-joiner state where feasible |
-| P2 | Production infra hardening | Claude | Secret Manager migration, upload persistence, GCS CORS/old-bucket URL audit |
+| P2 | Production infra hardening | Claude | Secret Manager migration and GCS old-bucket URL audit; upload persistence is live in #117 |
 | P3 | Performance/code quality backlog | CodeX/Claude by claim | TokenLayer selectors, dice bundle deferral, list caching, large refactors after P1 stabilizes |
 
 ---
@@ -94,7 +94,7 @@ Each item below needs a verification pass. "Unit-testable" = I can pin it headle
 | # | Item | Status | Note |
 |---|---|---|---|
 | O.1 | Post-deploy verification: Discord OAuth, Google OAuth, char save round-trip, image upload round-trip, DGX Chronicle worker poll | ⬜ | needs new personal OAuth clients live + Andrew |
-| O.2 | `UPLOAD_DIR` writes to local FS on Cloud Run — user uploads may not persist | 🔶 | CodeX hardened upload *auth* in `fe9a7d2`; persistence (GCS vs fuse) still open |
+| O.2 | `UPLOAD_DIR` writes to local FS on Cloud Run — user uploads may not persist | ✅ | Done in PR #117; optional `UPLOAD_GCS_BUCKET` streams authorized uploads through `gs://atlas-bound-data-personal`, with local fallback for dev/tests |
 | O.3 | Move secrets to Google Secret Manager (`--set-secrets`) | ⬜ | currently plain env vars on the revision |
 | O.4 | Apple OAuth not plumbed through `deploy.sh` | ⬜ | defined in `.env.example`, decide if wanted |
 | O.5 | GCS bucket CORS for `dnd.kbrt.ai` on `atlas-bound-data-personal` (new bucket; I have Owner) + audit DB for old-bucket (`atlas-bound-data`) URLs | 🔶 | Personal-bucket CORS applied in PR #96; client still references legacy bucket, and GCP rejected conditional public `allUsers` access so public-read strategy needs explicit decision |
@@ -111,7 +111,7 @@ Each item below needs a verification pass. "Unit-testable" = I can pin it headle
 | Player ribbon activation + refresh returns to ribbon | 🔴 browser-only |
 | Reconnect / membership (background-tab return, network reconnect, kick/ban no stale sockets) | 🔴 browser-only |
 | Combat/spell recipient scoping (cast card, counterspell, shield, HP, conditions, death save, OA) | ✅ HP/conditions/death-save/reaction in #23; counterspell/Shield prompts covered by `combat-reaction-scoping`; cast VFX + counterspell/Shield responses + OA prompt fan-out covered in PR #68 |
-| Music late-joiner sync; chat whisper/hidden-roll visibility | ⬜ partly server-testable |
+| Music late-joiner sync; chat whisper/hidden-roll visibility | ✅ server regressions merged in #115; remaining browser-only smoke belongs in O.1 |
 
 ## Design / UX backlog (experience improvements — Claude's lane)
 
@@ -169,7 +169,7 @@ From a full design/UX review of all surfaces (lobby, in-session shell, canvas, c
 
 ### Functional bugs surfaced by the design pass → CodeX's QA lane
 - **B-D1** ✅ `TokenActionPanel` spell cap fixed in PR #17 — 13+ leveled spells are selectable.
-- **B-D2** `FogBrush` / `useFogBrush` is orphaned — never imported/mounted; manual fog painting is effectively unreleased. Wire or cut.
+- **B-D2** ✅ Manual fog brush wired, persisted, tested, and deployed in PR #116.
 - **B-D3** ✅ "Starting Map" picker fixed in PR #18 — selected preset creates and sets the starting map.
 - **B-D4** ✅ `--text-muted` contrast fixed in PR #27 (also D19).
 
