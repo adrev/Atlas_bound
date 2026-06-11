@@ -12,7 +12,6 @@ export function ChatInput() {
   const [mode, setMode] = useState<ChatMode>('ooc');
   const [whisperTarget, setWhisperTarget] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
-  const isDM = useSessionStore((s) => s.isDM);
   const players = useSessionStore((s) => s.players);
   const character = useCharacterStore((s) => s.myCharacter);
 
@@ -38,11 +37,7 @@ export function ChatInput() {
     }
 
     // Regular message
-    emitChatMessage(
-      mode,
-      trimmed,
-      mode === 'ic' ? character?.name : undefined
-    );
+    emitChatMessage(mode, trimmed, mode === 'ic' ? character?.name : undefined);
     setText('');
   };
 
@@ -103,17 +98,37 @@ export function ChatInput() {
 
       {/* Whisper indicator */}
       {whisperTarget && (
-        <div style={{
-          display: 'flex', alignItems: 'center', gap: 6,
-          padding: '4px 8px', fontSize: 11, fontWeight: 600,
-          background: 'rgba(155, 89, 182, 0.15)', borderRadius: theme.radius.sm,
-          color: '${theme.purple}', border: '1px solid rgba(155, 89, 182, 0.3)',
-        }}>
-          <span>Whispering to: {players.find(p => p.userId === whisperTarget)?.displayName || 'Unknown'}</span>
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 6,
+            padding: '4px 8px',
+            fontSize: 11,
+            fontWeight: 600,
+            background: 'rgba(155, 89, 182, 0.15)',
+            borderRadius: theme.radius.sm,
+            color: '${theme.purple}',
+            border: '1px solid rgba(155, 89, 182, 0.3)',
+          }}
+        >
+          <span>
+            Whispering to:{' '}
+            {players.find((p) => p.userId === whisperTarget)?.displayName || 'Unknown'}
+          </span>
           <button
             onClick={() => setWhisperTarget(null)}
-            style={{ background: 'none', border: 'none', color: '${theme.purple}', cursor: 'pointer', fontSize: 14, padding: '0 2px' }}
-          >&times;</button>
+            style={{
+              background: 'none',
+              border: 'none',
+              color: '${theme.purple}',
+              cursor: 'pointer',
+              fontSize: 14,
+              padding: '0 2px',
+            }}
+          >
+            &times;
+          </button>
         </div>
       )}
 
@@ -123,25 +138,25 @@ export function ChatInput() {
           ref={inputRef}
           style={{
             ...styles.input,
-            ...(whisperTarget ? { borderColor: '${theme.purple}', background: 'rgba(155, 89, 182, 0.05)' } : {}),
+            ...(whisperTarget
+              ? { borderColor: '${theme.purple}', background: 'rgba(155, 89, 182, 0.05)' }
+              : {}),
           }}
           placeholder={
             whisperTarget
-              ? `Whisper to ${players.find(p => p.userId === whisperTarget)?.displayName || 'player'}...`
+              ? `Whisper to ${players.find((p) => p.userId === whisperTarget)?.displayName || 'player'}...`
               : mode === 'ic'
-              ? `Speak as ${character?.name || 'character'}...`
-              : 'Type a message or /roll 1d20...'
+                ? `Speak as ${character?.name || 'character'}...`
+                : 'Type a message or /roll 1d20...'
           }
           value={text}
-          onChange={(e) => { setText(e.target.value); emitTyping(); }}
+          onChange={(e) => {
+            setText(e.target.value);
+            emitTyping();
+          }}
           onKeyDown={handleKeyDown}
         />
-        <button
-          style={styles.sendBtn}
-          onClick={handleSend}
-          disabled={!text.trim()}
-          title="Send"
-        >
+        <button style={styles.sendBtn} onClick={handleSend} disabled={!text.trim()} title="Send">
           <Send size={16} />
         </button>
       </div>

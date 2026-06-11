@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { useChatStore } from '../../stores/useChatStore';
-import { useSessionStore } from '../../stores/useSessionStore';
 import { getSocket } from '../../socket/client';
 import { ChatInput } from './ChatInput';
 import { DiceRollCard } from './DiceRollCard';
@@ -12,9 +11,6 @@ import type { ChatMessage } from '@dnd-vtt/shared';
 import { theme } from '../../styles/theme';
 
 function MessageBubble({ message }: { message: ChatMessage }) {
-  const userId = useSessionStore((s) => s.userId);
-  const isMine = message.userId === userId;
-
   const typeStyles: Record<string, React.CSSProperties> = {
     ic: {
       fontStyle: 'italic',
@@ -50,23 +46,27 @@ function MessageBubble({ message }: { message: ChatMessage }) {
     },
   };
 
-  const isHidden = !!(message as any).hidden;
-  const nameColor =
-    isHidden
-      ? theme.purple
-      : message.type === 'whisper'
+  const isHidden = !!message.hidden;
+  const nameColor = isHidden
+    ? theme.purple
+    : message.type === 'whisper'
       ? theme.purple
       : message.type === 'ic'
-      ? theme.gold.primary
-      : message.type === 'roll'
-      ? theme.gold.primary
-      : theme.text.secondary;
+        ? theme.gold.primary
+        : message.type === 'roll'
+          ? theme.gold.primary
+          : theme.text.secondary;
 
   return (
-    <div style={{
-      ...styles.message, ...typeStyles[message.type],
-      ...(isHidden ? { background: 'rgba(155,89,182,0.08)', borderLeft: '2px solid #9b59b6' } : {}),
-    }}>
+    <div
+      style={{
+        ...styles.message,
+        ...typeStyles[message.type],
+        ...(isHidden
+          ? { background: 'rgba(155,89,182,0.08)', borderLeft: '2px solid #9b59b6' }
+          : {}),
+      }}
+    >
       {message.type !== 'system' && message.type !== 'roll' && (
         <div style={styles.messageHeader}>
           <span style={{ ...styles.messageName, color: nameColor }}>
@@ -75,17 +75,24 @@ function MessageBubble({ message }: { message: ChatMessage }) {
               : message.displayName}
           </span>
           {message.type === 'whisper' && (
-            <span style={styles.whisperLabel}>
-              {message.whisperTo ? `whisper` : 'whisper'}
-            </span>
+            <span style={styles.whisperLabel}>{message.whisperTo ? `whisper` : 'whisper'}</span>
           )}
           {isHidden && (
-            <span style={{
-              fontSize: 9, fontWeight: 700, color: theme.purple,
-              background: 'rgba(155,89,182,0.15)', padding: '1px 6px',
-              borderRadius: 3, border: '1px solid rgba(155,89,182,0.3)',
-              textTransform: 'uppercase', letterSpacing: '0.04em',
-            }}>Hidden</span>
+            <span
+              style={{
+                fontSize: 9,
+                fontWeight: 700,
+                color: theme.purple,
+                background: 'rgba(155,89,182,0.15)',
+                padding: '1px 6px',
+                borderRadius: 3,
+                border: '1px solid rgba(155,89,182,0.3)',
+                textTransform: 'uppercase',
+                letterSpacing: '0.04em',
+              }}
+            >
+              Hidden
+            </span>
           )}
           <span style={styles.messageTime}>
             {new Date(message.createdAt).toLocaleTimeString([], {
@@ -134,7 +141,9 @@ function MessageBubble({ message }: { message: ChatMessage }) {
 export function ChatPanel() {
   const messages = useChatStore((s) => s.messages);
   const scrollRef = useRef<HTMLDivElement>(null);
-  const [typingUsers, setTypingUsers] = useState<Map<string, { displayName: string; timeout: ReturnType<typeof setTimeout> }>>(new Map());
+  const [typingUsers, setTypingUsers] = useState<
+    Map<string, { displayName: string; timeout: ReturnType<typeof setTimeout> }>
+  >(new Map());
   const [showScrollBtn, setShowScrollBtn] = useState(false);
   /** Whether the user is currently near the bottom of the chat. */
   const isAtBottomRef = useRef(true);
@@ -201,11 +210,7 @@ export function ChatPanel() {
     <div style={styles.container}>
       <div style={{ position: 'relative' as const, flex: 1, minHeight: 0 }}>
         <div ref={scrollRef} style={styles.messageList} onScroll={checkScrollPosition}>
-          {messages.length === 0 && (
-            <p style={styles.empty}>
-              No messages yet. Say something!
-            </p>
-          )}
+          {messages.length === 0 && <p style={styles.empty}>No messages yet. Say something!</p>}
           {messages.map((msg) => (
             <MessageBubble key={msg.id} message={msg} />
           ))}

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Plus } from 'lucide-react';
 import { useCharacterStore, type HotbarSlot } from '../../stores/useCharacterStore';
 import { emitRoll } from '../../socket/emitters';
@@ -33,7 +33,8 @@ function SlotDisplay({ slot, index }: { slot: HotbarSlot; index: number }) {
   };
 
   const isEmpty = !slot.data;
-  const spellData = slot.type === 'spell' && typeof slot.data === 'object' ? slot.data as Spell : null;
+  const spellData =
+    slot.type === 'spell' && typeof slot.data === 'object' ? (slot.data as Spell) : null;
   const label = spellData?.name || (typeof slot.data === 'string' ? slot.data : null);
 
   return (
@@ -48,14 +49,14 @@ function SlotDisplay({ slot, index }: { slot: HotbarSlot; index: number }) {
       onDrop={handleDrop}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
-      title={spellData ? `${spellData.name}\n${spellData.description}` : label || `Slot ${index + 1}`}
+      title={
+        spellData ? `${spellData.name}\n${spellData.description}` : label || `Slot ${index + 1}`
+      }
     >
       {isEmpty ? (
         <Plus size={14} color={theme.text.muted} />
       ) : (
-        <span style={styles.slotLabel}>
-          {label ? label.substring(0, 4) : '?'}
-        </span>
+        <span style={styles.slotLabel}>{label ? label.substring(0, 4) : '?'}</span>
       )}
       <span style={styles.slotKey}>{index === 9 ? '0' : `${index + 1}`}</span>
 
@@ -91,7 +92,10 @@ export function Hotbar() {
   useEffect(() => {
     const handleKeyPress = (e: KeyboardEvent) => {
       const active = document.activeElement;
-      if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' || active.tagName === 'SELECT')) {
+      if (
+        active &&
+        (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' || active.tagName === 'SELECT')
+      ) {
         return;
       }
       const keyNum = parseInt(e.key);

@@ -8,9 +8,33 @@ interface CreateItemFormProps {
   onCancel: () => void;
 }
 
-const ITEM_TYPES = ['weapon', 'armor', 'shield', 'gear', 'potion', 'scroll', 'wand', 'ring', 'wondrous'];
+const ITEM_TYPES = [
+  'weapon',
+  'armor',
+  'shield',
+  'gear',
+  'potion',
+  'scroll',
+  'wand',
+  'ring',
+  'wondrous',
+];
 const RARITIES = ['common', 'uncommon', 'rare', 'very rare', 'legendary', 'artifact'];
-const DAMAGE_TYPES = ['bludgeoning', 'piercing', 'slashing', 'fire', 'cold', 'lightning', 'thunder', 'acid', 'poison', 'necrotic', 'radiant', 'force', 'psychic'];
+const DAMAGE_TYPES = [
+  'bludgeoning',
+  'piercing',
+  'slashing',
+  'fire',
+  'cold',
+  'lightning',
+  'thunder',
+  'acid',
+  'poison',
+  'necrotic',
+  'radiant',
+  'force',
+  'psychic',
+];
 const AC_TYPES = ['light', 'medium', 'heavy'];
 
 const WEAPON_PROPERTIES = [
@@ -31,27 +55,33 @@ const WEAPON_PROPERTIES = [
 ] as const;
 
 const inputStyle: React.CSSProperties = {
-  width: '100%', padding: '6px 10px', fontSize: 12,
-  background: theme.bg.deepest, border: `1px solid ${theme.gold.border}`,
-  borderRadius: theme.radius.sm, color: theme.text.primary,
-  fontFamily: theme.font.body, outline: 'none', boxSizing: 'border-box',
+  width: '100%',
+  padding: '6px 10px',
+  fontSize: 12,
+  background: theme.bg.deepest,
+  border: `1px solid ${theme.gold.border}`,
+  borderRadius: theme.radius.sm,
+  color: theme.text.primary,
+  fontFamily: theme.font.body,
+  outline: 'none',
+  boxSizing: 'border-box',
 };
 
 const selectStyle: React.CSSProperties = { ...inputStyle, cursor: 'pointer' };
 
 const labelStyle: React.CSSProperties = {
-  fontSize: 10, fontWeight: 700, color: theme.gold.dim,
-  textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 3, display: 'block',
+  fontSize: 10,
+  fontWeight: 700,
+  color: theme.gold.dim,
+  textTransform: 'uppercase',
+  letterSpacing: '0.08em',
+  marginBottom: 3,
+  display: 'block',
 };
 
 const fieldGroup: React.CSSProperties = { marginBottom: 8 };
 
 const rowStyle: React.CSSProperties = { display: 'flex', gap: 8 };
-
-const checkboxLabelStyle: React.CSSProperties = {
-  display: 'flex', alignItems: 'center', gap: 6,
-  fontSize: 11, cursor: 'pointer',
-};
 
 function cap(s: string): string {
   return s.charAt(0).toUpperCase() + s.slice(1);
@@ -80,7 +110,10 @@ export function CreateItemForm({ sessionId, onCreated, onCancel }: CreateItemFor
   const isArmor = type === 'armor' || type === 'shield';
 
   const handleSubmit = async () => {
-    if (!name.trim()) { setError('Name is required'); return; }
+    if (!name.trim()) {
+      setError('Name is required');
+      return;
+    }
     setSubmitting(true);
     setError('');
     try {
@@ -123,16 +156,27 @@ export function CreateItemForm({ sessionId, onCreated, onCancel }: CreateItemFor
   };
 
   return (
-    <div style={{
-      display: 'flex', flexDirection: 'column', gap: 0, padding: 10,
-      background: theme.bg.card, border: `1px solid ${theme.border.default}`,
-      borderRadius: theme.radius.md,
-    }}>
+    <div
+      style={{
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 0,
+        padding: 10,
+        background: theme.bg.card,
+        border: `1px solid ${theme.border.default}`,
+        borderRadius: theme.radius.md,
+      }}
+    >
       {/* ── Header ──────────────────────────────────────────── */}
-      <div style={{
-        fontSize: 14, fontWeight: 700, color: theme.gold.primary,
-        fontFamily: theme.font.display, marginBottom: 10,
-      }}>
+      <div
+        style={{
+          fontSize: 14,
+          fontWeight: 700,
+          color: theme.gold.primary,
+          fontFamily: theme.font.display,
+          marginBottom: 10,
+        }}
+      >
         Create Custom Item
       </div>
 
@@ -153,7 +197,9 @@ export function CreateItemForm({ sessionId, onCreated, onCancel }: CreateItemFor
           <label style={labelStyle}>Type</label>
           <select style={selectStyle} value={type} onChange={(e) => setType(e.target.value)}>
             {ITEM_TYPES.map((t) => (
-              <option key={t} value={t}>{cap(t)}</option>
+              <option key={t} value={t}>
+                {cap(t)}
+              </option>
             ))}
           </select>
         </div>
@@ -161,7 +207,9 @@ export function CreateItemForm({ sessionId, onCreated, onCancel }: CreateItemFor
           <label style={labelStyle}>Rarity</label>
           <select style={selectStyle} value={rarity} onChange={(e) => setRarity(e.target.value)}>
             {RARITIES.map((r) => (
-              <option key={r} value={r}>{cap(r)}</option>
+              <option key={r} value={r}>
+                {cap(r)}
+              </option>
             ))}
           </select>
         </div>
@@ -172,14 +220,25 @@ export function CreateItemForm({ sessionId, onCreated, onCancel }: CreateItemFor
         <div style={{ ...fieldGroup, ...rowStyle }}>
           <div style={{ flex: 1 }}>
             <label style={labelStyle}>Damage</label>
-            <input style={inputStyle} value={damage} onChange={(e) => setDamage(e.target.value)} placeholder="1d8" />
+            <input
+              style={inputStyle}
+              value={damage}
+              onChange={(e) => setDamage(e.target.value)}
+              placeholder="1d8"
+            />
           </div>
           <div style={{ flex: 1 }}>
             <label style={labelStyle}>Damage Type</label>
-            <select style={selectStyle} value={damageType} onChange={(e) => setDamageType(e.target.value)}>
+            <select
+              style={selectStyle}
+              value={damageType}
+              onChange={(e) => setDamageType(e.target.value)}
+            >
               <option value="">--</option>
               {DAMAGE_TYPES.map((d) => (
-                <option key={d} value={d}>{cap(d)}</option>
+                <option key={d} value={d}>
+                  {cap(d)}
+                </option>
               ))}
             </select>
           </div>
@@ -225,7 +284,12 @@ export function CreateItemForm({ sessionId, onCreated, onCancel }: CreateItemFor
       {isWeapon && (
         <div style={{ ...fieldGroup, width: '50%' }}>
           <label style={labelStyle}>Range</label>
-          <input style={inputStyle} value={range} onChange={(e) => setRange(e.target.value)} placeholder="80/320" />
+          <input
+            style={inputStyle}
+            value={range}
+            onChange={(e) => setRange(e.target.value)}
+            placeholder="80/320"
+          />
         </div>
       )}
 
@@ -234,7 +298,12 @@ export function CreateItemForm({ sessionId, onCreated, onCancel }: CreateItemFor
         <div style={{ ...fieldGroup, ...rowStyle, alignItems: 'flex-end' }}>
           <div style={{ flex: 1 }}>
             <label style={labelStyle}>AC Bonus</label>
-            <input style={inputStyle} type="number" value={ac} onChange={(e) => setAc(Number(e.target.value))} />
+            <input
+              style={inputStyle}
+              type="number"
+              value={ac}
+              onChange={(e) => setAc(Number(e.target.value))}
+            />
           </div>
           <div style={{ flex: 1 }}>
             <label
@@ -246,7 +315,9 @@ export function CreateItemForm({ sessionId, onCreated, onCancel }: CreateItemFor
             <select style={selectStyle} value={acType} onChange={(e) => setAcType(e.target.value)}>
               <option value="">--</option>
               {AC_TYPES.map((t) => (
-                <option key={t} value={t}>{cap(t)}</option>
+                <option key={t} value={t}>
+                  {cap(t)}
+                </option>
               ))}
             </select>
           </div>
@@ -261,8 +332,12 @@ export function CreateItemForm({ sessionId, onCreated, onCancel }: CreateItemFor
             title="Heavy armor imposes disadvantage on Dexterity (Stealth) checks"
             onClick={() => setStealthDisadvantage(!stealthDisadvantage)}
             style={{
-              padding: '3px 10px', fontSize: 10, fontWeight: 600,
-              fontFamily: theme.font.body, borderRadius: 20, cursor: 'pointer',
+              padding: '3px 10px',
+              fontSize: 10,
+              fontWeight: 600,
+              fontFamily: theme.font.body,
+              borderRadius: 20,
+              cursor: 'pointer',
               border: `1px solid ${stealthDisadvantage ? theme.state.danger : theme.border.default}`,
               background: stealthDisadvantage ? theme.state.dangerBg : 'transparent',
               color: stealthDisadvantage ? theme.state.danger : theme.text.muted,
@@ -277,10 +352,7 @@ export function CreateItemForm({ sessionId, onCreated, onCancel }: CreateItemFor
       {/* Magic bonus + Weight + Value */}
       <div style={{ ...fieldGroup, ...rowStyle }}>
         <div style={{ flex: 1 }}>
-          <label
-            style={labelStyle}
-            title="Adds +1/+2/+3 to attack and damage rolls"
-          >
+          <label style={labelStyle} title="Adds +1/+2/+3 to attack and damage rolls">
             Magic +
           </label>
           <input
@@ -321,8 +393,12 @@ export function CreateItemForm({ sessionId, onCreated, onCancel }: CreateItemFor
           title="Must spend a short rest attuning before the item's magic works"
           onClick={() => setRequiresAttunement(!requiresAttunement)}
           style={{
-            padding: '3px 10px', fontSize: 10, fontWeight: 600,
-            fontFamily: theme.font.body, borderRadius: 20, cursor: 'pointer',
+            padding: '3px 10px',
+            fontSize: 10,
+            fontWeight: 600,
+            fontFamily: theme.font.body,
+            borderRadius: 20,
+            cursor: 'pointer',
             border: `1px solid ${requiresAttunement ? theme.purple : theme.border.default}`,
             background: requiresAttunement ? 'rgba(155,89,182,0.15)' : 'transparent',
             color: requiresAttunement ? theme.purple : theme.text.muted,
@@ -346,10 +422,14 @@ export function CreateItemForm({ sessionId, onCreated, onCancel }: CreateItemFor
 
       {/* Error */}
       {error && (
-        <div style={{
-          fontSize: 11, color: theme.state.danger,
-          marginBottom: 8, fontFamily: theme.font.body,
-        }}>
+        <div
+          style={{
+            fontSize: 11,
+            color: theme.state.danger,
+            marginBottom: 8,
+            fontFamily: theme.font.body,
+          }}
+        >
           {error}
         </div>
       )}

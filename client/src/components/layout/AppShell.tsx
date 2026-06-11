@@ -1,6 +1,23 @@
-import { useState, useEffect, useCallback, useRef, lazy, Suspense } from 'react';
+import { useState, useEffect, useRef, lazy, Suspense } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { Copy, PanelRightClose, PanelRightOpen, X, LogOut, Home, UserCog, ChevronDown, Menu, Settings, Volume2, VolumeX, Shield, Lightbulb, Megaphone, ScrollText } from 'lucide-react';
+import {
+  Copy,
+  PanelRightClose,
+  PanelRightOpen,
+  X,
+  LogOut,
+  Home,
+  UserCog,
+  ChevronDown,
+  Menu,
+  Settings,
+  Volume2,
+  VolumeX,
+  Shield,
+  Lightbulb,
+  Megaphone,
+  ScrollText,
+} from 'lucide-react';
 import { TweaksPanel } from '../../kbrt/TweaksPanel';
 import { useSocket } from '../../hooks/useSocket';
 import { useIsMobile } from '../../hooks/useIsMobile';
@@ -43,26 +60,26 @@ import { DialogHost } from '../ui/Dialog';
 // Lazy-load the 3D dice overlay so Three.js (~500 KB min+gz) is only
 // pulled in on first roll, not during the initial app boot.
 const Dice3DOverlay = lazy(() =>
-  import('../dice/Dice3DOverlay').then((m) => ({ default: m.Dice3DOverlay })),
+  import('../dice/Dice3DOverlay').then((m) => ({ default: m.Dice3DOverlay }))
 );
 
 // Lazy-loaded modals/panels — only fetched when first shown. Each of
 // these is either DM-only, modal-only, or infrequently used, so
 // keeping them out of the main chunk saves significant initial bytes.
 const CombatRecap = lazy(() =>
-  import('../combat/CombatRecap').then((m) => ({ default: m.CombatRecap })),
+  import('../combat/CombatRecap').then((m) => ({ default: m.CombatRecap }))
 );
 const ProfileModal = lazy(() =>
-  import('../auth/ProfileModal').then((m) => ({ default: m.ProfileModal })),
+  import('../auth/ProfileModal').then((m) => ({ default: m.ProfileModal }))
 );
 const HandoutModal = lazy(() =>
-  import('../session/HandoutModal').then((m) => ({ default: m.HandoutModal })),
+  import('../session/HandoutModal').then((m) => ({ default: m.HandoutModal }))
 );
 const MapBrowser = lazy(() =>
-  import('../mapbrowser/MapBrowser').then((m) => ({ default: m.MapBrowser })),
+  import('../mapbrowser/MapBrowser').then((m) => ({ default: m.MapBrowser }))
 );
 const CharacterSheetFull = lazy(() =>
-  import('../character/CharacterSheetFull').then((m) => ({ default: m.CharacterSheetFull })),
+  import('../character/CharacterSheetFull').then((m) => ({ default: m.CharacterSheetFull }))
 );
 
 export function AppShell() {
@@ -94,8 +111,8 @@ export function AppShell() {
   // immediately without needing to re-open the sheet.
   const [tweaksOpen, setTweaksOpen] = useState(false);
   const [fullSheetCharId, setFullSheetCharId] = useState<string | null>(null);
-  const fullSheetCharacter = useCharacterStore(
-    (s) => fullSheetCharId ? (s.allCharacters[fullSheetCharId] ?? null) : null,
+  const fullSheetCharacter = useCharacterStore((s) =>
+    fullSheetCharId ? (s.allCharacters[fullSheetCharId] ?? null) : null
   );
   const [requestedTab, setRequestedTab] = useState<string | null>(null);
   const currentMap = useMapStore((s) => s.currentMap);
@@ -135,7 +152,9 @@ export function AppShell() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ roomCode, displayName: name }),
       });
-    } catch { /* session might already have this user */ }
+    } catch {
+      /* session might already have this user */
+    }
     localStorage.setItem('dnd-vtt-displayName', name);
     setLocalName(name);
     setShowNamePrompt(false);
@@ -256,7 +275,7 @@ export function AppShell() {
       } else {
         // Fetch into the store so the live subscription picks it up.
         fetch(`/api/characters/${charId}`)
-          .then((r) => r.ok ? r.json() : null)
+          .then((r) => (r.ok ? r.json() : null))
           .then((data) => {
             if (data) {
               useCharacterStore.getState().setAllCharacters({
@@ -296,22 +315,25 @@ export function AppShell() {
     const code = storedRoomCode || roomCode || '';
     // Copy just the room code, not the full URL
     if (navigator.clipboard?.writeText) {
-      navigator.clipboard.writeText(code).then(() => {
-        setCopied(true);
-        setTimeout(() => setCopied(false), 1500);
-      }).catch(() => {
-        // Fallback
-        const ta = document.createElement('textarea');
-        ta.value = code;
-        ta.style.position = 'fixed';
-        ta.style.left = '-9999px';
-        document.body.appendChild(ta);
-        ta.select();
-        document.execCommand('copy');
-        document.body.removeChild(ta);
-        setCopied(true);
-        setTimeout(() => setCopied(false), 1500);
-      });
+      navigator.clipboard
+        .writeText(code)
+        .then(() => {
+          setCopied(true);
+          setTimeout(() => setCopied(false), 1500);
+        })
+        .catch(() => {
+          // Fallback
+          const ta = document.createElement('textarea');
+          ta.value = code;
+          ta.style.position = 'fixed';
+          ta.style.left = '-9999px';
+          document.body.appendChild(ta);
+          ta.select();
+          document.execCommand('copy');
+          document.body.removeChild(ta);
+          setCopied(true);
+          setTimeout(() => setCopied(false), 1500);
+        });
     } else {
       // Old browser fallback
       const ta = document.createElement('textarea');
@@ -338,21 +360,39 @@ export function AppShell() {
   // Show name prompt if navigating directly to session URL without a name
   if (showNamePrompt) {
     return (
-      <div style={{
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-        height: '100vh', background: theme.bg.deepest, fontFamily: theme.font.body,
-      }}>
-        <div style={{
-          background: theme.bg.card, border: `1px solid ${theme.border.default}`,
-          borderRadius: theme.radius.lg, padding: '32px 40px', maxWidth: 400,
-          textAlign: 'center',
-        }}>
-          <img src="/kbrt-logo.svg" alt="Atlas Bound" style={{ width: 80, height: 80, marginBottom: 8 }} />
-          <h2 style={{ color: theme.gold.primary, fontFamily: theme.font.display, margin: '0 0 8px' }}>
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          height: '100vh',
+          background: theme.bg.deepest,
+          fontFamily: theme.font.body,
+        }}
+      >
+        <div
+          style={{
+            background: theme.bg.card,
+            border: `1px solid ${theme.border.default}`,
+            borderRadius: theme.radius.lg,
+            padding: '32px 40px',
+            maxWidth: 400,
+            textAlign: 'center',
+          }}
+        >
+          <img
+            src="/kbrt-logo.svg"
+            alt="Atlas Bound"
+            style={{ width: 80, height: 80, marginBottom: 8 }}
+          />
+          <h2
+            style={{ color: theme.gold.primary, fontFamily: theme.font.display, margin: '0 0 8px' }}
+          >
             Join Session
           </h2>
           <p style={{ color: theme.text.secondary, fontSize: 13, margin: '0 0 20px' }}>
-            Enter your display name to join room <strong style={{ color: theme.text.primary }}>{roomCode}</strong>
+            Enter your display name to join room{' '}
+            <strong style={{ color: theme.text.primary }}>{roomCode}</strong>
           </p>
           <input
             type="text"
@@ -362,19 +402,30 @@ export function AppShell() {
             placeholder="Your Display Name"
             autoFocus
             style={{
-              width: '100%', padding: '10px 14px', fontSize: 14,
-              background: theme.bg.deep, border: `1px solid ${theme.border.default}`,
-              borderRadius: theme.radius.md, color: theme.text.primary,
-              outline: 'none', marginBottom: 12, boxSizing: 'border-box',
+              width: '100%',
+              padding: '10px 14px',
+              fontSize: 14,
+              background: theme.bg.deep,
+              border: `1px solid ${theme.border.default}`,
+              borderRadius: theme.radius.md,
+              color: theme.text.primary,
+              outline: 'none',
+              marginBottom: 12,
+              boxSizing: 'border-box',
             }}
           />
           <button
             onClick={handleNameSubmit}
             disabled={!nameInput.trim()}
             style={{
-              width: '100%', padding: '10px', fontSize: 14, fontWeight: 600,
-              background: theme.gold.bg, border: `1px solid ${theme.gold.border}`,
-              borderRadius: theme.radius.md, color: theme.gold.primary,
+              width: '100%',
+              padding: '10px',
+              fontSize: 14,
+              fontWeight: 600,
+              background: theme.gold.bg,
+              border: `1px solid ${theme.gold.border}`,
+              borderRadius: theme.radius.md,
+              color: theme.gold.primary,
               cursor: nameInput.trim() ? 'pointer' : 'not-allowed',
               opacity: nameInput.trim() ? 1 : 0.5,
             }}
@@ -404,9 +455,7 @@ export function AppShell() {
           </div>
         )}
       </Suspense>
-      {showInitiativeModal && (
-        <InitiativeModal onClose={() => setShowInitiativeModal(false)} />
-      )}
+      {showInitiativeModal && <InitiativeModal onClose={() => setShowInitiativeModal(false)} />}
       <OpportunityAttackModal />
       <CounterspellModal />
       <ShieldModal />
@@ -429,15 +478,15 @@ export function AppShell() {
         {fullSheetCharacter && (
           <div style={styles.fullSheetOverlay}>
             <div style={styles.fullSheetContainer}>
-              <button
-                style={styles.closeFullSheet}
-                onClick={() => setFullSheetCharId(null)}
-              >
+              <button style={styles.closeFullSheet} onClick={() => setFullSheetCharId(null)}>
                 <X size={16} />
               </button>
               <CharacterSheetFull
                 character={fullSheetCharacter}
-                onClose={() => { setFullSheetCharId(null); setRequestedTab(null); }}
+                onClose={() => {
+                  setFullSheetCharId(null);
+                  setRequestedTab(null);
+                }}
                 initialTab={requestedTab || undefined}
               />
             </div>
@@ -461,9 +510,7 @@ export function AppShell() {
             </div>
             <button style={styles.codeButton} onClick={handleCopyCode} title="Copy room code">
               <Copy size={12} />
-              <span style={styles.codeText}>
-                {storedRoomCode || roomCode || '---'}
-              </span>
+              <span style={styles.codeText}>{storedRoomCode || roomCode || '---'}</span>
               {copied && <span style={styles.copiedBadge}>Copied!</span>}
             </button>
             <div
@@ -539,11 +586,16 @@ export function AppShell() {
           >
             <div style={styles.mobileSidebarContainer}>
               <div style={styles.mobileSidebarHeader}>
-                <span style={{ fontSize: 14, fontWeight: 700, color: theme.gold.primary }}>Menu</span>
+                <span style={{ fontSize: 14, fontWeight: 700, color: theme.gold.primary }}>
+                  Menu
+                </span>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                   <button
                     type="button"
-                    onClick={() => { setMobileSidebarOpen(false); setShowFeedbackModal(true); }}
+                    onClick={() => {
+                      setMobileSidebarOpen(false);
+                      setShowFeedbackModal(true);
+                    }}
                     title="Send feedback"
                     aria-label="Send feedback"
                     style={{
@@ -553,10 +605,7 @@ export function AppShell() {
                   >
                     <Lightbulb size={14} />
                   </button>
-                  <button
-                    style={styles.closeFullSheet}
-                    onClick={() => setMobileSidebarOpen(false)}
-                  >
+                  <button style={styles.closeFullSheet} onClick={() => setMobileSidebarOpen(false)}>
                     <X size={16} />
                   </button>
                 </div>
@@ -572,7 +621,9 @@ export function AppShell() {
 
         {sharedModals}
         <TweaksPanel open={tweaksOpen} onClose={() => setTweaksOpen(false)} />
-        <Suspense fallback={null}><Dice3DOverlay /></Suspense>
+        <Suspense fallback={null}>
+          <Dice3DOverlay />
+        </Suspense>
       </div>
     );
   }
@@ -592,12 +643,14 @@ export function AppShell() {
             Atlas<span style={styles.wordmarkAccent}> Bound</span>
           </div>
           <div style={styles.topDivider} aria-hidden />
-          <button style={styles.codeButton} onClick={handleCopyCode} title="Copy invite link for players">
+          <button
+            style={styles.codeButton}
+            onClick={handleCopyCode}
+            title="Copy invite link for players"
+          >
             <Copy size={12} />
             <span>Room</span>
-            <span style={styles.codeText}>
-              {storedRoomCode || roomCode || '---'}
-            </span>
+            <span style={styles.codeText}>{storedRoomCode || roomCode || '---'}</span>
             {copied && <span style={styles.copiedBadge}>Copied!</span>}
           </button>
           <div
@@ -619,10 +672,7 @@ export function AppShell() {
           {/* User Menu */}
           {authUser && (
             <div ref={userMenuRef} style={{ position: 'relative' }}>
-              <button
-                style={styles.userMenuButton}
-                onClick={() => setShowUserMenu(!showUserMenu)}
-              >
+              <button style={styles.userMenuButton} onClick={() => setShowUserMenu(!showUserMenu)}>
                 {authUser.avatarUrl ? (
                   <img
                     src={authUser.avatarUrl}
@@ -635,24 +685,33 @@ export function AppShell() {
                   </div>
                 )}
                 <span style={styles.userMenuName}>{authUser.displayName}</span>
-                <ChevronDown size={12} style={{
-                  color: theme.text.muted,
-                  transition: `transform ${theme.motion.fast}`,
-                  transform: showUserMenu ? 'rotate(180deg)' : 'rotate(0deg)',
-                }} />
+                <ChevronDown
+                  size={12}
+                  style={{
+                    color: theme.text.muted,
+                    transition: `transform ${theme.motion.fast}`,
+                    transform: showUserMenu ? 'rotate(180deg)' : 'rotate(0deg)',
+                  }}
+                />
               </button>
               {showUserMenu && (
                 <div style={styles.userDropdown}>
                   <button
                     style={styles.dropdownItem}
-                    onClick={() => { setShowUserMenu(false); setShowProfileModal(true); }}
+                    onClick={() => {
+                      setShowUserMenu(false);
+                      setShowProfileModal(true);
+                    }}
                   >
                     <UserCog size={14} />
                     Profile
                   </button>
                   <button
                     style={styles.dropdownItem}
-                    onClick={() => { setShowUserMenu(false); navigate('/'); }}
+                    onClick={() => {
+                      setShowUserMenu(false);
+                      navigate('/');
+                    }}
                   >
                     <Home size={14} />
                     Back to Lobby
@@ -660,7 +719,10 @@ export function AppShell() {
                   <div style={styles.dropdownDivider} />
                   <button
                     style={styles.dropdownItem}
-                    onClick={() => { setShowUserMenu(false); setShowFeedbackModal(true); }}
+                    onClick={() => {
+                      setShowUserMenu(false);
+                      setShowFeedbackModal(true);
+                    }}
                     title="Suggest a feature, flag a bug, or send a note"
                   >
                     <Lightbulb size={14} />
@@ -683,7 +745,10 @@ export function AppShell() {
                   {authUser.isAdmin && (
                     <button
                       style={styles.dropdownItem}
-                      onClick={() => { setShowUserMenu(false); navigate('/admin/feedback'); }}
+                      onClick={() => {
+                        setShowUserMenu(false);
+                        navigate('/admin/feedback');
+                      }}
                     >
                       <Shield size={14} />
                       Feedback Admin
@@ -692,7 +757,10 @@ export function AppShell() {
                   {authUser.isAdmin && (
                     <button
                       style={styles.dropdownItem}
-                      onClick={() => { setShowUserMenu(false); navigate('/admin/tidings'); }}
+                      onClick={() => {
+                        setShowUserMenu(false);
+                        navigate('/admin/tidings');
+                      }}
                     >
                       <Megaphone size={14} />
                       Patch Notes
@@ -714,9 +782,16 @@ export function AppShell() {
             ref={audioButtonRef}
             className="btn-icon"
             onClick={() => setShowAudioPopover((v) => !v)}
-            onContextMenu={(e) => { e.preventDefault(); toggleMasterMute(); }}
+            onContextMenu={(e) => {
+              e.preventDefault();
+              toggleMasterMute();
+            }}
             title="Audio controls (right-click to quick-mute)"
-            aria-label={masterMuted ? 'Unmute audio and open controls' : 'Open audio controls (right-click to mute)'}
+            aria-label={
+              masterMuted
+                ? 'Unmute audio and open controls'
+                : 'Open audio controls (right-click to mute)'
+            }
             aria-pressed={showAudioPopover}
             style={{ color: masterMuted ? theme.text.muted : undefined }}
           >
@@ -771,13 +846,12 @@ export function AppShell() {
       <ReviewWaitingBanner />
       <TweaksPanel open={tweaksOpen} onClose={() => setTweaksOpen(false)} />
       {showAudioPopover && (
-        <AudioPopover
-          onClose={() => setShowAudioPopover(false)}
-          anchorRef={audioButtonRef}
-        />
+        <AudioPopover onClose={() => setShowAudioPopover(false)} anchorRef={audioButtonRef} />
       )}
       <FirstJoinTour />
-      <Suspense fallback={null}><Dice3DOverlay /></Suspense>
+      <Suspense fallback={null}>
+        <Dice3DOverlay />
+      </Suspense>
     </div>
   );
 }

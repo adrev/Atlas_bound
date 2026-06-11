@@ -9,13 +9,30 @@ interface CreateSpellFormProps {
 }
 
 const SCHOOLS = [
-  'abjuration', 'conjuration', 'divination', 'enchantment',
-  'evocation', 'illusion', 'necromancy', 'transmutation',
+  'abjuration',
+  'conjuration',
+  'divination',
+  'enchantment',
+  'evocation',
+  'illusion',
+  'necromancy',
+  'transmutation',
 ] as const;
 
 const DAMAGE_TYPES = [
-  'acid', 'bludgeoning', 'cold', 'fire', 'force', 'lightning',
-  'necrotic', 'piercing', 'poison', 'psychic', 'radiant', 'slashing', 'thunder',
+  'acid',
+  'bludgeoning',
+  'cold',
+  'fire',
+  'force',
+  'lightning',
+  'necrotic',
+  'piercing',
+  'poison',
+  'psychic',
+  'radiant',
+  'slashing',
+  'thunder',
 ] as const;
 
 const ATTACK_TYPES = ['none', 'ranged', 'melee'] as const;
@@ -23,9 +40,21 @@ const SAVING_THROWS = ['none', 'str', 'dex', 'con', 'int', 'wis', 'cha'] as cons
 const AOE_TYPES = ['none', 'sphere', 'cone', 'cube', 'line'] as const;
 
 const CONDITIONS = [
-  'none', 'blinded', 'charmed', 'deafened', 'frightened', 'grappled',
-  'incapacitated', 'invisible', 'paralyzed', 'petrified', 'poisoned',
-  'prone', 'restrained', 'stunned', 'unconscious',
+  'none',
+  'blinded',
+  'charmed',
+  'deafened',
+  'frightened',
+  'grappled',
+  'incapacitated',
+  'invisible',
+  'paralyzed',
+  'petrified',
+  'poisoned',
+  'prone',
+  'restrained',
+  'stunned',
+  'unconscious',
 ] as const;
 
 const ANIMATION_TYPES = ['auto', 'projectile', 'aoe', 'buff', 'melee'] as const;
@@ -33,42 +62,60 @@ const ANIMATION_TYPES = ['auto', 'projectile', 'aoe', 'buff', 'melee'] as const;
 // ── Shared styles ───────────────────────────────────────────
 
 const inputStyle: React.CSSProperties = {
-  width: '100%', padding: '6px 10px', fontSize: 12,
-  background: theme.bg.deepest, border: `1px solid ${theme.gold.border}`,
-  borderRadius: theme.radius.sm, color: theme.text.primary,
-  fontFamily: theme.font.body, outline: 'none', boxSizing: 'border-box',
+  width: '100%',
+  padding: '6px 10px',
+  fontSize: 12,
+  background: theme.bg.deepest,
+  border: `1px solid ${theme.gold.border}`,
+  borderRadius: theme.radius.sm,
+  color: theme.text.primary,
+  fontFamily: theme.font.body,
+  outline: 'none',
+  boxSizing: 'border-box',
 };
 
 const selectStyle: React.CSSProperties = { ...inputStyle, cursor: 'pointer' };
 
 const labelStyle: React.CSSProperties = {
-  fontSize: 10, fontWeight: 700, color: theme.gold.dim,
-  textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 3, display: 'block',
+  fontSize: 10,
+  fontWeight: 700,
+  color: theme.gold.dim,
+  textTransform: 'uppercase',
+  letterSpacing: '0.08em',
+  marginBottom: 3,
+  display: 'block',
 };
 
 const fieldGroup: React.CSSProperties = { marginBottom: 8 };
 
 const rowStyle: React.CSSProperties = { display: 'flex', gap: 8 };
 
-const checkboxLabelStyle: React.CSSProperties = {
-  display: 'flex', alignItems: 'center', gap: 4,
-  fontSize: 12, color: theme.text.secondary,
-  fontFamily: theme.font.body, cursor: 'pointer',
-};
-
 const sectionHeaderStyle: React.CSSProperties = {
-  fontSize: 11, fontWeight: 700, color: theme.gold.primary,
-  textTransform: 'uppercase', letterSpacing: '0.08em',
-  margin: '10px 0 6px', fontFamily: theme.font.body,
+  fontSize: 11,
+  fontWeight: 700,
+  color: theme.gold.primary,
+  textTransform: 'uppercase',
+  letterSpacing: '0.08em',
+  margin: '10px 0 6px',
+  fontFamily: theme.font.body,
   borderBottom: `1px solid ${theme.border.default}`,
   paddingBottom: 4,
 };
 
 const sectionToggleStyle: React.CSSProperties = {
-  background: 'none', border: 'none', padding: '6px 0', margin: '4px 0 2px',
-  fontSize: 11, fontWeight: 700, color: theme.gold.primary,
-  textTransform: 'uppercase', letterSpacing: '0.08em',
-  cursor: 'pointer', fontFamily: theme.font.body, textAlign: 'left', width: '100%',
+  background: 'none',
+  border: 'none',
+  padding: '6px 0',
+  margin: '4px 0 2px',
+  fontSize: 11,
+  fontWeight: 700,
+  color: theme.gold.primary,
+  textTransform: 'uppercase',
+  letterSpacing: '0.08em',
+  cursor: 'pointer',
+  fontFamily: theme.font.body,
+  textAlign: 'left',
+  width: '100%',
 };
 
 // ── Helpers ─────────────────────────────────────────────────
@@ -77,11 +124,21 @@ function cap(s: string): string {
   return s.charAt(0).toUpperCase() + s.slice(1);
 }
 
-function pillToggle(active: boolean, color: string, bg: string, borderColor: string): React.CSSProperties {
+function pillToggle(
+  active: boolean,
+  color: string,
+  bg: string,
+  borderColor: string
+): React.CSSProperties {
   return {
-    padding: '3px 10px', fontSize: 10, fontWeight: 600,
-    fontFamily: theme.font.body, borderRadius: 20, cursor: 'pointer',
-    transition: 'all 0.12s', outline: 'none',
+    padding: '3px 10px',
+    fontSize: 10,
+    fontWeight: 600,
+    fontFamily: theme.font.body,
+    borderRadius: 20,
+    cursor: 'pointer',
+    transition: 'all 0.12s',
+    outline: 'none',
     border: `1px solid ${active ? borderColor : theme.border.default}`,
     background: active ? bg : 'transparent',
     color: active ? color : theme.text.muted,
@@ -192,16 +249,25 @@ export function CreateSpellForm({ sessionId, onCreated, onCancel }: CreateSpellF
     <form
       onSubmit={handleSubmit}
       style={{
-        display: 'flex', flexDirection: 'column', gap: 0, padding: 10,
-        background: theme.bg.card, border: `1px solid ${theme.border.default}`,
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 0,
+        padding: 10,
+        background: theme.bg.card,
+        border: `1px solid ${theme.border.default}`,
         borderRadius: theme.radius.md,
       }}
     >
       {/* ── Header ──────────────────────────────────────────── */}
-      <div style={{
-        fontSize: 14, fontWeight: 700, color: theme.gold.primary,
-        fontFamily: theme.font.display, marginBottom: 10,
-      }}>
+      <div
+        style={{
+          fontSize: 14,
+          fontWeight: 700,
+          color: theme.gold.primary,
+          fontFamily: theme.font.display,
+          marginBottom: 10,
+        }}
+      >
         Create Custom Spell
       </div>
 
@@ -237,7 +303,9 @@ export function CreateSpellForm({ sessionId, onCreated, onCancel }: CreateSpellF
           <label style={labelStyle}>School</label>
           <select style={selectStyle} value={school} onChange={(e) => setSchool(e.target.value)}>
             {SCHOOLS.map((s) => (
-              <option key={s} value={s}>{cap(s)}</option>
+              <option key={s} value={s}>
+                {cap(s)}
+              </option>
             ))}
           </select>
         </div>
@@ -247,11 +315,21 @@ export function CreateSpellForm({ sessionId, onCreated, onCancel }: CreateSpellF
       <div style={{ ...fieldGroup, ...rowStyle }}>
         <div style={{ flex: 1 }}>
           <label style={labelStyle}>Casting Time</label>
-          <input style={inputStyle} type="text" value={castingTime} onChange={(e) => setCastingTime(e.target.value)} />
+          <input
+            style={inputStyle}
+            type="text"
+            value={castingTime}
+            onChange={(e) => setCastingTime(e.target.value)}
+          />
         </div>
         <div style={{ flex: 1 }}>
           <label style={labelStyle}>Range</label>
-          <input style={inputStyle} type="text" value={range} onChange={(e) => setRange(e.target.value)} />
+          <input
+            style={inputStyle}
+            type="text"
+            value={range}
+            onChange={(e) => setRange(e.target.value)}
+          />
         </div>
       </div>
 
@@ -259,11 +337,21 @@ export function CreateSpellForm({ sessionId, onCreated, onCancel }: CreateSpellF
       <div style={{ ...fieldGroup, ...rowStyle }}>
         <div style={{ flex: 1 }}>
           <label style={labelStyle}>Components</label>
-          <input style={inputStyle} type="text" value={components} onChange={(e) => setComponents(e.target.value)} />
+          <input
+            style={inputStyle}
+            type="text"
+            value={components}
+            onChange={(e) => setComponents(e.target.value)}
+          />
         </div>
         <div style={{ flex: 1 }}>
           <label style={labelStyle}>Duration</label>
-          <input style={inputStyle} type="text" value={duration} onChange={(e) => setDuration(e.target.value)} />
+          <input
+            style={inputStyle}
+            type="text"
+            value={duration}
+            onChange={(e) => setDuration(e.target.value)}
+          />
         </div>
       </div>
 
@@ -304,9 +392,15 @@ export function CreateSpellForm({ sessionId, onCreated, onCancel }: CreateSpellF
         </div>
         <div style={{ flex: 1 }}>
           <label style={labelStyle}>Damage Type</label>
-          <select style={selectStyle} value={damageType} onChange={(e) => setDamageType(e.target.value)}>
+          <select
+            style={selectStyle}
+            value={damageType}
+            onChange={(e) => setDamageType(e.target.value)}
+          >
             {DAMAGE_TYPES.map((t) => (
-              <option key={t} value={t}>{cap(t)}</option>
+              <option key={t} value={t}>
+                {cap(t)}
+              </option>
             ))}
           </select>
         </div>
@@ -316,17 +410,29 @@ export function CreateSpellForm({ sessionId, onCreated, onCancel }: CreateSpellF
       <div style={{ ...fieldGroup, ...rowStyle, alignItems: 'flex-end' }}>
         <div style={{ flex: 1 }}>
           <label style={labelStyle}>Attack Type</label>
-          <select style={selectStyle} value={attackType} onChange={(e) => setAttackType(e.target.value)}>
+          <select
+            style={selectStyle}
+            value={attackType}
+            onChange={(e) => setAttackType(e.target.value)}
+          >
             {ATTACK_TYPES.map((t) => (
-              <option key={t} value={t}>{cap(t)}</option>
+              <option key={t} value={t}>
+                {cap(t)}
+              </option>
             ))}
           </select>
         </div>
         <div style={{ flex: 1 }}>
           <label style={labelStyle}>Saving Throw</label>
-          <select style={selectStyle} value={savingThrow} onChange={(e) => setSavingThrow(e.target.value)}>
+          <select
+            style={selectStyle}
+            value={savingThrow}
+            onChange={(e) => setSavingThrow(e.target.value)}
+          >
             {SAVING_THROWS.map((t) => (
-              <option key={t} value={t}>{t === 'none' ? 'None' : t.toUpperCase()}</option>
+              <option key={t} value={t}>
+                {t === 'none' ? 'None' : t.toUpperCase()}
+              </option>
             ))}
           </select>
         </div>
@@ -336,8 +442,15 @@ export function CreateSpellForm({ sessionId, onCreated, onCancel }: CreateSpellF
             title="Target takes half damage on a successful save"
             onClick={() => setHalfOnSave(!halfOnSave)}
             style={{
-              ...pillToggle(halfOnSave, theme.state.warning, theme.state.warningBg, 'rgba(243,156,18,0.4)'),
-              alignSelf: 'flex-end', marginBottom: 2, whiteSpace: 'nowrap',
+              ...pillToggle(
+                halfOnSave,
+                theme.state.warning,
+                theme.state.warningBg,
+                'rgba(243,156,18,0.4)'
+              ),
+              alignSelf: 'flex-end',
+              marginBottom: 2,
+              whiteSpace: 'nowrap',
             }}
           >
             Half on save
@@ -356,7 +469,9 @@ export function CreateSpellForm({ sessionId, onCreated, onCancel }: CreateSpellF
           </label>
           <select style={selectStyle} value={aoeType} onChange={(e) => setAoeType(e.target.value)}>
             {AOE_TYPES.map((t) => (
-              <option key={t} value={t}>{cap(t)}</option>
+              <option key={t} value={t}>
+                {cap(t)}
+              </option>
             ))}
           </select>
         </div>
@@ -411,34 +526,40 @@ export function CreateSpellForm({ sessionId, onCreated, onCancel }: CreateSpellF
             >
               Condition on Failed Save
             </label>
-            <select style={selectStyle} value={appliesCondition} onChange={(e) => setAppliesCondition(e.target.value)}>
+            <select
+              style={selectStyle}
+              value={appliesCondition}
+              onChange={(e) => setAppliesCondition(e.target.value)}
+            >
               {CONDITIONS.map((c) => (
-                <option key={c} value={c}>{cap(c)}</option>
+                <option key={c} value={c}>
+                  {cap(c)}
+                </option>
               ))}
             </select>
           </div>
 
           {/* Animation Type */}
           <div style={fieldGroup}>
-            <label
-              style={labelStyle}
-              title="Visual effect when the spell is cast"
-            >
+            <label style={labelStyle} title="Visual effect when the spell is cast">
               Animation Type
             </label>
-            <select style={selectStyle} value={animationType} onChange={(e) => setAnimationType(e.target.value)}>
+            <select
+              style={selectStyle}
+              value={animationType}
+              onChange={(e) => setAnimationType(e.target.value)}
+            >
               {ANIMATION_TYPES.map((t) => (
-                <option key={t} value={t}>{cap(t)}</option>
+                <option key={t} value={t}>
+                  {cap(t)}
+                </option>
               ))}
             </select>
           </div>
 
           {/* Animation Color */}
           <div style={fieldGroup}>
-            <label
-              style={labelStyle}
-              title="Leave empty for auto color based on school"
-            >
+            <label style={labelStyle} title="Leave empty for auto color based on school">
               Animation Color
             </label>
             <div style={{ ...rowStyle, alignItems: 'center' }}>
@@ -449,11 +570,16 @@ export function CreateSpellForm({ sessionId, onCreated, onCancel }: CreateSpellF
                 onChange={(e) => setAnimationColor(e.target.value)}
                 placeholder="#ff4500"
               />
-              <div style={{
-                width: 24, height: 24, borderRadius: theme.radius.sm,
-                border: `1px solid ${theme.gold.border}`,
-                background: animationColor || 'transparent', flexShrink: 0,
-              }} />
+              <div
+                style={{
+                  width: 24,
+                  height: 24,
+                  borderRadius: theme.radius.sm,
+                  border: `1px solid ${theme.gold.border}`,
+                  background: animationColor || 'transparent',
+                  flexShrink: 0,
+                }}
+              />
             </div>
           </div>
         </div>
@@ -496,10 +622,14 @@ export function CreateSpellForm({ sessionId, onCreated, onCancel }: CreateSpellF
 
       {/* ── Error ───────────────────────────────────────────── */}
       {error && (
-        <div style={{
-          fontSize: 11, color: theme.state.danger,
-          marginBottom: 8, fontFamily: theme.font.body,
-        }}>
+        <div
+          style={{
+            fontSize: 11,
+            color: theme.state.danger,
+            marginBottom: 8,
+            fontFamily: theme.font.body,
+          }}
+        >
           {error}
         </div>
       )}

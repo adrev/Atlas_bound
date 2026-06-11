@@ -1,6 +1,5 @@
 import { useState } from 'react';
 import { X, Upload, Globe, AlertTriangle, RefreshCw } from 'lucide-react';
-import { importDndBeyondJSON } from '../../services/api';
 import { useCharacterStore } from '../../stores/useCharacterStore';
 import { useSessionStore } from '../../stores/useSessionStore';
 import type { Character } from '@dnd-vtt/shared';
@@ -35,7 +34,9 @@ export function CharacterImport({ onClose }: CharacterImportProps) {
   const [activeTab, setActiveTab] = useState<ImportTab>('api');
   const [jsonText, setJsonText] = useState('');
   const [apiInput, setApiInput] = useState('');
-  const [preview, setPreview] = useState<Partial<Character> & { _rawJson?: unknown } | null>(null);
+  const [preview, setPreview] = useState<(Partial<Character> & { _rawJson?: unknown }) | null>(
+    null
+  );
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [fetching, setFetching] = useState(false);
@@ -55,7 +56,10 @@ export function CharacterImport({ onClose }: CharacterImportProps) {
         name: data.name || 'Unknown',
         race: data.race?.fullName || data.race || 'Unknown',
         class: data.classes?.[0]?.definition?.name || data.class || 'Unknown',
-        level: data.classes?.reduce((sum: number, c: { level: number }) => sum + c.level, 0) || data.level || 1,
+        level:
+          data.classes?.reduce((sum: number, c: { level: number }) => sum + c.level, 0) ||
+          data.level ||
+          1,
         _rawJson: parsed,
       });
     } catch (err) {
@@ -68,7 +72,9 @@ export function CharacterImport({ onClose }: CharacterImportProps) {
     setPreview(null);
     const charId = extractCharacterId(apiInput);
     if (!charId) {
-      setError('Invalid input. Paste a D&D Beyond character URL (e.g. https://www.dndbeyond.com/characters/163807652) or just the numeric ID.');
+      setError(
+        'Invalid input. Paste a D&D Beyond character URL (e.g. https://www.dndbeyond.com/characters/163807652) or just the numeric ID.'
+      );
       return;
     }
     setFetching(true);
@@ -80,8 +86,11 @@ export function CharacterImport({ onClose }: CharacterImportProps) {
       }
       const json = await resp.json();
       const data = json.data ?? json;
-      const classes = data.classes as Array<{ definition: { name: string }; level: number }> | undefined;
-      const className = classes?.map((c) => `${c.definition.name} ${c.level}`).join(' / ') || 'Unknown';
+      const classes = data.classes as
+        | Array<{ definition: { name: string }; level: number }>
+        | undefined;
+      const className =
+        classes?.map((c) => `${c.definition.name} ${c.level}`).join(' / ') || 'Unknown';
       const totalLevel = classes?.reduce((sum, c) => sum + c.level, 0) || 1;
       const raceName = data.race?.fullName || data.race?.baseName || 'Unknown';
       setPreview({
@@ -102,9 +111,7 @@ export function CharacterImport({ onClose }: CharacterImportProps) {
     setLoading(true);
     setError(null);
     try {
-      const characterJson = activeTab === 'json'
-        ? JSON.parse(jsonText)
-        : preview?._rawJson;
+      const characterJson = activeTab === 'json' ? JSON.parse(jsonText) : preview?._rawJson;
       if (!characterJson) {
         throw new Error('No character data. Fetch the character first.');
       }
@@ -249,7 +256,10 @@ export function CharacterImport({ onClose }: CharacterImportProps) {
                   disabled={fetching || !apiInput.trim()}
                   style={{ whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: 6 }}
                 >
-                  <RefreshCw size={14} style={fetching ? { animation: 'spin 1s linear infinite' } : undefined} />
+                  <RefreshCw
+                    size={14}
+                    style={fetching ? { animation: 'spin 1s linear infinite' } : undefined}
+                  />
                   {fetching ? 'Fetching...' : 'Fetch'}
                 </button>
               </div>
@@ -257,16 +267,15 @@ export function CharacterImport({ onClose }: CharacterImportProps) {
                 <AlertTriangle size={16} color={theme.hp.half} />
                 <p style={styles.warningText}>
                   Character must be set to <strong>public</strong> on D&D Beyond for this to work.
-                  Go to your character sheet on D&D Beyond, click the share icon, and enable public sharing.
+                  Go to your character sheet on D&D Beyond, click the share icon, and enable public
+                  sharing.
                 </p>
               </div>
             </>
           )}
 
           {/* Error */}
-          {error && (
-            <div style={styles.error}>{error}</div>
-          )}
+          {error && <div style={styles.error}>{error}</div>}
 
           {/* Preview */}
           {preview && (
