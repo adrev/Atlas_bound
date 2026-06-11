@@ -21,15 +21,16 @@ export function GridLayer({
   stageHeight,
 }: GridLayerProps) {
   const lines = useMemo(() => {
-    const scale = viewport.scaleX;
+    const scaleX = viewport.scaleX;
+    const scaleY = viewport.scaleY;
     const offsetX = viewport.x;
     const offsetY = viewport.y;
 
     // Calculate visible area in map coordinates
-    const visibleLeft = Math.max(0, -offsetX / scale);
-    const visibleTop = Math.max(0, -offsetY / scale);
-    const visibleRight = Math.min(mapWidth, (stageWidth - offsetX) / scale);
-    const visibleBottom = Math.min(mapHeight, (stageHeight - offsetY) / scale);
+    const visibleLeft = Math.max(0, -offsetX / scaleX);
+    const visibleTop = Math.max(0, -offsetY / scaleY);
+    const visibleRight = Math.min(mapWidth, (stageWidth - offsetX) / scaleX);
+    const visibleBottom = Math.min(mapHeight, (stageHeight - offsetY) / scaleY);
 
     // Calculate which grid lines to draw
     const startCol = Math.floor(visibleLeft / gridSize);
@@ -58,7 +59,17 @@ export function GridLayer({
     }
 
     return gridLines;
-  }, [mapWidth, mapHeight, gridSize, viewport.x, viewport.y, viewport.scaleX, viewport.scaleY, stageWidth, stageHeight]);
+  }, [
+    mapWidth,
+    mapHeight,
+    gridSize,
+    viewport.x,
+    viewport.y,
+    viewport.scaleX,
+    viewport.scaleY,
+    stageWidth,
+    stageHeight,
+  ]);
 
   return (
     <>
