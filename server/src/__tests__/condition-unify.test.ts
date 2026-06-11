@@ -121,7 +121,7 @@ describe('CombatService.removeCondition (DM tracker remove)', () => {
     expect(room.conditionMeta.get('pc')?.has('restrained') ?? false).toBe(false);
 
     // And the end-of-turn tick no longer rolls a phantom save.
-    const tick = await tickEndOfTurnConditions(SESSION, 'pc', 2);
+    const tick = await tickEndOfTurnConditions(SESSION, 'pc');
     expect(tick.messages).toHaveLength(0);
     expect(tick.removed).toHaveLength(0);
   });
