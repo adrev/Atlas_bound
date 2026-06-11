@@ -58,7 +58,7 @@ describe('GCS upload storage', () => {
     expect(filename).toMatch(/^[0-9a-f-]+\.png$/);
     expect(uploadCall).toBeTruthy();
     expect(uploadCall?.init?.method).toBe('POST');
-    expect(new URL(uploadCall!.url).searchParams.get('name')).toBe(`tokens/${filename}`);
+    expect(new URL(uploadCall!.url).searchParams.get('name')).toBe(`uploads/tokens/${filename}`);
     expect((uploadCall?.init?.headers as Record<string, string>).Authorization).toBe(
       'Bearer test-token'
     );
@@ -78,6 +78,12 @@ describe('GCS upload storage', () => {
     } as unknown as Response;
 
     await expect(tryServeUploadFromGcs(`/tokens/${filename}`, res)).resolves.toBe(true);
+    const downloadCall = calls.find(
+      (call) => call.url.includes('/storage/v1/b/') && !call.url.includes('/upload/')
+    );
+    expect(decodeURIComponent(new URL(downloadCall!.url).pathname)).toContain(
+      `/o/uploads/tokens/${filename}`
+    );
     expect(headers.get('Content-Type')).toBe('image/png');
     expect(sentBody).toEqual(PNG_BYTES);
   });
