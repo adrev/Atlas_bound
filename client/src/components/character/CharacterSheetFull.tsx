@@ -1,4 +1,11 @@
-import { useState, useEffect, useCallback, useMemo, type CSSProperties, type ReactNode } from 'react';
+import {
+  useState,
+  useEffect,
+  useCallback,
+  useMemo,
+  type CSSProperties,
+  type ReactNode,
+} from 'react';
 import {
   abilityModifier,
   SKILL_ABILITY_MAP,
@@ -19,19 +26,30 @@ import {
   type CharacterCurrency,
   type AbilityScores,
   type DeathSaves,
+  type Token,
 } from '@dnd-vtt/shared';
-import { emitRoll, emitCharacterUpdate, emitSystemMessage, emitSpendHitDie, emitSpellSlotAdjust } from '../../socket/emitters';
+import {
+  emitRoll,
+  emitCharacterUpdate,
+  emitSpendHitDie,
+  emitSpellSlotAdjust,
+} from '../../socket/emitters';
 import { parseSpellMetaFromDesc, enrichSpellFromDescription } from '../../utils/spell-enrich';
 import { useMapStore } from '../../stores/useMapStore';
 import { useSessionStore } from '../../stores/useSessionStore';
 import { useCharacterStore } from '../../stores/useCharacterStore';
 import { performLongRest, performShortRest } from '../../utils/rest';
-import { isPrepareClass, maxPreparedSpells, countPreparedSpells } from '../../utils/prepared-spells';
+import {
+  isPrepareClass,
+  maxPreparedSpells,
+  countPreparedSpells,
+} from '../../utils/prepared-spells';
 import { InfoTooltip } from '../ui/InfoTooltip';
 import { lookupWeaponProperty } from '../../utils/rules-text';
 import { theme } from '../../styles/theme';
 import { HPBar, askConfirm, showInfo } from '../ui';
-import { getSpellIconUrl, getSpellImageUrl, getItemIconUrl, getItemImageUrl } from '../../utils/compendiumIcons';
+import { getSpellIconUrl, getSpellImageUrl, getItemIconUrl } from '../../utils/compendiumIcons';
+import { publicAssetUrl } from '../../utils/publicAssets';
 import { NotesTab } from './tabs/NotesTab';
 import { BackgroundTab } from './tabs/BackgroundTab';
 
@@ -71,14 +89,15 @@ function stripHtml(html: string): string {
 function getWeaponAttackAbility(
   properties: string[] | undefined,
   strMod: number,
-  dexMod: number,
+  dexMod: number
 ): { ability: AbilityName; label: string; explanation: string } {
-  const props = (properties || []).map(p => p.toLowerCase());
-  const isFinesse = props.some(p => p.includes('finesse'));
-  const isRanged = props.some(p => p.includes('ranged')) ||
-                   props.some(p => p.includes('ammunition')) ||
-                   props.some(p => p.includes('range '));
-  const isThrown = props.some(p => p.includes('thrown'));
+  const props = (properties || []).map((p) => p.toLowerCase());
+  const isFinesse = props.some((p) => p.includes('finesse'));
+  const isRanged =
+    props.some((p) => p.includes('ranged')) ||
+    props.some((p) => p.includes('ammunition')) ||
+    props.some((p) => p.includes('range '));
+  const isThrown = props.some((p) => p.includes('thrown'));
 
   if (isRanged && !isThrown) {
     return {
@@ -100,7 +119,9 @@ function getWeaponAttackAbility(
         'both attack and damage rolls — you must use the same modifier for ' +
         'both. We pick whichever is higher for you automatically.\n\n' +
         `Current: STR ${fmtModStr(strMod)}, DEX ${fmtModStr(dexMod)} \u2192 ${useDex ? 'DEX' : 'STR'} is better.` +
-        (isThrown ? '\n\nThrown: if you throw this weapon, you still use the chosen ability mod.' : ''),
+        (isThrown
+          ? '\n\nThrown: if you throw this weapon, you still use the chosen ability mod.'
+          : ''),
     };
   }
 
@@ -251,35 +272,6 @@ function rollLocal(notation: string): { total: number; dice: string } {
   return { total, dice: `${diceStr}${mod >= 0 ? '+' + mod : mod}` };
 }
 
-function showRestToast(restType: string, changes: string[]) {
-  const existing = document.getElementById('rest-toast');
-  if (existing) existing.remove();
-  const toast = document.createElement('div');
-  toast.id = 'rest-toast';
-  const titleDiv = document.createElement('div');
-  titleDiv.style.cssText = `font-size:16px;font-weight:700;margin-bottom:6px;color:${theme.gold.primary}`;
-  titleDiv.textContent = restType;
-  const listDiv = document.createElement('div');
-  listDiv.style.cssText = 'font-size:12px;line-height:1.6';
-  changes.forEach(c => {
-    const row = document.createElement('div');
-    row.style.cssText = `padding:2px 0;border-bottom:1px solid ${theme.border.default}`;
-    row.textContent = `\u2714 ${c}`;
-    listDiv.appendChild(row);
-  });
-  toast.appendChild(titleDiv);
-  toast.appendChild(listDiv);
-  Object.assign(toast.style, {
-    position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%, -50%)',
-    padding: '20px 28px', background: theme.bg.deep, color: theme.text.primary, borderRadius: `${theme.radius.lg}px`,
-    border: `2px solid ${theme.gold.primary}`, zIndex: '99999', minWidth: '300px', maxWidth: '420px',
-    boxShadow: `${theme.shadow.lg}, ${theme.goldGlow.soft}`,
-    animation: 'fadeIn 0.3s ease',
-  });
-  document.body.appendChild(toast);
-  setTimeout(() => toast.remove(), 4000);
-}
-
 let rollToastTimeout: ReturnType<typeof setTimeout> | null = null;
 function showRollToast(notation: string, reason: string) {
   // Roll locally for immediate feedback
@@ -308,15 +300,23 @@ function showRollToast(notation: string, reason: string) {
   rollDiv.appendChild(detailSpan);
   toast.appendChild(reasonDiv);
   toast.appendChild(rollDiv);
-  const isNat20 = notation.includes('1d20') && result.total - (parseInt(notation.split(/[+-]/)[1] || '0')) === 20;
-  const isNat1 = notation.includes('1d20') && result.total - (parseInt(notation.split(/[+-]/)[1] || '0')) === 1;
+  const isNat20 =
+    notation.includes('1d20') && result.total - parseInt(notation.split(/[+-]/)[1] || '0') === 20;
+  const isNat1 =
+    notation.includes('1d20') && result.total - parseInt(notation.split(/[+-]/)[1] || '0') === 1;
   Object.assign(toast.style, {
-    position: 'fixed', bottom: '100px', left: '50%', transform: 'translateX(-50%)',
-    padding: '10px 24px', borderRadius: '8px',
+    position: 'fixed',
+    bottom: '100px',
+    left: '50%',
+    transform: 'translateX(-50%)',
+    padding: '10px 24px',
+    borderRadius: '8px',
     background: isNat20 ? '#d4a843' : isNat1 ? '#8b0000' : '#c53131',
-    color: '#fff', zIndex: '99999',
+    color: '#fff',
+    zIndex: '99999',
     boxShadow: isNat20 ? '0 0 20px rgba(212,168,67,0.6)' : '0 4px 16px rgba(0,0,0,0.5)',
-    animation: 'fadeIn 0.2s ease', textAlign: 'center',
+    animation: 'fadeIn 0.2s ease',
+    textAlign: 'center',
   });
   document.body.appendChild(toast);
   if (rollToastTimeout) clearTimeout(rollToastTimeout);
@@ -326,7 +326,11 @@ function showRollToast(notation: string, reason: string) {
 /* ── Safe JSON parser ────────────────────────────────────── */
 function parse<T>(val: unknown, fallback: T): T {
   if (typeof val === 'string') {
-    try { val = JSON.parse(val); } catch { return fallback; }
+    try {
+      val = JSON.parse(val);
+    } catch {
+      return fallback;
+    }
   }
   if (val == null) return fallback;
   // If BOTH the parsed value and the fallback are plain objects (not
@@ -346,8 +350,12 @@ function parse<T>(val: unknown, fallback: T): T {
 }
 
 const RARITY_COLORS: Record<string, string> = {
-  common: '#9d9d9d', uncommon: '#1eff00', rare: '#0070dd',
-  'very rare': '#a335ee', legendary: '#ff8000', artifact: '#e6cc80',
+  common: '#9d9d9d',
+  uncommon: '#1eff00',
+  rare: '#0070dd',
+  'very rare': '#a335ee',
+  legendary: '#ff8000',
+  artifact: '#e6cc80',
 };
 
 /* ── Color Palette ─────────────────────────────────────────
@@ -381,29 +389,38 @@ const C = {
 
 /* ── Label Maps ──────────────────────────────────────────── */
 const ABILITY_LABELS: Record<AbilityName, string> = {
-  str: 'STR', dex: 'DEX', con: 'CON',
-  int: 'INT', wis: 'WIS', cha: 'CHA',
+  str: 'STR',
+  dex: 'DEX',
+  con: 'CON',
+  int: 'INT',
+  wis: 'WIS',
+  cha: 'CHA',
 };
 
 const ABILITY_KEYS: AbilityName[] = ['str', 'dex', 'con', 'int', 'wis', 'cha'];
 
 const SKILL_LABELS: Record<keyof Skills, string> = {
-  acrobatics: 'Acrobatics', animalHandling: 'Animal Handling',
-  arcana: 'Arcana', athletics: 'Athletics', deception: 'Deception',
-  history: 'History', insight: 'Insight', intimidation: 'Intimidation',
-  investigation: 'Investigation', medicine: 'Medicine', nature: 'Nature',
-  perception: 'Perception', performance: 'Performance',
-  persuasion: 'Persuasion', religion: 'Religion',
-  sleightOfHand: 'Sleight of Hand', stealth: 'Stealth', survival: 'Survival',
+  acrobatics: 'Acrobatics',
+  animalHandling: 'Animal Handling',
+  arcana: 'Arcana',
+  athletics: 'Athletics',
+  deception: 'Deception',
+  history: 'History',
+  insight: 'Insight',
+  intimidation: 'Intimidation',
+  investigation: 'Investigation',
+  medicine: 'Medicine',
+  nature: 'Nature',
+  perception: 'Perception',
+  performance: 'Performance',
+  persuasion: 'Persuasion',
+  religion: 'Religion',
+  sleightOfHand: 'Sleight of Hand',
+  stealth: 'Stealth',
+  survival: 'Survival',
 };
 
 const SKILL_KEYS = Object.keys(SKILL_LABELS) as (keyof Skills)[];
-
-const SCHOOL_ABBREV: Record<string, string> = {
-  abjuration: 'ABJ', conjuration: 'CON', divination: 'DIV',
-  enchantment: 'ENC', evocation: 'EVO', illusion: 'ILL',
-  necromancy: 'NEC', transmutation: 'TRS',
-};
 
 /* ── Helpers ─────────────────────────────────────────────── */
 function fmtMod(mod: number): string {
@@ -425,10 +442,14 @@ function levelPillLabel(n: number): string {
 /* ── Tiny Components ─────────────────────────────────────── */
 function ProfDot({ filled, double }: { filled: boolean; double?: boolean }) {
   const base: CSSProperties = {
-    width: 10, height: 10, borderRadius: '50%',
+    width: 10,
+    height: 10,
+    borderRadius: '50%',
     border: `2px solid ${filled ? C.red : C.textMuted}`,
     background: filled ? C.red : 'transparent',
-    display: 'inline-block', marginRight: 4, flexShrink: 0,
+    display: 'inline-block',
+    marginRight: 4,
+    flexShrink: 0,
   };
   if (double) {
     return (
@@ -441,29 +462,58 @@ function ProfDot({ filled, double }: { filled: boolean; double?: boolean }) {
   return <span style={base} />;
 }
 
-function Badge({ children, color = C.red, style }: { children: ReactNode; color?: string; style?: CSSProperties }) {
+function Badge({
+  children,
+  color = C.red,
+  style,
+}: {
+  children: ReactNode;
+  color?: string;
+  style?: CSSProperties;
+}) {
   return (
-    <span style={{
-      background: color, color: '#fff', fontSize: 10, fontWeight: 700,
-      padding: '2px 6px', borderRadius: 3, textTransform: 'uppercase',
-      letterSpacing: '0.5px', ...style,
-    }}>
+    <span
+      style={{
+        background: color,
+        color: '#fff',
+        fontSize: 10,
+        fontWeight: 700,
+        padding: '2px 6px',
+        borderRadius: 3,
+        textTransform: 'uppercase',
+        letterSpacing: '0.5px',
+        ...style,
+      }}
+    >
       {children}
     </span>
   );
 }
 
-function Pill({ active, children, onClick }: { active: boolean; children: ReactNode; onClick: () => void }) {
+function Pill({
+  active,
+  children,
+  onClick,
+}: {
+  active: boolean;
+  children: ReactNode;
+  onClick: () => void;
+}) {
   return (
     <button
       onClick={onClick}
       style={{
-        padding: '4px 12px', fontSize: 11, fontWeight: 700,
+        padding: '4px 12px',
+        fontSize: 11,
+        fontWeight: 700,
         background: active ? C.red : C.bgElevated,
         color: active ? '#fff' : C.textSecondary,
         border: `1px solid ${active ? C.red : C.border}`,
-        borderRadius: 4, cursor: 'pointer', textTransform: 'uppercase',
-        letterSpacing: '0.5px', transition: 'all 0.15s',
+        borderRadius: 4,
+        cursor: 'pointer',
+        textTransform: 'uppercase',
+        letterSpacing: '0.5px',
+        transition: 'all 0.15s',
       }}
     >
       {children}
@@ -476,10 +526,13 @@ function SlotPip({ filled, onClick }: { filled: boolean; onClick: () => void }) 
     <span
       onClick={onClick}
       style={{
-        width: 14, height: 14, borderRadius: '50%',
+        width: 14,
+        height: 14,
+        borderRadius: '50%',
         border: `2px solid ${C.red}`,
         background: filled ? C.red : 'transparent',
-        display: 'inline-block', cursor: 'pointer',
+        display: 'inline-block',
+        cursor: 'pointer',
         transition: 'background 0.15s',
       }}
     />
@@ -488,30 +541,53 @@ function SlotPip({ filled, onClick }: { filled: boolean; onClick: () => void }) 
 
 function SectionHeader({ children, style }: { children: ReactNode; style?: CSSProperties }) {
   return (
-    <div style={{
-      fontSize: 11, fontWeight: 700, textTransform: 'uppercase',
-      letterSpacing: '1px', color: C.red, padding: '8px 0 4px',
-      borderBottom: `1px solid ${C.borderDim}`, marginBottom: 6, ...style,
-    }}>
+    <div
+      style={{
+        fontSize: 11,
+        fontWeight: 700,
+        textTransform: 'uppercase',
+        letterSpacing: '1px',
+        color: C.red,
+        padding: '8px 0 4px',
+        borderBottom: `1px solid ${C.borderDim}`,
+        marginBottom: 6,
+        ...style,
+      }}
+    >
       {children}
     </div>
   );
 }
 
-function RollButton({ notation, reason, label, style }: {
-  notation: string; reason?: string; label?: string; style?: CSSProperties;
+function RollButton({
+  notation,
+  reason,
+  label,
+  style,
+}: {
+  notation: string;
+  reason?: string;
+  label?: string;
+  style?: CSSProperties;
 }) {
   return (
     <button
       onClick={() => emitRoll(notation, reason)}
       title={`Roll ${notation}`}
       style={{
-        background: C.red, color: '#fff', border: 'none', borderRadius: 3,
-        padding: '3px 8px', fontSize: 11, cursor: 'pointer', fontWeight: 600,
-        transition: 'background 0.15s', ...style,
+        background: C.red,
+        color: '#fff',
+        border: 'none',
+        borderRadius: 3,
+        padding: '3px 8px',
+        fontSize: 11,
+        cursor: 'pointer',
+        fontWeight: 600,
+        transition: 'background 0.15s',
+        ...style,
       }}
-      onMouseEnter={e => (e.currentTarget.style.background = '#d44')}
-      onMouseLeave={e => (e.currentTarget.style.background = C.red)}
+      onMouseEnter={(e) => (e.currentTarget.style.background = '#d44')}
+      onMouseLeave={(e) => (e.currentTarget.style.background = C.red)}
     >
       {label ?? notation}
     </button>
@@ -532,59 +608,126 @@ const MAIN_TABS: { key: MainTab; label: string }[] = [
 /* ═══════════════════════════════════════════════════════════
    COMPONENT: CharacterSheetFull
    ═══════════════════════════════════════════════════════════ */
-export function CharacterSheetFull({ character, onClose, initialTab }: { character: Character; onClose: () => void; initialTab?: string }) {
+export function CharacterSheetFull({
+  character,
+  onClose,
+  initialTab,
+}: {
+  character: Character;
+  onClose: () => void;
+  initialTab?: string;
+}) {
   const [activeTab, setActiveTab] = useState<MainTab>((initialTab as MainTab) || 'actions');
 
   /* Parse all potentially-stringified fields */
-  const abilityScores = parse<AbilityScores>(character.abilityScores, { str: 10, dex: 10, con: 10, int: 10, wis: 10, cha: 10 });
+  const abilityScores = parse<AbilityScores>(character.abilityScores, {
+    str: 10,
+    dex: 10,
+    con: 10,
+    int: 10,
+    wis: 10,
+    cha: 10,
+  });
   const skills = parse<Skills>(character.skills, {} as Skills);
   const savingThrows = parse<AbilityName[]>(character.savingThrows, []);
   const spellSlots = parse<Record<number, SpellSlot>>(character.spellSlots, {});
   const spells = parse<Spell[]>(character.spells, []);
   const features = parse<Feature[]>(character.features, []);
   // Subscribe to store directly so equip toggles reflect immediately
-  const storeChar = useCharacterStore((s) => s.myCharacter?.id === character.id ? s.myCharacter : s.allCharacters[character.id]);
+  const storeChar = useCharacterStore((s) =>
+    s.myCharacter?.id === character.id ? s.myCharacter : s.allCharacters[character.id]
+  );
   const inventory = parse<InventoryItem[]>(storeChar?.inventory ?? character.inventory, []);
 
   // Auto-enrich inventory items on first load (match to compendium)
   useEffect(() => {
-    const hasUnmatched = inventory.some((i: any) => !i.slug && i.name);
+    const hasUnmatched = inventory.some((i) => !i.slug && i.name);
     if (!hasUnmatched) return;
     fetch(`/api/characters/${character.id}/inventory/enrich`, { method: 'POST' })
-      .then(r => r.ok ? r.json() : null)
-      .then(data => {
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
         if (data?.updated) {
-          useCharacterStore.getState().applyRemoteUpdate(character.id, { inventory: data.inventory });
+          useCharacterStore
+            .getState()
+            .applyRemoteUpdate(character.id, { inventory: data.inventory });
         }
       })
       .catch(() => {});
-  }, [character.id]); // eslint-disable-line
-  const background = parse<CharacterBackground>(character.background, { name: '', description: '', feature: '' });
-  const characteristics = parse<CharacterCharacteristics>(character.characteristics, { alignment: '', gender: '', eyes: '', hair: '', skin: '', height: '', weight: '', age: '', faith: '', size: '' });
-  const personality = parse<CharacterPersonality>(character.personality, { traits: '', ideals: '', bonds: '', flaws: '' });
-  const notes = parse<CharacterNotes>(character.notes, { organizations: '', allies: '', enemies: '', backstory: '', other: '' });
-  const proficienciesRaw = parse<CharacterProficiencies>(character.proficiencies, { armor: [], weapons: [], tools: [], languages: [] });
+  }, [character.id]);
+  const background = parse<CharacterBackground>(character.background, {
+    name: '',
+    description: '',
+    feature: '',
+  });
+  const characteristics = parse<CharacterCharacteristics>(character.characteristics, {
+    alignment: '',
+    gender: '',
+    eyes: '',
+    hair: '',
+    skin: '',
+    height: '',
+    weight: '',
+    age: '',
+    faith: '',
+    size: '',
+  });
+  const personality = parse<CharacterPersonality>(character.personality, {
+    traits: '',
+    ideals: '',
+    bonds: '',
+    flaws: '',
+  });
+  const notes = parse<CharacterNotes>(character.notes, {
+    organizations: '',
+    allies: '',
+    enemies: '',
+    backstory: '',
+    other: '',
+  });
+  const proficienciesRaw = parse<CharacterProficiencies>(character.proficiencies, {
+    armor: [],
+    weapons: [],
+    tools: [],
+    languages: [],
+  });
   const proficiencies: CharacterProficiencies = {
     armor: Array.isArray(proficienciesRaw.armor) ? proficienciesRaw.armor : [],
     weapons: Array.isArray(proficienciesRaw.weapons) ? proficienciesRaw.weapons : [],
     tools: Array.isArray(proficienciesRaw.tools) ? proficienciesRaw.tools : [],
     languages: Array.isArray(proficienciesRaw.languages) ? proficienciesRaw.languages : [],
   };
-  const sensesRaw = parse<CharacterSenses>(character.senses, { passivePerception: 10, passiveInvestigation: 10, passiveInsight: 10, darkvision: 0 });
+  const sensesRaw = parse<CharacterSenses>(character.senses, {
+    passivePerception: 10,
+    passiveInvestigation: 10,
+    passiveInsight: 10,
+    darkvision: 0,
+  });
   const senses: CharacterSenses = {
-    passivePerception: typeof sensesRaw.passivePerception === 'number' ? sensesRaw.passivePerception : 10,
-    passiveInvestigation: typeof sensesRaw.passiveInvestigation === 'number' ? sensesRaw.passiveInvestigation : 10,
+    passivePerception:
+      typeof sensesRaw.passivePerception === 'number' ? sensesRaw.passivePerception : 10,
+    passiveInvestigation:
+      typeof sensesRaw.passiveInvestigation === 'number' ? sensesRaw.passiveInvestigation : 10,
     passiveInsight: typeof sensesRaw.passiveInsight === 'number' ? sensesRaw.passiveInsight : 10,
     darkvision: typeof sensesRaw.darkvision === 'number' ? sensesRaw.darkvision : 0,
   };
-  const defensesRaw = parse<CharacterDefenses>(character.defenses, { resistances: [], immunities: [], vulnerabilities: [] });
+  const defensesRaw = parse<CharacterDefenses>(character.defenses, {
+    resistances: [],
+    immunities: [],
+    vulnerabilities: [],
+  });
   const defenses: CharacterDefenses = {
     resistances: Array.isArray(defensesRaw.resistances) ? defensesRaw.resistances : [],
     immunities: Array.isArray(defensesRaw.immunities) ? defensesRaw.immunities : [],
     vulnerabilities: Array.isArray(defensesRaw.vulnerabilities) ? defensesRaw.vulnerabilities : [],
   };
   const conditions = parse<string[]>(character.conditions, []);
-  const currency = parse<CharacterCurrency>(character.currency, { cp: 0, sp: 0, ep: 0, gp: 0, pp: 0 });
+  const currency = parse<CharacterCurrency>(character.currency, {
+    cp: 0,
+    sp: 0,
+    ep: 0,
+    gp: 0,
+    pp: 0,
+  });
   const deathSaves = parse<DeathSaves>(character.deathSaves, { successes: 0, failures: 0 });
 
   const profBonus = character.proficiencyBonus ?? 2;
@@ -595,30 +738,45 @@ export function CharacterSheetFull({ character, onClose, initialTab }: { charact
   const isOwner = character.userId === userId;
 
   /* Mod helper */
-  const getMod = useCallback((ability: AbilityName) => abilityModifier(abilityScores[ability]), [abilityScores]);
+  const getMod = useCallback(
+    (ability: AbilityName) => abilityModifier(abilityScores[ability]),
+    [abilityScores]
+  );
 
-  const getSkillMod = useCallback((skill: keyof Skills) => {
-    const ability = SKILL_ABILITY_MAP[skill];
-    const base = getMod(ability);
-    const prof = skills[skill];
-    if (prof === 'expertise') return base + profBonus * 2;
-    if (prof === 'proficient') return base + profBonus;
-    return base;
-  }, [getMod, skills, profBonus]);
+  const getSkillMod = useCallback(
+    (skill: keyof Skills) => {
+      const ability = SKILL_ABILITY_MAP[skill];
+      const base = getMod(ability);
+      const prof = skills[skill];
+      if (prof === 'expertise') return base + profBonus * 2;
+      if (prof === 'proficient') return base + profBonus;
+      return base;
+    },
+    [getMod, skills, profBonus]
+  );
 
   /* HP percentage */
-  const hpPct = character.maxHitPoints > 0 ? Math.max(0, Math.min(100, (character.hitPoints / character.maxHitPoints) * 100)) : 0;
+  const hpPct =
+    character.maxHitPoints > 0
+      ? Math.max(0, Math.min(100, (character.hitPoints / character.maxHitPoints) * 100))
+      : 0;
   const hpColor = hpPct > 50 ? C.green : hpPct > 25 ? C.gold : C.red;
 
   /* Close on backdrop click */
-  const handleBackdropClick = useCallback((e: React.MouseEvent) => {
-    if (e.target === e.currentTarget) onClose();
-  }, [onClose]);
+  const handleBackdropClick = useCallback(
+    (e: React.MouseEvent) => {
+      if (e.target === e.currentTarget) onClose();
+    },
+    [onClose]
+  );
 
   /* Close on Escape */
-  const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
-    if (e.key === 'Escape') onClose();
-  }, [onClose]);
+  const handleKeyDown = useCallback(
+    (e: React.KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    },
+    [onClose]
+  );
 
   return (
     <div
@@ -626,9 +784,13 @@ export function CharacterSheetFull({ character, onClose, initialTab }: { charact
       onKeyDown={handleKeyDown}
       tabIndex={-1}
       style={{
-        position: 'fixed', inset: 0, zIndex: 9999,
-        background: 'rgba(0,0,0,0.75)', display: 'flex',
-        alignItems: 'center', justifyContent: 'center',
+        position: 'fixed',
+        inset: 0,
+        zIndex: 9999,
+        background: 'rgba(0,0,0,0.75)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
         fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
         color: C.textPrimary,
       }}
@@ -639,25 +801,40 @@ export function CharacterSheetFull({ character, onClose, initialTab }: { charact
           vertically rather than clipping content — narrow windows
           (laptop, embedded iframe) get a scrollable sheet instead
           of cut-off columns. */}
-      <div style={{
-        width: '95vw', maxWidth: 1100, height: '95vh', maxHeight: '95vh',
-        background: C.bgDeep, borderRadius: 8,
-        border: `1px solid ${C.border}`,
-        boxShadow: '0 8px 40px rgba(0,0,0,0.6)',
-        display: 'flex', flexDirection: 'column',
-        overflow: 'hidden', position: 'relative',
-      }}>
+      <div
+        style={{
+          width: '95vw',
+          maxWidth: 1100,
+          height: '95vh',
+          maxHeight: '95vh',
+          background: C.bgDeep,
+          borderRadius: 8,
+          border: `1px solid ${C.border}`,
+          boxShadow: '0 8px 40px rgba(0,0,0,0.6)',
+          display: 'flex',
+          flexDirection: 'column',
+          overflow: 'hidden',
+          position: 'relative',
+        }}
+      >
         {/* Close button */}
         <button
           onClick={onClose}
           style={{
-            position: 'absolute', top: 8, right: 12, zIndex: 10,
-            background: 'transparent', border: 'none',
-            color: C.textMuted, fontSize: 24, cursor: 'pointer',
-            lineHeight: 1, padding: 4,
+            position: 'absolute',
+            top: 8,
+            right: 12,
+            zIndex: 10,
+            background: 'transparent',
+            border: 'none',
+            color: C.textMuted,
+            fontSize: 24,
+            cursor: 'pointer',
+            lineHeight: 1,
+            padding: 4,
           }}
-          onMouseEnter={e => (e.currentTarget.style.color = C.textPrimary)}
-          onMouseLeave={e => (e.currentTarget.style.color = C.textMuted)}
+          onMouseEnter={(e) => (e.currentTarget.style.color = C.textPrimary)}
+          onMouseLeave={(e) => (e.currentTarget.style.color = C.textMuted)}
         >
           &times;
         </button>
@@ -667,16 +844,17 @@ export function CharacterSheetFull({ character, onClose, initialTab }: { charact
             alongside the center column's ability-score row — we
             wrap in a scrollable container so the sheet degrades
             gracefully rather than clipping. */}
-        <div style={{
-          display: 'flex',
-          flex: 1,
-          overflow: 'auto',
-          flexWrap: 'nowrap',
-          minHeight: 0,
-        }}>
+        <div
+          style={{
+            display: 'flex',
+            flex: 1,
+            overflow: 'auto',
+            flexWrap: 'nowrap',
+            minHeight: 0,
+          }}
+        >
           {/* ═══ LEFT COLUMN ═══ */}
           <LeftColumn
-            abilityScores={abilityScores}
             skills={skills}
             savingThrows={savingThrows}
             profBonus={profBonus}
@@ -690,13 +868,15 @@ export function CharacterSheetFull({ character, onClose, initialTab }: { charact
               flex: 1 to grow, minWidth: 0 so it can shrink smaller
               than its content (required when children have their
               own fixed widths that would otherwise pin the column). */}
-          <div style={{
-            flex: 1,
-            minWidth: 0,
-            display: 'flex',
-            flexDirection: 'column',
-            overflow: 'hidden',
-          }}>
+          <div
+            style={{
+              flex: 1,
+              minWidth: 0,
+              display: 'flex',
+              flexDirection: 'column',
+              overflow: 'hidden',
+            }}
+          >
             {/* Header */}
             <HeaderBar character={character} canEdit={isDM || isOwner} />
 
@@ -705,7 +885,6 @@ export function CharacterSheetFull({ character, onClose, initialTab }: { charact
               abilityScores={abilityScores}
               profBonus={profBonus}
               speed={character.speed}
-              ac={character.armorClass}
               getMod={getMod}
             />
 
@@ -720,44 +899,107 @@ export function CharacterSheetFull({ character, onClose, initialTab }: { charact
             />
 
             {/* Initiative / AC / Defenses / Conditions row */}
-            <div style={{ display: 'flex', gap: 8, padding: '0 16px 8px', flexWrap: 'wrap', alignItems: 'flex-start' }}>
-              <StatBox label="Initiative" value={fmtMod(character.initiative ?? getMod('dex'))} onClick={() => showRollToast(`1d20${fmtMod(character.initiative ?? getMod('dex'))}`, 'Initiative')} />
+            <div
+              style={{
+                display: 'flex',
+                gap: 8,
+                padding: '0 16px 8px',
+                flexWrap: 'wrap',
+                alignItems: 'flex-start',
+              }}
+            >
+              <StatBox
+                label="Initiative"
+                value={fmtMod(character.initiative ?? getMod('dex'))}
+                onClick={() =>
+                  showRollToast(
+                    `1d20${fmtMod(character.initiative ?? getMod('dex'))}`,
+                    'Initiative'
+                  )
+                }
+              />
               <StatBox label="AC" value={String(character.armorClass)} />
-              {(defenses.resistances.length > 0 || defenses.immunities.length > 0 || defenses.vulnerabilities.length > 0) && (
-                <div style={{ fontSize: 11, color: C.textSecondary, padding: '4px 8px', background: C.bgCard, borderRadius: 4, border: `1px solid ${C.borderDim}` }}>
-                  {defenses.resistances.length > 0 && <div><span style={{ color: C.blue, fontWeight: 600 }}>Resist:</span> {defenses.resistances.join(', ')}</div>}
-                  {defenses.immunities.length > 0 && <div><span style={{ color: C.gold, fontWeight: 600 }}>Immune:</span> {defenses.immunities.join(', ')}</div>}
-                  {defenses.vulnerabilities.length > 0 && <div><span style={{ color: C.red, fontWeight: 600 }}>Vuln:</span> {defenses.vulnerabilities.join(', ')}</div>}
+              {(defenses.resistances.length > 0 ||
+                defenses.immunities.length > 0 ||
+                defenses.vulnerabilities.length > 0) && (
+                <div
+                  style={{
+                    fontSize: 11,
+                    color: C.textSecondary,
+                    padding: '4px 8px',
+                    background: C.bgCard,
+                    borderRadius: 4,
+                    border: `1px solid ${C.borderDim}`,
+                  }}
+                >
+                  {defenses.resistances.length > 0 && (
+                    <div>
+                      <span style={{ color: C.blue, fontWeight: 600 }}>Resist:</span>{' '}
+                      {defenses.resistances.join(', ')}
+                    </div>
+                  )}
+                  {defenses.immunities.length > 0 && (
+                    <div>
+                      <span style={{ color: C.gold, fontWeight: 600 }}>Immune:</span>{' '}
+                      {defenses.immunities.join(', ')}
+                    </div>
+                  )}
+                  {defenses.vulnerabilities.length > 0 && (
+                    <div>
+                      <span style={{ color: C.red, fontWeight: 600 }}>Vuln:</span>{' '}
+                      {defenses.vulnerabilities.join(', ')}
+                    </div>
+                  )}
                 </div>
               )}
               {conditions.length > 0 && (
                 <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', alignItems: 'center' }}>
-                  {conditions.map((c, i) => <Badge key={i} color={C.purple}>{c}</Badge>)}
+                  {conditions.map((c, i) => (
+                    <Badge key={i} color={C.purple}>
+                      {c}
+                    </Badge>
+                  ))}
                 </div>
               )}
             </div>
 
             {/* Tab Bar */}
-            <div style={{
-              display: 'flex', gap: 0, padding: '0 16px',
-              borderBottom: `2px solid ${C.borderDim}`,
-              overflowX: 'auto', flexShrink: 0,
-            }}>
-              {MAIN_TABS.map(t => (
+            <div
+              style={{
+                display: 'flex',
+                gap: 0,
+                padding: '0 16px',
+                borderBottom: `2px solid ${C.borderDim}`,
+                overflowX: 'auto',
+                flexShrink: 0,
+              }}
+            >
+              {MAIN_TABS.map((t) => (
                 <button
                   key={t.key}
                   onClick={() => setActiveTab(t.key)}
                   style={{
-                    padding: '8px 14px', fontSize: 11, fontWeight: 700,
-                    textTransform: 'uppercase', letterSpacing: '0.5px',
-                    background: 'transparent', border: 'none',
-                    borderBottom: activeTab === t.key ? `2px solid ${C.red}` : '2px solid transparent',
+                    padding: '8px 14px',
+                    fontSize: 11,
+                    fontWeight: 700,
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.5px',
+                    background: 'transparent',
+                    border: 'none',
+                    borderBottom:
+                      activeTab === t.key ? `2px solid ${C.red}` : '2px solid transparent',
                     color: activeTab === t.key ? C.red : C.textMuted,
-                    cursor: 'pointer', whiteSpace: 'nowrap',
-                    marginBottom: -2, transition: 'color 0.15s',
+                    cursor: 'pointer',
+                    whiteSpace: 'nowrap',
+                    marginBottom: -2,
+                    transition: 'color 0.15s',
                   }}
-                  onMouseEnter={e => { if (activeTab !== t.key) e.currentTarget.style.color = C.textSecondary; }}
-                  onMouseLeave={e => { if (activeTab !== t.key) e.currentTarget.style.color = C.textMuted; }}
+                  onMouseEnter={(e) => {
+                    if (activeTab !== t.key) e.currentTarget.style.color = C.textSecondary;
+                  }}
+                  onMouseLeave={(e) => {
+                    if (activeTab !== t.key) e.currentTarget.style.color = C.textMuted;
+                  }}
                 >
                   {t.label}
                 </button>
@@ -771,7 +1013,6 @@ export function CharacterSheetFull({ character, onClose, initialTab }: { charact
                   inventory={inventory}
                   spells={spells}
                   features={features}
-                  abilityScores={abilityScores}
                   profBonus={profBonus}
                   getMod={getMod}
                   spellAttackBonus={character.spellAttackBonus}
@@ -786,7 +1027,6 @@ export function CharacterSheetFull({ character, onClose, initialTab }: { charact
                   spellAttackBonus={character.spellAttackBonus}
                   spellSaveDC={character.spellSaveDC}
                   abilityScores={abilityScores}
-                  profBonus={profBonus}
                   characterId={character.id}
                   characterLevel={character.level}
                   characterClass={character.class}
@@ -804,9 +1044,7 @@ export function CharacterSheetFull({ character, onClose, initialTab }: { charact
                   canEdit={isDM || isOwner}
                 />
               )}
-              {activeTab === 'features' && (
-                <FeaturesTab features={features} />
-              )}
+              {activeTab === 'features' && <FeaturesTab features={features} />}
               {activeTab === 'background' && (
                 <BackgroundTab
                   background={background}
@@ -814,9 +1052,7 @@ export function CharacterSheetFull({ character, onClose, initialTab }: { charact
                   personality={personality}
                 />
               )}
-              {activeTab === 'notes' && (
-                <NotesTab notes={notes} />
-              )}
+              {activeTab === 'notes' && <NotesTab notes={notes} />}
             </div>
           </div>
 
@@ -830,8 +1066,15 @@ export function CharacterSheetFull({ character, onClose, initialTab }: { charact
 /* ═══════════════════════════════════════════════════════════
    LEFT COLUMN
    ═══════════════════════════════════════════════════════════ */
-function LeftColumn({ abilityScores, skills, savingThrows, profBonus, senses, proficiencies, getMod, getSkillMod }: {
-  abilityScores: AbilityScores;
+function LeftColumn({
+  skills,
+  savingThrows,
+  profBonus,
+  senses,
+  proficiencies,
+  getMod,
+  getSkillMod,
+}: {
   skills: Skills;
   savingThrows: AbilityName[];
   profBonus: number;
@@ -841,15 +1084,21 @@ function LeftColumn({ abilityScores, skills, savingThrows, profBonus, senses, pr
   getSkillMod: (s: keyof Skills) => number;
 }) {
   return (
-    <div style={{
-      width: 220, minWidth: 220, flexShrink: 0,
-      background: C.bgCard,
-      borderRight: `1px solid ${C.borderDim}`,
-      overflowY: 'auto', padding: '12px 10px', fontSize: 12,
-    }}>
+    <div
+      style={{
+        width: 220,
+        minWidth: 220,
+        flexShrink: 0,
+        background: C.bgCard,
+        borderRight: `1px solid ${C.borderDim}`,
+        overflowY: 'auto',
+        padding: '12px 10px',
+        fontSize: 12,
+      }}
+    >
       {/* Saving Throws */}
       <SectionHeader>Saving Throws</SectionHeader>
-      {ABILITY_KEYS.map(ab => {
+      {ABILITY_KEYS.map((ab) => {
         const prof = savingThrows.includes(ab);
         const mod = getMod(ab) + (prof ? profBonus : 0);
         return (
@@ -857,14 +1106,26 @@ function LeftColumn({ abilityScores, skills, savingThrows, profBonus, senses, pr
             key={ab}
             onClick={() => showRollToast(`1d20${fmtMod(mod)}`, `${ABILITY_LABELS[ab]} Save`)}
             style={{
-              display: 'flex', alignItems: 'center', gap: 4,
-              padding: '3px 4px', cursor: 'pointer', borderRadius: 3,
+              display: 'flex',
+              alignItems: 'center',
+              gap: 4,
+              padding: '3px 4px',
+              cursor: 'pointer',
+              borderRadius: 3,
             }}
-            onMouseEnter={e => (e.currentTarget.style.background = C.bgHover)}
-            onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
+            onMouseEnter={(e) => (e.currentTarget.style.background = C.bgHover)}
+            onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
           >
             <ProfDot filled={prof} />
-            <span style={{ width: 28, fontWeight: 600, color: C.textSecondary, fontSize: 10, textTransform: 'uppercase' }}>
+            <span
+              style={{
+                width: 28,
+                fontWeight: 600,
+                color: C.textSecondary,
+                fontSize: 10,
+                textTransform: 'uppercase',
+              }}
+            >
               {ABILITY_LABELS[ab]}
             </span>
             <span style={{ marginLeft: 'auto', fontWeight: 600, color: C.textPrimary }}>
@@ -876,7 +1137,7 @@ function LeftColumn({ abilityScores, skills, savingThrows, profBonus, senses, pr
 
       {/* Skills */}
       <SectionHeader style={{ marginTop: 12 }}>Skills</SectionHeader>
-      {SKILL_KEYS.map(sk => {
+      {SKILL_KEYS.map((sk) => {
         const prof = skills[sk] ?? 'none';
         const mod = getSkillMod(sk);
         const ability = SKILL_ABILITY_MAP[sk];
@@ -885,18 +1146,31 @@ function LeftColumn({ abilityScores, skills, savingThrows, profBonus, senses, pr
             key={sk}
             onClick={() => showRollToast(`1d20${fmtMod(mod)}`, SKILL_LABELS[sk])}
             style={{
-              display: 'flex', alignItems: 'center', gap: 4,
-              padding: '2px 4px', cursor: 'pointer', borderRadius: 3,
+              display: 'flex',
+              alignItems: 'center',
+              gap: 4,
+              padding: '2px 4px',
+              cursor: 'pointer',
+              borderRadius: 3,
             }}
-            onMouseEnter={e => (e.currentTarget.style.background = C.bgHover)}
-            onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
+            onMouseEnter={(e) => (e.currentTarget.style.background = C.bgHover)}
+            onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
           >
             <ProfDot filled={prof !== 'none'} double={prof === 'expertise'} />
             <span style={{ flex: 1, fontSize: 11, color: C.textPrimary }}>{SKILL_LABELS[sk]}</span>
-            <span style={{ fontSize: 9, color: C.textMuted, textTransform: 'uppercase', marginRight: 4 }}>
+            <span
+              style={{
+                fontSize: 9,
+                color: C.textMuted,
+                textTransform: 'uppercase',
+                marginRight: 4,
+              }}
+            >
               {ABILITY_LABELS[ability]}
             </span>
-            <span style={{ fontWeight: 600, color: C.textPrimary, minWidth: 22, textAlign: 'right' }}>
+            <span
+              style={{ fontWeight: 600, color: C.textPrimary, minWidth: 22, textAlign: 'right' }}
+            >
               {fmtMod(mod)}
             </span>
           </div>
@@ -906,17 +1180,35 @@ function LeftColumn({ abilityScores, skills, savingThrows, profBonus, senses, pr
       {/* Passive Scores */}
       <SectionHeader style={{ marginTop: 12 }}>Passive Scores</SectionHeader>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 4 }}>
-        {([
-          ['Percep.', senses.passivePerception],
-          ['Invest.', senses.passiveInvestigation],
-          ['Insight', senses.passiveInsight],
-        ] as const).map(([label, val]) => (
-          <div key={label} style={{
-            background: C.bgElevated, border: `1px solid ${C.borderDim}`,
-            borderRadius: 4, padding: '4px 4px', textAlign: 'center', overflow: 'hidden',
-          }}>
+        {(
+          [
+            ['Percep.', senses.passivePerception],
+            ['Invest.', senses.passiveInvestigation],
+            ['Insight', senses.passiveInsight],
+          ] as const
+        ).map(([label, val]) => (
+          <div
+            key={label}
+            style={{
+              background: C.bgElevated,
+              border: `1px solid ${C.borderDim}`,
+              borderRadius: 4,
+              padding: '4px 4px',
+              textAlign: 'center',
+              overflow: 'hidden',
+            }}
+          >
             <div style={{ fontSize: 16, fontWeight: 700, color: C.textPrimary }}>{val}</div>
-            <div style={{ fontSize: 8, color: C.textMuted, textTransform: 'uppercase', whiteSpace: 'nowrap' }}>{label}</div>
+            <div
+              style={{
+                fontSize: 8,
+                color: C.textMuted,
+                textTransform: 'uppercase',
+                whiteSpace: 'nowrap',
+              }}
+            >
+              {label}
+            </div>
           </div>
         ))}
       </div>
@@ -932,13 +1224,15 @@ function LeftColumn({ abilityScores, skills, savingThrows, profBonus, senses, pr
       )}
 
       {/* Proficiencies */}
-      {(['armor', 'weapons', 'tools', 'languages'] as const).map(cat => {
+      {(['armor', 'weapons', 'tools', 'languages'] as const).map((cat) => {
         const items = proficiencies[cat];
         if (!items || items.length === 0) return null;
         return (
           <div key={cat}>
             <SectionHeader style={{ marginTop: 12 }}>{cat}</SectionHeader>
-            <div style={{ color: C.textSecondary, fontSize: 11, padding: '2px 4px', lineHeight: 1.5 }}>
+            <div
+              style={{ color: C.textSecondary, fontSize: 11, padding: '2px 4px', lineHeight: 1.5 }}
+            >
               {items.join(', ')}
             </div>
           </div>
@@ -955,22 +1249,40 @@ function HeaderBar({ character, canEdit = true }: { character: Character; canEdi
   const [showShortRest, setShowShortRest] = useState(false);
 
   return (
-    <div style={{
-      display: 'flex', alignItems: 'center', gap: 12,
-      padding: '12px 48px 12px 16px', borderBottom: `1px solid ${C.borderDim}`,
-      background: C.bgCard, flexShrink: 0,
-      position: 'relative',
-    }}>
+    <div
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: 12,
+        padding: '12px 48px 12px 16px',
+        borderBottom: `1px solid ${C.borderDim}`,
+        background: C.bgCard,
+        flexShrink: 0,
+        position: 'relative',
+      }}
+    >
       {/* Portrait */}
-      <div style={{
-        width: 60, height: 60, borderRadius: '50%',
-        border: `3px solid ${C.red}`, overflow: 'hidden',
-        background: C.bgElevated, flexShrink: 0,
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-        boxShadow: C.redGlow,
-      }}>
+      <div
+        style={{
+          width: 60,
+          height: 60,
+          borderRadius: '50%',
+          border: `3px solid ${C.red}`,
+          overflow: 'hidden',
+          background: C.bgElevated,
+          flexShrink: 0,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          boxShadow: C.redGlow,
+        }}
+      >
         {character.portraitUrl ? (
-          <img src={character.portraitUrl} alt={character.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+          <img
+            src={character.portraitUrl}
+            alt={character.name}
+            style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+          />
         ) : (
           <span style={{ fontSize: 24, color: C.textMuted }}>{character.name?.[0] ?? '?'}</span>
         )}
@@ -992,38 +1304,62 @@ function HeaderBar({ character, canEdit = true }: { character: Character; canEdi
       )}
 
       {/* Rest buttons — only shown to the character owner or the DM */}
-      {canEdit && (<>
-      <button
-        onClick={() => setShowShortRest(true)}
-        style={{
-          padding: '6px 12px', fontSize: 11, fontWeight: 600,
-          background: C.bgElevated, color: C.textSecondary,
-          border: `1px solid ${C.border}`, borderRadius: 4, cursor: 'pointer',
-        }}
-        onMouseEnter={e => { e.currentTarget.style.background = C.bgHover; e.currentTarget.style.color = C.textPrimary; }}
-        onMouseLeave={e => { e.currentTarget.style.background = C.bgElevated; e.currentTarget.style.color = C.textSecondary; }}
-      >
-        Short Rest
-      </button>
-      <button
-        onClick={() => {
-          // Delegated to the shared utility so this path produces an
-          // identical chat message to the Long Rest button on the
-          // bottom-bar quick actions. Previously we had two side-by-
-          // side implementations that had drifted apart.
-          performLongRest(character);
-        }}
-        style={{
-          padding: '6px 12px', fontSize: 11, fontWeight: 600,
-          background: C.bgElevated, color: C.textSecondary,
-          border: `1px solid ${C.border}`, borderRadius: 4, cursor: 'pointer',
-        }}
-        onMouseEnter={e => { e.currentTarget.style.background = C.bgHover; e.currentTarget.style.color = C.textPrimary; }}
-        onMouseLeave={e => { e.currentTarget.style.background = C.bgElevated; e.currentTarget.style.color = C.textSecondary; }}
-      >
-        Long Rest
-      </button>
-      </>)}
+      {canEdit && (
+        <>
+          <button
+            onClick={() => setShowShortRest(true)}
+            style={{
+              padding: '6px 12px',
+              fontSize: 11,
+              fontWeight: 600,
+              background: C.bgElevated,
+              color: C.textSecondary,
+              border: `1px solid ${C.border}`,
+              borderRadius: 4,
+              cursor: 'pointer',
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.background = C.bgHover;
+              e.currentTarget.style.color = C.textPrimary;
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.background = C.bgElevated;
+              e.currentTarget.style.color = C.textSecondary;
+            }}
+          >
+            Short Rest
+          </button>
+          <button
+            onClick={() => {
+              // Delegated to the shared utility so this path produces an
+              // identical chat message to the Long Rest button on the
+              // bottom-bar quick actions. Previously we had two side-by-
+              // side implementations that had drifted apart.
+              performLongRest(character);
+            }}
+            style={{
+              padding: '6px 12px',
+              fontSize: 11,
+              fontWeight: 600,
+              background: C.bgElevated,
+              color: C.textSecondary,
+              border: `1px solid ${C.border}`,
+              borderRadius: 4,
+              cursor: 'pointer',
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.background = C.bgHover;
+              e.currentTarget.style.color = C.textPrimary;
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.background = C.bgElevated;
+              e.currentTarget.style.color = C.textSecondary;
+            }}
+          >
+            Long Rest
+          </button>
+        </>
+      )}
     </div>
   );
 }
@@ -1034,14 +1370,19 @@ function HeaderBar({ character, canEdit = true }: { character: Character; canEdi
 function ShortRestDialog({ character, onClose }: { character: Character; onClose: () => void }) {
   // Pull live hit dice / hp from the store so the dialog updates in real time
   // as the user spends dice.
-  const liveChar = useCharacterStore(s => s.allCharacters[character.id] ?? character);
-  const hitDicePools = parse<Array<{ dieSize: number; total: number; used: number }>>(liveChar.hitDice as unknown, []);
+  const liveChar = useCharacterStore((s) => s.allCharacters[character.id] ?? character);
+  const hitDicePools = parse<Array<{ dieSize: number; total: number; used: number }>>(
+    liveChar.hitDice as unknown,
+    []
+  );
   const hp = liveChar.hitPoints;
   const maxHp = liveChar.maxHitPoints;
-  const conMod = abilityModifier(parse<Record<string, number>>(liveChar.abilityScores, {}).con ?? 10);
+  const conMod = abilityModifier(
+    parse<Record<string, number>>(liveChar.abilityScores, {}).con ?? 10
+  );
 
   function spendDie(dieSize: number) {
-    const poolIdx = hitDicePools.findIndex(p => p.dieSize === dieSize);
+    const poolIdx = hitDicePools.findIndex((p) => p.dieSize === dieSize);
     if (poolIdx < 0) return;
     const pool = hitDicePools[poolIdx];
     if (pool.used >= pool.total) return;
@@ -1060,36 +1401,87 @@ function ShortRestDialog({ character, onClose }: { character: Character; onClose
   }
 
   return (
-    <div onClick={onClose} style={{
-      position: 'fixed', inset: 0, zIndex: 9999,
-      display: 'flex', alignItems: 'center', justifyContent: 'center',
-      background: 'rgba(0,0,0,0.65)',
-    }}>
-      <div onClick={e => e.stopPropagation()} style={{
-        background: C.bgCard, border: `2px solid ${C.red}`, borderRadius: 8,
-        padding: 20, minWidth: 360, maxWidth: 480, boxShadow: C.redGlow,
-      }}>
-        <div style={{ fontSize: 18, fontWeight: 700, color: C.red, marginBottom: 4, textAlign: 'center', letterSpacing: '0.04em', textTransform: 'uppercase' }}>
+    <div
+      onClick={onClose}
+      style={{
+        position: 'fixed',
+        inset: 0,
+        zIndex: 9999,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        background: 'rgba(0,0,0,0.65)',
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          background: C.bgCard,
+          border: `2px solid ${C.red}`,
+          borderRadius: 8,
+          padding: 20,
+          minWidth: 360,
+          maxWidth: 480,
+          boxShadow: C.redGlow,
+        }}
+      >
+        <div
+          style={{
+            fontSize: 18,
+            fontWeight: 700,
+            color: C.red,
+            marginBottom: 4,
+            textAlign: 'center',
+            letterSpacing: '0.04em',
+            textTransform: 'uppercase',
+          }}
+        >
           Short Rest
         </div>
         <div style={{ fontSize: 11, color: C.textMuted, textAlign: 'center', marginBottom: 14 }}>
-          Spend Hit Dice to heal. Each die heals 1d(size) {conMod >= 0 ? '+' : ''}{conMod} HP.
+          Spend Hit Dice to heal. Each die heals 1d(size) {conMod >= 0 ? '+' : ''}
+          {conMod} HP.
         </div>
 
         {/* HP gauge */}
         <div style={{ marginBottom: 16 }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: C.textSecondary, marginBottom: 4 }}>
+          <div
+            style={{
+              display: 'flex',
+              justifyContent: 'space-between',
+              fontSize: 11,
+              color: C.textSecondary,
+              marginBottom: 4,
+            }}
+          >
             <span>Hit Points</span>
-            <span><b style={{ color: C.textPrimary }}>{hp}</b> / {maxHp}</span>
+            <span>
+              <b style={{ color: C.textPrimary }}>{hp}</b> / {maxHp}
+            </span>
           </div>
           <div style={{ height: 8, background: C.bgElevated, borderRadius: 4, overflow: 'hidden' }}>
-            <div style={{ width: `${maxHp > 0 ? (hp / maxHp) * 100 : 0}%`, height: '100%', background: hp / maxHp < 0.3 ? C.red : C.gold, transition: 'width 0.3s ease' }} />
+            <div
+              style={{
+                width: `${maxHp > 0 ? (hp / maxHp) * 100 : 0}%`,
+                height: '100%',
+                background: hp / maxHp < 0.3 ? C.red : C.gold,
+                transition: 'width 0.3s ease',
+              }}
+            />
           </div>
         </div>
 
         {/* Hit Dice pools */}
         {hitDicePools.length === 0 && (
-          <div style={{ padding: 12, textAlign: 'center', color: C.textMuted, fontSize: 12, fontStyle: 'italic' }}>
+          <div
+            style={{
+              padding: 12,
+              textAlign: 'center',
+              color: C.textMuted,
+              fontSize: 12,
+              fontStyle: 'italic',
+            }}
+          >
             No Hit Dice tracked for this character.
             <div style={{ marginTop: 6, fontSize: 11 }}>
               Re-import from D&D Beyond to populate them.
@@ -1102,23 +1494,42 @@ function ShortRestDialog({ character, onClose }: { character: Character; onClose
           const noDice = left <= 0;
           const disabled = noHeal || noDice;
           return (
-            <div key={pool.dieSize} style={{
-              display: 'flex', alignItems: 'center', gap: 12,
-              padding: '10px 14px', marginBottom: 6,
-              background: C.bgElevated, borderRadius: 6,
-              border: `1px solid ${C.borderDim}`,
-              opacity: disabled ? 0.5 : 1,
-            }}>
+            <div
+              key={pool.dieSize}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 12,
+                padding: '10px 14px',
+                marginBottom: 6,
+                background: C.bgElevated,
+                borderRadius: 6,
+                border: `1px solid ${C.borderDim}`,
+                opacity: disabled ? 0.5 : 1,
+              }}
+            >
               <div style={{ flex: 1 }}>
-                <div style={{ fontSize: 14, fontWeight: 700, color: C.textPrimary }}>1d{pool.dieSize}</div>
-                <div style={{ fontSize: 10, color: C.textMuted }}>{left} / {pool.total} remaining</div>
+                <div style={{ fontSize: 14, fontWeight: 700, color: C.textPrimary }}>
+                  1d{pool.dieSize}
+                </div>
+                <div style={{ fontSize: 10, color: C.textMuted }}>
+                  {left} / {pool.total} remaining
+                </div>
               </div>
               <button
                 disabled={disabled}
                 onClick={() => spendDie(pool.dieSize)}
-                title={noHeal ? 'Already at max HP' : noDice ? 'No Hit Dice remaining' : `Roll 1d${pool.dieSize} + ${conMod} CON`}
+                title={
+                  noHeal
+                    ? 'Already at max HP'
+                    : noDice
+                      ? 'No Hit Dice remaining'
+                      : `Roll 1d${pool.dieSize} + ${conMod} CON`
+                }
                 style={{
-                  padding: '6px 14px', fontSize: 11, fontWeight: 700,
+                  padding: '6px 14px',
+                  fontSize: 11,
+                  fontWeight: 700,
                   background: disabled ? C.bgCard : C.red,
                   color: disabled ? C.textMuted : '#fff',
                   border: `1px solid ${disabled ? C.borderDim : C.red}`,
@@ -1137,20 +1548,40 @@ function ShortRestDialog({ character, onClose }: { character: Character; onClose
 
         {/* Action buttons */}
         <div style={{ display: 'flex', gap: 8, marginTop: 16 }}>
-          <button onClick={onClose} style={{
-            flex: 1, padding: '8px 12px', fontSize: 12, fontWeight: 600,
-            background: 'transparent', color: C.textSecondary,
-            border: `1px solid ${C.border}`, borderRadius: 4, cursor: 'pointer',
-            fontFamily: 'inherit',
-          }}>
+          <button
+            onClick={onClose}
+            style={{
+              flex: 1,
+              padding: '8px 12px',
+              fontSize: 12,
+              fontWeight: 600,
+              background: 'transparent',
+              color: C.textSecondary,
+              border: `1px solid ${C.border}`,
+              borderRadius: 4,
+              cursor: 'pointer',
+              fontFamily: 'inherit',
+            }}
+          >
             Cancel
           </button>
-          <button onClick={finishRest} style={{
-            flex: 2, padding: '8px 12px', fontSize: 12, fontWeight: 700,
-            background: C.gold, color: '#1a1a1a',
-            border: `1px solid ${C.gold}`, borderRadius: 4, cursor: 'pointer',
-            fontFamily: 'inherit', textTransform: 'uppercase', letterSpacing: '0.04em',
-          }}>
+          <button
+            onClick={finishRest}
+            style={{
+              flex: 2,
+              padding: '8px 12px',
+              fontSize: 12,
+              fontWeight: 700,
+              background: C.gold,
+              color: '#1a1a1a',
+              border: `1px solid ${C.gold}`,
+              borderRadius: 4,
+              cursor: 'pointer',
+              fontFamily: 'inherit',
+              textTransform: 'uppercase',
+              letterSpacing: '0.04em',
+            }}
+          >
             Finish Short Rest
           </button>
         </div>
@@ -1162,34 +1593,57 @@ function ShortRestDialog({ character, onClose }: { character: Character; onClose
 /* ═══════════════════════════════════════════════════════════
    STATS ROW
    ═══════════════════════════════════════════════════════════ */
-function StatsRow({ abilityScores, profBonus, speed, ac, getMod }: {
-  abilityScores: AbilityScores; profBonus: number; speed: number; ac: number;
+function StatsRow({
+  abilityScores,
+  profBonus,
+  speed,
+  getMod,
+}: {
+  abilityScores: AbilityScores;
+  profBonus: number;
+  speed: number;
   getMod: (a: AbilityName) => number;
 }) {
   return (
-    <div style={{
-      display: 'flex', gap: 6, padding: '10px 16px',
-      overflowX: 'auto', flexShrink: 0, flexWrap: 'wrap',
-    }}>
-      {ABILITY_KEYS.map(ab => (
+    <div
+      style={{
+        display: 'flex',
+        gap: 6,
+        padding: '10px 16px',
+        overflowX: 'auto',
+        flexShrink: 0,
+        flexWrap: 'wrap',
+      }}
+    >
+      {ABILITY_KEYS.map((ab) => (
         <div
           key={ab}
           onClick={() => showRollToast(`1d20${fmtMod(getMod(ab))}`, `${ABILITY_LABELS[ab]} Check`)}
           style={{
-            width: 56, textAlign: 'center', padding: '6px 0',
-            border: `2px solid ${C.red}`, borderRadius: 6,
-            background: C.bgCard, cursor: 'pointer',
+            width: 56,
+            textAlign: 'center',
+            padding: '6px 0',
+            border: `2px solid ${C.red}`,
+            borderRadius: 6,
+            background: C.bgCard,
+            cursor: 'pointer',
             transition: 'box-shadow 0.15s',
           }}
-          onMouseEnter={e => (e.currentTarget.style.boxShadow = C.redGlow)}
-          onMouseLeave={e => (e.currentTarget.style.boxShadow = 'none')}
+          onMouseEnter={(e) => (e.currentTarget.style.boxShadow = C.redGlow)}
+          onMouseLeave={(e) => (e.currentTarget.style.boxShadow = 'none')}
         >
-          <div style={{ fontSize: 9, fontWeight: 700, color: C.red, textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+          <div
+            style={{
+              fontSize: 9,
+              fontWeight: 700,
+              color: C.red,
+              textTransform: 'uppercase',
+              letterSpacing: '0.5px',
+            }}
+          >
             {ABILITY_LABELS[ab]}
           </div>
-          <div style={{ fontSize: 20, fontWeight: 700, lineHeight: 1.2 }}>
-            {fmtMod(getMod(ab))}
-          </div>
+          <div style={{ fontSize: 20, fontWeight: 700, lineHeight: 1.2 }}>{fmtMod(getMod(ab))}</div>
           <div style={{ fontSize: 10, color: C.textMuted }}>{abilityScores[ab]}</div>
         </div>
       ))}
@@ -1201,22 +1655,40 @@ function StatsRow({ abilityScores, profBonus, speed, ac, getMod }: {
   );
 }
 
-function StatBox({ label, value, onClick }: { label: string; value: string; onClick?: () => void }) {
+function StatBox({
+  label,
+  value,
+  onClick,
+}: {
+  label: string;
+  value: string;
+  onClick?: () => void;
+}) {
   return (
     <div
       onClick={onClick}
       style={{
-        width: 56, textAlign: 'center', padding: '6px 0',
-        border: `1px solid ${C.border}`, borderRadius: 6,
-        background: C.bgCard, cursor: onClick ? 'pointer' : 'default',
+        width: 56,
+        textAlign: 'center',
+        padding: '6px 0',
+        border: `1px solid ${C.border}`,
+        borderRadius: 6,
+        background: C.bgCard,
+        cursor: onClick ? 'pointer' : 'default',
       }}
     >
-      <div style={{ fontSize: 9, fontWeight: 700, color: C.textMuted, textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+      <div
+        style={{
+          fontSize: 9,
+          fontWeight: 700,
+          color: C.textMuted,
+          textTransform: 'uppercase',
+          letterSpacing: '0.5px',
+        }}
+      >
         {label}
       </div>
-      <div style={{ fontSize: 20, fontWeight: 700, lineHeight: 1.2 }}>
-        {value}
-      </div>
+      <div style={{ fontSize: 20, fontWeight: 700, lineHeight: 1.2 }}>{value}</div>
     </div>
   );
 }
@@ -1227,21 +1699,22 @@ function StatBox({ label, value, onClick }: { label: string; value: string; onCl
    matches the sidebar and tooltip HP visuals exactly. Death-save
    tracker uses themed skull-style dots at 0 HP.
    ═══════════════════════════════════════════════════════════ */
-function HPSection({ hp, maxHp, tempHp, deathSaves }: {
-  hp: number; maxHp: number; tempHp: number;
-  hpPct: number;  // kept in the type signature for caller compat
+function HPSection({
+  hp,
+  maxHp,
+  tempHp,
+  deathSaves,
+}: {
+  hp: number;
+  maxHp: number;
+  tempHp: number;
+  hpPct: number; // kept in the type signature for caller compat
   hpColor: string; // kept in the type signature for caller compat
   deathSaves: DeathSaves;
 }) {
   return (
     <div style={{ padding: '4px 16px 8px' }}>
-      <HPBar
-        current={hp}
-        max={maxHp}
-        temp={tempHp}
-        size="large"
-        showEmoji
-      />
+      <HPBar current={hp} max={maxHp} temp={tempHp} size="large" showEmoji />
 
       {/* Death saves (if at 0 HP) — unchanged layout, colors now
           flow through theme via the redefined C alias. */}
@@ -1249,24 +1722,34 @@ function HPSection({ hp, maxHp, tempHp, deathSaves }: {
         <div style={{ display: 'flex', gap: 12, marginTop: 6, fontSize: 11 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
             <span style={{ color: C.green, fontWeight: 600 }}>Saves:</span>
-            {[0, 1, 2].map(i => (
-              <span key={i} style={{
-                width: 10, height: 10, borderRadius: '50%',
-                border: `2px solid ${C.green}`,
-                background: i < deathSaves.successes ? C.green : 'transparent',
-                display: 'inline-block',
-              }} />
+            {[0, 1, 2].map((i) => (
+              <span
+                key={i}
+                style={{
+                  width: 10,
+                  height: 10,
+                  borderRadius: '50%',
+                  border: `2px solid ${C.green}`,
+                  background: i < deathSaves.successes ? C.green : 'transparent',
+                  display: 'inline-block',
+                }}
+              />
             ))}
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
             <span style={{ color: C.red, fontWeight: 600 }}>Fails:</span>
-            {[0, 1, 2].map(i => (
-              <span key={i} style={{
-                width: 10, height: 10, borderRadius: '50%',
-                border: `2px solid ${C.red}`,
-                background: i < deathSaves.failures ? C.red : 'transparent',
-                display: 'inline-block',
-              }} />
+            {[0, 1, 2].map((i) => (
+              <span
+                key={i}
+                style={{
+                  width: 10,
+                  height: 10,
+                  borderRadius: '50%',
+                  border: `2px solid ${C.red}`,
+                  background: i < deathSaves.failures ? C.red : 'transparent',
+                  display: 'inline-block',
+                }}
+              />
             ))}
           </div>
         </div>
@@ -1289,11 +1772,18 @@ const ACTION_FILTERS: { key: ActionFilter; label: string }[] = [
   { key: 'limited', label: 'LIMITED USE' },
 ];
 
-function ActionsTab({ inventory, spells, features, abilityScores, profBonus, getMod, spellAttackBonus, spellSaveDC }: {
+function ActionsTab({
+  inventory,
+  spells,
+  features,
+  profBonus,
+  getMod,
+  spellAttackBonus,
+  spellSaveDC,
+}: {
   inventory: InventoryItem[];
   spells: Spell[];
   features: Feature[];
-  abilityScores: AbilityScores;
   profBonus: number;
   getMod: (a: AbilityName) => number;
   spellAttackBonus: number;
@@ -1302,25 +1792,28 @@ function ActionsTab({ inventory, spells, features, abilityScores, profBonus, get
   const [filter, setFilter] = useState<ActionFilter>('all');
 
   /* Equipped weapons */
-  const weapons = inventory.filter(i => i.type === 'weapon' && i.equipped);
+  const weapons = inventory.filter((i) => i.type === 'weapon' && i.equipped);
   /* Damaging cantrips */
-  const attackCantrips = spells.filter(s => s.level === 0 && (s.damage || s.attackType));
+  const attackCantrips = spells.filter((s) => s.level === 0 && (s.damage || s.attackType));
   /* Features with limited uses */
-  const limitedFeatures = features.filter(f => (f.usesTotal ?? 0) > 0);
+  const limitedFeatures = features.filter((f) => (f.usesTotal ?? 0) > 0);
   /* Class abilities (features that aren't limited-use) */
-  const classAbilities = features.filter(f => !f.usesTotal);
+  const classAbilities = features.filter((f) => !f.usesTotal);
 
   const showWeapons = filter === 'all' || filter === 'attack';
   const showCantrips = filter === 'all' || filter === 'attack';
   const showLimited = filter === 'all' || filter === 'limited';
-  const showAbilities = filter === 'all' || filter === 'action' || filter === 'bonus' || filter === 'other';
+  const showAbilities =
+    filter === 'all' || filter === 'action' || filter === 'bonus' || filter === 'other';
 
   return (
     <div>
       {/* Sub-filters */}
       <div style={{ display: 'flex', gap: 4, marginBottom: 12, flexWrap: 'wrap' }}>
-        {ACTION_FILTERS.map(f => (
-          <Pill key={f.key} active={filter === f.key} onClick={() => setFilter(f.key)}>{f.label}</Pill>
+        {ACTION_FILTERS.map((f) => (
+          <Pill key={f.key} active={filter === f.key} onClick={() => setFilter(f.key)}>
+            {f.label}
+          </Pill>
         ))}
       </div>
 
@@ -1331,24 +1824,39 @@ function ActionsTab({ inventory, spells, features, abilityScores, profBonus, get
           <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
             {weapons.map((w, i) => {
               /* Guess attack mod: finesse weapons use higher of str/dex, ranged use dex */
-              const isFinesse = w.properties?.some(p => p.toLowerCase().includes('finesse'));
-              const isRanged = w.properties?.some(p => p.toLowerCase().includes('ranged')) || w.properties?.some(p => p.toLowerCase().includes('ammunition'));
+              const isFinesse = w.properties?.some((p) => p.toLowerCase().includes('finesse'));
+              const isRanged =
+                w.properties?.some((p) => p.toLowerCase().includes('ranged')) ||
+                w.properties?.some((p) => p.toLowerCase().includes('ammunition'));
               let atkAbility: AbilityName = 'str';
               if (isRanged) atkAbility = 'dex';
               else if (isFinesse && getMod('dex') > getMod('str')) atkAbility = 'dex';
               const atkMod = getMod(atkAbility) + profBonus;
               const dmgMod = getMod(atkAbility);
               const dmgStr = w.damage ?? '1d6';
-              const range = w.properties?.find(p => p.toLowerCase().includes('range'))?.replace(/range/i, '').trim() || (isRanged ? '80/320' : '5 ft.');
+              const range =
+                w.properties
+                  ?.find((p) => p.toLowerCase().includes('range'))
+                  ?.replace(/range/i, '')
+                  .trim() || (isRanged ? '80/320' : '5 ft.');
 
               return (
-                <div key={i} style={{
-                  display: 'flex', alignItems: 'center', gap: 8,
-                  padding: '6px 8px', background: C.bgCard,
-                  borderRadius: 4, border: `1px solid ${C.borderDim}`,
-                }}>
+                <div
+                  key={i}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 8,
+                    padding: '6px 8px',
+                    background: C.bgCard,
+                    borderRadius: 4,
+                    border: `1px solid ${C.borderDim}`,
+                  }}
+                >
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                    <div
+                      style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}
+                    >
                       <span style={{ fontWeight: 600, fontSize: 13 }}>{w.name}</span>
                       <WeaponAbilityBadge
                         properties={w.properties}
@@ -1362,12 +1870,38 @@ function ActionsTab({ inventory, spells, features, abilityScores, profBonus, get
                       </div>
                     )}
                   </div>
-                  <div style={{ fontSize: 11, color: C.textMuted, minWidth: 60, textAlign: 'center' }}>{range}</div>
-                  <div style={{ fontSize: 13, fontWeight: 600, color: C.textPrimary, minWidth: 36, textAlign: 'center' }}>{fmtMod(atkMod)}</div>
-                  <div style={{ fontSize: 12, color: C.textSecondary, minWidth: 60, textAlign: 'center' }}>
-                    {dmgStr}{dmgMod !== 0 ? fmtMod(dmgMod) : ''} {w.damageType ?? ''}
+                  <div
+                    style={{ fontSize: 11, color: C.textMuted, minWidth: 60, textAlign: 'center' }}
+                  >
+                    {range}
                   </div>
-                  <RollButton notation={`1d20${fmtMod(atkMod)}`} reason={`${w.name} Attack`} label="ATK" />
+                  <div
+                    style={{
+                      fontSize: 13,
+                      fontWeight: 600,
+                      color: C.textPrimary,
+                      minWidth: 36,
+                      textAlign: 'center',
+                    }}
+                  >
+                    {fmtMod(atkMod)}
+                  </div>
+                  <div
+                    style={{
+                      fontSize: 12,
+                      color: C.textSecondary,
+                      minWidth: 60,
+                      textAlign: 'center',
+                    }}
+                  >
+                    {dmgStr}
+                    {dmgMod !== 0 ? fmtMod(dmgMod) : ''} {w.damageType ?? ''}
+                  </div>
+                  <RollButton
+                    notation={`1d20${fmtMod(atkMod)}`}
+                    reason={`${w.name} Attack`}
+                    label="ATK"
+                  />
                   <RollButton
                     notation={`${dmgStr}${dmgMod !== 0 ? fmtMod(dmgMod) : ''}`}
                     reason={`${w.name} Damage`}
@@ -1386,16 +1920,26 @@ function ActionsTab({ inventory, spells, features, abilityScores, profBonus, get
         <>
           <SectionHeader style={{ marginTop: 12 }}>Spell Attacks</SectionHeader>
           {attackCantrips.map((s, i) => (
-            <div key={i} style={{
-              display: 'flex', alignItems: 'center', gap: 8,
-              padding: '6px 8px', background: C.bgCard,
-              borderRadius: 4, border: `1px solid ${C.borderDim}`, marginBottom: 2,
-            }}>
+            <div
+              key={i}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8,
+                padding: '6px 8px',
+                background: C.bgCard,
+                borderRadius: 4,
+                border: `1px solid ${C.borderDim}`,
+                marginBottom: 2,
+              }}
+            >
               <div style={{ flex: 1 }}>
                 <div style={{ fontWeight: 600, fontSize: 13 }}>{s.name}</div>
                 <div style={{ fontSize: 10, color: C.textMuted }}>{s.school} cantrip</div>
               </div>
-              <div style={{ fontSize: 11, color: C.textMuted, minWidth: 50, textAlign: 'center' }}>{s.range}</div>
+              <div style={{ fontSize: 11, color: C.textMuted, minWidth: 50, textAlign: 'center' }}>
+                {s.range}
+              </div>
               {s.attackType && (
                 <div style={{ fontSize: 13, fontWeight: 600, minWidth: 36, textAlign: 'center' }}>
                   {fmtMod(spellAttackBonus)}
@@ -1406,14 +1950,25 @@ function ActionsTab({ inventory, spells, features, abilityScores, profBonus, get
                   DC {spellSaveDC} {ABILITY_LABELS[s.savingThrow]}
                 </div>
               )}
-              <div style={{ fontSize: 12, color: C.textSecondary, minWidth: 60, textAlign: 'center' }}>
+              <div
+                style={{ fontSize: 12, color: C.textSecondary, minWidth: 60, textAlign: 'center' }}
+              >
                 {s.damage ?? ''} {s.damageType ?? ''}
               </div>
               {s.attackType && (
-                <RollButton notation={`1d20${fmtMod(spellAttackBonus)}`} reason={`${s.name} Attack`} label="ATK" />
+                <RollButton
+                  notation={`1d20${fmtMod(spellAttackBonus)}`}
+                  reason={`${s.name} Attack`}
+                  label="ATK"
+                />
               )}
               {s.damage && (
-                <RollButton notation={s.damage} reason={`${s.name} Damage`} label="DMG" style={{ background: C.redDim }} />
+                <RollButton
+                  notation={s.damage}
+                  reason={`${s.name} Damage`}
+                  label="DMG"
+                  style={{ background: C.redDim }}
+                />
               )}
             </div>
           ))}
@@ -1427,44 +1982,88 @@ function ActionsTab({ inventory, spells, features, abilityScores, profBonus, get
           {limitedFeatures.map((f, i) => {
             const usesLeft = f.usesRemaining ?? f.usesTotal ?? 0;
             const isSpent = (f.usesTotal ?? 0) > 0 && usesLeft <= 0;
-            const rechargeLabel = f.resetOn === 'short' ? 'Short Rest' : f.resetOn === 'long' ? 'Long Rest' : f.resetOn === 'dawn' ? 'Dawn' : 'Long Rest';
+            const rechargeLabel =
+              f.resetOn === 'short'
+                ? 'Short Rest'
+                : f.resetOn === 'long'
+                  ? 'Long Rest'
+                  : f.resetOn === 'dawn'
+                    ? 'Dawn'
+                    : 'Long Rest';
             const tooltip = isSpent
               ? `${f.name} — All uses spent (0/${f.usesTotal}). Recharges on ${rechargeLabel}.`
               : `${f.name} — ${usesLeft}/${f.usesTotal} uses remaining. Recharges on ${rechargeLabel}.`;
             return (
-              <div key={i} title={tooltip} style={{
-                padding: '6px 8px', background: C.bgCard,
-                borderRadius: 4, border: `1px solid ${C.borderDim}`, marginBottom: 2,
-                opacity: isSpent ? 0.5 : 1,
-              }}>
+              <div
+                key={i}
+                title={tooltip}
+                style={{
+                  padding: '6px 8px',
+                  background: C.bgCard,
+                  borderRadius: 4,
+                  border: `1px solid ${C.borderDim}`,
+                  marginBottom: 2,
+                  opacity: isSpent ? 0.5 : 1,
+                }}
+              >
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                   <div style={{ flex: 1 }}>
-                    <span style={{ fontWeight: 600, fontSize: 13, textDecoration: isSpent ? 'line-through' : 'none', color: isSpent ? C.textMuted : C.textPrimary }}>
+                    <span
+                      style={{
+                        fontWeight: 600,
+                        fontSize: 13,
+                        textDecoration: isSpent ? 'line-through' : 'none',
+                        color: isSpent ? C.textMuted : C.textPrimary,
+                      }}
+                    >
                       {f.name}
                     </span>
-                    <span style={{ fontSize: 10, color: C.textMuted, marginLeft: 6 }}>{f.source}</span>
-                    {isSpent && <span style={{ color: C.red, marginLeft: 6, fontSize: 9, fontWeight: 700 }}>SPENT</span>}
+                    <span style={{ fontSize: 10, color: C.textMuted, marginLeft: 6 }}>
+                      {f.source}
+                    </span>
+                    {isSpent && (
+                      <span style={{ color: C.red, marginLeft: 6, fontSize: 9, fontWeight: 700 }}>
+                        SPENT
+                      </span>
+                    )}
                   </div>
-                  <span style={{ fontSize: 10, color: isSpent ? C.red : C.textSecondary, fontWeight: 600 }}>
+                  <span
+                    style={{
+                      fontSize: 10,
+                      color: isSpent ? C.red : C.textSecondary,
+                      fontWeight: 600,
+                    }}
+                  >
                     {usesLeft}/{f.usesTotal}
                   </span>
                   <div style={{ display: 'flex', gap: 3, alignItems: 'center' }}>
                     {Array.from({ length: f.usesTotal! }).map((_, j) => (
-                      <span key={j} style={{
-                        width: 12, height: 12, borderRadius: '50%',
-                        border: `2px solid ${C.red}`,
-                        background: j < usesLeft ? C.red : 'transparent',
-                        display: 'inline-block',
-                      }} />
+                      <span
+                        key={j}
+                        style={{
+                          width: 12,
+                          height: 12,
+                          borderRadius: '50%',
+                          border: `2px solid ${C.red}`,
+                          background: j < usesLeft ? C.red : 'transparent',
+                          display: 'inline-block',
+                        }}
+                      />
                     ))}
                   </div>
                   {f.resetOn && (
                     <span style={{ fontSize: 9, color: C.textMuted, textTransform: 'uppercase' }}>
-                      {f.resetOn === 'short' ? 'Short Rest' : f.resetOn === 'long' ? 'Long Rest' : f.resetOn}
+                      {f.resetOn === 'short'
+                        ? 'Short Rest'
+                        : f.resetOn === 'long'
+                          ? 'Long Rest'
+                          : f.resetOn}
                     </span>
                   )}
                 </div>
-                <div style={{ fontSize: 11, color: C.textSecondary, marginTop: 4, lineHeight: 1.4 }}>
+                <div
+                  style={{ fontSize: 11, color: C.textSecondary, marginTop: 4, lineHeight: 1.4 }}
+                >
                   {stripHtml(f.description)}
                 </div>
               </div>
@@ -1478,11 +2077,18 @@ function ActionsTab({ inventory, spells, features, abilityScores, profBonus, get
         <>
           <SectionHeader style={{ marginTop: 12 }}>Class Abilities</SectionHeader>
           {classAbilities.map((f, i) => (
-            <div key={i} style={{
-              padding: '6px 8px', background: C.bgCard,
-              borderRadius: 4, border: `1px solid ${C.borderDim}`, marginBottom: 2,
-            }}>
-              <div style={{ fontWeight: 600, fontSize: 13 }}>{f.name}
+            <div
+              key={i}
+              style={{
+                padding: '6px 8px',
+                background: C.bgCard,
+                borderRadius: 4,
+                border: `1px solid ${C.borderDim}`,
+                marginBottom: 2,
+              }}
+            >
+              <div style={{ fontWeight: 600, fontSize: 13 }}>
+                {f.name}
                 <span style={{ fontSize: 10, color: C.textMuted, marginLeft: 6 }}>{f.source}</span>
               </div>
               <div style={{ fontSize: 11, color: C.textSecondary, marginTop: 2, lineHeight: 1.4 }}>
@@ -1494,11 +2100,14 @@ function ActionsTab({ inventory, spells, features, abilityScores, profBonus, get
       )}
 
       {/* Empty state */}
-      {weapons.length === 0 && attackCantrips.length === 0 && limitedFeatures.length === 0 && classAbilities.length === 0 && (
-        <div style={{ color: C.textMuted, textAlign: 'center', padding: 40, fontSize: 13 }}>
-          No actions available. Equip weapons or add spells and features.
-        </div>
-      )}
+      {weapons.length === 0 &&
+        attackCantrips.length === 0 &&
+        limitedFeatures.length === 0 &&
+        classAbilities.length === 0 && (
+          <div style={{ color: C.textMuted, textAlign: 'center', padding: 40, fontSize: 13 }}>
+            No actions available. Equip weapons or add spells and features.
+          </div>
+        )}
     </div>
   );
 }
@@ -1507,13 +2116,41 @@ function ActionsTab({ inventory, spells, features, abilityScores, profBonus, get
    TAB: SPELLS
    ═══════════════════════════════════════════════════════════ */
 const SCHOOL_COLORS: Record<string, string> = {
-  Evocation: '#c53131', Necromancy: '#2e7d32', Abjuration: '#2980b9',
-  Enchantment: '#9b59b6', Conjuration: '#1abc9c', Transmutation: '#d4a843',
-  Divination: '#a0a0c0', Illusion: '#e67e22',
-  evocation: '#c53131', necromancy: '#2e7d32', abjuration: '#2980b9',
-  enchantment: '#9b59b6', conjuration: '#1abc9c', transmutation: '#d4a843',
-  divination: '#a0a0c0', illusion: '#e67e22',
+  Evocation: '#c53131',
+  Necromancy: '#2e7d32',
+  Abjuration: '#2980b9',
+  Enchantment: '#9b59b6',
+  Conjuration: '#1abc9c',
+  Transmutation: '#d4a843',
+  Divination: '#a0a0c0',
+  Illusion: '#e67e22',
+  evocation: '#c53131',
+  necromancy: '#2e7d32',
+  abjuration: '#2980b9',
+  enchantment: '#9b59b6',
+  conjuration: '#1abc9c',
+  transmutation: '#d4a843',
+  divination: '#a0a0c0',
+  illusion: '#e67e22',
 };
+
+interface CompendiumSpellResult {
+  slug: string;
+  name: string;
+  level?: number;
+  school?: string;
+  castingTime?: string;
+  range?: string;
+  components?: string;
+  duration?: string;
+  description?: string;
+  higherLevels?: string;
+  concentration?: boolean;
+  ritual?: boolean;
+  snippet?: string;
+}
+
+type SpellPickerRow = { slug: string; name: string; level: number; school: string };
 
 /**
  * Convert a CompendiumSpell into a character Spell object, parsing the
@@ -1521,7 +2158,7 @@ const SCHOOL_COLORS: Record<string, string> = {
  * and attack type. Used by the "Add Spell" dialog and any DM tooling that
  * needs to grant spells to a character.
  */
-function compendiumSpellToCharSpell(comp: any): Spell {
+function compendiumSpellToCharSpell(comp: CompendiumSpellResult): Spell {
   const parsed = parseSpellMetaFromDesc(comp.description || '');
   return {
     name: comp.name,
@@ -1550,14 +2187,18 @@ function compendiumSpellToCharSpell(comp: any): Spell {
  * via onClose. Filtering is server-side via /api/compendium/search and
  * /api/compendium/spells.
  */
-function AddSpellDialog({ existingSpellNames, onAdd, onClose }: {
+function AddSpellDialog({
+  existingSpellNames,
+  onAdd,
+  onClose,
+}: {
   existingSpellNames: Set<string>;
   onAdd: (spell: Spell) => void;
   onClose: () => void;
 }) {
   const [search, setSearch] = useState('');
   const [levelFilter, setLevelFilter] = useState<number | null>(null);
-  const [results, setResults] = useState<Array<{ slug: string; name: string; level: number; school: string }>>([]);
+  const [results, setResults] = useState<SpellPickerRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [adding, setAdding] = useState<string | null>(null);
 
@@ -1567,12 +2208,14 @@ function AddSpellDialog({ existingSpellNames, onAdd, onClose }: {
     const fetchResults = async () => {
       setLoading(true);
       try {
-        let data: any[];
+        let data: SpellPickerRow[];
         if (search.trim().length >= 2) {
           // Full-text search via the /search endpoint
-          const r = await fetch(`/api/compendium/search?q=${encodeURIComponent(search.trim())}&category=spells&limit=40`);
-          const j = await r.json();
-          data = (j.results || []).map((row: any) => ({
+          const r = await fetch(
+            `/api/compendium/search?q=${encodeURIComponent(search.trim())}&category=spells&limit=40`
+          );
+          const j = (await r.json()) as { results?: CompendiumSpellResult[] };
+          data = (j.results || []).map((row) => ({
             slug: row.slug,
             name: row.name,
             level: row.level ?? 0,
@@ -1584,16 +2227,19 @@ function AddSpellDialog({ existingSpellNames, onAdd, onClose }: {
           params.set('limit', '60');
           if (levelFilter !== null) params.set('level', String(levelFilter));
           const r = await fetch(`/api/compendium/spells?${params.toString()}`);
-          data = await r.json();
+          data = (await r.json()) as SpellPickerRow[];
         }
         if (!cancelled) setResults(data);
-      } catch (err) {
+      } catch {
         if (!cancelled) setResults([]);
       }
       if (!cancelled) setLoading(false);
     };
     const timeout = setTimeout(fetchResults, search.trim().length >= 2 ? 250 : 0);
-    return () => { cancelled = true; clearTimeout(timeout); };
+    return () => {
+      cancelled = true;
+      clearTimeout(timeout);
+    };
   }, [search, levelFilter]);
 
   async function handleAdd(slug: string) {
@@ -1601,34 +2247,76 @@ function AddSpellDialog({ existingSpellNames, onAdd, onClose }: {
     try {
       const r = await fetch(`/api/compendium/spells/${slug}`);
       if (r.ok) {
-        const comp = await r.json();
+        const comp = (await r.json()) as CompendiumSpellResult;
         const spell = compendiumSpellToCharSpell(comp);
         onAdd(spell);
       }
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
     setAdding(null);
   }
 
   return (
-    <div onClick={onClose} style={{
-      position: 'fixed', inset: 0, zIndex: 9999,
-      display: 'flex', alignItems: 'center', justifyContent: 'center',
-      background: 'rgba(0,0,0,0.65)',
-    }}>
-      <div onClick={e => e.stopPropagation()} style={{
-        background: C.bgCard, border: `2px solid ${C.gold}`, borderRadius: 8,
-        padding: 16, width: 540, maxWidth: '90vw', maxHeight: '80vh',
-        display: 'flex', flexDirection: 'column',
-      }}>
+    <div
+      onClick={onClose}
+      style={{
+        position: 'fixed',
+        inset: 0,
+        zIndex: 9999,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        background: 'rgba(0,0,0,0.65)',
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          background: C.bgCard,
+          border: `2px solid ${C.gold}`,
+          borderRadius: 8,
+          padding: 16,
+          width: 540,
+          maxWidth: '90vw',
+          maxHeight: '80vh',
+          display: 'flex',
+          flexDirection: 'column',
+        }}
+      >
         {/* Header */}
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
-          <div style={{ fontSize: 16, fontWeight: 700, color: C.gold, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            marginBottom: 10,
+          }}
+        >
+          <div
+            style={{
+              fontSize: 16,
+              fontWeight: 700,
+              color: C.gold,
+              textTransform: 'uppercase',
+              letterSpacing: '0.04em',
+            }}
+          >
             Add Spell
           </div>
-          <button onClick={onClose} style={{
-            background: 'transparent', border: 'none', color: C.textMuted,
-            fontSize: 20, cursor: 'pointer', padding: '0 6px',
-          }}>×</button>
+          <button
+            onClick={onClose}
+            style={{
+              background: 'transparent',
+              border: 'none',
+              color: C.textMuted,
+              fontSize: 20,
+              cursor: 'pointer',
+              padding: '0 6px',
+            }}
+          >
+            ×
+          </button>
         </div>
 
         {/* Search */}
@@ -1636,21 +2324,29 @@ function AddSpellDialog({ existingSpellNames, onAdd, onClose }: {
           autoFocus
           type="text"
           value={search}
-          onChange={e => setSearch(e.target.value)}
+          onChange={(e) => setSearch(e.target.value)}
           placeholder="Search 1400+ spells (e.g. fireball)..."
           style={{
-            width: '100%', padding: '8px 12px', marginBottom: 8,
-            background: C.bgElevated, border: `1px solid ${C.border}`,
-            borderRadius: 6, color: C.textPrimary, fontSize: 13,
-            outline: 'none', boxSizing: 'border-box',
+            width: '100%',
+            padding: '8px 12px',
+            marginBottom: 8,
+            background: C.bgElevated,
+            border: `1px solid ${C.border}`,
+            borderRadius: 6,
+            color: C.textPrimary,
+            fontSize: 13,
+            outline: 'none',
+            boxSizing: 'border-box',
           }}
         />
 
         {/* Level filter pills (only when not searching) */}
         {search.trim().length < 2 && (
           <div style={{ display: 'flex', gap: 4, marginBottom: 8, flexWrap: 'wrap' }}>
-            <Pill active={levelFilter === null} onClick={() => setLevelFilter(null)}>ALL</Pill>
-            {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9].map(l => (
+            <Pill active={levelFilter === null} onClick={() => setLevelFilter(null)}>
+              ALL
+            </Pill>
+            {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9].map((l) => (
               <Pill key={l} active={levelFilter === l} onClick={() => setLevelFilter(l)}>
                 {l === 0 ? 'CANTRIP' : `L${l}`}
               </Pill>
@@ -1659,55 +2355,93 @@ function AddSpellDialog({ existingSpellNames, onAdd, onClose }: {
         )}
 
         {/* Results list */}
-        <div style={{
-          flex: 1, overflowY: 'auto', minHeight: 0,
-          border: `1px solid ${C.borderDim}`, borderRadius: 6,
-          background: C.bgElevated,
-        }}>
+        <div
+          style={{
+            flex: 1,
+            overflowY: 'auto',
+            minHeight: 0,
+            border: `1px solid ${C.borderDim}`,
+            borderRadius: 6,
+            background: C.bgElevated,
+          }}
+        >
           {loading && results.length === 0 && (
-            <div style={{ padding: 20, textAlign: 'center', color: C.textMuted, fontSize: 12 }}>Loading...</div>
+            <div style={{ padding: 20, textAlign: 'center', color: C.textMuted, fontSize: 12 }}>
+              Loading...
+            </div>
           )}
           {!loading && results.length === 0 && (
             <div style={{ padding: 20, textAlign: 'center', color: C.textMuted, fontSize: 12 }}>
               {search.trim().length >= 2 ? `No spells found for "${search}"` : 'No spells'}
             </div>
           )}
-          {results.map(r => {
+          {results.map((r) => {
             const slug = r.slug;
             const alreadyKnown = existingSpellNames.has(r.name.toLowerCase());
             const isAdding = adding === slug;
             const schoolColor = SCHOOL_COLORS[r.school] || C.textMuted;
             return (
-              <div key={slug} style={{
-                display: 'flex', alignItems: 'center', gap: 10,
-                padding: '8px 12px',
-                borderBottom: `1px solid ${C.borderDim}`,
-                background: alreadyKnown ? 'rgba(212,168,67,0.06)' : 'transparent',
-              }}>
-                <img src={getSpellImageUrl(r.slug || r.name)} alt="" loading="lazy"
-                  style={{ width: 32, height: 32, borderRadius: '50%', objectFit: 'cover', border: `1.5px solid ${schoolColor}`, flexShrink: 0 }}
-                  onError={e => { (e.target as HTMLImageElement).src = getSpellIconUrl(r.name); }}
+              <div
+                key={slug}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 10,
+                  padding: '8px 12px',
+                  borderBottom: `1px solid ${C.borderDim}`,
+                  background: alreadyKnown ? 'rgba(212,168,67,0.06)' : 'transparent',
+                }}
+              >
+                <img
+                  src={getSpellImageUrl(r.slug || r.name)}
+                  alt=""
+                  loading="lazy"
+                  style={{
+                    width: 32,
+                    height: 32,
+                    borderRadius: '50%',
+                    objectFit: 'cover',
+                    border: `1.5px solid ${schoolColor}`,
+                    flexShrink: 0,
+                  }}
+                  onError={(e) => {
+                    (e.target as HTMLImageElement).src = getSpellIconUrl(r.name);
+                  }}
                 />
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 13, fontWeight: 600, color: alreadyKnown ? C.textMuted : C.textPrimary }}>
+                  <div
+                    style={{
+                      fontSize: 13,
+                      fontWeight: 600,
+                      color: alreadyKnown ? C.textMuted : C.textPrimary,
+                    }}
+                  >
                     {r.name}
-                    {alreadyKnown && <span style={{ marginLeft: 6, fontSize: 9, color: C.gold, fontWeight: 700 }}>KNOWN</span>}
+                    {alreadyKnown && (
+                      <span style={{ marginLeft: 6, fontSize: 9, color: C.gold, fontWeight: 700 }}>
+                        KNOWN
+                      </span>
+                    )}
                   </div>
                   <div style={{ fontSize: 10, color: C.textMuted }}>
-                    {r.level === 0 ? 'Cantrip' : `Level ${r.level}`}{r.school ? ` · ${r.school}` : ''}
+                    {r.level === 0 ? 'Cantrip' : `Level ${r.level}`}
+                    {r.school ? ` · ${r.school}` : ''}
                   </div>
                 </div>
                 <button
                   disabled={alreadyKnown || isAdding}
                   onClick={() => handleAdd(slug)}
                   style={{
-                    padding: '6px 12px', fontSize: 11, fontWeight: 700,
+                    padding: '6px 12px',
+                    fontSize: 11,
+                    fontWeight: 700,
                     background: alreadyKnown ? 'transparent' : C.gold,
                     color: alreadyKnown ? C.textMuted : '#1a1a1a',
                     border: `1px solid ${alreadyKnown ? C.borderDim : C.gold}`,
                     borderRadius: 4,
                     cursor: alreadyKnown ? 'not-allowed' : 'pointer',
-                    fontFamily: 'inherit', textTransform: 'uppercase',
+                    fontFamily: 'inherit',
+                    textTransform: 'uppercase',
                     letterSpacing: '0.04em',
                   }}
                 >
@@ -1719,21 +2453,33 @@ function AddSpellDialog({ existingSpellNames, onAdd, onClose }: {
         </div>
 
         <div style={{ marginTop: 8, fontSize: 10, color: C.textMuted, textAlign: 'center' }}>
-          Click <b>Add</b> to grant the spell. Spells with damage / saves are auto-parsed from the description.
+          Click <b>Add</b> to grant the spell. Spells with damage / saves are auto-parsed from the
+          description.
         </div>
       </div>
     </div>
   );
 }
 
-function SpellsTab({ spells: rawSpells, spellSlots, spellcastingAbility, spellAttackBonus, spellSaveDC, abilityScores, profBonus, characterId, characterLevel, characterClass, isDM, isOwner }: {
+function SpellsTab({
+  spells: rawSpells,
+  spellSlots,
+  spellcastingAbility,
+  spellAttackBonus,
+  spellSaveDC,
+  abilityScores,
+  characterId,
+  characterLevel,
+  characterClass,
+  isDM,
+  isOwner,
+}: {
   spells: Spell[];
   spellSlots: Record<number, SpellSlot>;
   spellcastingAbility: string;
   spellAttackBonus: number;
   spellSaveDC: number;
   abilityScores: AbilityScores;
-  profBonus: number;
   characterId: string;
   characterLevel: number;
   characterClass: string;
@@ -1757,22 +2503,23 @@ function SpellsTab({ spells: rawSpells, spellSlots, spellcastingAbility, spellAt
   // resolver does the same parsing as a fallback, but the SPELL LIST view
   // only reads the structured field, so without enrichment the user sees
   // a blank "1d10 fire" line.
-  const spells = useMemo(
-    () => rawSpells.map(enrichSpellFromDescription),
-    [rawSpells],
-  );
+  const spells = useMemo(() => rawSpells.map(enrichSpellFromDescription), [rawSpells]);
 
   const scAbility = (spellcastingAbility || 'int') as AbilityName;
   const scMod = abilityModifier(abilityScores[scAbility] ?? 10);
 
   // Split cantrips from leveled spells
-  const cantrips = useMemo(() => spells.filter(s => s.level === 0).filter(s =>
-    !search || s.name.toLowerCase().includes(search.toLowerCase())
-  ), [spells, search]);
+  const cantrips = useMemo(
+    () =>
+      spells
+        .filter((s) => s.level === 0)
+        .filter((s) => !search || s.name.toLowerCase().includes(search.toLowerCase())),
+    [spells, search]
+  );
 
   const leveledSpells = useMemo(() => {
     const map: Record<number, Spell[]> = {};
-    const filtered = spells.filter(s => {
+    const filtered = spells.filter((s) => {
       if (s.level === 0) return false;
       if (levelFilter !== null && s.level !== levelFilter) return false;
       if (search && !s.name.toLowerCase().includes(search.toLowerCase())) return false;
@@ -1782,10 +2529,18 @@ function SpellsTab({ spells: rawSpells, spellSlots, spellcastingAbility, spellAt
     return map;
   }, [spells, levelFilter, search]);
 
-  const levels = Object.keys(leveledSpells).map(Number).sort((a, b) => a - b);
-  const allLevels = useMemo(() => Array.from(new Set(spells.filter(s => s.level > 0).map(s => s.level))).sort((a, b) => a - b), [spells]);
+  const levels = Object.keys(leveledSpells)
+    .map(Number)
+    .sort((a, b) => a - b);
+  const allLevels = useMemo(
+    () =>
+      Array.from(new Set(spells.filter((s) => s.level > 0).map((s) => s.level))).sort(
+        (a, b) => a - b
+      ),
+    [spells]
+  );
 
-  const toggleExpand = (key: string) => setExpanded(prev => ({ ...prev, [key]: !prev[key] }));
+  const toggleExpand = (key: string) => setExpanded((prev) => ({ ...prev, [key]: !prev[key] }));
 
   // Toggle spell slot (click to expend/restore)
   const toggleSlot = (level: number, index: number) => {
@@ -1799,20 +2554,25 @@ function SpellsTab({ spells: rawSpells, spellSlots, spellcastingAbility, spellAt
     }
   };
 
-  const getSpellSlug = (name: string) => name.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '').replace(/'/g, '');
+  const getSpellSlug = (name: string) =>
+    name
+      .toLowerCase()
+      .replace(/\s+/g, '-')
+      .replace(/[^a-z0-9-]/g, '')
+      .replace(/'/g, '');
 
   // Helpers that mutate the spells array. We use rawSpells (the unenriched
   // source) so we don't accidentally write display-only enriched fields
   // back to the database.
   const addSpell = (spell: Spell) => {
-    const exists = rawSpells.some(s => s.name.toLowerCase() === spell.name.toLowerCase());
+    const exists = rawSpells.some((s) => s.name.toLowerCase() === spell.name.toLowerCase());
     if (exists) return;
     const updated = [...rawSpells, spell];
     emitCharacterUpdate(characterId, { spells: updated });
   };
 
   const removeSpell = (spellName: string) => {
-    const updated = rawSpells.filter(s => s.name.toLowerCase() !== spellName.toLowerCase());
+    const updated = rawSpells.filter((s) => s.name.toLowerCase() !== spellName.toLowerCase());
     emitCharacterUpdate(characterId, { spells: updated });
   };
 
@@ -1821,9 +2581,8 @@ function SpellsTab({ spells: rawSpells, spellSlots, spellcastingAbility, spellAt
   // Useful for granting individual story-moment spells without enabling
   // the global override.
   const toggleSpellOverride = (spellName: string) => {
-    const updated = rawSpells.map(s => s.name.toLowerCase() === spellName.toLowerCase()
-      ? { ...s, dmOverride: !s.dmOverride }
-      : s,
+    const updated = rawSpells.map((s) =>
+      s.name.toLowerCase() === spellName.toLowerCase() ? { ...s, dmOverride: !s.dmOverride } : s
     );
     emitCharacterUpdate(characterId, { spells: updated });
   };
@@ -1832,9 +2591,8 @@ function SpellsTab({ spells: rawSpells, spellSlots, spellcastingAbility, spellAt
   // Cantrips are always prepared; their toggle is a no-op and the
   // UI hides the checkbox on cantrips.
   const toggleSpellPrepared = (spellName: string) => {
-    const updated = rawSpells.map(s => s.name.toLowerCase() === spellName.toLowerCase()
-      ? { ...s, prepared: !s.prepared }
-      : s,
+    const updated = rawSpells.map((s) =>
+      s.name.toLowerCase() === spellName.toLowerCase() ? { ...s, prepared: !s.prepared } : s
     );
     emitCharacterUpdate(characterId, { spells: updated });
   };
@@ -1847,8 +2605,8 @@ function SpellsTab({ spells: rawSpells, spellSlots, spellcastingAbility, spellAt
   const numPrepared = preparesSpells ? countPreparedSpells(rawSpells) : 0;
 
   const existingSpellNames = useMemo(
-    () => new Set(spells.map(s => s.name.toLowerCase())),
-    [spells],
+    () => new Set(spells.map((s) => s.name.toLowerCase())),
+    [spells]
   );
 
   if (spells.length === 0) {
@@ -1856,13 +2614,24 @@ function SpellsTab({ spells: rawSpells, spellSlots, spellcastingAbility, spellAt
       <div style={{ color: C.textMuted, textAlign: 'center', padding: 40, fontSize: 13 }}>
         <div style={{ marginBottom: 12 }}>No spells known.</div>
         {canEdit && (
-          <button onClick={() => setShowAddSpell(true)} style={{
-            padding: '8px 18px', fontSize: 12, fontWeight: 700,
-            background: C.gold, color: '#1a1a1a',
-            border: `1px solid ${C.gold}`, borderRadius: 4,
-            cursor: 'pointer', fontFamily: 'inherit',
-            textTransform: 'uppercase', letterSpacing: '0.04em',
-          }}>+ Add Spell</button>
+          <button
+            onClick={() => setShowAddSpell(true)}
+            style={{
+              padding: '8px 18px',
+              fontSize: 12,
+              fontWeight: 700,
+              background: C.gold,
+              color: '#1a1a1a',
+              border: `1px solid ${C.gold}`,
+              borderRadius: 4,
+              cursor: 'pointer',
+              fontFamily: 'inherit',
+              textTransform: 'uppercase',
+              letterSpacing: '0.04em',
+            }}
+          >
+            + Add Spell
+          </button>
         )}
         {showAddSpell && (
           <AddSpellDialog
@@ -1890,15 +2659,16 @@ function SpellsTab({ spells: rawSpells, spellSlots, spellcastingAbility, spellAt
     const slotsMax = slot ? slot.max : 0;
     const overridden = dmIgnoreSpellSlots || !!spell.dmOverride;
     const isSpent = !overridden && spell.level > 0 && slot ? slotsLeft <= 0 : false;
-    const tooltip = spell.level === 0
-      ? `${spell.name} — Cantrip (at will, never expended)`
-      : spell.dmOverride
-        ? `${spell.name} — DM override on this spell (slots bypassed)`
-        : dmIgnoreSpellSlots
-          ? `${spell.name} — DM override active, slots bypassed`
-          : isSpent
-            ? `${spell.name} — Out of level ${spell.level} slots (0/${slotsMax}). Long Rest to recharge.`
-            : `${spell.name} — Level ${spell.level} (${slotsLeft}/${slotsMax} slots left, Long Rest to recharge)`;
+    const tooltip =
+      spell.level === 0
+        ? `${spell.name} — Cantrip (at will, never expended)`
+        : spell.dmOverride
+          ? `${spell.name} — DM override on this spell (slots bypassed)`
+          : dmIgnoreSpellSlots
+            ? `${spell.name} — DM override active, slots bypassed`
+            : isSpent
+              ? `${spell.name} — Out of level ${spell.level} slots (0/${slotsMax}). Long Rest to recharge.`
+              : `${spell.name} — Level ${spell.level} (${slotsLeft}/${slotsMax} slots left, Long Rest to recharge)`;
 
     // Prepared-class gating: leveled spells need to be prepared for
     // casting. Cantrips are always ready. Non-prepare classes never
@@ -1909,26 +2679,45 @@ function SpellsTab({ spells: rawSpells, spellSlots, spellcastingAbility, spellAt
     const isUnprepared = preparesSpells && spell.level > 0 && !spell.prepared;
 
     return (
-      <div key={i} title={tooltip} style={{
-        background: C.bgCard, borderRadius: 4,
-        border: `1px solid ${isSpent ? C.borderDim : C.borderDim}`, marginBottom: 2,
-        overflow: 'hidden',
-        opacity: isSpent ? 0.5 : isUnprepared ? 0.65 : 1,
-      }}>
+      <div
+        key={i}
+        title={tooltip}
+        style={{
+          background: C.bgCard,
+          borderRadius: 4,
+          border: `1px solid ${isSpent ? C.borderDim : C.borderDim}`,
+          marginBottom: 2,
+          overflow: 'hidden',
+          opacity: isSpent ? 0.5 : isUnprepared ? 0.65 : 1,
+        }}
+      >
         <div
-          style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '5px 8px', cursor: 'pointer' }}
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 6,
+            padding: '5px 8px',
+            cursor: 'pointer',
+          }}
           onClick={() => toggleExpand(key)}
-          onMouseEnter={e => (e.currentTarget.style.background = C.bgHover)}
-          onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
+          onMouseEnter={(e) => (e.currentTarget.style.background = C.bgHover)}
+          onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
         >
           {/* Prepared checkbox — prepare-classes only */}
           {showPrepareToggle && (
             <label
               onClick={(e) => e.stopPropagation()}
-              title={spell.prepared ? 'Prepared — click to un-prepare' : 'Not prepared — click to prepare'}
+              title={
+                spell.prepared
+                  ? 'Prepared — click to un-prepare'
+                  : 'Not prepared — click to prepare'
+              }
               style={{
-                display: 'inline-flex', alignItems: 'center', flexShrink: 0,
-                cursor: 'pointer', marginRight: 2,
+                display: 'inline-flex',
+                alignItems: 'center',
+                flexShrink: 0,
+                cursor: 'pointer',
+                marginRight: 2,
               }}
             >
               <input
@@ -1940,38 +2729,85 @@ function SpellsTab({ spells: rawSpells, spellSlots, spellcastingAbility, spellAt
             </label>
           )}
           {/* Spell image */}
-          <img src={getSpellImageUrl(spell.name)} alt="" loading="lazy"
-            style={{ width: 28, height: 28, borderRadius: '50%', objectFit: 'cover', flexShrink: 0, border: `1.5px solid ${schoolColor}`, filter: isSpent ? 'grayscale(60%)' : 'none' }}
-            onError={e => { (e.target as HTMLImageElement).src = getSpellIconUrl(spell.name, spell.school); }}
+          <img
+            src={getSpellImageUrl(spell.name)}
+            alt=""
+            loading="lazy"
+            style={{
+              width: 28,
+              height: 28,
+              borderRadius: '50%',
+              objectFit: 'cover',
+              flexShrink: 0,
+              border: `1.5px solid ${schoolColor}`,
+              filter: isSpent ? 'grayscale(60%)' : 'none',
+            }}
+            onError={(e) => {
+              (e.target as HTMLImageElement).src = getSpellIconUrl(spell.name, spell.school);
+            }}
           />
           {/* Name + badges */}
           <div
             style={{ flex: 1, minWidth: 0, cursor: 'pointer' }}
             onClick={(e) => {
               e.stopPropagation();
-              window.dispatchEvent(new CustomEvent('open-compendium-detail', {
-                detail: { slug, category: 'spells', name: spell.name },
-              }));
+              window.dispatchEvent(
+                new CustomEvent('open-compendium-detail', {
+                  detail: { slug, category: 'spells', name: spell.name },
+                })
+              );
             }}
           >
-            <div style={{ fontWeight: 600, fontSize: 12, color: isSpent ? C.textMuted : schoolColor, textDecoration: isSpent ? 'line-through' : 'none' }}>
+            <div
+              style={{
+                fontWeight: 600,
+                fontSize: 12,
+                color: isSpent ? C.textMuted : schoolColor,
+                textDecoration: isSpent ? 'line-through' : 'none',
+              }}
+            >
               {spell.name}
-              {isSpent && <span style={{ color: C.red, marginLeft: 6, fontSize: 9, fontWeight: 700 }}>SPENT</span>}
-              {spell.dmOverride && <span style={{ color: '#b185db', marginLeft: 6, fontSize: 9, fontWeight: 700 }} title="DM override active on this spell — slots ignored">🔓 OVERRIDE</span>}
+              {isSpent && (
+                <span style={{ color: C.red, marginLeft: 6, fontSize: 9, fontWeight: 700 }}>
+                  SPENT
+                </span>
+              )}
+              {spell.dmOverride && (
+                <span
+                  style={{ color: '#b185db', marginLeft: 6, fontSize: 9, fontWeight: 700 }}
+                  title="DM override active on this spell — slots ignored"
+                >
+                  🔓 OVERRIDE
+                </span>
+              )}
             </div>
             <div style={{ fontSize: 9, color: C.textMuted }}>
               {spell.school}
-              {spell.isConcentration && <span style={{ color: C.gold, marginLeft: 4 }}>Concentration</span>}
+              {spell.isConcentration && (
+                <span style={{ color: C.gold, marginLeft: 4 }}>Concentration</span>
+              )}
               {spell.isRitual && <span style={{ color: C.purple, marginLeft: 4 }}>Ritual</span>}
-              {spell.damage && <span style={{ color: C.red, marginLeft: 4 }}>{spell.damage} {spell.damageType || ''}</span>}
-              {spell.savingThrow && <span style={{ color: C.gold, marginLeft: 4 }}>DC {spellSaveDC} {spell.savingThrow.toUpperCase()}</span>}
-              {slot && <span style={{ color: isSpent ? C.red : C.gold, marginLeft: 4 }}>{slotsLeft}/{slotsMax} slots</span>}
+              {spell.damage && (
+                <span style={{ color: C.red, marginLeft: 4 }}>
+                  {spell.damage} {spell.damageType || ''}
+                </span>
+              )}
+              {spell.savingThrow && (
+                <span style={{ color: C.gold, marginLeft: 4 }}>
+                  DC {spellSaveDC} {spell.savingThrow.toUpperCase()}
+                </span>
+              )}
+              {slot && (
+                <span style={{ color: isSpent ? C.red : C.gold, marginLeft: 4 }}>
+                  {slotsLeft}/{slotsMax} slots
+                </span>
+              )}
             </div>
           </div>
           {/* Quick cast */}
           <button
             disabled={isSpent}
-            onClick={e => {
+            onClick={(e) => {
               e.stopPropagation();
               if (isSpent) return;
               if (spell.attackType) {
@@ -1984,39 +2820,96 @@ function SpellsTab({ spells: rawSpells, spellSlots, spellcastingAbility, spellAt
               background: isSpent ? 'transparent' : schoolColor + '22',
               color: isSpent ? C.textMuted : schoolColor,
               border: `1px solid ${isSpent ? C.borderDim : schoolColor + '44'}`,
-              borderRadius: 3, padding: '2px 8px', fontSize: 9,
-              cursor: isSpent ? 'not-allowed' : 'pointer', fontWeight: 700,
-              flexShrink: 0, fontFamily: 'inherit', textTransform: 'uppercase',
+              borderRadius: 3,
+              padding: '2px 8px',
+              fontSize: 9,
+              cursor: isSpent ? 'not-allowed' : 'pointer',
+              fontWeight: 700,
+              flexShrink: 0,
+              fontFamily: 'inherit',
+              textTransform: 'uppercase',
             }}
-          >{isSpent ? 'Spent' : 'Cast'}</button>
+          >
+            {isSpent ? 'Spent' : 'Cast'}
+          </button>
           <span style={{ fontSize: 10, color: C.textMuted }}>{isExp ? '\u25B2' : '\u25BC'}</span>
         </div>
 
         {/* Expanded details */}
         {isExp && (
-          <div style={{ padding: '8px 12px', borderTop: `1px solid ${C.borderDim}`, background: C.bgElevated, fontSize: 11, lineHeight: 1.5 }}>
+          <div
+            style={{
+              padding: '8px 12px',
+              borderTop: `1px solid ${C.borderDim}`,
+              background: C.bgElevated,
+              fontSize: 11,
+              lineHeight: 1.5,
+            }}
+          >
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 6 }}>
-              <span style={{ fontSize: 9, padding: '1px 5px', borderRadius: 3, background: schoolColor + '22', color: schoolColor, border: `1px solid ${schoolColor}44` }}>
+              <span
+                style={{
+                  fontSize: 9,
+                  padding: '1px 5px',
+                  borderRadius: 3,
+                  background: schoolColor + '22',
+                  color: schoolColor,
+                  border: `1px solid ${schoolColor}44`,
+                }}
+              >
                 {spell.school}
               </span>
-              <span><b style={{ color: C.textMuted }}>Cast:</b> {spell.castingTime}</span>
-              <span><b style={{ color: C.textMuted }}>Range:</b> {spell.range}</span>
-              <span><b style={{ color: C.textMuted }}>Components:</b> {spell.components}</span>
-              <span><b style={{ color: C.textMuted }}>Duration:</b> {spell.duration}</span>
+              <span>
+                <b style={{ color: C.textMuted }}>Cast:</b> {spell.castingTime}
+              </span>
+              <span>
+                <b style={{ color: C.textMuted }}>Range:</b> {spell.range}
+              </span>
+              <span>
+                <b style={{ color: C.textMuted }}>Components:</b> {spell.components}
+              </span>
+              <span>
+                <b style={{ color: C.textMuted }}>Duration:</b> {spell.duration}
+              </span>
             </div>
             {spell.damage && (
               <div style={{ display: 'flex', gap: 6, marginBottom: 6 }}>
-                <RollButton notation={spell.damage} reason={`${spell.name} Damage`} label="Roll Damage" />
-                {spell.attackType && <RollButton notation={`1d20${fmtMod(spellAttackBonus)}`} reason={`${spell.name} Attack`} label="Roll Attack" />}
+                <RollButton
+                  notation={spell.damage}
+                  reason={`${spell.name} Damage`}
+                  label="Roll Damage"
+                />
+                {spell.attackType && (
+                  <RollButton
+                    notation={`1d20${fmtMod(spellAttackBonus)}`}
+                    reason={`${spell.name} Attack`}
+                    label="Roll Attack"
+                  />
+                )}
               </div>
             )}
-            <div style={{ color: C.textSecondary, whiteSpace: 'pre-wrap' }}>{stripHtml(spell.description)}</div>
+            <div style={{ color: C.textSecondary, whiteSpace: 'pre-wrap' }}>
+              {stripHtml(spell.description)}
+            </div>
             {spell.higherLevels && (
-              <div style={{ marginTop: 6, color: C.blue }}><b>At Higher Levels:</b> {spell.higherLevels}</div>
+              <div style={{ marginTop: 6, color: C.blue }}>
+                <b>At Higher Levels:</b> {spell.higherLevels}
+              </div>
             )}
             {/* DM/owner: per-spell DM override + remove */}
             {canEdit && (
-              <div style={{ marginTop: 8, paddingTop: 8, borderTop: `1px solid ${C.borderDim}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+              <div
+                style={{
+                  marginTop: 8,
+                  paddingTop: 8,
+                  borderTop: `1px solid ${C.borderDim}`,
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  gap: 8,
+                  flexWrap: 'wrap',
+                }}
+              >
                 {isDM && spell.level > 0 ? (
                   <button
                     onClick={(e) => {
@@ -2025,16 +2918,22 @@ function SpellsTab({ spells: rawSpells, spellSlots, spellcastingAbility, spellAt
                     }}
                     title="Bypass slot consumption and requirements for this specific spell. Useful for story moments where the DM grants a temporary spell awakening."
                     style={{
-                      padding: '4px 10px', fontSize: 10, fontWeight: 600,
+                      padding: '4px 10px',
+                      fontSize: 10,
+                      fontWeight: 600,
                       background: spell.dmOverride ? 'rgba(155,89,182,0.2)' : 'transparent',
                       color: spell.dmOverride ? '#b185db' : C.textMuted,
                       border: `1px solid ${spell.dmOverride ? '#9b59b6' : C.borderDim}`,
-                      borderRadius: 3, cursor: 'pointer', fontFamily: 'inherit',
+                      borderRadius: 3,
+                      cursor: 'pointer',
+                      fontFamily: 'inherit',
                     }}
                   >
                     🔓 {spell.dmOverride ? 'Override ON' : 'DM: Ignore slots'}
                   </button>
-                ) : <span />}
+                ) : (
+                  <span />
+                )}
                 <button
                   onClick={(e) => {
                     e.stopPropagation();
@@ -2043,14 +2942,21 @@ function SpellsTab({ spells: rawSpells, spellSlots, spellcastingAbility, spellAt
                       message: `Remove "${spell.name}" from this character? A fresh DDB import will add it back if the character has it on D&D Beyond.`,
                       tone: 'danger',
                       confirmLabel: 'Remove',
-                    }).then((ok) => { if (ok) removeSpell(spell.name); });
+                    }).then((ok) => {
+                      if (ok) removeSpell(spell.name);
+                    });
                   }}
                   title="Remove spell from character (will be re-added on next DDB import)"
                   style={{
-                    padding: '4px 10px', fontSize: 10, fontWeight: 600,
-                    background: 'transparent', color: C.red,
-                    border: `1px solid ${C.red}44`, borderRadius: 3,
-                    cursor: 'pointer', fontFamily: 'inherit',
+                    padding: '4px 10px',
+                    fontSize: 10,
+                    fontWeight: 600,
+                    background: 'transparent',
+                    color: C.red,
+                    border: `1px solid ${C.red}44`,
+                    borderRadius: 3,
+                    cursor: 'pointer',
+                    fontFamily: 'inherit',
                   }}
                 >
                   🗑 Remove Spell
@@ -2066,14 +2972,41 @@ function SpellsTab({ spells: rawSpells, spellSlots, spellcastingAbility, spellAt
   return (
     <div>
       {/* Spellcasting stats */}
-      <div style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap', alignItems: 'center' }}>
+      <div
+        style={{
+          display: 'flex',
+          gap: 8,
+          marginBottom: 12,
+          flexWrap: 'wrap',
+          alignItems: 'center',
+        }}
+      >
         {[
           { label: 'Modifier', value: fmtMod(scMod) },
           { label: 'Spell Attack', value: fmtMod(spellAttackBonus) },
           { label: 'Save DC', value: String(spellSaveDC) },
-        ].map(s => (
-          <div key={s.label} style={{ background: C.bgCard, border: `1px solid ${C.borderDim}`, borderRadius: 6, padding: '6px 14px', textAlign: 'center' }}>
-            <div style={{ fontSize: 8, color: C.textMuted, textTransform: 'uppercase', fontWeight: 700, letterSpacing: '0.04em' }}>{s.label}</div>
+        ].map((s) => (
+          <div
+            key={s.label}
+            style={{
+              background: C.bgCard,
+              border: `1px solid ${C.borderDim}`,
+              borderRadius: 6,
+              padding: '6px 14px',
+              textAlign: 'center',
+            }}
+          >
+            <div
+              style={{
+                fontSize: 8,
+                color: C.textMuted,
+                textTransform: 'uppercase',
+                fontWeight: 700,
+                letterSpacing: '0.04em',
+              }}
+            >
+              {s.label}
+            </div>
             <div style={{ fontSize: 18, fontWeight: 700 }}>{s.value}</div>
           </div>
         ))}
@@ -2084,45 +3017,76 @@ function SpellsTab({ spells: rawSpells, spellSlots, spellcastingAbility, spellAt
             title="Bypass spell slot consumption and requirements. Useful for testing and story moments where the DM grants a temporary spell. The chat header will mark each cast as a DM override."
             style={{
               marginLeft: 'auto',
-              padding: '8px 14px', fontSize: 10, fontWeight: 700,
+              padding: '8px 14px',
+              fontSize: 10,
+              fontWeight: 700,
               background: dmIgnoreSpellSlots ? 'rgba(155,89,182,0.2)' : 'transparent',
               color: dmIgnoreSpellSlots ? '#b185db' : C.textMuted,
               border: `1px solid ${dmIgnoreSpellSlots ? '#9b59b6' : C.borderDim}`,
-              borderRadius: 4, cursor: 'pointer', fontFamily: 'inherit',
-              textTransform: 'uppercase', letterSpacing: '0.04em',
+              borderRadius: 4,
+              cursor: 'pointer',
+              fontFamily: 'inherit',
+              textTransform: 'uppercase',
+              letterSpacing: '0.04em',
             }}
           >
             🔓 {dmIgnoreSpellSlots ? 'DM Override ON' : 'DM Override Off'}
           </button>
         )}
         {canEdit && (
-          <button onClick={() => setShowAddSpell(true)} style={{
-            marginLeft: isDM ? 0 : 'auto',
-            padding: '8px 16px', fontSize: 11, fontWeight: 700,
-            background: C.gold, color: '#1a1a1a',
-            border: `1px solid ${C.gold}`, borderRadius: 4,
-            cursor: 'pointer', fontFamily: 'inherit',
-            textTransform: 'uppercase', letterSpacing: '0.04em',
-          }}>+ Add Spell</button>
+          <button
+            onClick={() => setShowAddSpell(true)}
+            style={{
+              marginLeft: isDM ? 0 : 'auto',
+              padding: '8px 16px',
+              fontSize: 11,
+              fontWeight: 700,
+              background: C.gold,
+              color: '#1a1a1a',
+              border: `1px solid ${C.gold}`,
+              borderRadius: 4,
+              cursor: 'pointer',
+              fontFamily: 'inherit',
+              textTransform: 'uppercase',
+              letterSpacing: '0.04em',
+            }}
+          >
+            + Add Spell
+          </button>
         )}
       </div>
       {/* Prepared-spells counter (prepare-classes only) */}
       {preparesSpells && (
-        <div style={{
-          marginBottom: 8, padding: '6px 10px',
-          background: numPrepared > maxPrepared
-            ? 'rgba(231,76,60,0.08)'
-            : 'rgba(208,162,87,0.08)',
-          border: `1px solid ${numPrepared > maxPrepared ? 'rgba(231,76,60,0.35)' : 'rgba(208,162,87,0.25)'}`,
-          borderRadius: 4, fontSize: 11, color: C.textSecondary,
-          display: 'flex', alignItems: 'center', gap: 8,
-        }}>
-          <span style={{ fontSize: 11, fontWeight: 700, color: C.gold, letterSpacing: '0.05em' }}>PREPARED</span>
-          <span style={{ color: numPrepared > maxPrepared ? '#e74c3c' : C.textPrimary, fontWeight: 700 }}>
+        <div
+          style={{
+            marginBottom: 8,
+            padding: '6px 10px',
+            background:
+              numPrepared > maxPrepared ? 'rgba(231,76,60,0.08)' : 'rgba(208,162,87,0.08)',
+            border: `1px solid ${numPrepared > maxPrepared ? 'rgba(231,76,60,0.35)' : 'rgba(208,162,87,0.25)'}`,
+            borderRadius: 4,
+            fontSize: 11,
+            color: C.textSecondary,
+            display: 'flex',
+            alignItems: 'center',
+            gap: 8,
+          }}
+        >
+          <span style={{ fontSize: 11, fontWeight: 700, color: C.gold, letterSpacing: '0.05em' }}>
+            PREPARED
+          </span>
+          <span
+            style={{
+              color: numPrepared > maxPrepared ? '#e74c3c' : C.textPrimary,
+              fontWeight: 700,
+            }}
+          >
             {numPrepared}
           </span>
           <span style={{ color: C.textMuted }}>/ {maxPrepared}</span>
-          <span style={{ marginLeft: 'auto', fontSize: 10, color: C.textMuted, fontStyle: 'italic' }}>
+          <span
+            style={{ marginLeft: 'auto', fontSize: 10, color: C.textMuted, fontStyle: 'italic' }}
+          >
             {numPrepared > maxPrepared
               ? 'Over your limit — unprepare some spells after your next Long Rest'
               : 'Check the box on a leveled spell to prepare it'}
@@ -2131,14 +3095,21 @@ function SpellsTab({ spells: rawSpells, spellSlots, spellcastingAbility, spellAt
       )}
       {/* DM override active banner */}
       {dmIgnoreSpellSlots && isDM && (
-        <div style={{
-          marginBottom: 8, padding: '6px 10px',
-          background: 'rgba(155,89,182,0.1)',
-          border: '1px solid rgba(155,89,182,0.4)',
-          borderRadius: 4, fontSize: 11, color: '#b185db',
-          textAlign: 'center', fontStyle: 'italic',
-        }}>
-          🔓 DM Override active — all leveled spells are castable, no slots consumed. Click the button above to turn off.
+        <div
+          style={{
+            marginBottom: 8,
+            padding: '6px 10px',
+            background: 'rgba(155,89,182,0.1)',
+            border: '1px solid rgba(155,89,182,0.4)',
+            borderRadius: 4,
+            fontSize: 11,
+            color: '#b185db',
+            textAlign: 'center',
+            fontStyle: 'italic',
+          }}
+        >
+          🔓 DM Override active — all leveled spells are castable, no slots consumed. Click the
+          button above to turn off.
         </div>
       )}
 
@@ -2152,15 +3123,43 @@ function SpellsTab({ spells: rawSpells, spellSlots, spellcastingAbility, spellAt
       )}
 
       {/* Search */}
-      <input type="text" placeholder="Search spells..." value={search} onChange={e => setSearch(e.target.value)}
-        style={{ width: '100%', padding: '6px 10px', marginBottom: 8, background: C.bgElevated, border: `1px solid ${C.border}`,
-          borderRadius: 6, color: C.textPrimary, fontSize: 12, outline: 'none', boxSizing: 'border-box' }} />
+      <input
+        type="text"
+        placeholder="Search spells..."
+        value={search}
+        onChange={(e) => setSearch(e.target.value)}
+        style={{
+          width: '100%',
+          padding: '6px 10px',
+          marginBottom: 8,
+          background: C.bgElevated,
+          border: `1px solid ${C.border}`,
+          borderRadius: 6,
+          color: C.textPrimary,
+          fontSize: 12,
+          outline: 'none',
+          boxSizing: 'border-box',
+        }}
+      />
 
       {/* Cantrips section */}
       {cantrips.length > 0 && (levelFilter === null || levelFilter === 0) && (
         <div style={{ marginBottom: 16 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 0', borderBottom: `1px solid ${C.borderDim}`, marginBottom: 4 }}>
-            <span style={{ fontSize: 12, fontWeight: 700, color: C.gold, textTransform: 'uppercase' }}>Cantrips</span>
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+              padding: '6px 0',
+              borderBottom: `1px solid ${C.borderDim}`,
+              marginBottom: 4,
+            }}
+          >
+            <span
+              style={{ fontSize: 12, fontWeight: 700, color: C.gold, textTransform: 'uppercase' }}
+            >
+              Cantrips
+            </span>
             <span style={{ fontSize: 9, color: C.textMuted, marginLeft: 'auto' }}>At Will</span>
           </div>
           {cantrips.map((spell, i) => renderSpellRow(spell, i))}
@@ -2170,39 +3169,62 @@ function SpellsTab({ spells: rawSpells, spellSlots, spellcastingAbility, spellAt
       {/* Level filter pills (for leveled spells only) */}
       {allLevels.length > 0 && (
         <div style={{ display: 'flex', gap: 4, marginBottom: 8, flexWrap: 'wrap' }}>
-          <Pill active={levelFilter === null} onClick={() => setLevelFilter(null)}>ALL</Pill>
-          {allLevels.map(l => (
-            <Pill key={l} active={levelFilter === l} onClick={() => setLevelFilter(l)}>{levelPillLabel(l)}</Pill>
+          <Pill active={levelFilter === null} onClick={() => setLevelFilter(null)}>
+            ALL
+          </Pill>
+          {allLevels.map((l) => (
+            <Pill key={l} active={levelFilter === l} onClick={() => setLevelFilter(l)}>
+              {levelPillLabel(l)}
+            </Pill>
           ))}
         </div>
       )}
 
       {/* Leveled spell groups */}
-      {levels.map(level => {
+      {levels.map((level) => {
         const slot = spellSlots[level];
         const group = leveledSpells[level];
         const slotsAvail = slot ? slot.max - slot.used : 0;
         return (
           <div key={level} style={{ marginBottom: 16 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 0', borderBottom: `1px solid ${C.borderDim}`, marginBottom: 4 }}>
-              <span style={{ fontSize: 12, fontWeight: 700, color: C.red, textTransform: 'uppercase' }}>
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8,
+                padding: '6px 0',
+                borderBottom: `1px solid ${C.borderDim}`,
+                marginBottom: 4,
+              }}
+            >
+              <span
+                style={{ fontSize: 12, fontWeight: 700, color: C.red, textTransform: 'uppercase' }}
+              >
                 {ordinal(level)} Level
               </span>
               {/* Interactive slot pips */}
               {slot && (
                 <div style={{ display: 'flex', gap: 3, marginLeft: 'auto', alignItems: 'center' }}>
-                  <span style={{ fontSize: 9, color: slotsAvail > 0 ? C.textSecondary : C.red, marginRight: 4, fontWeight: 600 }}>
+                  <span
+                    style={{
+                      fontSize: 9,
+                      color: slotsAvail > 0 ? C.textSecondary : C.red,
+                      marginRight: 4,
+                      fontWeight: 600,
+                    }}
+                  >
                     {slotsAvail}/{slot.max}
                   </span>
                   {Array.from({ length: slot.max }).map((_, i) => (
-                    <SlotPip key={i} filled={i >= slot.used}
-                      onClick={() => toggleSlot(level, i)} />
+                    <SlotPip key={i} filled={i >= slot.used} onClick={() => toggleSlot(level, i)} />
                   ))}
                 </div>
               )}
             </div>
             {slotsAvail === 0 && slot && (
-              <div style={{ fontSize: 9, color: C.red, fontStyle: 'italic', marginBottom: 4 }}>No spell slots remaining</div>
+              <div style={{ fontSize: 9, color: C.red, fontStyle: 'italic', marginBottom: 4 }}>
+                No spell slots remaining
+              </div>
             )}
             {group.map((spell, i) => renderSpellRow(spell, i))}
           </div>
@@ -2242,9 +3264,10 @@ function InventoryTab({
   const [expanded, setExpanded] = useState<Record<number, boolean>>({});
 
   const totalWeight = inventory.reduce((sum, i) => sum + i.weight * i.quantity, 0);
-  const totalGP = currency.pp * 10 + currency.gp + currency.ep * 0.5 + currency.sp * 0.1 + currency.cp * 0.01;
+  const totalGP =
+    currency.pp * 10 + currency.gp + currency.ep * 0.5 + currency.sp * 0.1 + currency.cp * 0.01;
 
-  const filtered = inventory.filter(i => {
+  const filtered = inventory.filter((i) => {
     if (filter === 'equipment') return i.equipped;
     if (filter === 'backpack') return !i.equipped;
     if (filter === 'attunement') return i.attunement;
@@ -2255,8 +3278,10 @@ function InventoryTab({
     <div>
       {/* Sub-filters */}
       <div style={{ display: 'flex', gap: 4, marginBottom: 8, flexWrap: 'wrap' }}>
-        {INV_FILTERS.map(f => (
-          <Pill key={f.key} active={filter === f.key} onClick={() => setFilter(f.key)}>{f.label}</Pill>
+        {INV_FILTERS.map((f) => (
+          <Pill key={f.key} active={filter === f.key} onClick={() => setFilter(f.key)}>
+            {f.label}
+          </Pill>
         ))}
       </div>
 
@@ -2282,19 +3307,27 @@ function InventoryTab({
       {filtered.map((item, i) => {
         const isExpanded = expanded[i];
         return (
-          <div key={i} style={{
-            background: C.bgCard, borderRadius: 4,
-            border: `1px solid ${C.borderDim}`, marginBottom: 2,
-            overflow: 'hidden',
-          }}>
+          <div
+            key={i}
+            style={{
+              background: C.bgCard,
+              borderRadius: 4,
+              border: `1px solid ${C.borderDim}`,
+              marginBottom: 2,
+              overflow: 'hidden',
+            }}
+          >
             <div
               style={{
-                display: 'flex', alignItems: 'center', gap: 8,
-                padding: '6px 8px', cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8,
+                padding: '6px 8px',
+                cursor: 'pointer',
               }}
-              onClick={() => setExpanded(prev => ({ ...prev, [i]: !prev[i] }))}
-              onMouseEnter={e => (e.currentTarget.style.background = C.bgHover)}
-              onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
+              onClick={() => setExpanded((prev) => ({ ...prev, [i]: !prev[i] }))}
+              onMouseEnter={(e) => (e.currentTarget.style.background = C.bgHover)}
+              onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
             >
               {/* Equipped toggle — only the character owner or the DM can change equip state */}
               <span
@@ -2304,66 +3337,118 @@ function InventoryTab({
                   const updated = [...inventory];
                   updated[i] = { ...item, equipped: !item.equipped };
                   emitCharacterUpdate(characterId, { inventory: updated });
-                  useCharacterStore.getState().applyRemoteUpdate(characterId, { inventory: updated });
+                  useCharacterStore
+                    .getState()
+                    .applyRemoteUpdate(characterId, { inventory: updated });
                 }}
-                title={canEdit ? (item.equipped ? 'Equipped — click to unequip' : 'Click to equip') : (item.equipped ? 'Equipped' : 'Not equipped')}
+                title={
+                  canEdit
+                    ? item.equipped
+                      ? 'Equipped — click to unequip'
+                      : 'Click to equip'
+                    : item.equipped
+                      ? 'Equipped'
+                      : 'Not equipped'
+                }
                 style={{
-                  width: 16, height: 16, borderRadius: 3, cursor: canEdit ? 'pointer' : 'default',
+                  width: 16,
+                  height: 16,
+                  borderRadius: 3,
+                  cursor: canEdit ? 'pointer' : 'default',
                   border: `2px solid ${item.equipped ? C.red : C.textDim}`,
                   background: item.equipped ? C.red : 'transparent',
-                  flexShrink: 0, transition: 'all 0.15s',
-                  display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  fontSize: 8, color: item.equipped ? '#fff' : 'transparent',
+                  flexShrink: 0,
+                  transition: 'all 0.15s',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  fontSize: 8,
+                  color: item.equipped ? '#fff' : 'transparent',
                 }}
-              >{item.equipped ? 'E' : ''}</span>
+              >
+                {item.equipped ? 'E' : ''}
+              </span>
               {/* Item image */}
               <img
                 src={(() => {
-                  const url = (item as any).imageUrl as string | undefined;
-                  if (!url) return getItemIconUrl(item.name, (item as any).type);
+                  const url = item.imageUrl;
+                  if (!url) return getItemIconUrl(item.name, item.type);
                   // DDB imports set imageUrl to "/uploads/items/{slug}.png" which
                   // works in local dev but 404s on Cloud Run (items live on GCS).
                   // Rewrite to the GCS CDN URL for production compatibility.
                   if (url.startsWith('/uploads/items/')) {
                     const filename = url.replace('/uploads/items/', '');
-                    return `https://storage.googleapis.com/atlas-bound-data/items/${filename}`;
+                    return publicAssetUrl(`items/${filename}`);
                   }
                   if (url.startsWith('/uploads/spells/')) {
                     const filename = url.replace('/uploads/spells/', '');
-                    return `https://storage.googleapis.com/atlas-bound-data/spells/${filename}`;
+                    return publicAssetUrl(`spells/${filename}`);
                   }
                   // Bare filename without path prefix
                   if (!url.startsWith('http') && !url.startsWith('/') && !url.startsWith('data:')) {
-                    return `https://storage.googleapis.com/atlas-bound-data/items/${url}`;
+                    return publicAssetUrl(`items/${url}`);
                   }
                   return url;
                 })()}
                 alt=""
                 loading="lazy"
-                style={{ width: 28, height: 28, borderRadius: '50%', objectFit: 'cover', flexShrink: 0,
-                  border: `1.5px solid ${RARITY_COLORS[(item.rarity || 'common').toLowerCase()] || C.borderDim}` }}
-                onError={e => { (e.target as HTMLImageElement).src = getItemIconUrl(item.name, (item as any).type); }}
+                style={{
+                  width: 28,
+                  height: 28,
+                  borderRadius: '50%',
+                  objectFit: 'cover',
+                  flexShrink: 0,
+                  border: `1.5px solid ${RARITY_COLORS[(item.rarity || 'common').toLowerCase()] || C.borderDim}`,
+                }}
+                onError={(e) => {
+                  (e.target as HTMLImageElement).src = getItemIconUrl(item.name, item.type);
+                }}
               />
               <div
-                style={{ flex: 1, minWidth: 0, cursor: (item as any).slug ? 'pointer' : 'default' }}
+                style={{ flex: 1, minWidth: 0, cursor: item.slug ? 'pointer' : 'default' }}
                 onClick={(e) => {
-                  const slug = (item as any).slug;
+                  const slug = item.slug;
                   if (slug) {
                     e.stopPropagation();
-                    window.dispatchEvent(new CustomEvent('open-compendium-detail', {
-                      detail: { slug, category: 'items', name: item.name },
-                    }));
+                    window.dispatchEvent(
+                      new CustomEvent('open-compendium-detail', {
+                        detail: { slug, category: 'items', name: item.name },
+                      })
+                    );
                   }
                 }}
               >
-                <div style={{ fontWeight: 600, fontSize: 13, color: RARITY_COLORS[(item.rarity || '').toLowerCase()] || C.textPrimary }}>{item.name}</div>
+                <div
+                  style={{
+                    fontWeight: 600,
+                    fontSize: 13,
+                    color: RARITY_COLORS[(item.rarity || '').toLowerCase()] || C.textPrimary,
+                  }}
+                >
+                  {item.name}
+                </div>
                 <div style={{ fontSize: 9, color: C.textMuted }}>
-                  {item.type}{item.attuned ? ' (attuned)' : ''}
-                  {item.damage && <span style={{ color: C.red, marginLeft: 4 }}>{item.damage} {item.damageType || ''}</span>}
-                  {(item as any).acBonus && <span style={{ color: '#3498db', marginLeft: 4 }}>AC +{(item as any).acBonus}</span>}
+                  {item.type}
+                  {item.attuned ? ' (attuned)' : ''}
+                  {item.damage && (
+                    <span style={{ color: C.red, marginLeft: 4 }}>
+                      {item.damage} {item.damageType || ''}
+                    </span>
+                  )}
+                  {item.acBonus && (
+                    <span style={{ color: '#3498db', marginLeft: 4 }}>AC +{item.acBonus}</span>
+                  )}
                 </div>
               </div>
-              <span style={{ fontSize: 10, color: C.textSecondary, minWidth: 20, textAlign: 'center', fontWeight: 700 }}>
+              <span
+                style={{
+                  fontSize: 10,
+                  color: C.textSecondary,
+                  minWidth: 20,
+                  textAlign: 'center',
+                  fontWeight: 700,
+                }}
+              >
                 x{item.quantity}
               </span>
               <span style={{ fontSize: 10, color: C.textMuted }}>
@@ -2372,17 +3457,25 @@ function InventoryTab({
             </div>
 
             {isExpanded && (
-              <div style={{
-                padding: '8px 12px', borderTop: `1px solid ${C.borderDim}`,
-                background: C.bgElevated, fontSize: 11, lineHeight: 1.5,
-              }}>
+              <div
+                style={{
+                  padding: '8px 12px',
+                  borderTop: `1px solid ${C.borderDim}`,
+                  background: C.bgElevated,
+                  fontSize: 11,
+                  lineHeight: 1.5,
+                }}
+              >
                 {item.description && (
-                  <div style={{ color: C.textSecondary, marginBottom: 6, whiteSpace: 'pre-wrap' }}>{stripHtml(item.description)}</div>
+                  <div style={{ color: C.textSecondary, marginBottom: 6, whiteSpace: 'pre-wrap' }}>
+                    {stripHtml(item.description)}
+                  </div>
                 )}
                 <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
                   {item.damage && (
                     <span>
-                      <b style={{ color: C.textMuted }}>Damage:</b> {item.damage} {item.damageType ?? ''}
+                      <b style={{ color: C.textMuted }}>Damage:</b> {item.damage}{' '}
+                      {item.damageType ?? ''}
                     </span>
                   )}
                   {/* Ability badge (STR/DEX/Finesse) — weapons only. Hover
@@ -2403,57 +3496,90 @@ function InventoryTab({
                       <WeaponPropertyPills properties={item.properties} />
                     </span>
                   )}
-                  {item.attunement && <Badge color={item.attuned ? C.red : C.textDim}>{item.attuned ? 'Attuned' : 'Requires Attunement'}</Badge>}
+                  {item.attunement && (
+                    <Badge color={item.attuned ? C.red : C.textDim}>
+                      {item.attuned ? 'Attuned' : 'Requires Attunement'}
+                    </Badge>
+                  )}
                 </div>
                 <div style={{ marginTop: 6, display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                   {item.type === 'weapon' && item.damage && (
-                    <RollButton notation={item.damage} reason={`${item.name} Damage`} label="Roll Damage" />
+                    <RollButton
+                      notation={item.damage}
+                      reason={`${item.name} Damage`}
+                      label="Roll Damage"
+                    />
                   )}
-                  {canEdit && <button
-                    onClick={async (e) => {
-                      e.stopPropagation();
-                      try {
-                        // Find position near the character's token
-                        const mapState = useMapStore.getState();
-                        const currentMap = mapState.currentMap;
-                        if (!currentMap) { showInfo('No map loaded.', 'warning'); return; }
-                        const tokens = mapState.tokens;
-                        const myToken = Object.values(tokens).find((t: any) => t.characterId === characterId);
-                        const dropX = myToken ? (myToken as any).x + 70 : currentMap.width / 2;
-                        const dropY = myToken ? (myToken as any).y : currentMap.height / 2;
+                  {canEdit && (
+                    <button
+                      onClick={async (e) => {
+                        e.stopPropagation();
+                        try {
+                          // Find position near the character's token
+                          const mapState = useMapStore.getState();
+                          const currentMap = mapState.currentMap;
+                          if (!currentMap) {
+                            showInfo('No map loaded.', 'warning');
+                            return;
+                          }
+                          const tokens = mapState.tokens;
+                          const myToken = Object.values(tokens).find(
+                            (t: Token) => t.characterId === characterId
+                          );
+                          const dropX = myToken ? myToken.x + 70 : currentMap.width / 2;
+                          const dropY = myToken ? myToken.y : currentMap.height / 2;
 
-                        // Server handles everything: removes from inventory, creates loot character + entry
-                        const resp = await fetch(`/api/characters/${characterId}/loot/drop`, {
-                          method: 'POST',
-                          headers: { 'Content-Type': 'application/json' },
-                          body: JSON.stringify({ itemIndex: i, mapId: currentMap.id, x: dropX, y: dropY }),
-                        });
-                        // Drop mutates inventory + spawns a token — pull
-                        // snapshot so both stick on every client.
-                        const { triggerSnapshot } = await import('../../socket/stateSnapshot');
-                        triggerSnapshot('inventory:drop');
-                        if (!resp.ok) {
-                          console.error('Drop failed:', await resp.text());
-                          showInfo('Couldn\u2019t drop item \u2014 server rejected the request.', 'danger');
-                          return;
+                          // Server handles everything: removes from inventory, creates loot character + entry
+                          const resp = await fetch(`/api/characters/${characterId}/loot/drop`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                              itemIndex: i,
+                              mapId: currentMap.id,
+                              x: dropX,
+                              y: dropY,
+                            }),
+                          });
+                          // Drop mutates inventory + spawns a token — pull
+                          // snapshot so both stick on every client.
+                          const { triggerSnapshot } = await import('../../socket/stateSnapshot');
+                          triggerSnapshot('inventory:drop');
+                          if (!resp.ok) {
+                            console.error('Drop failed:', await resp.text());
+                            showInfo(
+                              'Couldn\u2019t drop item \u2014 server rejected the request.',
+                              'danger'
+                            );
+                            return;
+                          }
+                          const data = await resp.json();
+
+                          // Update local inventory. Server now creates the
+                          // loot token atomically and broadcasts it via
+                          // `map:token-added`, so no client emit is needed.
+                          useCharacterStore
+                            .getState()
+                            .applyRemoteUpdate(characterId, { inventory: data.inventory });
+                        } catch (err) {
+                          console.error('Drop item failed:', err);
+                          showInfo('Couldn\u2019t drop item. Try again.', 'danger');
                         }
-                        const data = await resp.json();
-
-                        // Update local inventory. Server now creates the
-                        // loot token atomically and broadcasts it via
-                        // `map:token-added`, so no client emit is needed.
-                        useCharacterStore.getState().applyRemoteUpdate(characterId, { inventory: data.inventory });
-                      } catch (err) {
-                        console.error('Drop item failed:', err);
-                        showInfo('Couldn\u2019t drop item. Try again.', 'danger');
-                      }
-                    }}
-                    style={{
-                      padding: '3px 8px', fontSize: 10, fontWeight: 600, borderRadius: 4,
-                      background: 'rgba(212,168,67,0.1)', border: '1px solid rgba(212,168,67,0.3)',
-                      color: C.gold, cursor: 'pointer', fontFamily: 'inherit',
-                    }}
-                  >Drop on Map</button>}
+                      }}
+                      style={{
+                        padding: '3px 8px',
+                        fontSize: 10,
+                        fontWeight: 600,
+                        borderRadius: 4,
+                        background: 'rgba(212,168,67,0.1)',
+                        border: '1px solid rgba(212,168,67,0.3)',
+                        color: C.gold,
+                        cursor: 'pointer',
+                        fontFamily: 'inherit',
+                      }}
+                    >
+                      Drop on Map
+                    </button>
+                  )}
                 </div>
               </div>
             )}
@@ -2479,7 +3605,7 @@ function FeaturesTab({ features }: { features: Feature[] }) {
   const [filter, setFilter] = useState<FeatFilter>('all');
   const [expanded, setExpanded] = useState<Record<number, boolean>>({});
 
-  const filtered = features.filter(f => {
+  const filtered = features.filter((f) => {
     if (filter === 'class') return f.sourceType === 'class';
     if (filter === 'race') return f.sourceType === 'race';
     if (filter === 'feat') return f.sourceType === 'feat';
@@ -2490,8 +3616,10 @@ function FeaturesTab({ features }: { features: Feature[] }) {
     <div>
       {/* Sub-filters */}
       <div style={{ display: 'flex', gap: 4, marginBottom: 12, flexWrap: 'wrap' }}>
-        {FEAT_FILTERS.map(f => (
-          <Pill key={f.key} active={filter === f.key} onClick={() => setFilter(f.key)}>{f.label}</Pill>
+        {FEAT_FILTERS.map((f) => (
+          <Pill key={f.key} active={filter === f.key} onClick={() => setFilter(f.key)}>
+            {f.label}
+          </Pill>
         ))}
       </div>
 
@@ -2506,56 +3634,100 @@ function FeaturesTab({ features }: { features: Feature[] }) {
         const hasUses = feat.usesTotal != null && feat.usesTotal > 0;
         const usesLeft = feat.usesRemaining ?? feat.usesTotal ?? 0;
         const isSpent = hasUses && usesLeft <= 0;
-        const rechargeLabel = feat.resetOn === 'short' ? 'Short Rest' : feat.resetOn === 'long' ? 'Long Rest' : feat.resetOn === 'dawn' ? 'Dawn' : 'Long Rest';
+        const rechargeLabel =
+          feat.resetOn === 'short'
+            ? 'Short Rest'
+            : feat.resetOn === 'long'
+              ? 'Long Rest'
+              : feat.resetOn === 'dawn'
+                ? 'Dawn'
+                : 'Long Rest';
         const tooltip = !hasUses
           ? `${feat.name} — Always available (${feat.source})`
           : isSpent
             ? `${feat.name} — All uses spent (0/${feat.usesTotal}). Recharges on ${rechargeLabel}.`
             : `${feat.name} — ${usesLeft}/${feat.usesTotal} uses remaining. Recharges on ${rechargeLabel}.`;
         return (
-          <div key={i} title={tooltip} style={{
-            background: C.bgCard, borderRadius: 4,
-            border: `1px solid ${C.borderDim}`, marginBottom: 4,
-            overflow: 'hidden',
-            opacity: isSpent ? 0.5 : 1,
-          }}>
+          <div
+            key={i}
+            title={tooltip}
+            style={{
+              background: C.bgCard,
+              borderRadius: 4,
+              border: `1px solid ${C.borderDim}`,
+              marginBottom: 4,
+              overflow: 'hidden',
+              opacity: isSpent ? 0.5 : 1,
+            }}
+          >
             <div
               style={{
-                display: 'flex', alignItems: 'center', gap: 8,
-                padding: '8px 10px', cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8,
+                padding: '8px 10px',
+                cursor: 'pointer',
               }}
-              onClick={() => setExpanded(prev => ({ ...prev, [i]: !prev[i] }))}
-              onMouseEnter={e => (e.currentTarget.style.background = C.bgHover)}
-              onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
+              onClick={() => setExpanded((prev) => ({ ...prev, [i]: !prev[i] }))}
+              onMouseEnter={(e) => (e.currentTarget.style.background = C.bgHover)}
+              onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
             >
               <div style={{ flex: 1 }}>
-                <span style={{ fontWeight: 600, fontSize: 13, textDecoration: isSpent ? 'line-through' : 'none', color: isSpent ? C.textMuted : C.textPrimary }}>
+                <span
+                  style={{
+                    fontWeight: 600,
+                    fontSize: 13,
+                    textDecoration: isSpent ? 'line-through' : 'none',
+                    color: isSpent ? C.textMuted : C.textPrimary,
+                  }}
+                >
                   {feat.name}
                 </span>
-                <span style={{ fontSize: 10, color: C.textMuted, marginLeft: 8 }}>{feat.source}</span>
-                {isSpent && <span style={{ color: C.red, marginLeft: 6, fontSize: 9, fontWeight: 700 }}>SPENT</span>}
+                <span style={{ fontSize: 10, color: C.textMuted, marginLeft: 8 }}>
+                  {feat.source}
+                </span>
+                {isSpent && (
+                  <span style={{ color: C.red, marginLeft: 6, fontSize: 9, fontWeight: 700 }}>
+                    SPENT
+                  </span>
+                )}
               </div>
               {/* Usage pips + count */}
               {hasUses && (
                 <>
-                  <span style={{ fontSize: 10, color: isSpent ? C.red : C.textSecondary, fontWeight: 600 }}>
+                  <span
+                    style={{
+                      fontSize: 10,
+                      color: isSpent ? C.red : C.textSecondary,
+                      fontWeight: 600,
+                    }}
+                  >
                     {usesLeft}/{feat.usesTotal}
                   </span>
                   <div style={{ display: 'flex', gap: 3, alignItems: 'center' }}>
                     {Array.from({ length: feat.usesTotal! }).map((_, j) => (
-                      <span key={j} style={{
-                        width: 12, height: 12, borderRadius: '50%',
-                        border: `2px solid ${C.red}`,
-                        background: j < usesLeft ? C.red : 'transparent',
-                        display: 'inline-block',
-                      }} />
+                      <span
+                        key={j}
+                        style={{
+                          width: 12,
+                          height: 12,
+                          borderRadius: '50%',
+                          border: `2px solid ${C.red}`,
+                          background: j < usesLeft ? C.red : 'transparent',
+                          display: 'inline-block',
+                        }}
+                      />
                     ))}
                   </div>
                 </>
               )}
               {feat.resetOn && (
                 <span style={{ fontSize: 9, color: C.textMuted, textTransform: 'uppercase' }}>
-                  {feat.resetOn === 'short' ? 'Short Rest' : feat.resetOn === 'long' ? 'Long Rest' : feat.resetOn}
+                  {feat.resetOn === 'short'
+                    ? 'Short Rest'
+                    : feat.resetOn === 'long'
+                      ? 'Long Rest'
+                      : feat.resetOn}
                 </span>
               )}
               <span style={{ fontSize: 12, color: C.textMuted }}>
@@ -2564,11 +3736,17 @@ function FeaturesTab({ features }: { features: Feature[] }) {
             </div>
 
             {isExpanded && (
-              <div style={{
-                padding: '8px 12px', borderTop: `1px solid ${C.borderDim}`,
-                background: C.bgElevated, fontSize: 11, lineHeight: 1.5,
-                color: C.textSecondary, whiteSpace: 'pre-wrap',
-              }}>
+              <div
+                style={{
+                  padding: '8px 12px',
+                  borderTop: `1px solid ${C.borderDim}`,
+                  background: C.bgElevated,
+                  fontSize: 11,
+                  lineHeight: 1.5,
+                  color: C.textSecondary,
+                  whiteSpace: 'pre-wrap',
+                }}
+              >
                 {stripHtml(feat.description)}
               </div>
             )}

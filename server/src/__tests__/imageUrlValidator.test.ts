@@ -23,21 +23,37 @@ describe('safeImageUrlSchema', () => {
     expect(safeImageUrlSchema.safeParse('data:image/svg+xml;base64,PHN2Zy8+').success).toBe(false);
   });
 
-  it('accepts https URL on our GCS bucket', () => {
+  it('accepts https URL on our current public GCS bucket', () => {
+    const url = 'https://storage.googleapis.com/atlas-bound-public-assets-personal/maps/forest.png';
+    expect(safeImageUrlSchema.safeParse(url).success).toBe(true);
+  });
+
+  it('accepts https URL on the legacy public GCS bucket', () => {
     const url = 'https://storage.googleapis.com/atlas-bound-data/maps/forest.png';
     expect(safeImageUrlSchema.safeParse(url).success).toBe(true);
   });
 
+  it('rejects https URL on arbitrary GCS buckets', () => {
+    const url = 'https://storage.googleapis.com/someone-elses-bucket/maps/forest.png';
+    expect(safeImageUrlSchema.safeParse(url).success).toBe(false);
+  });
+
   it('accepts https URL on Discord CDN', () => {
-    expect(safeImageUrlSchema.safeParse('https://cdn.discordapp.com/avatars/1/abc.png').success).toBe(true);
+    expect(
+      safeImageUrlSchema.safeParse('https://cdn.discordapp.com/avatars/1/abc.png').success
+    ).toBe(true);
   });
 
   it('accepts https URL on DnDBeyond', () => {
-    expect(safeImageUrlSchema.safeParse('https://www.dndbeyond.com/avatars/abc.png').success).toBe(true);
+    expect(safeImageUrlSchema.safeParse('https://www.dndbeyond.com/avatars/abc.png').success).toBe(
+      true
+    );
   });
 
   it('accepts the DDB proxy-image path (so imported PC portraits survive token-add validation)', () => {
-    const url = '/api/dndbeyond/proxy-image?url=' + encodeURIComponent('https://www.dndbeyond.com/avatars/abc.png');
+    const url =
+      '/api/dndbeyond/proxy-image?url=' +
+      encodeURIComponent('https://www.dndbeyond.com/avatars/abc.png');
     expect(safeImageUrlSchema.safeParse(url).success).toBe(true);
   });
 
@@ -67,7 +83,9 @@ describe('safeImageUrlSchema', () => {
 
   it('rejects hostnames that look like suffix matches but are not', () => {
     // Would be a bug if 'notstorage.googleapis.com' was accepted.
-    expect(safeImageUrlSchema.safeParse('https://notstorage.googleapis.com/foo.png').success).toBe(false);
+    expect(safeImageUrlSchema.safeParse('https://notstorage.googleapis.com/foo.png').success).toBe(
+      false
+    );
   });
 
   it('rejects string longer than 2000 chars', () => {

@@ -10,13 +10,17 @@ import { z } from 'zod';
  *   - content injection from arbitrary external hosts
  */
 const ALLOWED_HOSTS = [
-  'storage.googleapis.com',        // our GCS bucket (atlas-bound-data)
-  'cdn.discordapp.com',            // Discord avatars
-  'lh3.googleusercontent.com',     // Google avatars
-  'www.dndbeyond.com',             // D&D Beyond character portraits
-  'media-waterdeep.cursecdn.com',  // D&D Beyond image CDN
-  'i.ibb.co',                      // imgbb (common community host)
+  'cdn.discordapp.com', // Discord avatars
+  'lh3.googleusercontent.com', // Google avatars
+  'www.dndbeyond.com', // D&D Beyond character portraits
+  'media-waterdeep.cursecdn.com', // D&D Beyond image CDN
+  'i.ibb.co', // imgbb (common community host)
 ];
+
+const ALLOWED_GCS_BUCKETS = new Set([
+  'atlas-bound-public-assets-personal',
+  'atlas-bound-data', // legacy public asset URLs persisted before the bucket migration
+]);
 
 /**
  * Accepts:
@@ -54,14 +58,16 @@ export const safeImageUrlSchema = z
       try {
         const url = new URL(value);
         if (url.protocol !== 'https:') return false;
-        return ALLOWED_HOSTS.some(
-          (h) => url.hostname === h || url.hostname.endsWith('.' + h),
-        );
+        if (url.hostname === 'storage.googleapis.com') {
+          const [bucket] = url.pathname.split('/').filter(Boolean);
+          return bucket ? ALLOWED_GCS_BUCKETS.has(bucket) : false;
+        }
+        return ALLOWED_HOSTS.some((h) => url.hostname === h || url.hostname.endsWith('.' + h));
       } catch {
         return false;
       }
     },
-    { message: 'Image URL must be a relative upload path or on an approved host' },
+    { message: 'Image URL must be a relative upload path or on an approved host' }
   );
 
-export { ALLOWED_HOSTS };
+export { ALLOWED_HOSTS, ALLOWED_GCS_BUCKETS };

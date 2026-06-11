@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Group, Circle, Rect, Text, Ring, Shape, Line, Arrow } from 'react-konva';
+import { Group, Circle, Rect, Text, Ring, Shape, Arrow } from 'react-konva';
 import { useShallow } from 'zustand/react/shallow';
 import type { Token, TokenAura } from '@dnd-vtt/shared';
 import { colorForCondition } from '@dnd-vtt/shared';
@@ -10,29 +10,33 @@ import { useCharacterStore } from '../../../stores/useCharacterStore';
 import { useDrawStore } from '../../../stores/useDrawStore';
 import { useDragToken } from '../../../hooks/useDragToken';
 import { theme } from '../../../styles/theme';
+import { isKnownPublicAssetUrl } from '../../../utils/publicAssets';
 
 // Stable empty array to avoid creating new [] on every render
 // (causes "getSnapshot should be cached" infinite loop in React)
 const EMPTY_STAGED: never[] = [];
 
 // ── Condition visual effects ──────────────────────────────────────────
-const CONDITION_VISUALS: Record<string, { color: string; opacity: number; effect: 'tint' | 'glow' | 'pulse' | 'overlay' }> = {
-  poisoned:       { color: '#2ecc71', opacity: 0.3,  effect: 'tint' },
-  burning:        { color: '#e67e22', opacity: 0.4,  effect: 'glow' },
-  frozen:         { color: '#3498db', opacity: 0.3,  effect: 'tint' },
-  stunned:        { color: '#f1c40f', opacity: 0.3,  effect: 'pulse' },
-  paralyzed:      { color: '#f1c40f', opacity: 0.4,  effect: 'tint' },
-  frightened:     { color: '#9b59b6', opacity: 0.3,  effect: 'pulse' },
-  invisible:      { color: 'transparent', opacity: 0.3, effect: 'overlay' },
-  prone:          { color: '#95a5a6', opacity: 0.2,  effect: 'tint' },
-  restrained:     { color: '#e74c3c', opacity: 0.3,  effect: 'tint' },
-  charmed:        { color: '#e91e63', opacity: 0.3,  effect: 'glow' },
-  blinded:        { color: '#2c3e50', opacity: 0.4,  effect: 'overlay' },
-  deafened:       { color: '#7f8c8d', opacity: 0.2,  effect: 'tint' },
-  stable:         { color: '#27ae60', opacity: 0.2,  effect: 'glow' },
-  concentration:  { color: '#3498db', opacity: 0.2,  effect: 'glow' },
-  blessed:        { color: '#f1c40f', opacity: 0.25, effect: 'glow' },
-  hexed:          { color: '#8e44ad', opacity: 0.3,  effect: 'glow' },
+const CONDITION_VISUALS: Record<
+  string,
+  { color: string; opacity: number; effect: 'tint' | 'glow' | 'pulse' | 'overlay' }
+> = {
+  poisoned: { color: '#2ecc71', opacity: 0.3, effect: 'tint' },
+  burning: { color: '#e67e22', opacity: 0.4, effect: 'glow' },
+  frozen: { color: '#3498db', opacity: 0.3, effect: 'tint' },
+  stunned: { color: '#f1c40f', opacity: 0.3, effect: 'pulse' },
+  paralyzed: { color: '#f1c40f', opacity: 0.4, effect: 'tint' },
+  frightened: { color: '#9b59b6', opacity: 0.3, effect: 'pulse' },
+  invisible: { color: 'transparent', opacity: 0.3, effect: 'overlay' },
+  prone: { color: '#95a5a6', opacity: 0.2, effect: 'tint' },
+  restrained: { color: '#e74c3c', opacity: 0.3, effect: 'tint' },
+  charmed: { color: '#e91e63', opacity: 0.3, effect: 'glow' },
+  blinded: { color: '#2c3e50', opacity: 0.4, effect: 'overlay' },
+  deafened: { color: '#7f8c8d', opacity: 0.2, effect: 'tint' },
+  stable: { color: '#27ae60', opacity: 0.2, effect: 'glow' },
+  concentration: { color: '#3498db', opacity: 0.2, effect: 'glow' },
+  blessed: { color: '#f1c40f', opacity: 0.25, effect: 'glow' },
+  hexed: { color: '#8e44ad', opacity: 0.3, effect: 'glow' },
 };
 
 /**
@@ -61,7 +65,13 @@ function usePulseOpacity(active: boolean) {
 /**
  * Renders glow/pulse condition effects BEHIND the token.
  */
-function ConditionGlowLayer({ conditions, tokenSize }: { conditions: string[]; tokenSize: number }) {
+function ConditionGlowLayer({
+  conditions,
+  tokenSize,
+}: {
+  conditions: string[];
+  tokenSize: number;
+}) {
   const hasPulse = conditions.some((c) => CONDITION_VISUALS[c]?.effect === 'pulse');
   const pulseOpacity = usePulseOpacity(hasPulse);
 
@@ -94,7 +104,13 @@ function ConditionGlowLayer({ conditions, tokenSize }: { conditions: string[]; t
 /**
  * Renders tint/overlay condition effects ON TOP of the token.
  */
-function ConditionTintLayer({ conditions, tokenSize }: { conditions: string[]; tokenSize: number }) {
+function ConditionTintLayer({
+  conditions,
+  tokenSize,
+}: {
+  conditions: string[];
+  tokenSize: number;
+}) {
   const elements: React.ReactNode[] = [];
   for (const cond of conditions) {
     const vis = CONDITION_VISUALS[cond];
@@ -171,7 +187,7 @@ function TokenImage({ url, size }: { url: string; size: number }) {
   useEffect(() => {
     urlRef.current = url;
     const img = new window.Image();
-    if (!url.startsWith('https://storage.googleapis.com/atlas-bound-data/')) {
+    if (!isKnownPublicAssetUrl(url)) {
       img.crossOrigin = 'anonymous';
     }
     img.onload = () => {
@@ -182,7 +198,10 @@ function TokenImage({ url, size }: { url: string; size: number }) {
       if (urlRef.current === url) setImage(null);
     };
     img.src = url;
-    return () => { img.onload = null; img.onerror = null; };
+    return () => {
+      img.onload = null;
+      img.onerror = null;
+    };
   }, [url]);
 
   if (!image) return <Circle radius={size / 2} fill="#555" />;
@@ -219,8 +238,12 @@ interface TokenSpriteProps {
 
 function TokenSprite({ tokenId, showTokenLabels }: TokenSpriteProps) {
   const token = useMapStore((s) => s.tokens[tokenId]);
-  const isSelected = useMapStore((s) => s.selectedTokenId === tokenId || s.selectedTokenIds.includes(tokenId));
-  const isCurrentTurn = useCombatStore((s) => s.active && s.combatants[s.currentTurnIndex]?.tokenId === tokenId);
+  const isSelected = useMapStore(
+    (s) => s.selectedTokenId === tokenId || s.selectedTokenIds.includes(tokenId)
+  );
+  const isCurrentTurn = useCombatStore(
+    (s) => s.active && s.combatants[s.currentTurnIndex]?.tokenId === tokenId
+  );
   const { draggable, onDragStart, onDragEnd, onDragMove } = useDragToken(tokenId);
   const selectToken = useMapStore((s) => s.selectToken);
   const setHoveredToken = useMapStore((s) => s.setHoveredToken);
@@ -242,7 +265,7 @@ function TokenSprite({ tokenId, showTokenLabels }: TokenSpriteProps) {
   const combatant = useCombatStore((s) => s.combatants.find((c) => c.tokenId === tokenId));
   const actionEconomy = useCombatStore((s) => {
     const currentTurnTokenId = s.active
-      ? s.combatants[s.currentTurnIndex]?.tokenId ?? null
+      ? (s.combatants[s.currentTurnIndex]?.tokenId ?? null)
       : null;
     return currentTurnTokenId === tokenId ? s.actionEconomy : null;
   });
@@ -264,25 +287,23 @@ function TokenSprite({ tokenId, showTokenLabels }: TokenSpriteProps) {
   const moveUsed = Math.max(0, moveMax - moveRemaining);
   const movePctRemaining = moveMax > 0 ? Math.max(0, moveRemaining / moveMax) : 0;
   const moveColor =
-    movePctRemaining > 0.5 ? '#5ba3d5'   // bright blue
-    : movePctRemaining > 0.1 ? '#d4a843' // gold (running low)
-    : '#c53131';                          // red (out of move)
+    movePctRemaining > 0.5
+      ? '#5ba3d5' // bright blue
+      : movePctRemaining > 0.1
+        ? '#d4a843' // gold (running low)
+        : '#c53131'; // red (out of move)
   // HP ratio: prefer combatant (combat), then character store, then 1 (full)
   const currentHp = combatant ? combatant.hp : charHp;
   const currentMaxHp = combatant ? combatant.maxHp : charMaxHp;
   const actualHpRatio = combatant
     ? Math.max(0, combatant.hp / Math.max(1, combatant.maxHp))
-    : (charHp !== null && charMaxHp !== null && charMaxHp > 0)
+    : charHp !== null && charMaxHp !== null && charMaxHp > 0
       ? Math.max(0, charHp / charMaxHp)
       : 1;
   const hasHpData = currentHp !== null && currentMaxHp !== null && currentMaxHp > 0;
 
   const hpColor =
-    actualHpRatio > 0.5
-      ? theme.hp.full
-      : actualHpRatio > 0.25
-      ? theme.hp.half
-      : theme.hp.low;
+    actualHpRatio > 0.5 ? theme.hp.full : actualHpRatio > 0.25 ? theme.hp.half : theme.hp.low;
 
   // Badge colors sourced from shared CONDITION_EFFECTS +
   // PSEUDO_CONDITION_EFFECTS via colorForCondition(). Drop the old
@@ -294,17 +315,22 @@ function TokenSprite({ tokenId, showTokenLabels }: TokenSpriteProps) {
   // HP bar visibility: DM sees all, players see own + visible creature bars
   const isOwnToken = token.ownerUserId === userId;
   const showHpBarForPlayer = isDM || isOwnToken || (isNPC && token.visible);
-  const showHpBar = showHpBarForPlayer && hasHpData && (combatant || (charHp !== null && charMaxHp !== null && charHp < charMaxHp));
+  const showHpBar =
+    showHpBarForPlayer &&
+    hasHpData &&
+    (combatant || (charHp !== null && charMaxHp !== null && charHp < charMaxHp));
 
   // Loot bag tokens (race === 'loot' or item image) should never show as dead
-  const isLootBag = charData?.race === 'loot' || (token.imageUrl?.includes('/uploads/items/'));
+  const isLootBag = charData?.race === 'loot' || token.imageUrl?.includes('/uploads/items/');
   // Death state — skip for loot bags which naturally have 0 HP
-  const isDead = !isLootBag && ((charHp !== null && charHp <= 0) || (combatant && combatant.hp <= 0));
+  const isDead =
+    !isLootBag && ((charHp !== null && charHp <= 0) || (combatant && combatant.hp <= 0));
 
   // Visibility state — DM sees invisible tokens dimmed so they can still
   // be moved/managed but it's clear they're hidden from players
   const tokenConditions = (token.conditions || []) as string[];
-  const isInvisible = tokenConditions.includes('invisible') && !tokenConditions.includes('outlined');
+  const isInvisible =
+    tokenConditions.includes('invisible') && !tokenConditions.includes('outlined');
 
   // Compute opacity:
   //   • Dead → 40%
@@ -338,9 +364,11 @@ function TokenSprite({ tokenId, showTokenLabels }: TokenSpriteProps) {
         if (useDrawStore.getState().isDrawMode) return;
         const state = useMapStore.getState();
         if (state.isTargeting) {
-          window.dispatchEvent(new CustomEvent('target-token-selected', {
-            detail: { tokenId: token.id }
-          }));
+          window.dispatchEvent(
+            new CustomEvent('target-token-selected', {
+              detail: { tokenId: token.id },
+            })
+          );
           return;
         }
         // Shift-click (and Meta/Ctrl on Mac) → additive select, so the
@@ -353,9 +381,11 @@ function TokenSprite({ tokenId, showTokenLabels }: TokenSpriteProps) {
         if (useDrawStore.getState().isDrawMode) return;
         const { isTargeting } = useMapStore.getState();
         if (isTargeting) {
-          window.dispatchEvent(new CustomEvent('target-token-selected', {
-            detail: { tokenId: token.id }
-          }));
+          window.dispatchEvent(
+            new CustomEvent('target-token-selected', {
+              detail: { tokenId: token.id },
+            })
+          );
           return;
         }
         selectToken(token.id);
@@ -407,11 +437,17 @@ function TokenSprite({ tokenId, showTokenLabels }: TokenSpriteProps) {
       }}
       onTouchMove={(e) => {
         const node = e.target as unknown as { __longPressTimer?: ReturnType<typeof setTimeout> };
-        if (node.__longPressTimer) { clearTimeout(node.__longPressTimer); node.__longPressTimer = undefined; }
+        if (node.__longPressTimer) {
+          clearTimeout(node.__longPressTimer);
+          node.__longPressTimer = undefined;
+        }
       }}
       onTouchEnd={(e) => {
         const node = e.target as unknown as { __longPressTimer?: ReturnType<typeof setTimeout> };
-        if (node.__longPressTimer) { clearTimeout(node.__longPressTimer); node.__longPressTimer = undefined; }
+        if (node.__longPressTimer) {
+          clearTimeout(node.__longPressTimer);
+          node.__longPressTimer = undefined;
+        }
       }}
       onMouseEnter={(e) => {
         setIsHovered(true);
@@ -437,9 +473,7 @@ function TokenSprite({ tokenId, showTokenLabels }: TokenSpriteProps) {
       }}
     >
       {/* Aura overlay — renders behind everything */}
-      {token.aura && (
-        <AuraOverlay aura={token.aura} gridSize={gridSize} />
-      )}
+      {token.aura && <AuraOverlay aura={token.aura} gridSize={gridSize} />}
 
       {/* Condition glow/pulse effects — behind the token */}
       {tokenConditions.length > 0 && (
@@ -480,11 +514,7 @@ function TokenSprite({ tokenId, showTokenLabels }: TokenSpriteProps) {
       {/* Token border - green for player-owned, red for NPC/enemy, blue if selected */}
       <Circle
         radius={tokenSize / 2}
-        stroke={
-          isSelected ? theme.blue
-          : token.ownerUserId ? '#45a049'
-          : '#c53131'
-        }
+        stroke={isSelected ? theme.blue : token.ownerUserId ? '#45a049' : '#c53131'}
         strokeWidth={isSelected ? 3 : 2}
         fill="transparent"
       />
@@ -497,7 +527,10 @@ function TokenSprite({ tokenId, showTokenLabels }: TokenSpriteProps) {
       {/* Skull overlay for dead tokens */}
       {isDead && (
         <Group>
-          <TokenImage url={`data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><circle cx="32" cy="32" r="30" fill="#333" opacity="0.85"/><text x="32" y="44" text-anchor="middle" font-size="36" fill="#ccc" font-family="sans-serif">&#x1F480;</text></svg>')}`} size={tokenSize * 0.7} />
+          <TokenImage
+            url={`data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><circle cx="32" cy="32" r="30" fill="#333" opacity="0.85"/><text x="32" y="44" text-anchor="middle" font-size="36" fill="#ccc" font-family="sans-serif">&#x1F480;</text></svg>')}`}
+            size={tokenSize * 0.7}
+          />
         </Group>
       )}
 
@@ -548,139 +581,146 @@ function TokenSprite({ tokenId, showTokenLabels }: TokenSpriteProps) {
           with a numeric label sitting on top so players can see how
           many feet they've moved and how many remain at a glance,
           without needing the Combat sidebar tab open. */}
-      {showMovement && (() => {
-        const labelText = `${moveRemaining} / ${moveMax} ft`;
-        const labelW = Math.max(tokenSize + 4, 56);
-        const yBase = -tokenSize / 2 - 24;
-        return (
-          <Group y={yBase}>
-            {/* Background pill */}
-            <Rect
-              x={-labelW / 2}
-              y={0}
-              width={labelW}
-              height={13}
-              fill="rgba(10,10,18,0.85)"
-              stroke={moveColor}
-              strokeWidth={1}
-              cornerRadius={6}
-              shadowColor="rgba(0,0,0,0.5)"
-              shadowBlur={3}
-              shadowOffset={{ x: 0, y: 1 }}
-              shadowEnabled
-            />
-            {/* Inner progress fill — left side is "used", right side is "remaining" */}
-            <Rect
-              x={-labelW / 2 + 2}
-              y={2}
-              width={Math.max(0, (labelW - 4) * movePctRemaining)}
-              height={9}
-              fill={moveColor}
-              opacity={0.25}
-              cornerRadius={4}
-            />
-            {/* Numeric label */}
-            <Text
-              x={-labelW / 2}
-              y={1}
-              width={labelW}
-              align="center"
-              text={labelText}
-              fontSize={9}
-              fontStyle="bold"
-              fill={moveColor}
-              shadowColor="black"
-              shadowBlur={2}
-              shadowEnabled
-            />
-            {/* Used distance ticker on the side, only when something has moved */}
-            {moveUsed > 0 && (
-              <Text
-                x={labelW / 2 + 4}
-                y={1}
-                text={`-${moveUsed}`}
-                fontSize={8}
-                fontStyle="bold"
-                fill="#888"
+      {showMovement &&
+        (() => {
+          const labelText = `${moveRemaining} / ${moveMax} ft`;
+          const labelW = Math.max(tokenSize + 4, 56);
+          const yBase = -tokenSize / 2 - 24;
+          return (
+            <Group y={yBase}>
+              {/* Background pill */}
+              <Rect
+                x={-labelW / 2}
+                y={0}
+                width={labelW}
+                height={13}
+                fill="rgba(10,10,18,0.85)"
+                stroke={moveColor}
+                strokeWidth={1}
+                cornerRadius={6}
+                shadowColor="rgba(0,0,0,0.5)"
+                shadowBlur={3}
+                shadowOffset={{ x: 0, y: 1 }}
+                shadowEnabled
               />
-            )}
-          </Group>
-        );
-      })()}
+              {/* Inner progress fill — left side is "used", right side is "remaining" */}
+              <Rect
+                x={-labelW / 2 + 2}
+                y={2}
+                width={Math.max(0, (labelW - 4) * movePctRemaining)}
+                height={9}
+                fill={moveColor}
+                opacity={0.25}
+                cornerRadius={4}
+              />
+              {/* Numeric label */}
+              <Text
+                x={-labelW / 2}
+                y={1}
+                width={labelW}
+                align="center"
+                text={labelText}
+                fontSize={9}
+                fontStyle="bold"
+                fill={moveColor}
+                shadowColor="black"
+                shadowBlur={2}
+                shadowEnabled
+              />
+              {/* Used distance ticker on the side, only when something has moved */}
+              {moveUsed > 0 && (
+                <Text
+                  x={labelW / 2 + 4}
+                  y={1}
+                  text={`-${moveUsed}`}
+                  fontSize={8}
+                  fontStyle="bold"
+                  fill="#888"
+                />
+              )}
+            </Group>
+          );
+        })()}
 
       {/* Name label background + text (below token + HP bar).
           Shown always when showTokenLabels is on, or when the token
           is selected / hovered (name is also in the tooltip). The
           background is tinted by the token's faction so the combat
           side is obvious at a glance. */}
-      {(showTokenLabels || isSelected) && (() => {
-        const hpBarOffset = showHpBar ? 7 : 0;
-        const labelWidth = Math.max(tokenSize + 20, Math.min(token.name.length * 6.5 + 16, 160));
-        const needsWrap = token.name.length > (tokenSize + 20) / 6;
-        const labelHeight = needsWrap ? 26 : 16;
-        const faction = (token as { faction?: string }).faction ?? 'neutral';
-        // Semi-transparent tint over a dark base so the name stays legible.
-        const labelFill =
-          faction === 'friendly' ? 'rgba(46,204,113,0.75)' :
-          faction === 'hostile'  ? 'rgba(231,76,60,0.75)'  :
-                                   'rgba(0,0,0,0.75)';
-        const labelStroke =
-          faction === 'friendly' ? '#2ecc71' :
-          faction === 'hostile'  ? '#e74c3c' :
-                                   'transparent';
-        return (
-          <>
-            <Rect
-              x={-labelWidth / 2}
-              y={tokenSize / 2 + 2 + hpBarOffset}
-              width={labelWidth}
-              height={labelHeight}
-              fill={labelFill}
-              stroke={labelStroke}
-              strokeWidth={labelStroke === 'transparent' ? 0 : 1}
-              cornerRadius={4}
-            />
-            <Text
-              text={token.name}
-              y={tokenSize / 2 + 3 + hpBarOffset}
-              x={-labelWidth / 2}
-              width={labelWidth}
-              align="center"
-              fontSize={10}
-              fontStyle="bold"
-              fill="#fff"
-              wrap="word"
-              shadowColor="black"
-              shadowBlur={3}
-              shadowOffset={{ x: 0, y: 1 }}
-              shadowEnabled
-            />
-          </>
-        );
-      })()}
+      {(showTokenLabels || isSelected) &&
+        (() => {
+          const hpBarOffset = showHpBar ? 7 : 0;
+          const labelWidth = Math.max(tokenSize + 20, Math.min(token.name.length * 6.5 + 16, 160));
+          const needsWrap = token.name.length > (tokenSize + 20) / 6;
+          const labelHeight = needsWrap ? 26 : 16;
+          const faction = (token as { faction?: string }).faction ?? 'neutral';
+          // Semi-transparent tint over a dark base so the name stays legible.
+          const labelFill =
+            faction === 'friendly'
+              ? 'rgba(46,204,113,0.75)'
+              : faction === 'hostile'
+                ? 'rgba(231,76,60,0.75)'
+                : 'rgba(0,0,0,0.75)';
+          const labelStroke =
+            faction === 'friendly' ? '#2ecc71' : faction === 'hostile' ? '#e74c3c' : 'transparent';
+          return (
+            <>
+              <Rect
+                x={-labelWidth / 2}
+                y={tokenSize / 2 + 2 + hpBarOffset}
+                width={labelWidth}
+                height={labelHeight}
+                fill={labelFill}
+                stroke={labelStroke}
+                strokeWidth={labelStroke === 'transparent' ? 0 : 1}
+                cornerRadius={4}
+              />
+              <Text
+                text={token.name}
+                y={tokenSize / 2 + 3 + hpBarOffset}
+                x={-labelWidth / 2}
+                width={labelWidth}
+                align="center"
+                fontSize={10}
+                fontStyle="bold"
+                fill="#fff"
+                wrap="word"
+                shadowColor="black"
+                shadowBlur={3}
+                shadowOffset={{ x: 0, y: 1 }}
+                shadowEnabled
+              />
+            </>
+          );
+        })()}
 
       {/* DEAD label */}
-      {isDead && (() => {
-        const hpBarOffset = showHpBar ? 7 : 0;
-        const labelVisible = showTokenLabels || isSelected;
-        const nameLabelOffset = labelVisible ? (token.name.length > (tokenSize + 20) / 6 ? 28 : 18) : 2;
-        return (
-          <Text
-            text="DEAD"
-            y={tokenSize / 2 + nameLabelOffset + hpBarOffset}
-            x={-30}
-            width={60}
-            align="center"
-            fontSize={9}
-            fontStyle="bold"
-            fill="#c53131"
-          />
-        );
-      })()}
+      {isDead &&
+        (() => {
+          const hpBarOffset = showHpBar ? 7 : 0;
+          const labelVisible = showTokenLabels || isSelected;
+          const nameLabelOffset = labelVisible
+            ? token.name.length > (tokenSize + 20) / 6
+              ? 28
+              : 18
+            : 2;
+          return (
+            <Text
+              text="DEAD"
+              y={tokenSize / 2 + nameLabelOffset + hpBarOffset}
+              x={-30}
+              width={60}
+              align="center"
+              fontSize={9}
+              fontStyle="bold"
+              fill="#c53131"
+            />
+          );
+        })()}
 
       {/* Condition badges */}
       {token.conditions.length > 0 && (
-        <Group y={tokenSize / 2 + ((showTokenLabels || isSelected) ? 20 : 6) + (showHpBar ? 7 : 0)}>
+        <Group y={tokenSize / 2 + (showTokenLabels || isSelected ? 20 : 6) + (showHpBar ? 7 : 0)}>
           {token.conditions.slice(0, 4).map((cond, i) => (
             <Circle
               key={cond}
@@ -716,7 +756,7 @@ function selectVisibleSortedTokenIds(
     enableFog: boolean;
     gridSize: number;
     selectedTokenId: string | null;
-  },
+  }
 ) {
   const { isDM, userId, enableFog, gridSize, selectedTokenId } = options;
   const allTokens = Object.values(tokens);
@@ -737,15 +777,16 @@ function selectVisibleSortedTokenIds(
         return true;
       });
 
-  const base = !isDM && enableFog
-    ? (() => {
-        const myTokens = visibleTokens.filter((t) => t.ownerUserId === userId);
-        return visibleTokens.filter((token) => {
-          if (token.ownerUserId === userId) return true;
-          return isWithinVision(token, myTokens, gridSize);
-        });
-      })()
-    : visibleTokens;
+  const base =
+    !isDM && enableFog
+      ? (() => {
+          const myTokens = visibleTokens.filter((t) => t.ownerUserId === userId);
+          return visibleTokens.filter((token) => {
+            if (token.ownerUserId === userId) return true;
+            return isWithinVision(token, myTokens, gridSize);
+          });
+        })()
+      : visibleTokens;
 
   // Stable render-order sort so Konva click resolution routes to the
   // token the player most likely wants to interact with when two
@@ -776,12 +817,12 @@ function selectVisibleSortedTokenIds(
  */
 function MovementPreview() {
   const dragPreview = useMapStore((s) => s.dragPreview);
-  const token = useMapStore((s) => dragPreview ? s.tokens[dragPreview.tokenId] : null);
+  const token = useMapStore((s) => (dragPreview ? s.tokens[dragPreview.tokenId] : null));
   const gridSize = useMapStore((s) => s.currentMap?.gridSize ?? 70);
   const combat = useCombatStore((s) => s.actionEconomy);
   const isCombatActive = useCombatStore((s) => s.active);
-  const currentTurnTokenId = useCombatStore((s) =>
-    s.combatants[s.currentTurnIndex]?.tokenId ?? null,
+  const currentTurnTokenId = useCombatStore(
+    (s) => s.combatants[s.currentTurnIndex]?.tokenId ?? null
   );
 
   if (!dragPreview) return null;
@@ -959,10 +1000,7 @@ function StagedHeroGhost({
       }}
     >
       {/* Hit area — invisible but hittable so the Group drag works */}
-      <Circle
-        radius={tokenSize / 2 + 6}
-        fill="rgba(0,0,0,0.01)"
-      />
+      <Circle radius={tokenSize / 2 + 6} fill="rgba(0,0,0,0.01)" />
       {/* Gold dashed border */}
       <Circle
         radius={tokenSize / 2 + 3}
@@ -1013,22 +1051,22 @@ export function TokenLayer() {
   const currentMapId = useMapStore((s) => s.currentMap?.id ?? null);
   const stagedHeroesMap = useMapStore((s) => s.stagedHeroes);
   const stagedHeroes = (currentMapId && stagedHeroesMap[currentMapId]) || EMPTY_STAGED;
-  const tokenIds = useMapStore(useShallow((s) => selectVisibleSortedTokenIds(s.tokens, {
-    isDM,
-    userId,
-    enableFog,
-    gridSize: s.currentMap?.gridSize ?? 70,
-    selectedTokenId: s.selectedTokenId,
-  })));
+  const tokenIds = useMapStore(
+    useShallow((s) =>
+      selectVisibleSortedTokenIds(s.tokens, {
+        isDM,
+        userId,
+        enableFog,
+        gridSize: s.currentMap?.gridSize ?? 70,
+        selectedTokenId: s.selectedTokenId,
+      })
+    )
+  );
 
   return (
     <>
       {tokenIds.map((tokenId) => (
-        <TokenSprite
-          key={tokenId}
-          tokenId={tokenId}
-          showTokenLabels={showTokenLabels}
-        />
+        <TokenSprite key={tokenId} tokenId={tokenId} showTokenLabels={showTokenLabels} />
       ))}
       {/* Drag preview overlay (ghost + blue arrow + distance label).
           Mounts only while a drag is in progress; renders after the

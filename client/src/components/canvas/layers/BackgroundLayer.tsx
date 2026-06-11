@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Image as KonvaImage, Rect } from 'react-konva';
 import { theme } from '../../../styles/theme';
+import { isKnownPublicAssetUrl } from '../../../utils/publicAssets';
 import { getVisibleMapRect, type ViewportTransform } from '../../../utils/visibleMapRect';
 
 // NOTE on layer consolidation (2026-04): every visual unit in
@@ -21,10 +22,9 @@ interface BackgroundLayerProps {
 }
 
 function shouldUseAnonymousCors(url: string): boolean {
-  // The public GCS art bucket currently cannot be CORS-updated from this
-  // project account. Setting crossOrigin='anonymous' without CORS headers
-  // makes the browser reject the image, leaving only the dark grid.
-  return !url.startsWith('https://storage.googleapis.com/atlas-bound-data/');
+  // Legacy public art URLs do not always send CORS headers. Setting
+  // crossOrigin='anonymous' there can make browsers reject the image.
+  return !isKnownPublicAssetUrl(url);
 }
 
 function useImage(url: string | null): [HTMLImageElement | null, 'loading' | 'loaded' | 'error'] {
@@ -82,7 +82,16 @@ export function BackgroundLayer({
   const [image, status] = useImage(imageUrl);
   const visibleRect = useMemo(
     () => getVisibleMapRect(width, height, viewport, stageWidth, stageHeight),
-    [width, height, viewport.x, viewport.y, viewport.scaleX, viewport.scaleY, stageWidth, stageHeight],
+    [
+      width,
+      height,
+      viewport.x,
+      viewport.y,
+      viewport.scaleX,
+      viewport.scaleY,
+      stageWidth,
+      stageHeight,
+    ]
   );
 
   if (!visibleRect) return null;
