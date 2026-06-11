@@ -8,22 +8,38 @@ import { useCharacterStore } from '../../stores/useCharacterStore';
 import { emitCharacterUpdate } from '../../socket/emitters';
 import { resolveSpellSlug } from '../../utils/spell-aliases';
 import {
-  getCreatureIconUrl, getCreatureImageUrl, getCreatureImageSvgUrl,
-  getSpellIconUrl, getSpellImageUrl,
-  getItemIconUrl, getItemImageUrl,
-  getClassImageUrl, getClassIconUrl,
-  getRaceImageUrl, getRaceIconUrl,
-  getBackgroundImageUrl, getBackgroundIconUrl,
-  getFeatImageUrl, getFeatIconUrl,
-  getConditionImageUrl, getConditionIconUrl,
-  getRuleImageUrl, getRuleIconUrl,
+  getCreatureImageUrl,
+  getCreatureImageSvgUrl,
+  getSpellIconUrl,
+  getSpellImageUrl,
+  getItemIconUrl,
+  getItemImageUrl,
+  getClassImageUrl,
+  getClassIconUrl,
+  getRaceImageUrl,
+  getRaceIconUrl,
+  getBackgroundImageUrl,
+  getBackgroundIconUrl,
+  getFeatImageUrl,
+  getFeatIconUrl,
+  getConditionImageUrl,
+  getConditionIconUrl,
+  getRuleImageUrl,
+  getRuleIconUrl,
 } from '../../utils/compendiumIcons';
-import { splitCommaList, accentForSense, accentForLanguage, SENSE_LANG_CHIP_BASE } from '../../utils/senseLanguageChips';
+import {
+  splitCommaList,
+  accentForSense,
+  accentForLanguage,
+  SENSE_LANG_CHIP_BASE,
+} from '../../utils/senseLanguageChips';
 import type {
+  AbilityName,
   CompendiumMonster,
   CompendiumSpell,
   CompendiumItem,
   CompendiumSearchResult,
+  Spell as CharacterSpell,
 } from '@dnd-vtt/shared';
 import { CONDITION_MAP } from '@dnd-vtt/shared';
 import { RULES_GLOSSARY } from './rulesGlossary';
@@ -78,8 +94,21 @@ const mdStyles: Record<string, React.CSSProperties> = {
   tableWrapper: { overflowX: 'auto', margin: '8px 0' },
   table: { width: '100%', borderCollapse: 'collapse', fontSize: 11 },
   thead: { background: 'rgba(212,168,67,0.1)' },
-  th: { padding: '4px 8px', textAlign: 'left', borderBottom: `1px solid ${theme.border.default}`, color: theme.gold.dim, fontWeight: 700, fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.04em' },
-  td: { padding: '4px 8px', borderBottom: `1px solid ${theme.border.default}`, color: theme.text.secondary },
+  th: {
+    padding: '4px 8px',
+    textAlign: 'left',
+    borderBottom: `1px solid ${theme.border.default}`,
+    color: theme.gold.dim,
+    fontWeight: 700,
+    fontSize: 10,
+    textTransform: 'uppercase',
+    letterSpacing: '0.04em',
+  },
+  td: {
+    padding: '4px 8px',
+    borderBottom: `1px solid ${theme.border.default}`,
+    color: theme.text.secondary,
+  },
   tr: {},
   heading: { color: theme.text.primary, margin: '10px 0 4px', fontSize: 14, fontWeight: 700 },
   hr: { border: 'none', borderTop: `1px solid ${theme.border.default}`, margin: '8px 0' },
@@ -102,7 +131,12 @@ const RARITY_COLORS: Record<string, string> = {
 
 const ABILITY_LABELS = ['STR', 'DEX', 'CON', 'INT', 'WIS', 'CHA'] as const;
 const ABILITY_KEYS: (keyof CompendiumMonster['abilityScores'])[] = [
-  'str', 'dex', 'con', 'int', 'wis', 'cha',
+  'str',
+  'dex',
+  'con',
+  'int',
+  'wis',
+  'cha',
 ];
 
 function abilityMod(score: number): string {
@@ -116,7 +150,11 @@ function formatSpeed(speed: Record<string, number>): string {
     .join(', ');
 }
 
-function getCreatureImage(_slug: string, name?: string, _type?: string): { svg: string; png: string } {
+function getCreatureImage(
+  _slug: string,
+  name?: string,
+  _type?: string
+): { svg: string; png: string } {
   // Prefer the DB slug — see notes on getSpellImage below for why
   // slugify(name) isn't round-trip-safe. Name/type kept as signature
   // parameters for call-site compatibility but not used.
@@ -128,7 +166,9 @@ function getCreatureImage(_slug: string, name?: string, _type?: string): { svg: 
 
 function MonsterDetail({ monster: initialMonster }: { monster: CompendiumMonster }) {
   const [monster, setMonster] = useState(initialMonster);
-  const [versions, setVersions] = useState<{ slug: string; name: string; source: string; cr: string; hp: number; ac: number }[]>([]);
+  const [versions, setVersions] = useState<
+    { slug: string; name: string; source: string; cr: string; hp: number; ac: number }[]
+  >([]);
   const [selectedSlug, setSelectedSlug] = useState(initialMonster.slug);
   const imageUrls = getCreatureImage(monster.slug, monster.name, monster.type);
   const [imgSrc, setImgSrc] = useState(imageUrls.png);
@@ -153,15 +193,17 @@ function MonsterDetail({ monster: initialMonster }: { monster: CompendiumMonster
         setImgExists(true);
         setImageSource('uploaded');
       }
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
     setUploading(false);
   };
 
   // Fetch all versions of this monster
   useEffect(() => {
     fetch(`/api/compendium/monsters/${initialMonster.slug}/versions`)
-      .then(r => r.ok ? r.json() : [])
-      .then(v => setVersions(v))
+      .then((r) => (r.ok ? r.json() : []))
+      .then((v) => setVersions(v))
       .catch(() => {});
   }, [initialMonster.slug]);
 
@@ -174,8 +216,13 @@ function MonsterDetail({ monster: initialMonster }: { monster: CompendiumMonster
     setSelectedSlug(slug);
     // Preview the version immediately
     fetch(`/api/compendium/monsters/${slug}`)
-      .then(r => r.ok ? r.json() : null)
-      .then(data => { if (data) { setMonster(data); setImgExists(true); } })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (data) {
+          setMonster(data);
+          setImgExists(true);
+        }
+      })
       .catch(() => {});
   };
 
@@ -189,7 +236,7 @@ function MonsterDetail({ monster: initialMonster }: { monster: CompendiumMonster
           hitPoints: monster.hitPoints,
           maxHitPoints: monster.hitPoints,
           armorClass: monster.armorClass,
-          speed: typeof monster.speed === 'object' ? (monster.speed.walk || 30) : 30,
+          speed: typeof monster.speed === 'object' ? monster.speed.walk || 30 : 30,
           abilityScores: JSON.stringify(monster.abilityScores),
         };
         emitCharacterUpdate(token.characterId, updates);
@@ -204,20 +251,30 @@ function MonsterDetail({ monster: initialMonster }: { monster: CompendiumMonster
         <div style={{ marginBottom: 8 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
             <span style={{ fontSize: 10, color: theme.text.muted, fontWeight: 600 }}>Source:</span>
-            {versions.map(v => {
+            {versions.map((v) => {
               const isActive = v.slug === selectedSlug;
               const isOriginal = v.slug === originalSlug;
               return (
-                <button key={v.slug} onClick={() => handleVersionChange(v.slug)} style={{
-                  padding: '3px 8px', fontSize: 10, borderRadius: 12, cursor: 'pointer',
-                  border: isActive ? `1px solid ${theme.state.danger}` : '1px solid transparent',
-                  background: isActive ? theme.state.dangerBg : 'rgba(255,255,255,0.05)',
-                  color: isActive ? theme.text.primary : theme.text.muted,
-                  fontWeight: isActive ? 600 : 400,
-                  fontFamily: 'inherit', transition: 'all 0.15s',
-                }}>
+                <button
+                  key={v.slug}
+                  onClick={() => handleVersionChange(v.slug)}
+                  style={{
+                    padding: '3px 8px',
+                    fontSize: 10,
+                    borderRadius: 12,
+                    cursor: 'pointer',
+                    border: isActive ? `1px solid ${theme.state.danger}` : '1px solid transparent',
+                    background: isActive ? theme.state.dangerBg : 'rgba(255,255,255,0.05)',
+                    color: isActive ? theme.text.primary : theme.text.muted,
+                    fontWeight: isActive ? 600 : 400,
+                    fontFamily: 'inherit',
+                    transition: 'all 0.15s',
+                  }}
+                >
                   {v.source}
-                  {isOriginal && !isActive && <span style={{ marginLeft: 3, fontSize: 8, color: theme.text.muted }}>●</span>}
+                  {isOriginal && !isActive && (
+                    <span style={{ marginLeft: 3, fontSize: 8, color: theme.text.muted }}>●</span>
+                  )}
                 </button>
               );
             })}
@@ -225,20 +282,37 @@ function MonsterDetail({ monster: initialMonster }: { monster: CompendiumMonster
 
           {/* Apply bar - shows when previewing a different version */}
           {isChanged && (
-            <div style={{
-              marginTop: 8, display: 'flex', alignItems: 'center', gap: 8,
-              padding: '6px 10px', background: 'rgba(197,49,49,0.08)',
-              borderRadius: 6, border: '1px solid rgba(197,49,49,0.2)',
-            }}>
+            <div
+              style={{
+                marginTop: 8,
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8,
+                padding: '6px 10px',
+                background: 'rgba(197,49,49,0.08)',
+                borderRadius: 6,
+                border: '1px solid rgba(197,49,49,0.2)',
+              }}
+            >
               <span style={{ flex: 1, fontSize: 11, color: theme.text.secondary }}>
-                Viewing <strong style={{ color: theme.text.primary }}>{monster.source}</strong> — HP {monster.hitPoints}, AC {monster.armorClass}
+                Viewing <strong style={{ color: theme.text.primary }}>{monster.source}</strong> — HP{' '}
+                {monster.hitPoints}, AC {monster.armorClass}
               </span>
-              <button onClick={applyChanges} style={{
-                padding: '5px 16px', fontSize: 11, fontWeight: 700, borderRadius: 4,
-                background: theme.state.danger, border: 'none',
-                color: theme.text.primary, cursor: 'pointer', fontFamily: 'inherit',
-                whiteSpace: 'nowrap',
-              }}>
+              <button
+                onClick={applyChanges}
+                style={{
+                  padding: '5px 16px',
+                  fontSize: 11,
+                  fontWeight: 700,
+                  borderRadius: 4,
+                  background: theme.state.danger,
+                  border: 'none',
+                  color: theme.text.primary,
+                  cursor: 'pointer',
+                  fontFamily: 'inherit',
+                  whiteSpace: 'nowrap',
+                }}
+              >
                 Apply
               </button>
             </div>
@@ -247,11 +321,12 @@ function MonsterDetail({ monster: initialMonster }: { monster: CompendiumMonster
       )}
 
       {/* Single source label */}
-      {versions.length <= 1 && (monster.source || (versions.length === 1 && versions[0].source)) && (
-        <div style={{ fontSize: 10, color: theme.text.muted, marginBottom: 6 }}>
-          Source: {versions.length === 1 ? versions[0].source : monster.source}
-        </div>
-      )}
+      {versions.length <= 1 &&
+        (monster.source || (versions.length === 1 && versions[0].source)) && (
+          <div style={{ fontSize: 10, color: theme.text.muted, marginBottom: 6 }}>
+            Source: {versions.length === 1 ? versions[0].source : monster.source}
+          </div>
+        )}
 
       {/* Header with image */}
       <div style={{ display: 'flex', gap: 12, alignItems: 'center', marginBottom: 8 }}>
@@ -268,7 +343,13 @@ function MonsterDetail({ monster: initialMonster }: { monster: CompendiumMonster
                   setImgExists(false);
                 }
               }}
-              style={{ width: 64, height: 64, borderRadius: '50%', objectFit: 'cover', border: `3px solid ${theme.state.danger}` }}
+              style={{
+                width: 64,
+                height: 64,
+                borderRadius: '50%',
+                objectFit: 'cover',
+                border: `3px solid ${theme.state.danger}`,
+              }}
             />
           )}
           {/* DM upload button */}
@@ -290,11 +371,20 @@ function MonsterDetail({ monster: initialMonster }: { monster: CompendiumMonster
                 disabled={uploading}
                 title="Upload custom token art"
                 style={{
-                  position: 'absolute', bottom: -4, right: -4,
-                  width: 22, height: 22, borderRadius: '50%',
-                  background: theme.bg.deep, border: `2px solid ${theme.border.default}`,
-                  color: theme.text.secondary, fontSize: 12, cursor: 'pointer',
-                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  position: 'absolute',
+                  bottom: -4,
+                  right: -4,
+                  width: 22,
+                  height: 22,
+                  borderRadius: '50%',
+                  background: theme.bg.deep,
+                  border: `2px solid ${theme.border.default}`,
+                  color: theme.text.secondary,
+                  fontSize: 12,
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
                   padding: 0,
                 }}
               >
@@ -307,10 +397,17 @@ function MonsterDetail({ monster: initialMonster }: { monster: CompendiumMonster
             <div
               title="Placeholder — upload custom art"
               style={{
-                position: 'absolute', top: -2, right: -2,
-                fontSize: 7, fontWeight: 700, color: theme.text.muted,
-                background: theme.bg.elevated, border: `1px solid ${theme.border.light}`,
-                borderRadius: 3, padding: '1px 3px', lineHeight: 1,
+                position: 'absolute',
+                top: -2,
+                right: -2,
+                fontSize: 7,
+                fontWeight: 700,
+                color: theme.text.muted,
+                background: theme.bg.elevated,
+                border: `1px solid ${theme.border.light}`,
+                borderRadius: 3,
+                padding: '1px 3px',
+                lineHeight: 1,
               }}
             >
               GEN
@@ -345,9 +442,7 @@ function MonsterDetail({ monster: initialMonster }: { monster: CompendiumMonster
         {ABILITY_LABELS.map((label, i) => (
           <div key={label} style={detailStyles.abilityBox}>
             <div style={detailStyles.abilityLabel}>{label}</div>
-            <div style={detailStyles.abilityScore}>
-              {monster.abilityScores[ABILITY_KEYS[i]]}
-            </div>
+            <div style={detailStyles.abilityScore}>{monster.abilityScores[ABILITY_KEYS[i]]}</div>
             <div style={detailStyles.abilityMod}>
               ({abilityMod(monster.abilityScores[ABILITY_KEYS[i]])})
             </div>
@@ -369,15 +464,20 @@ function MonsterDetail({ monster: initialMonster }: { monster: CompendiumMonster
       )}
       {monster.conditionImmunities && (
         <div style={detailStyles.statLine}>
-          <span style={detailStyles.statLabel}>Condition Immunities</span> {monster.conditionImmunities}
+          <span style={detailStyles.statLabel}>Condition Immunities</span>{' '}
+          {monster.conditionImmunities}
         </div>
       )}
       {monster.senses && (
         <div style={detailStyles.statLine}>
           <span style={detailStyles.statLabel}>Senses</span>{' '}
-          <span style={{ display: 'inline-flex', flexWrap: 'wrap', gap: 4, verticalAlign: 'middle' }}>
+          <span
+            style={{ display: 'inline-flex', flexWrap: 'wrap', gap: 4, verticalAlign: 'middle' }}
+          >
             {splitCommaList(monster.senses).map((s, i) => (
-              <span key={i} style={{ ...SENSE_LANG_CHIP_BASE, ...accentForSense(s) }}>{s}</span>
+              <span key={i} style={{ ...SENSE_LANG_CHIP_BASE, ...accentForSense(s) }}>
+                {s}
+              </span>
             ))}
           </span>
         </div>
@@ -385,9 +485,13 @@ function MonsterDetail({ monster: initialMonster }: { monster: CompendiumMonster
       {monster.languages && (
         <div style={detailStyles.statLine}>
           <span style={detailStyles.statLabel}>Languages</span>{' '}
-          <span style={{ display: 'inline-flex', flexWrap: 'wrap', gap: 4, verticalAlign: 'middle' }}>
+          <span
+            style={{ display: 'inline-flex', flexWrap: 'wrap', gap: 4, verticalAlign: 'middle' }}
+          >
             {splitCommaList(monster.languages).map((s, i) => (
-              <span key={i} style={{ ...SENSE_LANG_CHIP_BASE, ...accentForLanguage(s) }}>{s}</span>
+              <span key={i} style={{ ...SENSE_LANG_CHIP_BASE, ...accentForLanguage(s) }}>
+                {s}
+              </span>
             ))}
           </span>
         </div>
@@ -422,9 +526,7 @@ function MonsterDetail({ monster: initialMonster }: { monster: CompendiumMonster
                 <span style={detailStyles.attackBonus}>+{a.attack_bonus} to hit</span>
               )}
               {a.attack_bonus != null && a.damage_dice && ', '}
-              {a.damage_dice && (
-                <span style={detailStyles.damageDice}>{a.damage_dice} damage</span>
-              )}
+              {a.damage_dice && <span style={detailStyles.damageDice}>{a.damage_dice} damage</span>}
               {(a.attack_bonus != null || a.damage_dice) && '. '}
               <MarkdownContent text={a.desc} />
             </div>
@@ -483,7 +585,6 @@ function SpellDetail({ spell }: { spell: CompendiumSpell }) {
 
   // Add-to-character DM control
   const isDM = useSessionStore((s) => s.isDM);
-  const userId = useSessionStore((s) => s.userId);
   const allCharacters = useCharacterStore((s) => s.allCharacters);
   const tokens = useMapStore((s) => s.tokens);
   const [showCharPicker, setShowCharPicker] = useState(false);
@@ -499,26 +600,25 @@ function SpellDetail({ spell }: { spell: CompendiumSpell }) {
     const seen = new Set<string>();
     const out: { id: string; name: string }[] = [];
     for (const t of Object.values(tokens)) {
-      const cid = (t as any).characterId as string | null;
+      const cid = t.characterId;
       if (!cid || seen.has(cid)) continue;
       const ch = allCharacters[cid];
       if (!ch) continue;
-      out.push({ id: cid, name: ch.name || (t as any).name || 'Unnamed' });
+      out.push({ id: cid, name: ch.name || t.name || 'Unnamed' });
       seen.add(cid);
     }
     return out;
-    // userId retained only to keep the dep stable when we re-enable
-    // self-grant under a future session-setting.
-  }, [tokens, allCharacters, isDM, userId]);
+  }, [tokens, allCharacters, isDM]);
 
   async function grantToCharacter(characterId: string) {
     setAdding(characterId);
     try {
       const ch = allCharacters[characterId];
       if (!ch) return;
-      const existingSpells = (typeof ch.spells === 'string' ? JSON.parse(ch.spells) : ch.spells) || [];
+      const existingSpells: CharacterSpell[] =
+        (typeof ch.spells === 'string' ? JSON.parse(ch.spells) : ch.spells) || [];
       // Skip if they already know it
-      if (existingSpells.some((s: any) => s.name?.toLowerCase() === spell.name.toLowerCase())) {
+      if (existingSpells.some((s) => s.name?.toLowerCase() === spell.name.toLowerCase())) {
         setShowCharPicker(false);
         setAdding(null);
         return;
@@ -526,7 +626,7 @@ function SpellDetail({ spell }: { spell: CompendiumSpell }) {
 
       // Inline conversion (mirrors compendiumSpellToCharSpell in CharacterSheetFull)
       const cleanDesc = (spell.description || '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ');
-      const newSpell: any = {
+      const newSpell: CharacterSpell = {
         name: spell.name,
         level: spell.level,
         school: spell.school,
@@ -542,18 +642,43 @@ function SpellDetail({ spell }: { spell: CompendiumSpell }) {
       const dmgMatch = cleanDesc.match(/(\d+d\d+(?:\s*\+\s*\d+)?)\s+(\w+)\s*damage/i);
       if (dmgMatch) {
         newSpell.damage = dmgMatch[1].replace(/\s/g, '');
-        const validTypes = ['acid','bludgeoning','cold','fire','force','lightning','necrotic','piercing','poison','psychic','radiant','slashing','thunder'];
+        const validTypes = [
+          'acid',
+          'bludgeoning',
+          'cold',
+          'fire',
+          'force',
+          'lightning',
+          'necrotic',
+          'piercing',
+          'poison',
+          'psychic',
+          'radiant',
+          'slashing',
+          'thunder',
+        ];
         const t = dmgMatch[2].toLowerCase();
         if (validTypes.includes(t)) newSpell.damageType = t;
       }
-      const saveMatch = cleanDesc.match(/(strength|dexterity|constitution|wisdom|intelligence|charisma)\s+saving\s+throw/i);
+      const saveMatch = cleanDesc.match(
+        /(strength|dexterity|constitution|wisdom|intelligence|charisma)\s+saving\s+throw/i
+      );
       if (saveMatch) {
-        const m: Record<string, string> = { strength:'str', dexterity:'dex', constitution:'con', wisdom:'wis', intelligence:'int', charisma:'cha' };
+        const m: Record<string, AbilityName> = {
+          strength: 'str',
+          dexterity: 'dex',
+          constitution: 'con',
+          wisdom: 'wis',
+          intelligence: 'int',
+          charisma: 'cha',
+        };
         newSpell.savingThrow = m[saveMatch[1].toLowerCase()];
       }
       if (/ranged spell attack/i.test(cleanDesc)) newSpell.attackType = 'ranged';
       else if (/melee spell attack/i.test(cleanDesc)) newSpell.attackType = 'melee';
-      const aoeMatch = cleanDesc.match(/(\d+)[- ]foot[- ](radius|sphere|cube|cone|line|cylinder|emanation)/i);
+      const aoeMatch = cleanDesc.match(
+        /(\d+)[- ]foot[- ](radius|sphere|cube|cone|line|cylinder|emanation)/i
+      );
       if (aoeMatch) {
         newSpell.aoeSize = parseInt(aoeMatch[1]);
         const shape = aoeMatch[2].toLowerCase();
@@ -589,7 +714,14 @@ function SpellDetail({ spell }: { spell: CompendiumSpell }) {
                 setImgExists(false);
               }
             }}
-            style={{ width: 56, height: 56, borderRadius: '50%', objectFit: 'cover', border: `3px solid ${theme.gold.primary}`, flexShrink: 0 }}
+            style={{
+              width: 56,
+              height: 56,
+              borderRadius: '50%',
+              objectFit: 'cover',
+              border: `3px solid ${theme.gold.primary}`,
+              flexShrink: 0,
+            }}
           />
         )}
         <div style={{ flex: 1 }}>
@@ -600,37 +732,79 @@ function SpellDetail({ spell }: { spell: CompendiumSpell }) {
         {/* Add to character */}
         {grantTargets.length > 0 && (
           <div style={{ position: 'relative' }}>
-            <button onClick={() => setShowCharPicker(v => !v)} style={{
-              padding: '6px 12px', fontSize: 11, fontWeight: 700,
-              background: theme.gold.bg, color: theme.gold.primary,
-              border: `1px solid ${theme.gold.border}`, borderRadius: 4,
-              cursor: 'pointer', fontFamily: 'inherit',
-              textTransform: 'uppercase', letterSpacing: '0.04em',
-              whiteSpace: 'nowrap',
-            }}>
+            <button
+              onClick={() => setShowCharPicker((v) => !v)}
+              style={{
+                padding: '6px 12px',
+                fontSize: 11,
+                fontWeight: 700,
+                background: theme.gold.bg,
+                color: theme.gold.primary,
+                border: `1px solid ${theme.gold.border}`,
+                borderRadius: 4,
+                cursor: 'pointer',
+                fontFamily: 'inherit',
+                textTransform: 'uppercase',
+                letterSpacing: '0.04em',
+                whiteSpace: 'nowrap',
+              }}
+            >
               + Add to character
             </button>
             {showCharPicker && (
-              <div style={{
-                position: 'absolute', top: '100%', right: 0, marginTop: 4,
-                background: theme.bg.card, border: `1px solid ${theme.gold.border}`,
-                borderRadius: 6, padding: 4, zIndex: 100,
-                boxShadow: '0 4px 16px rgba(0,0,0,0.6)',
-                minWidth: 160, maxHeight: 240, overflowY: 'auto',
-              }}>
-                <div style={{ fontSize: 9, color: theme.text.muted, padding: '4px 8px', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+              <div
+                style={{
+                  position: 'absolute',
+                  top: '100%',
+                  right: 0,
+                  marginTop: 4,
+                  background: theme.bg.card,
+                  border: `1px solid ${theme.gold.border}`,
+                  borderRadius: 6,
+                  padding: 4,
+                  zIndex: 100,
+                  boxShadow: '0 4px 16px rgba(0,0,0,0.6)',
+                  minWidth: 160,
+                  maxHeight: 240,
+                  overflowY: 'auto',
+                }}
+              >
+                <div
+                  style={{
+                    fontSize: 9,
+                    color: theme.text.muted,
+                    padding: '4px 8px',
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.04em',
+                  }}
+                >
                   Grant to:
                 </div>
-                {grantTargets.map(t => (
-                  <button key={t.id} onClick={() => grantToCharacter(t.id)} disabled={adding === t.id} style={{
-                    display: 'block', width: '100%', textAlign: 'left',
-                    padding: '6px 10px', fontSize: 11, fontWeight: 600,
-                    background: 'transparent', color: theme.text.primary,
-                    border: 'none', cursor: 'pointer', fontFamily: 'inherit',
-                    borderRadius: 3,
-                  }}
-                    onMouseEnter={e => { e.currentTarget.style.background = theme.gold.bg; }}
-                    onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}
+                {grantTargets.map((t) => (
+                  <button
+                    key={t.id}
+                    onClick={() => grantToCharacter(t.id)}
+                    disabled={adding === t.id}
+                    style={{
+                      display: 'block',
+                      width: '100%',
+                      textAlign: 'left',
+                      padding: '6px 10px',
+                      fontSize: 11,
+                      fontWeight: 600,
+                      background: 'transparent',
+                      color: theme.text.primary,
+                      border: 'none',
+                      cursor: 'pointer',
+                      fontFamily: 'inherit',
+                      borderRadius: 3,
+                    }}
+                    onMouseEnter={(e) => {
+                      e.currentTarget.style.background = theme.gold.bg;
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.background = 'transparent';
+                    }}
                   >
                     {adding === t.id ? '...' : t.name}
                   </button>
@@ -675,7 +849,9 @@ function SpellDetail({ spell }: { spell: CompendiumSpell }) {
       {Array.isArray(spell.classes) && spell.classes.length > 0 && (
         <div style={detailStyles.classesRow}>
           {spell.classes.map((c) => (
-            <span key={c} style={detailStyles.classChip}>{c}</span>
+            <span key={c} style={detailStyles.classChip}>
+              {c}
+            </span>
           ))}
         </div>
       )}
@@ -683,7 +859,13 @@ function SpellDetail({ spell }: { spell: CompendiumSpell }) {
   );
 }
 
-function ItemDetail({ item, onClose }: { item: CompendiumItem & { rawJson?: Record<string, unknown> }; onClose?: () => void }) {
+function ItemDetail({
+  item,
+  onClose,
+}: {
+  item: CompendiumItem & { rawJson?: Record<string, unknown> };
+  onClose?: () => void;
+}) {
   const rarityColor = RARITY_COLORS[item.rarity.toLowerCase()] ?? '#888';
   const itemImg = getItemImage(item.slug, item.name, item.type);
   const [itemImgSrc, setItemImgSrc] = useState(itemImg.png);
@@ -706,11 +888,11 @@ function ItemDetail({ item, onClose }: { item: CompendiumItem & { rawJson?: Reco
     const seen = new Set<string>();
     const out: { id: string; name: string }[] = [];
     for (const t of Object.values(tokens)) {
-      const cid = (t as any).characterId as string | null;
+      const cid = t.characterId;
       if (!cid || seen.has(cid)) continue;
       const ch = allCharacters[cid];
       if (!ch) continue;
-      out.push({ id: cid, name: ch.name || (t as any).name || 'Unnamed' });
+      out.push({ id: cid, name: ch.name || t.name || 'Unnamed' });
       seen.add(cid);
     }
     return out;
@@ -721,9 +903,10 @@ function ItemDetail({ item, onClose }: { item: CompendiumItem & { rawJson?: Reco
     try {
       const ch = allCharacters[characterId];
       if (!ch) return;
-      const existingInventory = (
-        typeof ch.inventory === 'string' ? JSON.parse(ch.inventory as unknown as string) : ch.inventory
-      ) || [];
+      const existingInventory =
+        (typeof ch.inventory === 'string'
+          ? JSON.parse(ch.inventory as unknown as string)
+          : ch.inventory) || [];
       const nextItem: Record<string, unknown> = {
         name: item.name,
         quantity: 1,
@@ -733,11 +916,12 @@ function ItemDetail({ item, onClose }: { item: CompendiumItem & { rawJson?: Reco
         slug: item.slug,
         imageUrl: item.slug ? `/uploads/items/${item.slug}.png` : null,
         weight: (raw.weight as number) ?? 0,
-        cost: (raw.costGp ?? raw.valueGp ?? 0),
+        cost: raw.costGp ?? raw.valueGp ?? 0,
       };
       if (raw.damage) nextItem.damage = raw.damage;
       if (raw.damageType) nextItem.damageType = raw.damageType;
-      if (Array.isArray(raw.properties) && (raw.properties as string[]).length > 0) nextItem.properties = raw.properties;
+      if (Array.isArray(raw.properties) && (raw.properties as string[]).length > 0)
+        nextItem.properties = raw.properties;
       if (raw.range) nextItem.range = raw.range;
       if (raw.ac || raw.acBonus) nextItem.acBonus = raw.ac ?? raw.acBonus;
       if (item.requiresAttunement) nextItem.attunement = true;
@@ -751,20 +935,22 @@ function ItemDetail({ item, onClose }: { item: CompendiumItem & { rawJson?: Reco
   }
 
   // Parse raw_json for structured stats
-  const raw = (item.rawJson && typeof item.rawJson === 'object') ? item.rawJson : {};
-  const damage = raw.damage as string || '';
-  const damageType = raw.damageType as string || '';
-  const properties = raw.properties as string[] || [];
-  const range = raw.range as string || '';
-  const weight = raw.weight as number || 0;
+  const raw = item.rawJson && typeof item.rawJson === 'object' ? item.rawJson : {};
+  const damage = (raw.damage as string) || '';
+  const damageType = (raw.damageType as string) || '';
+  const properties = (raw.properties as string[]) || [];
+  const range = (raw.range as string) || '';
+  const weight = (raw.weight as number) || 0;
   const costGp = (raw.costGp ?? raw.valueGp ?? 0) as number;
-  const ac = raw.ac as number || raw.acBonus as number || 0;
-  const acType = raw.acType as string || '';
-  const versatileDamage = raw.versatileDamage as string || '';
-  const strRequired = raw.strRequired as number || 0;
-  const stealthDisadvantage = raw.stealthDisadvantage as boolean || false;
+  const ac = (raw.ac as number) || (raw.acBonus as number) || 0;
+  const acType = (raw.acType as string) || '';
+  const versatileDamage = (raw.versatileDamage as string) || '';
+  const strRequired = (raw.strRequired as number) || 0;
+  const stealthDisadvantage = (raw.stealthDisadvantage as boolean) || false;
   const isWeapon = (item.type || '').toLowerCase().includes('weapon');
-  const isArmor = (item.type || '').toLowerCase().includes('armor') || (item.type || '').toLowerCase().includes('shield');
+  const isArmor =
+    (item.type || '').toLowerCase().includes('armor') ||
+    (item.type || '').toLowerCase().includes('shield');
 
   // Edit state (must be after raw values are parsed)
   const [editName, setEditName] = useState(item.name);
@@ -783,8 +969,13 @@ function ItemDetail({ item, onClose }: { item: CompendiumItem & { rawJson?: Reco
   let parsedDamage = damage;
   let parsedDamageType = damageType;
   if (!parsedDamage && isWeapon && item.description) {
-    const m = item.description.match(/(\d+d\d+(?:\s*\+\s*\d+)?)\s+(slashing|piercing|bludgeoning|fire|cold|lightning|thunder|acid|poison|necrotic|radiant|force|psychic)/i);
-    if (m) { parsedDamage = m[1].replace(/\s/g, ''); parsedDamageType = m[2].toLowerCase(); }
+    const m = item.description.match(
+      /(\d+d\d+(?:\s*\+\s*\d+)?)\s+(slashing|piercing|bludgeoning|fire|cold|lightning|thunder|acid|poison|necrotic|radiant|force|psychic)/i
+    );
+    if (m) {
+      parsedDamage = m[1].replace(/\s/g, '');
+      parsedDamageType = m[2].toLowerCase();
+    }
   }
 
   return (
@@ -803,7 +994,14 @@ function ItemDetail({ item, onClose }: { item: CompendiumItem & { rawJson?: Reco
                 setImgExists(false);
               }
             }}
-            style={{ width: 56, height: 56, borderRadius: '50%', objectFit: 'cover', border: `3px solid ${rarityColor}`, flexShrink: 0 }}
+            style={{
+              width: 56,
+              height: 56,
+              borderRadius: '50%',
+              objectFit: 'cover',
+              border: `3px solid ${rarityColor}`,
+              flexShrink: 0,
+            }}
           />
         )}
         <div style={{ flex: 1 }}>
@@ -821,40 +1019,79 @@ function ItemDetail({ item, onClose }: { item: CompendiumItem & { rawJson?: Reco
             loot without opening each character sheet. */}
         {grantTargets.length > 0 && (
           <div style={{ position: 'relative' }}>
-            <button onClick={() => setShowCharPicker((v) => !v)} style={{
-              padding: '6px 12px', fontSize: 11, fontWeight: 700,
-              background: theme.gold.bg, color: theme.gold.primary,
-              border: `1px solid ${theme.gold.border}`, borderRadius: 4,
-              cursor: 'pointer', fontFamily: 'inherit',
-              textTransform: 'uppercase', letterSpacing: '0.04em',
-              whiteSpace: 'nowrap',
-            }}>
+            <button
+              onClick={() => setShowCharPicker((v) => !v)}
+              style={{
+                padding: '6px 12px',
+                fontSize: 11,
+                fontWeight: 700,
+                background: theme.gold.bg,
+                color: theme.gold.primary,
+                border: `1px solid ${theme.gold.border}`,
+                borderRadius: 4,
+                cursor: 'pointer',
+                fontFamily: 'inherit',
+                textTransform: 'uppercase',
+                letterSpacing: '0.04em',
+                whiteSpace: 'nowrap',
+              }}
+            >
               + Add to character
             </button>
             {showCharPicker && (
-              <div style={{
-                position: 'absolute', top: '100%', right: 0, marginTop: 4,
-                background: theme.bg.card, border: `1px solid ${theme.gold.border}`,
-                borderRadius: 6, padding: 4, zIndex: 100,
-                boxShadow: '0 4px 16px rgba(0,0,0,0.6)',
-                minWidth: 160, maxHeight: 240, overflowY: 'auto',
-              }}>
-                <div style={{
-                  fontSize: 9, color: theme.text.muted, padding: '4px 8px',
-                  textTransform: 'uppercase', letterSpacing: '0.04em',
-                }}>
+              <div
+                style={{
+                  position: 'absolute',
+                  top: '100%',
+                  right: 0,
+                  marginTop: 4,
+                  background: theme.bg.card,
+                  border: `1px solid ${theme.gold.border}`,
+                  borderRadius: 6,
+                  padding: 4,
+                  zIndex: 100,
+                  boxShadow: '0 4px 16px rgba(0,0,0,0.6)',
+                  minWidth: 160,
+                  maxHeight: 240,
+                  overflowY: 'auto',
+                }}
+              >
+                <div
+                  style={{
+                    fontSize: 9,
+                    color: theme.text.muted,
+                    padding: '4px 8px',
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.04em',
+                  }}
+                >
                   Grant to:
                 </div>
                 {grantTargets.map((t) => (
-                  <button key={t.id} onClick={() => grantItemToCharacter(t.id)} disabled={granting === t.id} style={{
-                    display: 'block', width: '100%', textAlign: 'left',
-                    padding: '6px 10px', fontSize: 11, fontWeight: 600,
-                    background: 'transparent', color: theme.text.primary,
-                    border: 'none', cursor: 'pointer', fontFamily: 'inherit',
-                    borderRadius: 3,
-                  }}
-                    onMouseEnter={(e) => { e.currentTarget.style.background = theme.gold.bg; }}
-                    onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
+                  <button
+                    key={t.id}
+                    onClick={() => grantItemToCharacter(t.id)}
+                    disabled={granting === t.id}
+                    style={{
+                      display: 'block',
+                      width: '100%',
+                      textAlign: 'left',
+                      padding: '6px 10px',
+                      fontSize: 11,
+                      fontWeight: 600,
+                      background: 'transparent',
+                      color: theme.text.primary,
+                      border: 'none',
+                      cursor: 'pointer',
+                      fontFamily: 'inherit',
+                      borderRadius: 3,
+                    }}
+                    onMouseEnter={(e) => {
+                      e.currentTarget.style.background = theme.gold.bg;
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.background = 'transparent';
+                    }}
                   >
                     {granting === t.id ? '...' : t.name}
                   </button>
@@ -890,10 +1127,12 @@ function ItemDetail({ item, onClose }: { item: CompendiumItem & { rawJson?: Reco
             {isArmor && ac > 0 && (
               <div style={itemStatStyles.statBox}>
                 <div style={itemStatStyles.statLabel}>AC</div>
-                <div style={itemStatStyles.statValue}>
-                  {item.type === 'Shield' ? `+${ac}` : ac}
-                </div>
-                {acType && acType !== 'flat' && <div style={itemStatStyles.statSub}>{acType === 'dex' ? '+ Dex' : acType === 'dex-max-2' ? '+ Dex (max 2)' : acType}</div>}
+                <div style={itemStatStyles.statValue}>{item.type === 'Shield' ? `+${ac}` : ac}</div>
+                {acType && acType !== 'flat' && (
+                  <div style={itemStatStyles.statSub}>
+                    {acType === 'dex' ? '+ Dex' : acType === 'dex-max-2' ? '+ Dex (max 2)' : acType}
+                  </div>
+                )}
               </div>
             )}
             {range && (
@@ -911,21 +1150,29 @@ function ItemDetail({ item, onClose }: { item: CompendiumItem & { rawJson?: Reco
             {costGp > 0 && (
               <div style={itemStatStyles.statBox}>
                 <div style={itemStatStyles.statLabel}>Cost</div>
-                <div style={itemStatStyles.statValue}>{costGp >= 1 ? `${costGp} gp` : `${Math.round(costGp * 10)} sp`}</div>
+                <div style={itemStatStyles.statValue}>
+                  {costGp >= 1 ? `${costGp} gp` : `${Math.round(costGp * 10)} sp`}
+                </div>
               </div>
             )}
           </div>
           {properties.length > 0 && (
             <div style={{ fontSize: 11, color: theme.text.secondary, marginBottom: 6 }}>
-              <span style={{ fontWeight: 700, color: theme.text.muted, fontSize: 10 }}>Properties: </span>
+              <span style={{ fontWeight: 700, color: theme.text.muted, fontSize: 10 }}>
+                Properties:{' '}
+              </span>
               {properties.join(', ')}
             </div>
           )}
           {strRequired > 0 && (
-            <div style={{ fontSize: 11, color: theme.text.muted, marginBottom: 4 }}>Requires Strength {strRequired}</div>
+            <div style={{ fontSize: 11, color: theme.text.muted, marginBottom: 4 }}>
+              Requires Strength {strRequired}
+            </div>
           )}
           {stealthDisadvantage && (
-            <div style={{ fontSize: 11, color: theme.state.danger, marginBottom: 4 }}>Disadvantage on Stealth</div>
+            <div style={{ fontSize: 11, color: theme.state.danger, marginBottom: 4 }}>
+              Disadvantage on Stealth
+            </div>
           )}
         </>
       )}
@@ -936,195 +1183,486 @@ function ItemDetail({ item, onClose }: { item: CompendiumItem & { rawJson?: Reco
 
       {/* Homebrew edit/delete */}
       {isHomebrew && !editing && (
-        <div style={{ display: 'flex', gap: 6, marginTop: 12, borderTop: `1px solid ${theme.border.default}`, paddingTop: 10 }}>
-          <span style={{ fontSize: 9, color: theme.gold.dim, background: theme.gold.bg, padding: '2px 6px', borderRadius: 3, border: `1px solid ${theme.gold.border}`, alignSelf: 'center' }}>
+        <div
+          style={{
+            display: 'flex',
+            gap: 6,
+            marginTop: 12,
+            borderTop: `1px solid ${theme.border.default}`,
+            paddingTop: 10,
+          }}
+        >
+          <span
+            style={{
+              fontSize: 9,
+              color: theme.gold.dim,
+              background: theme.gold.bg,
+              padding: '2px 6px',
+              borderRadius: 3,
+              border: `1px solid ${theme.gold.border}`,
+              alignSelf: 'center',
+            }}
+          >
             Homebrew
           </span>
           <div style={{ flex: 1 }} />
-          <button onClick={() => setEditing(true)} style={{
-            padding: '4px 12px', fontSize: 10, fontWeight: 600, borderRadius: 4,
-            background: theme.bg.elevated, border: `1px solid ${theme.border.default}`,
-            color: theme.text.secondary, cursor: 'pointer', fontFamily: theme.font.body,
-          }}>Edit</button>
-          <button onClick={() => setConfirmDelete(true)} style={{
-            padding: '4px 12px', fontSize: 10, fontWeight: 600, borderRadius: 4,
-            background: 'rgba(197,49,49,0.1)', border: '1px solid rgba(197,49,49,0.3)',
-            color: theme.state.danger, cursor: 'pointer', fontFamily: theme.font.body,
-          }}>Delete</button>
+          <button
+            onClick={() => setEditing(true)}
+            style={{
+              padding: '4px 12px',
+              fontSize: 10,
+              fontWeight: 600,
+              borderRadius: 4,
+              background: theme.bg.elevated,
+              border: `1px solid ${theme.border.default}`,
+              color: theme.text.secondary,
+              cursor: 'pointer',
+              fontFamily: theme.font.body,
+            }}
+          >
+            Edit
+          </button>
+          <button
+            onClick={() => setConfirmDelete(true)}
+            style={{
+              padding: '4px 12px',
+              fontSize: 10,
+              fontWeight: 600,
+              borderRadius: 4,
+              background: 'rgba(197,49,49,0.1)',
+              border: '1px solid rgba(197,49,49,0.3)',
+              color: theme.state.danger,
+              cursor: 'pointer',
+              fontFamily: theme.font.body,
+            }}
+          >
+            Delete
+          </button>
         </div>
       )}
 
       {/* Delete confirmation */}
       {confirmDelete && (
-        <div style={{
-          marginTop: 8, padding: 10, borderRadius: 6,
-          background: 'rgba(197,49,49,0.1)', border: '1px solid rgba(197,49,49,0.3)',
-        }}>
-          <div style={{ fontSize: 12, fontWeight: 600, color: theme.state.danger, marginBottom: 6 }}>
+        <div
+          style={{
+            marginTop: 8,
+            padding: 10,
+            borderRadius: 6,
+            background: 'rgba(197,49,49,0.1)',
+            border: '1px solid rgba(197,49,49,0.3)',
+          }}
+        >
+          <div
+            style={{ fontSize: 12, fontWeight: 600, color: theme.state.danger, marginBottom: 6 }}
+          >
             Permanently delete "{item.name}"?
           </div>
           <div style={{ fontSize: 10, color: theme.text.muted, marginBottom: 8 }}>
             This cannot be undone. The item will be removed from the homebrew compendium.
           </div>
           <div style={{ display: 'flex', gap: 6 }}>
-            <button onClick={() => setConfirmDelete(false)} style={{
-              flex: 1, padding: '5px 0', fontSize: 10, fontWeight: 600, borderRadius: 4,
-              background: theme.bg.elevated, border: `1px solid ${theme.border.default}`,
-              color: theme.text.secondary, cursor: 'pointer', fontFamily: theme.font.body,
-            }}>Cancel</button>
-            <button onClick={async () => {
-              await fetch(`/api/custom/items/${item.slug}`, { method: 'DELETE' });
-              onClose?.();
-            }} style={{
-              flex: 1, padding: '5px 0', fontSize: 10, fontWeight: 600, borderRadius: 4,
-              background: 'rgba(197,49,49,0.2)', border: '1px solid rgba(197,49,49,0.4)',
-              color: theme.state.danger, cursor: 'pointer', fontFamily: theme.font.body,
-            }}>Delete Forever</button>
+            <button
+              onClick={() => setConfirmDelete(false)}
+              style={{
+                flex: 1,
+                padding: '5px 0',
+                fontSize: 10,
+                fontWeight: 600,
+                borderRadius: 4,
+                background: theme.bg.elevated,
+                border: `1px solid ${theme.border.default}`,
+                color: theme.text.secondary,
+                cursor: 'pointer',
+                fontFamily: theme.font.body,
+              }}
+            >
+              Cancel
+            </button>
+            <button
+              onClick={async () => {
+                await fetch(`/api/custom/items/${item.slug}`, { method: 'DELETE' });
+                onClose?.();
+              }}
+              style={{
+                flex: 1,
+                padding: '5px 0',
+                fontSize: 10,
+                fontWeight: 600,
+                borderRadius: 4,
+                background: 'rgba(197,49,49,0.2)',
+                border: '1px solid rgba(197,49,49,0.4)',
+                color: theme.state.danger,
+                cursor: 'pointer',
+                fontFamily: theme.font.body,
+              }}
+            >
+              Delete Forever
+            </button>
           </div>
         </div>
       )}
 
       {/* Edit form */}
       {editing && (
-        <div style={{ marginTop: 8, padding: 10, borderRadius: 6, background: theme.bg.card, border: `1px solid ${theme.border.default}` }}>
-          <div style={{ fontSize: 10, fontWeight: 700, color: theme.gold.dim, marginBottom: 6, textTransform: 'uppercase' }}>Edit Item</div>
+        <div
+          style={{
+            marginTop: 8,
+            padding: 10,
+            borderRadius: 6,
+            background: theme.bg.card,
+            border: `1px solid ${theme.border.default}`,
+          }}
+        >
+          <div
+            style={{
+              fontSize: 10,
+              fontWeight: 700,
+              color: theme.gold.dim,
+              marginBottom: 6,
+              textTransform: 'uppercase',
+            }}
+          >
+            Edit Item
+          </div>
 
           {/* Image upload */}
           <div style={{ display: 'flex', gap: 8, marginBottom: 6, alignItems: 'center' }}>
-            <img loading="lazy" src={itemImgSrc} alt="" style={{ width: 40, height: 40, borderRadius: '50%', objectFit: 'cover', border: `2px solid ${theme.border.default}` }}
-              onError={e => { (e.currentTarget).src = getItemIconUrl(item.name, item.type); }} />
-            <input ref={fileInputRef} type="file" accept="image/png,image/jpeg,image/webp" style={{ display: 'none' }}
+            <img
+              loading="lazy"
+              src={itemImgSrc}
+              alt=""
+              style={{
+                width: 40,
+                height: 40,
+                borderRadius: '50%',
+                objectFit: 'cover',
+                border: `2px solid ${theme.border.default}`,
+              }}
+              onError={(e) => {
+                e.currentTarget.src = getItemIconUrl(item.name, item.type);
+              }}
+            />
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/png,image/jpeg,image/webp"
+              style={{ display: 'none' }}
               onChange={async (e) => {
                 const file = e.target.files?.[0];
                 if (!file) return;
                 const formData = new FormData();
                 formData.append('image', file);
                 formData.append('itemId', item.slug); // slug = custom item ID
-                const resp = await fetch(`/api/custom/items/${item.slug}/image`, { method: 'POST', body: formData });
+                const resp = await fetch(`/api/custom/items/${item.slug}/image`, {
+                  method: 'POST',
+                  body: formData,
+                });
                 if (resp.ok) {
                   const data = await resp.json();
                   setItemImgSrc(data.url + '?t=' + Date.now());
                   setImgExists(true);
                 }
                 e.target.value = '';
-              }} />
-            <button onClick={() => fileInputRef.current?.click()} style={{
-              padding: '3px 10px', fontSize: 10, borderRadius: 4, cursor: 'pointer',
-              background: theme.bg.elevated, border: `1px solid ${theme.border.default}`,
-              color: theme.text.secondary, fontFamily: theme.font.body,
-            }}>Upload Icon</button>
+              }}
+            />
+            <button
+              onClick={() => fileInputRef.current?.click()}
+              style={{
+                padding: '3px 10px',
+                fontSize: 10,
+                borderRadius: 4,
+                cursor: 'pointer',
+                background: theme.bg.elevated,
+                border: `1px solid ${theme.border.default}`,
+                color: theme.text.secondary,
+                fontFamily: theme.font.body,
+              }}
+            >
+              Upload Icon
+            </button>
           </div>
 
           {/* Name */}
-          <input value={editName} onChange={e => setEditName(e.target.value)} placeholder="Name"
-            style={editInputStyle} />
+          <input
+            value={editName}
+            onChange={(e) => setEditName(e.target.value)}
+            placeholder="Name"
+            style={editInputStyle}
+          />
 
           {/* Type + Rarity */}
           <div style={{ display: 'flex', gap: 4, marginBottom: 4 }}>
-            <select value={editType} onChange={e => setEditType(e.target.value)} style={editSelectStyle}>
-              {['gear', 'weapon', 'armor', 'shield', 'potion', 'scroll', 'treasure', 'currency'].map(t =>
-                <option key={t} value={t}>{t.charAt(0).toUpperCase() + t.slice(1)}</option>
-              )}
+            <select
+              value={editType}
+              onChange={(e) => setEditType(e.target.value)}
+              style={editSelectStyle}
+            >
+              {[
+                'gear',
+                'weapon',
+                'armor',
+                'shield',
+                'potion',
+                'scroll',
+                'treasure',
+                'currency',
+              ].map((t) => (
+                <option key={t} value={t}>
+                  {t.charAt(0).toUpperCase() + t.slice(1)}
+                </option>
+              ))}
             </select>
-            <select value={editRarity} onChange={e => setEditRarity(e.target.value)}
-              style={{ ...editSelectStyle, color: RARITY_COLORS[editRarity] || theme.text.primary }}>
-              {Object.keys(RARITY_COLORS).map(r => <option key={r} value={r}>{r}</option>)}
+            <select
+              value={editRarity}
+              onChange={(e) => setEditRarity(e.target.value)}
+              style={{ ...editSelectStyle, color: RARITY_COLORS[editRarity] || theme.text.primary }}
+            >
+              {Object.keys(RARITY_COLORS).map((r) => (
+                <option key={r} value={r}>
+                  {r}
+                </option>
+              ))}
             </select>
           </div>
 
           {/* Weapon stats */}
-          {editType.toLowerCase().includes('weapon') && (<>
-            <div style={editLabelStyle}>Damage</div>
-            <div style={{ display: 'flex', gap: 4, marginBottom: 4 }}>
-              <select value={editDamage} onChange={e => setEditDamage(e.target.value)} style={editSelectStyle}>
-                <option value="">— dice —</option>
-                {['1', '1d4', '1d6', '1d8', '1d10', '1d12', '2d6', '2d8', '2d10', '2d12'].map(d =>
-                  <option key={d} value={d}>{d}</option>
-                )}
-              </select>
-              <select value={editDamageType} onChange={e => setEditDamageType(e.target.value)} style={editSelectStyle}>
-                <option value="">— type —</option>
-                {['slashing', 'piercing', 'bludgeoning', 'fire', 'cold', 'lightning', 'thunder', 'acid', 'poison', 'necrotic', 'radiant', 'force', 'psychic'].map(t =>
-                  <option key={t} value={t}>{t}</option>
-                )}
-              </select>
-            </div>
-            <div style={editLabelStyle}>Properties</div>
-            <div style={{ display: 'flex', gap: 3, flexWrap: 'wrap', marginBottom: 4 }}>
-              {([
-                ['Finesse', 'Use STR or DEX for attack and damage rolls'],
-                ['Light', 'Can dual-wield with another light weapon'],
-                ['Heavy', 'Small creatures have disadvantage'],
-                ['Two-Handed', 'Requires both hands to wield'],
-                ['Versatile', 'Can use one or two hands (more damage two-handed)'],
-                ['Thrown', 'Can throw for a ranged attack using STR'],
-                ['Reach', '+5 ft melee range (10 ft total)'],
-                ['Ammunition', 'Requires ammo, has normal/long range'],
-                ['Loading', 'Only one attack per action even with Extra Attack'],
-                ['Special', 'Has unique rules — describe below'],
-              ] as [string, string][]).map(([p, tip]) => (
-                <button key={p} title={tip} onClick={() => setEditProperties(prev => prev.includes(p) ? prev.filter(x => x !== p) : [...prev, p])}
-                  style={{
-                    padding: '1px 5px', fontSize: 8, borderRadius: 3, cursor: 'pointer', fontFamily: theme.font.body,
-                    background: editProperties.includes(p) ? theme.gold.bg : 'transparent',
-                    border: `1px solid ${editProperties.includes(p) ? theme.gold.border : theme.border.default}`,
-                    color: editProperties.includes(p) ? theme.gold.primary : theme.text.muted,
-                  }}>{p}</button>
-              ))}
-            </div>
-            <div style={{ display: 'flex', gap: 4, marginBottom: 4 }}>
-              <div style={{ flex: 1 }}><div style={editLabelStyle}>Range</div><input value={editRange} onChange={e => setEditRange(e.target.value)} placeholder="20/60" style={editInputStyle} /></div>
-              <div style={{ flex: 1 }}><div style={editLabelStyle}>Weight</div><input value={editWeight} onChange={e => setEditWeight(e.target.value)} placeholder="0" style={editInputStyle} /></div>
-              <div style={{ flex: 1 }}><div style={editLabelStyle}>Cost (gp)</div><input value={editCost} onChange={e => setEditCost(e.target.value)} placeholder="0" style={editInputStyle} /></div>
-            </div>
-          </>)}
+          {editType.toLowerCase().includes('weapon') && (
+            <>
+              <div style={editLabelStyle}>Damage</div>
+              <div style={{ display: 'flex', gap: 4, marginBottom: 4 }}>
+                <select
+                  value={editDamage}
+                  onChange={(e) => setEditDamage(e.target.value)}
+                  style={editSelectStyle}
+                >
+                  <option value="">— dice —</option>
+                  {['1', '1d4', '1d6', '1d8', '1d10', '1d12', '2d6', '2d8', '2d10', '2d12'].map(
+                    (d) => (
+                      <option key={d} value={d}>
+                        {d}
+                      </option>
+                    )
+                  )}
+                </select>
+                <select
+                  value={editDamageType}
+                  onChange={(e) => setEditDamageType(e.target.value)}
+                  style={editSelectStyle}
+                >
+                  <option value="">— type —</option>
+                  {[
+                    'slashing',
+                    'piercing',
+                    'bludgeoning',
+                    'fire',
+                    'cold',
+                    'lightning',
+                    'thunder',
+                    'acid',
+                    'poison',
+                    'necrotic',
+                    'radiant',
+                    'force',
+                    'psychic',
+                  ].map((t) => (
+                    <option key={t} value={t}>
+                      {t}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div style={editLabelStyle}>Properties</div>
+              <div style={{ display: 'flex', gap: 3, flexWrap: 'wrap', marginBottom: 4 }}>
+                {(
+                  [
+                    ['Finesse', 'Use STR or DEX for attack and damage rolls'],
+                    ['Light', 'Can dual-wield with another light weapon'],
+                    ['Heavy', 'Small creatures have disadvantage'],
+                    ['Two-Handed', 'Requires both hands to wield'],
+                    ['Versatile', 'Can use one or two hands (more damage two-handed)'],
+                    ['Thrown', 'Can throw for a ranged attack using STR'],
+                    ['Reach', '+5 ft melee range (10 ft total)'],
+                    ['Ammunition', 'Requires ammo, has normal/long range'],
+                    ['Loading', 'Only one attack per action even with Extra Attack'],
+                    ['Special', 'Has unique rules — describe below'],
+                  ] as [string, string][]
+                ).map(([p, tip]) => (
+                  <button
+                    key={p}
+                    title={tip}
+                    onClick={() =>
+                      setEditProperties((prev) =>
+                        prev.includes(p) ? prev.filter((x) => x !== p) : [...prev, p]
+                      )
+                    }
+                    style={{
+                      padding: '1px 5px',
+                      fontSize: 8,
+                      borderRadius: 3,
+                      cursor: 'pointer',
+                      fontFamily: theme.font.body,
+                      background: editProperties.includes(p) ? theme.gold.bg : 'transparent',
+                      border: `1px solid ${editProperties.includes(p) ? theme.gold.border : theme.border.default}`,
+                      color: editProperties.includes(p) ? theme.gold.primary : theme.text.muted,
+                    }}
+                  >
+                    {p}
+                  </button>
+                ))}
+              </div>
+              <div style={{ display: 'flex', gap: 4, marginBottom: 4 }}>
+                <div style={{ flex: 1 }}>
+                  <div style={editLabelStyle}>Range</div>
+                  <input
+                    value={editRange}
+                    onChange={(e) => setEditRange(e.target.value)}
+                    placeholder="20/60"
+                    style={editInputStyle}
+                  />
+                </div>
+                <div style={{ flex: 1 }}>
+                  <div style={editLabelStyle}>Weight</div>
+                  <input
+                    value={editWeight}
+                    onChange={(e) => setEditWeight(e.target.value)}
+                    placeholder="0"
+                    style={editInputStyle}
+                  />
+                </div>
+                <div style={{ flex: 1 }}>
+                  <div style={editLabelStyle}>Cost (gp)</div>
+                  <input
+                    value={editCost}
+                    onChange={(e) => setEditCost(e.target.value)}
+                    placeholder="0"
+                    style={editInputStyle}
+                  />
+                </div>
+              </div>
+            </>
+          )}
 
           {/* Armor stats */}
           {(editType.toLowerCase().includes('armor') || editType.toLowerCase() === 'shield') && (
             <div style={{ display: 'flex', gap: 4, marginBottom: 4 }}>
-              <div style={{ flex: 1 }}><div style={editLabelStyle}>AC</div><input value={editAC} onChange={e => setEditAC(e.target.value)} placeholder="14" style={editInputStyle} /></div>
-              <div style={{ flex: 1 }}><div style={editLabelStyle}>Weight</div><input value={editWeight} onChange={e => setEditWeight(e.target.value)} placeholder="0" style={editInputStyle} /></div>
-              <div style={{ flex: 1 }}><div style={editLabelStyle}>Cost (gp)</div><input value={editCost} onChange={e => setEditCost(e.target.value)} placeholder="0" style={editInputStyle} /></div>
+              <div style={{ flex: 1 }}>
+                <div style={editLabelStyle}>AC</div>
+                <input
+                  value={editAC}
+                  onChange={(e) => setEditAC(e.target.value)}
+                  placeholder="14"
+                  style={editInputStyle}
+                />
+              </div>
+              <div style={{ flex: 1 }}>
+                <div style={editLabelStyle}>Weight</div>
+                <input
+                  value={editWeight}
+                  onChange={(e) => setEditWeight(e.target.value)}
+                  placeholder="0"
+                  style={editInputStyle}
+                />
+              </div>
+              <div style={{ flex: 1 }}>
+                <div style={editLabelStyle}>Cost (gp)</div>
+                <input
+                  value={editCost}
+                  onChange={(e) => setEditCost(e.target.value)}
+                  placeholder="0"
+                  style={editInputStyle}
+                />
+              </div>
             </div>
           )}
 
           {/* Generic weight/cost for other types */}
-          {!editType.toLowerCase().includes('weapon') && !editType.toLowerCase().includes('armor') && editType.toLowerCase() !== 'shield' && (
-            <div style={{ display: 'flex', gap: 4, marginBottom: 4 }}>
-              <div style={{ flex: 1 }}><div style={editLabelStyle}>Weight</div><input value={editWeight} onChange={e => setEditWeight(e.target.value)} placeholder="0" style={editInputStyle} /></div>
-              <div style={{ flex: 1 }}><div style={editLabelStyle}>Cost (gp)</div><input value={editCost} onChange={e => setEditCost(e.target.value)} placeholder="0" style={editInputStyle} /></div>
-            </div>
-          )}
+          {!editType.toLowerCase().includes('weapon') &&
+            !editType.toLowerCase().includes('armor') &&
+            editType.toLowerCase() !== 'shield' && (
+              <div style={{ display: 'flex', gap: 4, marginBottom: 4 }}>
+                <div style={{ flex: 1 }}>
+                  <div style={editLabelStyle}>Weight</div>
+                  <input
+                    value={editWeight}
+                    onChange={(e) => setEditWeight(e.target.value)}
+                    placeholder="0"
+                    style={editInputStyle}
+                  />
+                </div>
+                <div style={{ flex: 1 }}>
+                  <div style={editLabelStyle}>Cost (gp)</div>
+                  <input
+                    value={editCost}
+                    onChange={(e) => setEditCost(e.target.value)}
+                    placeholder="0"
+                    style={editInputStyle}
+                  />
+                </div>
+              </div>
+            )}
 
           {/* Description */}
-          <textarea value={editDesc} onChange={e => setEditDesc(e.target.value)} placeholder="Description (markdown)..." rows={4}
-            style={{ ...editInputStyle, resize: 'vertical', minHeight: 60 }} />
+          <textarea
+            value={editDesc}
+            onChange={(e) => setEditDesc(e.target.value)}
+            placeholder="Description (markdown)..."
+            rows={4}
+            style={{ ...editInputStyle, resize: 'vertical', minHeight: 60 }}
+          />
 
           {/* Buttons */}
           <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
-            <button onClick={() => setEditing(false)} style={{
-              flex: 1, padding: '5px 0', fontSize: 10, fontWeight: 600, borderRadius: 4,
-              background: theme.bg.elevated, border: `1px solid ${theme.border.default}`,
-              color: theme.text.secondary, cursor: 'pointer', fontFamily: theme.font.body,
-            }}>Cancel</button>
-            <button onClick={async () => {
-              await fetch(`/api/custom/items/${item.slug}`, {
-                method: 'PUT',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                  name: editName, type: editType, rarity: editRarity, description: editDesc,
-                  damage: editDamage, damageType: editDamageType,
-                  properties: editProperties,
-                  weight: parseFloat(editWeight) || 0,
-                  valueGp: parseFloat(editCost) || 0,
-                }),
-              });
-              onClose?.();
-            }} style={{
-              flex: 1, padding: '5px 0', fontSize: 10, fontWeight: 600, borderRadius: 4,
-              background: theme.gold.bg, border: `1px solid ${theme.gold.border}`,
-              color: theme.gold.primary, cursor: 'pointer', fontFamily: theme.font.body,
-            }}>Save Changes</button>
+            <button
+              onClick={() => setEditing(false)}
+              style={{
+                flex: 1,
+                padding: '5px 0',
+                fontSize: 10,
+                fontWeight: 600,
+                borderRadius: 4,
+                background: theme.bg.elevated,
+                border: `1px solid ${theme.border.default}`,
+                color: theme.text.secondary,
+                cursor: 'pointer',
+                fontFamily: theme.font.body,
+              }}
+            >
+              Cancel
+            </button>
+            <button
+              onClick={async () => {
+                await fetch(`/api/custom/items/${item.slug}`, {
+                  method: 'PUT',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    name: editName,
+                    type: editType,
+                    rarity: editRarity,
+                    description: editDesc,
+                    damage: editDamage,
+                    damageType: editDamageType,
+                    properties: editProperties,
+                    weight: parseFloat(editWeight) || 0,
+                    valueGp: parseFloat(editCost) || 0,
+                  }),
+                });
+                onClose?.();
+              }}
+              style={{
+                flex: 1,
+                padding: '5px 0',
+                fontSize: 10,
+                fontWeight: 600,
+                borderRadius: 4,
+                background: theme.gold.bg,
+                border: `1px solid ${theme.gold.border}`,
+                color: theme.gold.primary,
+                cursor: 'pointer',
+                fontFamily: theme.font.body,
+              }}
+            >
+              Save Changes
+            </button>
           </div>
         </div>
       )}
@@ -1133,37 +1671,65 @@ function ItemDetail({ item, onClose }: { item: CompendiumItem & { rawJson?: Reco
 }
 
 const editInputStyle: React.CSSProperties = {
-  width: '100%', padding: '5px 8px', fontSize: 11, marginBottom: 4, boxSizing: 'border-box',
-  background: theme.bg.deep, border: `1px solid ${theme.border.default}`, borderRadius: 4,
-  color: theme.text.primary, outline: 'none', fontFamily: theme.font.body,
+  width: '100%',
+  padding: '5px 8px',
+  fontSize: 11,
+  marginBottom: 4,
+  boxSizing: 'border-box',
+  background: theme.bg.deep,
+  border: `1px solid ${theme.border.default}`,
+  borderRadius: 4,
+  color: theme.text.primary,
+  outline: 'none',
+  fontFamily: theme.font.body,
 };
 const editSelectStyle: React.CSSProperties = {
-  flex: 1, padding: '4px 6px', fontSize: 11,
-  background: theme.bg.deep, border: `1px solid ${theme.border.default}`, borderRadius: 4,
-  color: theme.text.primary, outline: 'none',
+  flex: 1,
+  padding: '4px 6px',
+  fontSize: 11,
+  background: theme.bg.deep,
+  border: `1px solid ${theme.border.default}`,
+  borderRadius: 4,
+  color: theme.text.primary,
+  outline: 'none',
 };
 const editLabelStyle: React.CSSProperties = {
-  fontSize: 8, fontWeight: 700, color: theme.text.muted,
-  textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: 2,
+  fontSize: 8,
+  fontWeight: 700,
+  color: theme.text.muted,
+  textTransform: 'uppercase',
+  letterSpacing: '0.04em',
+  marginBottom: 2,
 };
 
 const itemStatStyles: Record<string, React.CSSProperties> = {
   statBox: {
-    display: 'flex', flexDirection: 'column', alignItems: 'center',
-    padding: '4px 10px', borderRadius: 6,
-    background: theme.bg.elevated, border: `1px solid ${theme.border.default}`,
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    padding: '4px 10px',
+    borderRadius: 6,
+    background: theme.bg.elevated,
+    border: `1px solid ${theme.border.default}`,
     minWidth: 50,
   },
   statLabel: {
-    fontSize: 8, fontWeight: 700, color: theme.text.muted,
-    textTransform: 'uppercase', letterSpacing: '0.05em',
+    fontSize: 8,
+    fontWeight: 700,
+    color: theme.text.muted,
+    textTransform: 'uppercase',
+    letterSpacing: '0.05em',
   },
   statValue: {
-    fontSize: 15, fontWeight: 700, color: theme.text.primary,
+    fontSize: 15,
+    fontWeight: 700,
+    color: theme.text.primary,
     fontFamily: theme.font.display,
   },
   statSub: {
-    fontSize: 9, color: theme.text.muted, marginTop: -1,
+    fontSize: 9,
+    color: theme.text.muted,
+    marginTop: -1,
   },
 };
 
@@ -1214,7 +1780,9 @@ export function CompendiumDetailPopup({ result, onClose }: Props) {
       const rule = RULES_GLOSSARY.find((r) => r.slug === result.slug);
       if (rule) {
         setData({
-          kind: 'rule', name: rule.name, description: rule.description,
+          kind: 'rule',
+          name: rule.name,
+          description: rule.description,
           imageUrl: getRuleImageUrl(rule.slug),
           fallbackUrl: getRuleIconUrl(rule.name),
           kindLabel: 'Rule',
@@ -1225,7 +1793,10 @@ export function CompendiumDetailPopup({ result, onClose }: Props) {
       const info = CONDITION_MAP.get(result.slug as never);
       if (info) {
         setData({
-          kind: 'condition', name: info.label, description: info.description, color: info.color,
+          kind: 'condition',
+          name: info.label,
+          description: info.description,
+          color: info.color,
           imageUrl: getConditionImageUrl(result.slug),
           fallbackUrl: getConditionIconUrl(info.label),
           kindLabel: 'Condition',
@@ -1237,7 +1808,10 @@ export function CompendiumDetailPopup({ result, onClose }: Props) {
       const buff = SPELL_BUFFS.find((b) => b.slug === result.slug);
       if (buff) {
         setData({
-          kind: 'condition', name: buff.name, description: buff.description, color: buff.color,
+          kind: 'condition',
+          name: buff.name,
+          description: buff.description,
+          color: buff.color,
           imageUrl: getConditionImageUrl(buff.slug),
           fallbackUrl: getConditionIconUrl(buff.name),
           kindLabel: 'Buff',
@@ -1256,9 +1830,14 @@ export function CompendiumDetailPopup({ result, onClose }: Props) {
           toolsLine,
           langLine,
           `**Feature:** ${bg.feature}`,
-        ].filter(Boolean).join('  \n');
+        ]
+          .filter(Boolean)
+          .join('  \n');
         setData({
-          kind: 'rule', name: bg.name, description: `${header}\n\n---\n\n${bg.description}`, color: '#6aa9d1',
+          kind: 'rule',
+          name: bg.name,
+          description: `${header}\n\n---\n\n${bg.description}`,
+          color: '#6aa9d1',
           imageUrl: getBackgroundImageUrl(bg.slug),
           fallbackUrl: getBackgroundIconUrl(bg.name),
           kindLabel: 'Background',
@@ -1277,7 +1856,10 @@ export function CompendiumDetailPopup({ result, onClose }: Props) {
           ? `_Prerequisite: ${feat.prerequisite}_\n\n${feat.description}`
           : feat.description;
         setData({
-          kind: 'rule', name: feat.name, description: body, color: '#d4a843',
+          kind: 'rule',
+          name: feat.name,
+          description: body,
+          color: '#d4a843',
           imageUrl: getFeatImageUrl(feat.slug),
           fallbackUrl: getFeatIconUrl(feat.name),
           kindLabel: 'Feat',
@@ -1299,7 +1881,10 @@ export function CompendiumDetailPopup({ result, onClose }: Props) {
           `**Subclasses:** ${cls.subclasses.join(', ')}`,
         ].join('  \n');
         setData({
-          kind: 'rule', name: cls.name, description: `${header}\n\n---\n\n${cls.description}`, color: '#9b59b6',
+          kind: 'rule',
+          name: cls.name,
+          description: `${header}\n\n---\n\n${cls.description}`,
+          color: '#9b59b6',
           imageUrl: getClassImageUrl(cls.slug),
           fallbackUrl: getClassIconUrl(cls.name),
           kindLabel: 'Class',
@@ -1321,7 +1906,10 @@ export function CompendiumDetailPopup({ result, onClose }: Props) {
           `**Subraces:** ${race.subraces.join(', ')}`,
         ].join('  \n');
         setData({
-          kind: 'rule', name: race.name, description: `${header}\n\n---\n\n${race.description}`, color: '#1abc9c',
+          kind: 'rule',
+          name: race.name,
+          description: `${header}\n\n---\n\n${race.description}`,
+          color: '#1abc9c',
           imageUrl: getRaceImageUrl(race.slug),
           fallbackUrl: getRaceIconUrl(race.name),
           kindLabel: 'Race',
@@ -1347,9 +1935,14 @@ export function CompendiumDetailPopup({ result, onClose }: Props) {
           toolsLine,
           langLine,
           `**Feature:** ${bg.feature}`,
-        ].filter(Boolean).join('  \n');
+        ]
+          .filter(Boolean)
+          .join('  \n');
         setData({
-          kind: 'rule', name: bg.name, description: `${header}\n\n---\n\n${bg.description}`, color: '#6aa9d1',
+          kind: 'rule',
+          name: bg.name,
+          description: `${header}\n\n---\n\n${bg.description}`,
+          color: '#6aa9d1',
           imageUrl: getBackgroundImageUrl(bg.slug),
           fallbackUrl: getBackgroundIconUrl(bg.name),
           kindLabel: 'Background',
@@ -1373,12 +1966,15 @@ export function CompendiumDetailPopup({ result, onClose }: Props) {
       .then((r) => {
         if (r.ok) return r.json();
         // Fallback to custom content API
-        const customUrl = categoryPath === 'monsters' ? `/api/custom/monsters/${slug}`
-          : categoryPath === 'spells' ? `/api/custom/spells/${slug}`
-          : `/api/custom/items/${slug}`;
-        return fetch(customUrl).then(r2 => {
+        const customUrl =
+          categoryPath === 'monsters'
+            ? `/api/custom/monsters/${slug}`
+            : categoryPath === 'spells'
+              ? `/api/custom/spells/${slug}`
+              : `/api/custom/items/${slug}`;
+        return fetch(customUrl).then((r2) => {
           if (!r2.ok) throw new Error(`Not found`);
-          return r2.json().then(d => {
+          return r2.json().then((d) => {
             // Normalize custom item fields to match compendium format
             if (categoryPath === 'items') {
               return {
@@ -1392,7 +1988,10 @@ export function CompendiumDetailPopup({ result, onClose }: Props) {
                 rawJson: {
                   damage: d.damage || '',
                   damageType: d.damage_type || '',
-                  properties: typeof d.properties === 'string' ? JSON.parse(d.properties || '[]') : (d.properties || []),
+                  properties:
+                    typeof d.properties === 'string'
+                      ? JSON.parse(d.properties || '[]')
+                      : d.properties || [],
                   weight: d.weight || 0,
                   costGp: d.value_gp || 0,
                 },
@@ -1442,19 +2041,29 @@ export function CompendiumDetailPopup({ result, onClose }: Props) {
             <ItemDetail item={data as CompendiumItem} onClose={onClose} />
           )}
           {!loading && !error && data && result.category === 'conditions' && (
-            <RuleOrConditionDetail entry={data as Parameters<typeof RuleOrConditionDetail>[0]['entry']} />
+            <RuleOrConditionDetail
+              entry={data as Parameters<typeof RuleOrConditionDetail>[0]['entry']}
+            />
           )}
           {!loading && !error && data && result.category === 'feats' && (
-            <RuleOrConditionDetail entry={data as Parameters<typeof RuleOrConditionDetail>[0]['entry']} />
+            <RuleOrConditionDetail
+              entry={data as Parameters<typeof RuleOrConditionDetail>[0]['entry']}
+            />
           )}
           {!loading && !error && data && result.category === 'classes' && (
-            <RuleOrConditionDetail entry={data as Parameters<typeof RuleOrConditionDetail>[0]['entry']} />
+            <RuleOrConditionDetail
+              entry={data as Parameters<typeof RuleOrConditionDetail>[0]['entry']}
+            />
           )}
           {!loading && !error && data && result.category === 'races' && (
-            <RuleOrConditionDetail entry={data as Parameters<typeof RuleOrConditionDetail>[0]['entry']} />
+            <RuleOrConditionDetail
+              entry={data as Parameters<typeof RuleOrConditionDetail>[0]['entry']}
+            />
           )}
           {!loading && !error && data && result.category === 'backgrounds' && (
-            <RuleOrConditionDetail entry={data as Parameters<typeof RuleOrConditionDetail>[0]['entry']} />
+            <RuleOrConditionDetail
+              entry={data as Parameters<typeof RuleOrConditionDetail>[0]['entry']}
+            />
           )}
         </div>
       </div>
@@ -1490,15 +2099,17 @@ function RuleOrConditionDetail({
           anchor fits roughly half of a square render and keeps the
           face front-and-centre. */}
       {entry.imageUrl && (
-        <div style={{
-          position: 'relative',
-          width: '100%',
-          height: 260,
-          borderRadius: theme.radius.md,
-          overflow: 'hidden',
-          marginBottom: 10,
-          background: theme.bg.deep,
-        }}>
+        <div
+          style={{
+            position: 'relative',
+            width: '100%',
+            height: 260,
+            borderRadius: theme.radius.md,
+            overflow: 'hidden',
+            marginBottom: 10,
+            background: theme.bg.deep,
+          }}
+        >
           <img
             src={entry.imageUrl}
             alt=""
@@ -1521,33 +2132,51 @@ function RuleOrConditionDetail({
           {/* Accent-tinted bottom fade so the title reads against any
               image value. Subtle — just a 40% bottom gradient in the
               card's accent color. */}
-          <div style={{
-            position: 'absolute',
-            bottom: 0,
-            left: 0,
-            right: 0,
-            height: 40,
-            background: `linear-gradient(180deg, transparent 0%, ${accent}55 100%)`,
-            pointerEvents: 'none',
-          }} />
+          <div
+            style={{
+              position: 'absolute',
+              bottom: 0,
+              left: 0,
+              right: 0,
+              height: 40,
+              background: `linear-gradient(180deg, transparent 0%, ${accent}55 100%)`,
+              pointerEvents: 'none',
+            }}
+          />
         </div>
       )}
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
-        <span style={{
-          display: 'inline-block', width: 8, height: 24, borderRadius: 2,
-          background: accent,
-        }} aria-hidden />
-        <h2 style={{
-          margin: 0, color: accent, fontFamily: theme.font.display,
-          fontSize: 20, letterSpacing: '0.04em',
-        }}>
+        <span
+          style={{
+            display: 'inline-block',
+            width: 8,
+            height: 24,
+            borderRadius: 2,
+            background: accent,
+          }}
+          aria-hidden
+        />
+        <h2
+          style={{
+            margin: 0,
+            color: accent,
+            fontFamily: theme.font.display,
+            fontSize: 20,
+            letterSpacing: '0.04em',
+          }}
+        >
           {entry.name}
         </h2>
-        <span style={{
-          marginLeft: 'auto', fontSize: 10, fontWeight: 700,
-          letterSpacing: '0.1em', textTransform: 'uppercase',
-          color: theme.text.muted,
-        }}>
+        <span
+          style={{
+            marginLeft: 'auto',
+            fontSize: 10,
+            fontWeight: 700,
+            letterSpacing: '0.1em',
+            textTransform: 'uppercase',
+            color: theme.text.muted,
+          }}
+        >
           {entry.kindLabel ?? (entry.kind === 'condition' ? 'Condition' : 'Rule')}
         </span>
       </div>

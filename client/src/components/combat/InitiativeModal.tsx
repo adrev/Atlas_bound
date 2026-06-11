@@ -49,9 +49,11 @@ export function InitiativeModal({ onClose }: InitiativeModalProps) {
   // rolled values, and the server auto-rolls everyone — so we now
   // treat any combatant with non-zero initiative as "ready" even if
   // the initiative-set confirmation hasn't arrived on this client yet.
-  const allReady = combatants.length > 0 && combatants.every(
-    (c) => initiativeRolls.has(c.tokenId) || (c.initiative !== 0 && Number.isFinite(c.initiative)),
-  );
+  const allReady =
+    combatants.length > 0 &&
+    combatants.every(
+      (c) => initiativeRolls.has(c.tokenId) || (c.initiative !== 0 && Number.isFinite(c.initiative))
+    );
 
   // Auto-close after all initiatives are ready. We track the
   // countdown via a ref + a separate render-tick state so the
@@ -83,9 +85,6 @@ export function InitiativeModal({ onClose }: InitiativeModalProps) {
 
   const handleRollMyInitiative = useCallback(() => {
     if (!myCombatant) return;
-    // Roll d20 + DEX modifier (initiativeBonus)
-    const roll = Math.floor(Math.random() * 20) + 1;
-    const total = roll + myCombatant.initiativeBonus;
     emitRollInitiative(myCombatant.tokenId, myCombatant.initiativeBonus);
     setRolledTokenIds((prev) => new Set(prev).add(myCombatant.tokenId));
   }, [myCombatant]);
@@ -123,14 +122,12 @@ export function InitiativeModal({ onClose }: InitiativeModalProps) {
   });
 
   const isRolled = (c: Combatant) =>
-    initiativeRolls.has(c.tokenId) ||
-    (c.initiative !== 0 && Number.isFinite(c.initiative));
+    initiativeRolls.has(c.tokenId) || (c.initiative !== 0 && Number.isFinite(c.initiative));
 
-  const npcsNeedRoll = isDM && combatants.some(
-    (c) => c.isNPC && !isRolled(c),
-  );
+  const npcsNeedRoll = isDM && combatants.some((c) => c.isNPC && !isRolled(c));
 
-  const myNeedsRoll = myCombatant && !isRolled(myCombatant) && !rolledTokenIds.has(myCombatant.tokenId);
+  const myNeedsRoll =
+    myCombatant && !isRolled(myCombatant) && !rolledTokenIds.has(myCombatant.tokenId);
 
   return (
     <div style={styles.overlay}>
@@ -147,15 +144,14 @@ export function InitiativeModal({ onClose }: InitiativeModalProps) {
             // fires (before the per-combatant initiative-set events have
             // landed on their client).
             const mapRoll = initiativeRolls.get(combatant.tokenId);
-            const rollResult = mapRoll !== undefined
-              ? mapRoll
-              : (combatant.initiative !== 0 && Number.isFinite(combatant.initiative) ? combatant.initiative : null);
+            const rollResult =
+              mapRoll !== undefined
+                ? mapRoll
+                : combatant.initiative !== 0 && Number.isFinite(combatant.initiative)
+                  ? combatant.initiative
+                  : null;
             return (
-              <CombatantRow
-                key={combatant.tokenId}
-                combatant={combatant}
-                rollResult={rollResult}
-              />
+              <CombatantRow key={combatant.tokenId} combatant={combatant} rollResult={rollResult} />
             );
           })}
         </div>
@@ -164,7 +160,8 @@ export function InitiativeModal({ onClose }: InitiativeModalProps) {
         <div style={styles.actions}>
           {myNeedsRoll && (
             <button style={styles.rollButton} onClick={handleRollMyInitiative}>
-              Roll Initiative (d20 + {myCombatant!.initiativeBonus >= 0 ? '+' : ''}{myCombatant!.initiativeBonus})
+              Roll Initiative (d20 + {myCombatant!.initiativeBonus >= 0 ? '+' : ''}
+              {myCombatant!.initiativeBonus})
             </button>
           )}
 
@@ -195,31 +192,25 @@ function CombatantRow({
   rollResult: number | null;
 }) {
   return (
-    <div style={{
-      ...styles.combatantRow,
-      ...(rollResult !== null ? styles.combatantRowReady : {}),
-    }}>
+    <div
+      style={{
+        ...styles.combatantRow,
+        ...(rollResult !== null ? styles.combatantRowReady : {}),
+      }}
+    >
       {/* Portrait */}
       <div style={styles.portrait}>
         {combatant.portraitUrl ? (
-          <img
-            src={combatant.portraitUrl}
-            alt={combatant.name}
-            style={styles.portraitImg}
-          />
+          <img src={combatant.portraitUrl} alt={combatant.name} style={styles.portraitImg} />
         ) : (
-          <div style={styles.portraitPlaceholder}>
-            {combatant.name.charAt(0).toUpperCase()}
-          </div>
+          <div style={styles.portraitPlaceholder}>{combatant.name.charAt(0).toUpperCase()}</div>
         )}
       </div>
 
       {/* Name */}
       <div style={styles.combatantInfo}>
         <span style={styles.combatantName}>{combatant.name}</span>
-        <span style={styles.combatantType}>
-          {combatant.isNPC ? 'NPC' : 'Player'}
-        </span>
+        <span style={styles.combatantType}>{combatant.isNPC ? 'NPC' : 'Player'}</span>
       </div>
 
       {/* Roll result */}

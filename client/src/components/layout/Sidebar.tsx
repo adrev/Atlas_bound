@@ -21,28 +21,33 @@ import { Upload, MapPin, RefreshCw, Trash2 } from 'lucide-react';
 import { ChatPanel } from '../chat/ChatPanel';
 import { PlayerList } from '../session/PlayerList';
 import { emitStartCombat, emitEndCombat, emitReadyCheck } from '../../socket/emitters';
+import type { Character, Player } from '@dnd-vtt/shared';
 
 // Lazy-loaded sidebar tabs. Each of these represents a sizable chunk
 // of code (compendium data, DM toolbar + its sub-panels, the notes
 // editor) that most users don't touch on first load. Splitting them
 // into their own chunks shrinks the initial bundle meaningfully.
 const NotesPanel = lazy(() =>
-  import('../notes/NotesPanel').then((m) => ({ default: m.NotesPanel })),
+  import('../notes/NotesPanel').then((m) => ({ default: m.NotesPanel }))
 );
-const DMToolbar = lazy(() =>
-  import('../dm/DMToolbar').then((m) => ({ default: m.DMToolbar })),
-);
+const DMToolbar = lazy(() => import('../dm/DMToolbar').then((m) => ({ default: m.DMToolbar })));
 const CompendiumPanel = lazy(() =>
-  import('../compendium/CompendiumPanel').then((m) => ({ default: m.CompendiumPanel })),
+  import('../compendium/CompendiumPanel').then((m) => ({ default: m.CompendiumPanel }))
 );
 
 function TabLoadingFallback() {
   return (
-    <div style={{
-      display: 'flex', alignItems: 'center', justifyContent: 'center',
-      height: '100%', padding: 24,
-      color: theme.text.muted, fontSize: 12,
-    }}>
+    <div
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        height: '100%',
+        padding: 24,
+        color: theme.text.muted,
+        fontSize: 12,
+      }}
+    >
       Loading…
     </div>
   );
@@ -140,9 +145,7 @@ export function Sidebar() {
               <span style={{ position: 'relative' as const, display: 'inline-flex' }}>
                 {tab.icon}
                 {tab.id === 'chat' && activeTab !== 'chat' && unreadCount > 0 && (
-                  <span style={styles.unreadBadge}>
-                    {unreadCount > 9 ? '9+' : unreadCount}
-                  </span>
+                  <span style={styles.unreadBadge}>{unreadCount > 9 ? '9+' : unreadCount}</span>
                 )}
               </span>
               <span style={styles.tabLabel}>{tab.label}</span>
@@ -150,9 +153,7 @@ export function Sidebar() {
             {/* Rune-slab separator between tiles — a thin vertical
                 gold-dim line with fade at top and bottom. Omitted
                 after the last tab. */}
-            {idx < visibleTabs.length - 1 && (
-              <div aria-hidden style={styles.tabSeparator} />
-            )}
+            {idx < visibleTabs.length - 1 && <div aria-hidden style={styles.tabSeparator} />}
           </div>
         ))}
       </div>
@@ -192,7 +193,12 @@ export function Sidebar() {
  * tiny non-character markers. Loot drops have a characterId pointing
  * at a loot bag record so they're identified by their image path.
  */
-function isCombatantToken(t: { name: string; size: number; characterId: string | null; imageUrl: string | null }): boolean {
+function isCombatantToken(t: {
+  name: string;
+  size: number;
+  characterId: string | null;
+  imageUrl: string | null;
+}): boolean {
   if (/^(Light|Dancing Lights) \(/.test(t.name)) return false;
   if ((t.imageUrl ?? '').includes('/uploads/items/')) return false;
   if (t.size < 0.5 && !t.characterId) return false;
@@ -226,7 +232,7 @@ function HeroTab() {
   const isDM = useSessionStore((s) => s.isDM);
   const [showImport, setShowImport] = useState(false);
   const [showList, setShowList] = useState(false);
-  const [characters, setCharacters] = useState<any[]>([]);
+  const [characters, setCharacters] = useState<Character[]>([]);
   const [listLoading, setListLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
   const [syncMessage, setSyncMessage] = useState<{ text: string; isError: boolean } | null>(null);
@@ -238,9 +244,7 @@ function HeroTab() {
   // (via a stale socket sync, pre-login localStorage carry-over, etc.)
   // this hides it so the tab renders the "No hero" empty state.
   const myCharacter =
-    rawMyCharacter && (isDM || rawMyCharacter.userId === userId)
-      ? rawMyCharacter
-      : null;
+    rawMyCharacter && (isDM || rawMyCharacter.userId === userId) ? rawMyCharacter : null;
 
   // Load all characters owned by this user.
   const reloadList = () => {
@@ -248,7 +252,7 @@ function HeroTab() {
     setListLoading(true);
     fetch(`/api/characters?userId=${encodeURIComponent(userId)}`)
       .then((r) => (r.ok ? r.json() : []))
-      .then((data: any[]) => {
+      .then((data: Character[]) => {
         setCharacters(data);
         // Auto-activate the last-used owned character, but recover if a
         // stale cross-session myCharacter is present and hidden by the
@@ -270,7 +274,7 @@ function HeroTab() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userId]);
 
-  const activateCharacter = (char: any) => {
+  const activateCharacter = (char: Character) => {
     useCharacterStore.getState().setCharacter(char);
     localStorage.setItem('dnd-vtt-characterId', char.id);
     setShowList(false);
@@ -320,13 +324,18 @@ function HeroTab() {
       useCharacterStore.getState().setCharacter(updated);
       // Broadcast to other clients so they see the level-up in real-time
       emitCharacterUpdate(myCharacter.id, {
-        level: updated.level, class: updated.class,
-        armorClass: updated.armorClass, speed: updated.speed,
+        level: updated.level,
+        class: updated.class,
+        armorClass: updated.armorClass,
+        speed: updated.speed,
         maxHitPoints: updated.maxHitPoints,
         abilityScores: updated.abilityScores,
         proficiencyBonus: updated.proficiencyBonus,
       });
-      setSyncMessage({ text: `Synced from D&D Beyond — now Level ${updated.level}`, isError: false });
+      setSyncMessage({
+        text: `Synced from D&D Beyond — now Level ${updated.level}`,
+        isError: false,
+      });
       reloadList();
       // Auto-dismiss success message after a few seconds
       setTimeout(() => setSyncMessage(null), 5000);
@@ -360,7 +369,6 @@ function HeroTab() {
       seen.add(t.characterId);
     }
     return out;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tokens, isDM]);
 
   const loadPartyCharacter = async (characterId: string) => {
@@ -369,18 +377,27 @@ function HeroTab() {
       if (!resp.ok) return;
       const ch = await resp.json();
       useCharacterStore.getState().setCharacter(ch);
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
   };
 
   // ── Active character body (top, takes focus) ───────────
   let body: React.ReactNode;
   if (!myCharacter) {
     body = (
-      <div style={{
-        display: 'flex', flexDirection: 'column', alignItems: 'center',
-        justifyContent: 'center', gap: 12, padding: 24, textAlign: 'center',
-        flex: 1,
-      }}>
+      <div
+        style={{
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          justifyContent: 'center',
+          gap: 12,
+          padding: 24,
+          textAlign: 'center',
+          flex: 1,
+        }}
+      >
         <BookOpen size={40} color={theme.text.muted} />
         <p style={{ color: theme.text.secondary, margin: 0, fontSize: 12 }}>
           {isDM
@@ -388,13 +405,25 @@ function HeroTab() {
             : 'No active hero. Use the buttons below to load or import a character.'}
         </p>
         {isDM && partyRoster.length > 0 && (
-          <div style={{
-            width: '100%', marginTop: 6, display: 'flex', flexDirection: 'column', gap: 4,
-          }}>
-            <div style={{
-              fontSize: 9, fontWeight: 700, letterSpacing: '0.1em',
-              textTransform: 'uppercase', color: theme.gold.dim, marginBottom: 2,
-            }}>
+          <div
+            style={{
+              width: '100%',
+              marginTop: 6,
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 4,
+            }}
+          >
+            <div
+              style={{
+                fontSize: 9,
+                fontWeight: 700,
+                letterSpacing: '0.1em',
+                textTransform: 'uppercase',
+                color: theme.gold.dim,
+                marginBottom: 2,
+              }}
+            >
               Party ({partyRoster.length})
             </div>
             {partyRoster.map((p) => (
@@ -402,13 +431,18 @@ function HeroTab() {
                 key={p.characterId}
                 onClick={() => loadPartyCharacter(p.characterId)}
                 style={{
-                  display: 'flex', alignItems: 'center', gap: 8,
-                  padding: '6px 10px', fontSize: 12,
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 8,
+                  padding: '6px 10px',
+                  fontSize: 12,
                   background: theme.bg.elevated,
                   border: `1px solid ${theme.border.default}`,
                   borderRadius: theme.radius.sm,
-                  color: theme.text.primary, cursor: 'pointer',
-                  fontFamily: theme.font.body, textAlign: 'left',
+                  color: theme.text.primary,
+                  cursor: 'pointer',
+                  fontFamily: theme.font.body,
+                  textAlign: 'left',
                 }}
               >
                 {p.portraitUrl ? (
@@ -416,15 +450,25 @@ function HeroTab() {
                     src={p.portraitUrl}
                     alt=""
                     style={{ width: 24, height: 24, borderRadius: '50%', objectFit: 'cover' }}
-                    onError={(e) => { e.currentTarget.style.display = 'none'; }}
+                    onError={(e) => {
+                      e.currentTarget.style.display = 'none';
+                    }}
                   />
                 ) : (
-                  <div style={{
-                    width: 24, height: 24, borderRadius: '50%',
-                    background: theme.gold.bg, color: theme.gold.primary,
-                    display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    fontSize: 11, fontWeight: 700,
-                  }}>
+                  <div
+                    style={{
+                      width: 24,
+                      height: 24,
+                      borderRadius: '50%',
+                      background: theme.gold.bg,
+                      color: theme.gold.primary,
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      fontSize: 11,
+                      fontWeight: 700,
+                    }}
+                  >
                     {p.name?.[0] ?? '?'}
                   </div>
                 )}
@@ -437,28 +481,47 @@ function HeroTab() {
     );
   } else if (!myTokenId) {
     body = (
-      <div style={{
-        display: 'flex', flexDirection: 'column', alignItems: 'center',
-        gap: 14, padding: '24px 16px', textAlign: 'center', flex: 1,
-      }}>
+      <div
+        style={{
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          gap: 14,
+          padding: '24px 16px',
+          textAlign: 'center',
+          flex: 1,
+        }}
+      >
         {myCharacter.portraitUrl ? (
           <img
             src={myCharacter.portraitUrl}
             alt=""
             style={{
-              width: 96, height: 96, borderRadius: '50%',
+              width: 96,
+              height: 96,
+              borderRadius: '50%',
               objectFit: 'cover',
               border: `2px solid ${theme.gold.primary}`,
             }}
           />
         ) : (
-          <div style={{
-            width: 96, height: 96, borderRadius: '50%',
-            background: theme.bg.elevated,
-            border: `2px solid ${theme.gold.primary}`,
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            fontSize: 32, fontWeight: 700, color: theme.text.primary,
-          }}>{myCharacter.name?.[0] ?? '?'}</div>
+          <div
+            style={{
+              width: 96,
+              height: 96,
+              borderRadius: '50%',
+              background: theme.bg.elevated,
+              border: `2px solid ${theme.gold.primary}`,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              fontSize: 32,
+              fontWeight: 700,
+              color: theme.text.primary,
+            }}
+          >
+            {myCharacter.name?.[0] ?? '?'}
+          </div>
         )}
         <div>
           <div style={{ fontSize: 16, fontWeight: 700, color: theme.text.primary }}>
@@ -496,51 +559,76 @@ function HeroTab() {
     <div
       onClick={() => setShowList(false)}
       style={{
-        position: 'absolute', inset: 0,
+        position: 'absolute',
+        inset: 0,
         background: 'rgba(0,0,0,0.6)',
-        display: 'flex', alignItems: 'flex-end', justifyContent: 'center',
+        display: 'flex',
+        alignItems: 'flex-end',
+        justifyContent: 'center',
         zIndex: 20,
       }}
     >
       <div
         onClick={(e) => e.stopPropagation()}
         style={{
-          width: '100%', maxHeight: '70%',
+          width: '100%',
+          maxHeight: '70%',
           background: theme.bg.card,
           borderTop: `1px solid ${theme.gold.border}`,
-          borderTopLeftRadius: 10, borderTopRightRadius: 10,
+          borderTopLeftRadius: 10,
+          borderTopRightRadius: 10,
           boxShadow: '0 -8px 30px rgba(0,0,0,0.6)',
-          display: 'flex', flexDirection: 'column',
+          display: 'flex',
+          flexDirection: 'column',
         }}
       >
-        <div style={{
-          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-          padding: '10px 14px',
-          borderBottom: `1px solid ${theme.border.default}`,
-        }}>
-          <span style={{
-            fontSize: 11, fontWeight: 700, letterSpacing: '0.1em',
-            color: theme.gold.dim, textTransform: 'uppercase',
-          }}>
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            padding: '10px 14px',
+            borderBottom: `1px solid ${theme.border.default}`,
+          }}
+        >
+          <span
+            style={{
+              fontSize: 11,
+              fontWeight: 700,
+              letterSpacing: '0.1em',
+              color: theme.gold.dim,
+              textTransform: 'uppercase',
+            }}
+          >
             My Characters ({characters.length})
           </span>
           <button
             onClick={() => setShowList(false)}
             style={{
-              background: 'none', border: 'none',
-              color: theme.text.muted, fontSize: 18, cursor: 'pointer',
-              padding: 0, lineHeight: 1,
+              background: 'none',
+              border: 'none',
+              color: theme.text.muted,
+              fontSize: 18,
+              cursor: 'pointer',
+              padding: 0,
+              lineHeight: 1,
             }}
-          >×</button>
+          >
+            ×
+          </button>
         </div>
-        <div style={{
-          padding: 10, display: 'flex', flexDirection: 'column', gap: 6,
-          overflowY: 'auto', flex: 1,
-        }}>
+        <div
+          style={{
+            padding: 10,
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 6,
+            overflowY: 'auto',
+            flex: 1,
+          }}
+        >
           {listLoading ? (
-            <div style={{ fontSize: 11, color: theme.text.muted, padding: 8 }}>
-              Loading…
-            </div>
+            <div style={{ fontSize: 11, color: theme.text.muted, padding: 8 }}>Loading…</div>
           ) : characters.length === 0 ? (
             <div style={{ fontSize: 11, color: theme.text.muted, padding: 8 }}>
               No characters yet. Click Import Character below to add one.
@@ -554,7 +642,9 @@ function HeroTab() {
                   key={c.id}
                   onClick={() => activateCharacter(c)}
                   style={{
-                    display: 'flex', alignItems: 'center', gap: 10,
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 10,
                     padding: '8px 10px',
                     background: isActive ? 'rgba(232,196,85,0.12)' : theme.bg.elevated,
                     border: `1px solid ${isActive ? theme.gold.primary : theme.border.default}`,
@@ -566,39 +656,69 @@ function HeroTab() {
                   }}
                 >
                   {c.portraitUrl ? (
-                    <img src={c.portraitUrl} alt="" style={{
-                      width: 40, height: 40, borderRadius: '50%', objectFit: 'cover',
-                      border: `1px solid ${isActive ? theme.gold.primary : theme.border.default}`,
-                      flexShrink: 0,
-                    }} />
+                    <img
+                      src={c.portraitUrl}
+                      alt=""
+                      style={{
+                        width: 40,
+                        height: 40,
+                        borderRadius: '50%',
+                        objectFit: 'cover',
+                        border: `1px solid ${isActive ? theme.gold.primary : theme.border.default}`,
+                        flexShrink: 0,
+                      }}
+                    />
                   ) : (
-                    <div style={{
-                      width: 40, height: 40, borderRadius: '50%',
-                      background: theme.bg.deep,
-                      border: `1px solid ${isActive ? theme.gold.primary : theme.border.default}`,
-                      display: 'flex', alignItems: 'center', justifyContent: 'center',
-                      fontSize: 15, fontWeight: 700,
-                      flexShrink: 0,
-                    }}>{c.name?.[0] ?? '?'}</div>
+                    <div
+                      style={{
+                        width: 40,
+                        height: 40,
+                        borderRadius: '50%',
+                        background: theme.bg.deep,
+                        border: `1px solid ${isActive ? theme.gold.primary : theme.border.default}`,
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        fontSize: 15,
+                        fontWeight: 700,
+                        flexShrink: 0,
+                      }}
+                    >
+                      {c.name?.[0] ?? '?'}
+                    </div>
                   )}
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{
-                      fontSize: 13, fontWeight: 700,
-                      whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
-                    }}>{c.name}</div>
+                    <div
+                      style={{
+                        fontSize: 13,
+                        fontWeight: 700,
+                        whiteSpace: 'nowrap',
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                      }}
+                    >
+                      {c.name}
+                    </div>
                     <div style={{ fontSize: 10, color: theme.text.muted, marginTop: 1 }}>
                       {c.race} {c.class} • Lv {c.level}
                     </div>
                   </div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
                     {tokenOnMap && (
-                      <span title="On the map" style={{
-                        fontSize: 8, fontWeight: 700,
-                        padding: '2px 5px', borderRadius: 3,
-                        background: 'rgba(46,204,113,0.2)',
-                        color: theme.state.success,
-                        letterSpacing: '0.05em',
-                      }}>ON MAP</span>
+                      <span
+                        title="On the map"
+                        style={{
+                          fontSize: 8,
+                          fontWeight: 700,
+                          padding: '2px 5px',
+                          borderRadius: 3,
+                          background: 'rgba(46,204,113,0.2)',
+                          color: theme.state.success,
+                          letterSpacing: '0.05em',
+                        }}
+                      >
+                        ON MAP
+                      </span>
                     )}
                     <button
                       title="Delete character"
@@ -611,26 +731,42 @@ function HeroTab() {
                           confirmLabel: 'Delete',
                         });
                         if (!ok) return;
-                        fetch(`/api/characters/${c.id}`, { method: 'DELETE', credentials: 'include' })
+                        fetch(`/api/characters/${c.id}`, {
+                          method: 'DELETE',
+                          credentials: 'include',
+                        })
                           .then((r) => {
                             if (r.ok) {
                               setCharacters((prev) => prev.filter((ch) => ch.id !== c.id));
                               // If deleted character was active, reload to clear
-                            if (myCharacter?.id === c.id) {
-                              window.location.reload();
-                            }
+                              if (myCharacter?.id === c.id) {
+                                window.location.reload();
+                              }
                             }
                           })
                           .catch(() => {});
                       }}
                       style={{
-                        background: 'none', border: 'none', cursor: 'pointer',
-                        color: theme.text.muted, padding: 4, borderRadius: 4,
-                        display: 'flex', alignItems: 'center', justifyContent: 'center',
-                        opacity: 0.5, transition: 'opacity 0.15s',
+                        background: 'none',
+                        border: 'none',
+                        cursor: 'pointer',
+                        color: theme.text.muted,
+                        padding: 4,
+                        borderRadius: 4,
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        opacity: 0.5,
+                        transition: 'opacity 0.15s',
                       }}
-                      onMouseEnter={(e) => { (e.currentTarget).style.opacity = '1'; (e.currentTarget).style.color = theme.danger; }}
-                      onMouseLeave={(e) => { (e.currentTarget).style.opacity = '0.5'; (e.currentTarget).style.color = theme.text.muted; }}
+                      onMouseEnter={(e) => {
+                        e.currentTarget.style.opacity = '1';
+                        e.currentTarget.style.color = theme.danger;
+                      }}
+                      onMouseLeave={(e) => {
+                        e.currentTarget.style.opacity = '0.5';
+                        e.currentTarget.style.color = theme.text.muted;
+                      }}
                     >
                       <Trash2 size={13} />
                     </button>
@@ -648,26 +784,32 @@ function HeroTab() {
   const hasDdbId = !!myCharacter?.dndbeyondId && myCharacter.userId === userId;
 
   const bottomBar = (
-    <div style={{
-      display: 'flex', flexDirection: 'column', gap: 0,
-      borderTop: `1px solid ${theme.border.default}`,
-      background: theme.bg.card,
-      flexShrink: 0,
-    }}>
+    <div
+      style={{
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 0,
+        borderTop: `1px solid ${theme.border.default}`,
+        background: theme.bg.card,
+        flexShrink: 0,
+      }}
+    >
       {/* Sync toast message */}
       {syncMessage && (
-        <div style={{
-          padding: '6px 12px',
-          fontSize: 12,
-          color: syncMessage.isError ? theme.danger : theme.state.success,
-          background: syncMessage.isError
-            ? 'rgba(192, 57, 43, 0.12)'
-            : 'rgba(46, 204, 113, 0.12)',
-          borderBottom: `1px solid ${syncMessage.isError
-            ? 'rgba(192, 57, 43, 0.25)'
-            : 'rgba(46, 204, 113, 0.25)'}`,
-          textAlign: 'center',
-        }}>
+        <div
+          style={{
+            padding: '6px 12px',
+            fontSize: 12,
+            color: syncMessage.isError ? theme.danger : theme.state.success,
+            background: syncMessage.isError
+              ? 'rgba(192, 57, 43, 0.12)'
+              : 'rgba(46, 204, 113, 0.12)',
+            borderBottom: `1px solid ${
+              syncMessage.isError ? 'rgba(192, 57, 43, 0.25)' : 'rgba(46, 204, 113, 0.25)'
+            }`,
+            textAlign: 'center',
+          }}
+        >
           {syncMessage.text}
         </div>
       )}
@@ -677,7 +819,12 @@ function HeroTab() {
           size="sm"
           leadingIcon={<BookOpen size={13} />}
           onClick={() => setShowList(true)}
-          style={{ color: theme.gold.primary, borderColor: theme.gold.border, flex: '1 1 auto', minWidth: 0 }}
+          style={{
+            color: theme.gold.primary,
+            borderColor: theme.gold.border,
+            flex: '1 1 auto',
+            minWidth: 0,
+          }}
         >
           Character List
         </Button>
@@ -686,7 +833,12 @@ function HeroTab() {
           size="sm"
           leadingIcon={<Upload size={13} />}
           onClick={() => setShowImport(true)}
-          style={{ color: theme.gold.primary, borderColor: theme.gold.border, flex: '1 1 auto', minWidth: 0 }}
+          style={{
+            color: theme.gold.primary,
+            borderColor: theme.gold.border,
+            flex: '1 1 auto',
+            minWidth: 0,
+          }}
         >
           Import
         </Button>
@@ -702,7 +854,12 @@ function HeroTab() {
             }
             onClick={handleSyncFromDDB}
             disabled={syncing}
-            style={{ color: theme.gold.primary, borderColor: theme.gold.border, flex: '1 1 auto', minWidth: 0 }}
+            style={{
+              color: theme.gold.primary,
+              borderColor: theme.gold.border,
+              flex: '1 1 auto',
+              minWidth: 0,
+            }}
           >
             {syncing ? 'Syncing...' : 'Sync'}
           </Button>
@@ -712,10 +869,14 @@ function HeroTab() {
   );
 
   return (
-    <div style={{
-      display: 'flex', flexDirection: 'column', height: '100%',
-      position: 'relative',
-    }}>
+    <div
+      style={{
+        display: 'flex',
+        flexDirection: 'column',
+        height: '100%',
+        position: 'relative',
+      }}
+    >
       {body}
       {bottomBar}
       {listOverlay}
@@ -756,14 +917,10 @@ function CombatPanel() {
   // primitive so its hover/focus/disabled states match every other
   // CTA in the app. `danger` for Start Combat (red call-to-action)
   // and `primary` (gold) for End Combat.
-  const combatButton = isDM && (
-    combatActive ? (
-      <Button
-        variant="primary"
-        size="lg"
-        fullWidth
-        onClick={() => emitEndCombat()}
-      >
+  const combatButton =
+    isDM &&
+    (combatActive ? (
+      <Button variant="primary" size="lg" fullWidth onClick={() => emitEndCombat()}>
         End Combat
       </Button>
     ) : (
@@ -796,40 +953,52 @@ function CombatPanel() {
           Ready Check
         </Button>
       </div>
-    )
-  );
+    ));
 
   // Ready check player status list (DM view)
   const readyCheckStatus = isDM && readyCheck?.active && (
-    <div style={{
-      display: 'flex', flexDirection: 'column', gap: 6,
-      padding: '10px 0',
-      borderTop: `1px solid ${theme.border.default}`,
-    }}>
-      <div style={{
-        fontSize: 11, fontWeight: 700, color: theme.gold.dim,
-        textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 2,
-      }}>
+    <div
+      style={{
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 6,
+        padding: '10px 0',
+        borderTop: `1px solid ${theme.border.default}`,
+      }}
+    >
+      <div
+        style={{
+          fontSize: 11,
+          fontWeight: 700,
+          color: theme.gold.dim,
+          textTransform: 'uppercase',
+          letterSpacing: '0.5px',
+          marginBottom: 2,
+        }}
+      >
         Ready Check
       </div>
       {readyCheck.playerIds.map((pid) => {
-        const player = players.find((p: any) => p.userId === pid);
+        const player = players.find((p: Player) => p.userId === pid);
         const isReady = readyCheck.responses[pid] === true;
         return (
-          <div key={pid} style={{
-            display: 'flex', alignItems: 'center', gap: 8,
-            padding: '4px 6px',
-            fontSize: 12,
-            color: isReady ? theme.state.success : theme.text.secondary,
-          }}>
+          <div
+            key={pid}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+              padding: '4px 6px',
+              fontSize: 12,
+              color: isReady ? theme.state.success : theme.text.secondary,
+            }}
+          >
             {isReady ? (
               <Check size={14} color={theme.state.success} />
             ) : (
               <Circle size={14} color={theme.text.muted} />
             )}
-            <span style={{ fontWeight: isReady ? 700 : 400 }}>
-              {player?.displayName ?? pid}
-            </span>
+            <span style={{ fontWeight: isReady ? 700 : 400 }}>{player?.displayName ?? pid}</span>
           </div>
         );
       })}
@@ -843,9 +1012,7 @@ function CombatPanel() {
         {readyCheckStatus}
         <div style={styles.emptyState}>
           <Swords size={32} color={theme.text.muted} />
-          <p style={{ color: theme.text.secondary, margin: 0 }}>
-            No combat active
-          </p>
+          <p style={{ color: theme.text.secondary, margin: 0 }}>No combat active</p>
           {isDM && !readyCheck?.active && (
             <p style={{ color: theme.text.muted, fontSize: 12, margin: 0, textAlign: 'center' }}>
               {tokenCount === 0
@@ -884,9 +1051,14 @@ function CombatPanel() {
     return (
       <div style={styles.combatPanel}>
         {combatButton}
-        <div style={{
-          padding: 16, textAlign: 'center', color: theme.text.muted, fontSize: 12,
-        }}>
+        <div
+          style={{
+            padding: 16,
+            textAlign: 'center',
+            color: theme.text.muted,
+            fontSize: 12,
+          }}
+        >
           {isDM
             ? 'Reviewing initiative — confirm in the modal to begin.'
             : 'Initiative rolled — waiting on DM to lock in the order.'}
