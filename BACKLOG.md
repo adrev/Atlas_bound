@@ -99,7 +99,7 @@ Each item below needs a verification pass. "Unit-testable" = I can pin it headle
 | O.3 | Move secrets to Google Secret Manager (`--set-secrets`) | ⬜ | currently plain env vars on the revision |
 | O.4 | Apple OAuth not plumbed through `deploy.sh` | ⬜ | defined in `.env.example`, decide if wanted |
 | O.5 | Public static asset bucket + CORS strategy | ✅ | Done in PR #120; public assets now live in `atlas-bound-public-assets-personal`, runtime client URLs use it, and PNG/JPG/SVG/MP3 content types + CORS were verified |
-| O.6 | Audit/migrate persisted DB URLs from old bucket (`atlas-bound-data`) to the new public asset bucket | 🔵 | CodeX branch adds dry-run/apply maintenance tooling; after merge, run `npm run assets:audit-public-urls` against prod first, then `npm run assets:migrate-public-urls` only if the report looks right |
+| O.6 | Audit/migrate persisted DB URLs from old bucket (`atlas-bound-data`) to the new public asset bucket | ⚠️ | Dry-run/apply maintenance tooling is merged in PR #123/#124; production DB still needs `npm run assets:audit-public-urls` first, then `npm run assets:migrate-public-urls` only if the report looks right |
 
 ## Websocket QA — remaining matrix rows
 
