@@ -86,6 +86,7 @@ Each item below needs a verification pass. "Unit-testable" = I can pin it headle
 | T4.4 | Vitest coverage thresholds on hot dirs (combat, dice, sockets) | ✅ | Done in PR #95; `npm run coverage` gates socket/combat/dice hot areas with baseline V8 thresholds |
 | T4.5 | Enable `noUncheckedIndexedAccess` in `tsconfig.base.json` | ⬜ | |
 | T4.6 | Decide Express v5 vs pin to v4 | ✅ | Express v5 is GA; server uses `express ^5.1.0` with `express@5.2.1` installed |
+| T4.7 | Bring TSX into the global `npm run lint` gate | ⬜ | Current script misses `client/src/**/*.tsx`; direct TSX scan shows ~270 warnings, mostly `TokenActionPanel`, so clean in slices before flipping the gate |
 
 ---
 

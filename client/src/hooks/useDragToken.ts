@@ -39,11 +39,18 @@ function showMovementDeniedToast(attempted: number, remaining: number, max: numb
     </div>
   `;
   Object.assign(toast.style, {
-    position: 'fixed', top: '18%', left: '50%',
+    position: 'fixed',
+    top: '18%',
+    left: '50%',
     transform: 'translateX(-50%)',
-    padding: '12px 18px', background: '#1a1a1a', color: '#eee',
-    borderRadius: '8px', border: '2px solid #c53131',
-    zIndex: '99999', minWidth: '260px', maxWidth: '360px',
+    padding: '12px 18px',
+    background: '#1a1a1a',
+    color: '#eee',
+    borderRadius: '8px',
+    border: '2px solid #c53131',
+    zIndex: '99999',
+    minWidth: '260px',
+    maxWidth: '360px',
     boxShadow: '0 6px 20px rgba(0,0,0,0.6)',
     fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
   });
@@ -70,7 +77,6 @@ export function useDragToken(tokenId: string) {
     const userId = useSessionStore.getState().userId;
     const isDM = useSessionStore.getState().isDM;
     const combat = useCombatStore.getState();
-    const locked = useMapStore.getState().lockedTokenIds;
 
     if (!token) return false;
 
@@ -79,7 +85,7 @@ export function useDragToken(tokenId: string) {
     if (isDrawMode) return false;
 
     // Locked tokens cannot be dragged
-    if (locked.has(tokenId)) return false;
+    if (lockedTokenIds.has(tokenId)) return false;
 
     // DM can always move tokens
     if (isDM) return true;
@@ -112,7 +118,7 @@ export function useDragToken(tokenId: string) {
         currentY: startY,
       });
     },
-    [tokenId],
+    [tokenId]
   );
 
   const handleDragEnd = useCallback(
@@ -129,13 +135,7 @@ export function useDragToken(tokenId: string) {
       const prevX = previewStart?.startX ?? prevToken?.x ?? node.x();
       const prevY = previewStart?.startY ?? prevToken?.y ?? node.y();
 
-      const snapped = snapToGrid(
-        node.x(),
-        node.y(),
-        gridSize,
-        gridOffsetX,
-        gridOffsetY
-      );
+      const snapped = snapToGrid(node.x(), node.y(), gridSize, gridOffsetX, gridOffsetY);
 
       // Convert pixel delta → feet using Chebyshev (5e "variant")
       // distance on the grid. A diagonal square costs 5 ft (same as
@@ -150,8 +150,8 @@ export function useDragToken(tokenId: string) {
       const feet = cellsMoved * 5;
 
       const combat = useCombatStore.getState();
-      const isActiveCombatant = combat.active &&
-        combat.combatants[combat.currentTurnIndex]?.tokenId === tokenId;
+      const isActiveCombatant =
+        combat.active && combat.combatants[combat.currentTurnIndex]?.tokenId === tokenId;
 
       // ── Enforce movement limit ────────────────────────────────
       // In combat, the current combatant can't exceed their remaining
@@ -160,12 +160,16 @@ export function useDragToken(tokenId: string) {
       // mid-turn, and enforcing the limit on them just wastes their
       // time with a Dash workaround. Players still hit the ceiling.
       const dmMovementOverride = useSessionStore.getState().isDM;
-      if (isActiveCombatant && !dmMovementOverride && feet > combat.actionEconomy.movementRemaining) {
+      if (
+        isActiveCombatant &&
+        !dmMovementOverride &&
+        feet > combat.actionEconomy.movementRemaining
+      ) {
         node.position({ x: prevX, y: prevY });
         showMovementDeniedToast(
           feet,
           combat.actionEconomy.movementRemaining,
-          combat.actionEconomy.movementMax,
+          combat.actionEconomy.movementMax
         );
         useMapStore.getState().endDragPreview();
         return;
@@ -194,13 +198,7 @@ export function useDragToken(tokenId: string) {
     (e: KonvaEventObject<DragEvent>) => {
       // Snap-preview while dragging.
       const node = e.target;
-      const snapped = snapToGrid(
-        node.x(),
-        node.y(),
-        gridSize,
-        gridOffsetX,
-        gridOffsetY
-      );
+      const snapped = snapToGrid(node.x(), node.y(), gridSize, gridOffsetX, gridOffsetY);
       node.position(snapped);
       // Update the drag-preview state so the ghost-line layer can
       // redraw the blue distance line + ft label live.
