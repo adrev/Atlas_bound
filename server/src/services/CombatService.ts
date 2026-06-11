@@ -1025,6 +1025,30 @@ export async function endCombat(sessionId: string): Promise<void> {
   room.gameMode = 'free-roam';
   room.actionEconomies.clear();
 
+  // Clear per-combat caches that used to leak into the NEXT encounter:
+  // melee-reach/Mobile/Polearm caches are rebuilt at every combat start,
+  // lair flags and legendary/recharge budgets are per-fight, and any
+  // conditionMeta with a round-relative expiry is meaningless once the
+  // round counter resets (a buff applied in fight A round 12 "expires
+  // after 21" would otherwise survive into fight B and not expire until
+  // ITS round 22). Meta without expiresAfterRound — manual conditions,
+  // grapples — persists deliberately: those are scene-real, not
+  // round-relative.
+  room.tokenMeleeReach.clear();
+  room.mobileMeleeTargets.clear();
+  room.polearmMasters.clear();
+  room.lairActionTokens.clear();
+  room.legendaryActions.clear();
+  room.rechargePools.clear();
+  for (const [tokenId, metaMap] of room.conditionMeta) {
+    for (const [name, meta] of metaMap) {
+      if (meta.expiresAfterRound != null || meta.saveAtEndOfTurn != null) {
+        metaMap.delete(name);
+      }
+    }
+    if (metaMap.size === 0) room.conditionMeta.delete(tokenId);
+  }
+
   await pool.query('DELETE FROM combat_state WHERE session_id = $1', [sessionId]);
   await pool.query("UPDATE sessions SET combat_active = 0, game_mode = 'free-roam' WHERE id = $1", [
     sessionId,
