@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Line, Rect, Circle, Arrow, Text, Group, Wedge } from 'react-konva';
 import type Konva from 'konva';
-import type { Drawing, DrawingGeometry, DrawingKind } from '@dnd-vtt/shared';
+import type { Drawing } from '@dnd-vtt/shared';
 import { useDrawStore, type PreviewDrawing } from '../../../stores/useDrawStore';
 import { useSessionStore } from '../../../stores/useSessionStore';
 import { emitDrawingUpdate } from '../../../socket/emitters';
@@ -13,17 +13,37 @@ import { emitDrawingUpdate } from '../../../socket/emitters';
  * element isn't provided (legacy drawings without an element hint).
  */
 const AOE_PALETTE: Record<string, { fill: string; stroke: string; glow: string }> = {
-  fire:      { fill: 'rgba(255, 140, 40, 0.40)',  stroke: 'rgba(255, 100, 20, 0.9)',   glow: '#ff6a20' },
-  cold:      { fill: 'rgba(180, 220, 255, 0.40)', stroke: 'rgba(120, 180, 240, 0.9)',  glow: '#a0c8ff' },
-  lightning: { fill: 'rgba(255, 255, 180, 0.40)', stroke: 'rgba(200, 220, 255, 0.9)',  glow: '#ffffa0' },
-  acid:      { fill: 'rgba(160, 220, 60, 0.40)',  stroke: 'rgba(110, 180, 40, 0.9)',   glow: '#a0dc3c' },
-  poison:    { fill: 'rgba(110, 180, 70, 0.40)',  stroke: 'rgba(60, 130, 50, 0.9)',    glow: '#6eb446' },
-  radiant:   { fill: 'rgba(255, 230, 140, 0.40)', stroke: 'rgba(230, 200, 100, 0.9)',  glow: '#ffe68c' },
-  necrotic:  { fill: 'rgba(120, 60, 140, 0.45)',  stroke: 'rgba(60, 30, 80, 0.9)',     glow: '#783c8c' },
-  thunder:   { fill: 'rgba(200, 220, 255, 0.40)', stroke: 'rgba(140, 160, 200, 0.9)',  glow: '#c8dcff' },
-  force:     { fill: 'rgba(230, 210, 255, 0.40)', stroke: 'rgba(170, 140, 230, 0.9)',  glow: '#e6d2ff' },
-  psychic:   { fill: 'rgba(255, 180, 220, 0.40)', stroke: 'rgba(200, 120, 180, 0.9)',  glow: '#ffb4dc' },
-  neutral:   { fill: 'rgba(220, 220, 230, 0.35)', stroke: 'rgba(180, 180, 200, 0.8)',  glow: '#dcdce6' },
+  fire: { fill: 'rgba(255, 140, 40, 0.40)', stroke: 'rgba(255, 100, 20, 0.9)', glow: '#ff6a20' },
+  cold: { fill: 'rgba(180, 220, 255, 0.40)', stroke: 'rgba(120, 180, 240, 0.9)', glow: '#a0c8ff' },
+  lightning: {
+    fill: 'rgba(255, 255, 180, 0.40)',
+    stroke: 'rgba(200, 220, 255, 0.9)',
+    glow: '#ffffa0',
+  },
+  acid: { fill: 'rgba(160, 220, 60, 0.40)', stroke: 'rgba(110, 180, 40, 0.9)', glow: '#a0dc3c' },
+  poison: { fill: 'rgba(110, 180, 70, 0.40)', stroke: 'rgba(60, 130, 50, 0.9)', glow: '#6eb446' },
+  radiant: {
+    fill: 'rgba(255, 230, 140, 0.40)',
+    stroke: 'rgba(230, 200, 100, 0.9)',
+    glow: '#ffe68c',
+  },
+  necrotic: { fill: 'rgba(120, 60, 140, 0.45)', stroke: 'rgba(60, 30, 80, 0.9)', glow: '#783c8c' },
+  thunder: {
+    fill: 'rgba(200, 220, 255, 0.40)',
+    stroke: 'rgba(140, 160, 200, 0.9)',
+    glow: '#c8dcff',
+  },
+  force: { fill: 'rgba(230, 210, 255, 0.40)', stroke: 'rgba(170, 140, 230, 0.9)', glow: '#e6d2ff' },
+  psychic: {
+    fill: 'rgba(255, 180, 220, 0.40)',
+    stroke: 'rgba(200, 120, 180, 0.9)',
+    glow: '#ffb4dc',
+  },
+  neutral: {
+    fill: 'rgba(220, 220, 230, 0.35)',
+    stroke: 'rgba(180, 180, 200, 0.8)',
+    glow: '#dcdce6',
+  },
 };
 
 function aoeStyle(drawing: Drawing): { fill: string; stroke: string; glow: string } {
@@ -163,9 +183,7 @@ function DrawingShape({
   selectable?: boolean;
   draggable?: boolean;
 }) {
-  const onClick = selectable
-    ? () => useDrawStore.getState().selectDrawing(drawing.id)
-    : undefined;
+  const onClick = selectable ? () => useDrawStore.getState().selectDrawing(drawing.id) : undefined;
 
   // When the user drops the drawing we compute the delta the Group has
   // moved (Konva translates the whole Group during drag) and apply
@@ -249,25 +267,12 @@ function renderShape(drawing: Drawing) {
 
   if (kind === 'circle' && geometry.circle) {
     const c = geometry.circle;
-    return (
-      <Circle
-        x={c.x}
-        y={c.y}
-        radius={c.radius}
-        stroke={color}
-        strokeWidth={strokeWidth}
-      />
-    );
+    return <Circle x={c.x} y={c.y} radius={c.radius} stroke={color} strokeWidth={strokeWidth} />;
   }
 
   if (kind === 'line' && geometry.points) {
     return (
-      <Line
-        points={geometry.points}
-        stroke={color}
-        strokeWidth={strokeWidth}
-        lineCap="round"
-      />
+      <Line points={geometry.points} stroke={color} strokeWidth={strokeWidth} lineCap="round" />
     );
   }
 
@@ -407,7 +412,9 @@ function SelectionRing({ drawing }: { drawing: Drawing }) {
   );
 }
 
-function getSelectionBounds(d: Drawing): { x: number; y: number; width: number; height: number } | null {
+function getSelectionBounds(
+  d: Drawing
+): { x: number; y: number; width: number; height: number } | null {
   const g = d.geometry;
   if (g.rect) return g.rect;
   if (g.circle) {
@@ -419,7 +426,10 @@ function getSelectionBounds(d: Drawing): { x: number; y: number; width: number; 
     };
   }
   if (g.points && g.points.length >= 2) {
-    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    let minX = Infinity,
+      minY = Infinity,
+      maxX = -Infinity,
+      maxY = -Infinity;
     for (let i = 0; i < g.points.length; i += 2) {
       const x = g.points[i];
       const y = g.points[i + 1];

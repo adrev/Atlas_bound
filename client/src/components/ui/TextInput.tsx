@@ -1,7 +1,10 @@
 import { forwardRef, useState } from 'react';
 import type {
-  InputHTMLAttributes, TextareaHTMLAttributes, SelectHTMLAttributes,
-  CSSProperties, ReactNode,
+  InputHTMLAttributes,
+  TextareaHTMLAttributes,
+  SelectHTMLAttributes,
+  CSSProperties,
+  ReactNode,
 } from 'react';
 import { theme } from '../../styles/theme';
 
@@ -49,11 +52,7 @@ const FONT_SIZE: Record<InputSize, number> = {
   md: 13,
 };
 
-function baseInputStyle(
-  size: InputSize,
-  error: boolean,
-  hasLeadingIcon: boolean,
-): CSSProperties {
+function baseInputStyle(size: InputSize, error: boolean, hasLeadingIcon: boolean): CSSProperties {
   return {
     padding: PADDING[size],
     paddingLeft: hasLeadingIcon ? (size === 'sm' ? 24 : 28) : undefined,
@@ -96,8 +95,17 @@ export interface TextInputProps
   extends Omit<InputHTMLAttributes<HTMLInputElement>, 'size'>, CommonInputProps {}
 
 export const TextInput = forwardRef<HTMLInputElement, TextInputProps>(function TextInput(
-  { size = 'md', error = false, leadingIcon, fullWidth = true, containerStyle, style, className, ...rest },
-  ref,
+  {
+    size = 'md',
+    error = false,
+    leadingIcon,
+    fullWidth = true,
+    containerStyle,
+    style,
+    className,
+    ...rest
+  },
+  ref
 ) {
   const inputStyle: CSSProperties = {
     ...baseInputStyle(size, error, !!leadingIcon),
@@ -112,9 +120,7 @@ export const TextInput = forwardRef<HTMLInputElement, TextInputProps>(function T
         ...containerStyle,
       }}
     >
-      {leadingIcon && (
-        <span style={iconWrapStyle(size)}>{leadingIcon}</span>
-      )}
+      {leadingIcon && <span style={iconWrapStyle(size)}>{leadingIcon}</span>}
       <input
         ref={ref}
         className={`atlas-input${error ? ' atlas-input--error' : ''}${className ? ' ' + className : ''}`}
@@ -129,14 +135,13 @@ export const TextInput = forwardRef<HTMLInputElement, TextInputProps>(function T
 // Just a TextInput with type="number" by default; preserves the
 // same focus/error/icon behavior and lets the browser handle
 // increment/decrement.
-export interface NumberInputProps extends TextInputProps {}
+export type NumberInputProps = TextInputProps;
 
-export const NumberInput = forwardRef<HTMLInputElement, NumberInputProps>(function NumberInput(
-  props,
-  ref,
-) {
-  return <TextInput type="number" ref={ref} {...props} />;
-});
+export const NumberInput = forwardRef<HTMLInputElement, NumberInputProps>(
+  function NumberInput(props, ref) {
+    return <TextInput type="number" ref={ref} {...props} />;
+  }
+);
 
 // ── Textarea ────────────────────────────────────────────────
 export interface TextareaProps
@@ -144,7 +149,7 @@ export interface TextareaProps
 
 export const Textarea = forwardRef<HTMLTextAreaElement, TextareaProps>(function Textarea(
   { size = 'md', error = false, fullWidth = true, containerStyle, style, className, ...rest },
-  ref,
+  ref
 ) {
   const areaStyle: CSSProperties = {
     ...baseInputStyle(size, error, false),
@@ -177,8 +182,17 @@ export interface SelectProps
   extends Omit<SelectHTMLAttributes<HTMLSelectElement>, 'size'>, CommonInputProps {}
 
 export const Select = forwardRef<HTMLSelectElement, SelectProps>(function Select(
-  { size = 'md', error = false, fullWidth = true, containerStyle, style, className, children, ...rest },
-  ref,
+  {
+    size = 'md',
+    error = false,
+    fullWidth = true,
+    containerStyle,
+    style,
+    className,
+    children,
+    ...rest
+  },
+  ref
 ) {
   const selectStyle: CSSProperties = {
     ...baseInputStyle(size, error, false),
