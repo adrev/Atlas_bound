@@ -15,7 +15,6 @@ import { LightingLayer } from './layers/LightingLayer';
 import { SpellAnimationLayer } from '../animations/SpellAnimation';
 import { useCombatStore } from '../../stores/useCombatStore';
 import { useEffectStore, type TargetingSpell } from '../../stores/useEffectStore';
-import { WallDrawLayer } from '../../components/dm/WallDrawTool';
 import { ZoneLayer } from '../../components/dm/ZoneTool';
 import { FogBrush, FogBrushLayer } from '../../components/dm/FogBrush';
 import { MeasureWallLayer, WallContextMenu } from './layers/MeasureWallLayer';
@@ -166,7 +165,6 @@ export function BattleMap() {
   const currentMap = useMapStore((s) => s.currentMap);
   const isDM = useSessionStore((s) => s.isDM);
   const gridOpacity = useSessionStore((s) => s.settings.gridOpacity);
-  const activeTool = useMapStore((s) => s.activeTool);
   // Read combat state via getState() to avoid re-render loops from array/object deps
   const [isMyTurn, setIsMyTurn] = useState(false);
   const [targetingSpell, setTargetingSpellLocal] = useState<TargetingSpell | null>(null);
@@ -630,7 +628,6 @@ export function BattleMap() {
                 Spell animations rendered last so casts always pop. */}
             <Layer>
               <MeasureWallLayer />
-              {isDM && activeTool === 'wall' && <WallDrawLayer gridSize={currentMap.gridSize} />}
               {isDM && <FogBrushLayer />}
               {isDM && <ZoneLayer />}
               {targetingSpell && <EffectLayer />}
