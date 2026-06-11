@@ -67,12 +67,17 @@ export async function startCombat(
   // Per-recipient emit so players never see hidden creatures in the
   // initiative tracker. Hidden creatures still act — we just don't
   // advertise them until the DM reveals the token.
+  // Position-independent turn pointer — recipients get filtered lists,
+  // so a raw index would point at the wrong row whenever hidden
+  // combatants precede it.
+  const currentTokenId = combatState.combatants[combatState.currentTurnIndex]?.tokenId ?? null;
   if (room) {
     for (const p of room.players.values()) {
       const visibleCombatants = combatantsVisibleTo(sessionId, combatState.combatants, p);
       io.to(p.socketId).emit('combat:started', {
         combatants: visibleCombatants,
         roundNumber: combatState.roundNumber,
+        currentTokenId,
         reviewPhase: true,
       });
     }
@@ -80,6 +85,7 @@ export async function startCombat(
     io.to(sessionId).emit('combat:started', {
       combatants: combatState.combatants,
       roundNumber: combatState.roundNumber,
+      currentTokenId,
       reviewPhase: true,
     });
   }

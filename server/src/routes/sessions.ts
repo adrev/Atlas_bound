@@ -4,15 +4,24 @@ import { randomBytes } from 'crypto';
 import rateLimit from 'express-rate-limit';
 import pool from '../db/connection.js';
 import {
-  createSessionSchema, joinSessionSchema, patchSessionSchema,
-  transferOwnershipSchema, sessionPromoteSchema, sessionDemoteSchema,
+  createSessionSchema,
+  joinSessionSchema,
+  patchSessionSchema,
+  transferOwnershipSchema,
+  sessionPromoteSchema,
+  sessionDemoteSchema,
 } from '../utils/validation.js';
 import { DEFAULT_SESSION_SETTINGS } from '@dnd-vtt/shared';
 import {
-  getAuthUserId, assertSessionMember, assertSessionDM, assertSessionOwner,
+  getAuthUserId,
+  assertSessionMember,
+  assertSessionDM,
+  assertSessionOwner,
 } from '../utils/authorization.js';
 import {
-  hashSessionPassword, verifySessionPassword, generateInviteCode,
+  hashSessionPassword,
+  verifySessionPassword,
+  generateInviteCode,
 } from '../utils/sessionPassword.js';
 import { getIO } from '../socket/ioInstance.js';
 import { getRoom, removePlayerFromRoom, resolveViewingMapId } from '../utils/roomState.js';
@@ -46,9 +55,11 @@ export function generateRoomCode(): string {
 
 // Rate-limit room-code join attempts to prevent code enumeration.
 const joinLimiter = rateLimit({
-  windowMs: 60 * 1000, max: 20,
+  windowMs: 60 * 1000,
+  max: 20,
   message: { error: 'Too many join attempts. Please try again later.' },
-  standardHeaders: true, legacyHeaders: false,
+  standardHeaders: true,
+  legacyHeaders: false,
   validate: false, // Cloud Run proxies set X-Forwarded-For
 });
 
@@ -89,9 +100,8 @@ router.post('/', async (req: Request, res: Response) => {
   const sessionId = uuidv4();
   const roomCode = await getUniqueRoomCode();
   const settings = JSON.stringify(DEFAULT_SESSION_SETTINGS);
-  const passwordHash = password && visibility === 'private'
-    ? await hashSessionPassword(password)
-    : null;
+  const passwordHash =
+    password && visibility === 'private' ? await hashSessionPassword(password) : null;
   // Every session gets an invite code up-front so the DM can share the
   // link later without a second round-trip. Public sessions just don't
   // display it prominently.
@@ -110,13 +120,20 @@ router.post('/', async (req: Request, res: Response) => {
        )
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $9)`,
       [
-        sessionId, name, roomCode, userId, settings, visibility, passwordHash,
-        inviteCode, startingMapId,
-      ],
+        sessionId,
+        name,
+        roomCode,
+        userId,
+        settings,
+        visibility,
+        passwordHash,
+        inviteCode,
+        startingMapId,
+      ]
     );
     await client.query(
       'INSERT INTO session_players (session_id, user_id, role) VALUES ($1, $2, $3)',
-      [sessionId, userId, 'dm'],
+      [sessionId, userId, 'dm']
     );
     if (startingMap && startingMapId) {
       await client.query(
@@ -133,7 +150,7 @@ router.post('/', async (req: Request, res: Response) => {
           startingMap.gridRows * gridSize,
           gridSize,
           DEFAULT_SESSION_SETTINGS.gridType,
-        ],
+        ]
       );
     }
     await client.query('COMMIT');
@@ -178,12 +195,19 @@ router.post('/join', joinLimiter, async (req: Request, res: Response) => {
   const { rows: sessionRows } = await pool.query(
     `SELECT id, name, room_code, dm_user_id, visibility, password_hash, invite_code
        FROM sessions WHERE room_code = $1`,
-    [roomCode],
+    [roomCode]
   );
-  const session = sessionRows[0] as {
-    id: string; name: string; room_code: string; dm_user_id: string;
-    visibility: string; password_hash: string | null; invite_code: string | null;
-  } | undefined;
+  const session = sessionRows[0] as
+    | {
+        id: string;
+        name: string;
+        room_code: string;
+        dm_user_id: string;
+        visibility: string;
+        password_hash: string | null;
+        invite_code: string | null;
+      }
+    | undefined;
 
   if (!session) {
     res.status(404).json({ error: 'Session not found with that room code' });
@@ -199,10 +223,14 @@ router.post('/join', joinLimiter, async (req: Request, res: Response) => {
        FROM session_bans b
        LEFT JOIN users bu ON bu.id = b.banned_by
        WHERE b.session_id = $1 AND b.user_id = $2`,
-    [session.id, userId],
+    [session.id, userId]
   );
   if (banRows.length > 0) {
-    const b = banRows[0] as { banned_at: string; reason: string | null; banned_by_name: string | null };
+    const b = banRows[0] as {
+      banned_at: string;
+      reason: string | null;
+      banned_by_name: string | null;
+    };
     res.status(403).json({
       error: 'banned',
       reason: b.reason,
@@ -214,7 +242,7 @@ router.post('/join', joinLimiter, async (req: Request, res: Response) => {
 
   const { rows: existingRows } = await pool.query(
     'SELECT user_id, role FROM session_players WHERE session_id = $1 AND user_id = $2',
-    [session.id, userId],
+    [session.id, userId]
   );
   const isAlreadyMember = existingRows.length > 0;
 
@@ -222,9 +250,8 @@ router.post('/join', joinLimiter, async (req: Request, res: Response) => {
     if (session.visibility === 'private') {
       // Try invite token first (it's a cheaper equality check than
       // the bcrypt compare and lets invite-link users skip the prompt).
-      const validInvite = !!inviteToken
-        && !!session.invite_code
-        && inviteToken === session.invite_code;
+      const validInvite =
+        !!inviteToken && !!session.invite_code && inviteToken === session.invite_code;
 
       let validPassword = false;
       if (!validInvite && password && session.password_hash) {
@@ -243,7 +270,7 @@ router.post('/join', joinLimiter, async (req: Request, res: Response) => {
 
     await pool.query(
       'INSERT INTO session_players (session_id, user_id, role) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING',
-      [session.id, userId, 'player'],
+      [session.id, userId, 'player']
     );
   }
 
@@ -267,7 +294,7 @@ router.get('/invites/:token', async (req: Request, res: Response) => {
   }
   const { rows } = await pool.query(
     'SELECT id, name, room_code FROM sessions WHERE invite_code = $1',
-    [token],
+    [token]
   );
   const row = rows[0] as { id: string; name: string; room_code: string } | undefined;
   if (!row) {
@@ -285,9 +312,13 @@ router.get('/invites/:token', async (req: Request, res: Response) => {
 // without needing a separate presence service yet.
 router.get('/mine', privateNoStoreCache, async (req: Request, res: Response) => {
   const userId = req.user?.id;
-  if (!userId) { res.json([]); return; }
+  if (!userId) {
+    res.json([]);
+    return;
+  }
 
-  const { rows } = await pool.query(`
+  const { rows } = await pool.query(
+    `
     SELECT s.id, s.name, s.room_code, sp.role,
            (SELECT COUNT(*) FROM session_players WHERE session_id = s.id) as player_count,
            s.created_at, s.updated_at,
@@ -300,12 +331,14 @@ router.get('/mine', privateNoStoreCache, async (req: Request, res: Response) => 
     LEFT JOIN maps m ON m.id = s.current_map_id
     WHERE sp.user_id = $1
     ORDER BY COALESCE(s.updated_at, s.created_at) DESC
-  `, [userId]);
+  `,
+    [userId]
+  );
 
   // Look up live presence for every row. The room state is in-process
   // memory, so each lookup is O(1) and the join doesn't touch the DB.
   // A room with zero connected userIds is treated as not-live.
-  const enriched = rows.map(r => {
+  const enriched = rows.map((r) => {
     const room = getRoom(r.id);
     const onlineCount = room
       ? Array.from(room.userSockets.values()).filter((s) => s.size > 0).length
@@ -377,13 +410,16 @@ router.delete('/:id', async (req: Request, res: Response) => {
 // DELETE /api/sessions/:id/leave - Leave a session
 router.delete('/:id/leave', async (req: Request, res: Response) => {
   const userId = req.user?.id;
-  if (!userId) { res.status(401).json({ error: 'Not authenticated' }); return; }
+  if (!userId) {
+    res.status(401).json({ error: 'Not authenticated' });
+    return;
+  }
 
   // Owner must transfer first (or delete the session). Otherwise leaving
   // would orphan every co-DM and player without an authority figure.
   const { rows: ownerRows } = await pool.query(
     'SELECT 1 FROM sessions WHERE id = $1 AND dm_user_id = $2',
-    [req.params.id, userId],
+    [req.params.id, userId]
   );
   if (ownerRows.length > 0) {
     res.status(409).json({
@@ -392,8 +428,10 @@ router.delete('/:id/leave', async (req: Request, res: Response) => {
     return;
   }
 
-  await pool.query('DELETE FROM session_players WHERE session_id = $1 AND user_id = $2',
-    [req.params.id, userId]);
+  await pool.query('DELETE FROM session_players WHERE session_id = $1 AND user_id = $2', [
+    req.params.id,
+    userId,
+  ]);
 
   // Evict all live sockets for this user from the Socket.IO room +
   // room state. Without this, the user's connected tabs keep receiving
@@ -450,14 +488,16 @@ router.post('/:id/link-character', async (req: Request, res: Response) => {
   // be writing a character_id onto a row that doesn't exist.
   const { rows: memberRows } = await pool.query(
     'SELECT 1 FROM session_players WHERE session_id = $1 AND user_id = $2',
-    [sessionId, userId],
+    [sessionId, userId]
   );
   if (memberRows.length === 0) {
     res.status(404).json({ error: 'Player not in session' });
     return;
   }
 
-  const { rows: charRows } = await pool.query('SELECT user_id FROM characters WHERE id = $1', [characterId]);
+  const { rows: charRows } = await pool.query('SELECT user_id FROM characters WHERE id = $1', [
+    characterId,
+  ]);
   if (charRows.length === 0) {
     res.status(404).json({ error: 'Character not found' });
     return;
@@ -472,8 +512,10 @@ router.post('/:id/link-character', async (req: Request, res: Response) => {
     return;
   }
 
-  await pool.query('UPDATE session_players SET character_id = $1 WHERE session_id = $2 AND user_id = $3',
-    [characterId, sessionId, userId]);
+  await pool.query(
+    'UPDATE session_players SET character_id = $1 WHERE session_id = $2 AND user_id = $3',
+    [characterId, sessionId, userId]
+  );
   res.json({ success: true });
 });
 
@@ -484,12 +526,15 @@ router.get('/:id', async (req: Request, res: Response) => {
 
   await assertSessionMember(String(id), userId);
 
-  const { rows: sessionRows } = await pool.query(`
+  const { rows: sessionRows } = await pool.query(
+    `
     SELECT id, name, room_code, dm_user_id, current_map_id, player_map_id,
            combat_active, game_mode, settings,
            visibility, password_hash, invite_code, created_at, updated_at
     FROM sessions WHERE id = $1
-  `, [id]);
+  `,
+    [id]
+  );
   const session = sessionRows[0] as Record<string, unknown> | undefined;
 
   if (!session) {
@@ -497,18 +542,19 @@ router.get('/:id', async (req: Request, res: Response) => {
     return;
   }
 
-  const { rows: players } = await pool.query(`
+  const { rows: players } = await pool.query(
+    `
     SELECT sp.user_id, sp.role, sp.character_id, u.display_name, u.avatar_url
     FROM session_players sp
     JOIN users u ON u.id = sp.user_id
     WHERE sp.session_id = $1
-  `, [id]);
+  `,
+    [id]
+  );
 
   // The invite token is DM planning data — a curious player can't see
   // it in the socket state-sync, so we must not leak it via REST either.
-  const requesterIsDM = players.some(
-    (p) => p.user_id === userId && p.role === 'dm',
-  );
+  const requesterIsDM = players.some((p) => p.user_id === userId && p.role === 'dm');
 
   // Scope the maps list to DMs. Players must never receive the prep /
   // preview map list through REST because /uploads/maps/* authorises
@@ -520,19 +566,25 @@ router.get('/:id', async (req: Request, res: Response) => {
   // before the preview-isolation fix shipped.
   let maps: Array<Record<string, unknown>> = [];
   if (requesterIsDM) {
-    const { rows } = await pool.query(`
+    const { rows } = await pool.query(
+      `
       SELECT id, name, image_url, width, height, grid_size, created_at
       FROM maps WHERE session_id = $1
       ORDER BY created_at DESC
-    `, [id]);
+    `,
+      [id]
+    );
     maps = rows;
   } else {
     const playerMapId = (session.player_map_id as string | null | undefined) ?? null;
     if (playerMapId) {
-      const { rows } = await pool.query(`
+      const { rows } = await pool.query(
+        `
         SELECT id, name, image_url, width, height, grid_size, created_at
         FROM maps WHERE id = $1 AND session_id = $2
-      `, [playerMapId, id]);
+      `,
+        [playerMapId, id]
+      );
       maps = rows;
     }
   }
@@ -557,7 +609,7 @@ router.get('/:id', async (req: Request, res: Response) => {
     inviteCode: requesterIsDM ? ((session.invite_code as string | null) ?? null) : null,
     createdAt: session.created_at,
     updatedAt: session.updated_at,
-    players: players.map(p => ({
+    players: players.map((p) => ({
       userId: p.user_id,
       displayName: p.display_name,
       avatarUrl: p.avatar_url,
@@ -587,15 +639,22 @@ router.patch('/:id', async (req: Request, res: Response) => {
   const sets: string[] = [];
   const params: unknown[] = [];
   let i = 1;
-  if (patch.name !== undefined) { sets.push(`name = $${i++}`); params.push(patch.name); }
-  if (patch.visibility !== undefined) { sets.push(`visibility = $${i++}`); params.push(patch.visibility); }
+  if (patch.name !== undefined) {
+    sets.push(`name = $${i++}`);
+    params.push(patch.name);
+  }
+  if (patch.visibility !== undefined) {
+    sets.push(`visibility = $${i++}`);
+    params.push(patch.visibility);
+  }
 
   if (patch.password !== undefined) {
     if (patch.password === '') {
       sets.push(`password_hash = NULL`);
     } else {
       const hash = await hashSessionPassword(patch.password);
-      sets.push(`password_hash = $${i++}`); params.push(hash);
+      sets.push(`password_hash = $${i++}`);
+      params.push(hash);
     }
   }
 
@@ -604,7 +663,10 @@ router.patch('/:id', async (req: Request, res: Response) => {
     let newCode = generateInviteCode();
     for (let attempt = 0; attempt < 3; attempt++) {
       try {
-        await pool.query('UPDATE sessions SET invite_code = $1 WHERE id = $2', [newCode, sessionId]);
+        await pool.query('UPDATE sessions SET invite_code = $1 WHERE id = $2', [
+          newCode,
+          sessionId,
+        ]);
         break;
       } catch (err) {
         if (attempt === 2) throw err;
@@ -621,9 +683,11 @@ router.patch('/:id', async (req: Request, res: Response) => {
 
   const { rows } = await pool.query(
     'SELECT visibility, password_hash, invite_code FROM sessions WHERE id = $1',
-    [sessionId],
+    [sessionId]
   );
-  const row = rows[0] as { visibility: string; password_hash: string | null; invite_code: string | null } | undefined;
+  const row = rows[0] as
+    | { visibility: string; password_hash: string | null; invite_code: string | null }
+    | undefined;
 
   // Broadcast to the room so DM clients pick up invite rotation / password
   // toggle without refetching. Invite tokens are DM-only; players only need
@@ -656,7 +720,8 @@ router.get('/:id/bans', async (req: Request, res: Response) => {
   const userId = getAuthUserId(req);
   const sessionId = String(req.params.id);
   await assertSessionMember(sessionId, userId);
-  const { rows } = await pool.query(`
+  const { rows } = await pool.query(
+    `
     SELECT b.user_id, b.banned_by, b.banned_at, b.reason,
            u.display_name, u.avatar_url,
            bu.display_name AS banned_by_name
@@ -665,16 +730,20 @@ router.get('/:id/bans', async (req: Request, res: Response) => {
     LEFT JOIN users bu ON bu.id = b.banned_by
     WHERE b.session_id = $1
     ORDER BY b.banned_at DESC
-  `, [sessionId]);
-  res.json(rows.map(r => ({
-    userId: r.user_id,
-    displayName: r.display_name,
-    avatarUrl: r.avatar_url,
-    bannedBy: r.banned_by_name,
-    bannedByUserId: r.banned_by,
-    bannedAt: r.banned_at,
-    reason: r.reason,
-  })));
+  `,
+    [sessionId]
+  );
+  res.json(
+    rows.map((r) => ({
+      userId: r.user_id,
+      displayName: r.display_name,
+      avatarUrl: r.avatar_url,
+      bannedBy: r.banned_by_name,
+      bannedByUserId: r.banned_by,
+      bannedAt: r.banned_at,
+      reason: r.reason,
+    }))
+  );
 });
 
 // POST /api/sessions/:id/bans  (DM-only)
@@ -702,7 +771,7 @@ router.post('/:id/bans', async (req: Request, res: Response) => {
        FROM session_players sp
        JOIN sessions s ON s.id = sp.session_id
        WHERE sp.session_id = $1 AND sp.user_id = $2`,
-    [sessionId, targetUserId],
+    [sessionId, targetUserId]
   );
   const target = targetRows[0] as { role: string; dm_user_id: string } | undefined;
   if (target) {
@@ -723,12 +792,12 @@ router.post('/:id/bans', async (req: Request, res: Response) => {
       `INSERT INTO session_bans (session_id, user_id, banned_by, reason)
        VALUES ($1, $2, $3, $4)
        ON CONFLICT (session_id, user_id) DO NOTHING`,
-      [sessionId, targetUserId, userId, reason ?? null],
+      [sessionId, targetUserId, userId, reason ?? null]
     );
-    await client.query(
-      'DELETE FROM session_players WHERE session_id = $1 AND user_id = $2',
-      [sessionId, targetUserId],
-    );
+    await client.query('DELETE FROM session_players WHERE session_id = $1 AND user_id = $2', [
+      sessionId,
+      targetUserId,
+    ]);
     await client.query('COMMIT');
   } catch (err) {
     await client.query('ROLLBACK');
@@ -741,7 +810,8 @@ router.post('/:id/bans', async (req: Request, res: Response) => {
   // and broadcast the updated ban list to everyone else.
   const io = getIO();
   if (io) {
-    const { rows: banRows } = await pool.query(`
+    const { rows: banRows } = await pool.query(
+      `
       SELECT b.user_id, b.banned_by, b.banned_at, b.reason,
              u.display_name, u.avatar_url,
              bu.display_name AS banned_by_name
@@ -750,11 +820,17 @@ router.post('/:id/bans', async (req: Request, res: Response) => {
       LEFT JOIN users bu ON bu.id = b.banned_by
       WHERE b.session_id = $1
       ORDER BY b.banned_at DESC
-    `, [sessionId]);
-    const bans = banRows.map(r => ({
-      userId: r.user_id, displayName: r.display_name, avatarUrl: r.avatar_url,
-      bannedBy: r.banned_by_name, bannedByUserId: r.banned_by,
-      bannedAt: r.banned_at, reason: r.reason,
+    `,
+      [sessionId]
+    );
+    const bans = banRows.map((r) => ({
+      userId: r.user_id,
+      displayName: r.display_name,
+      avatarUrl: r.avatar_url,
+      bannedBy: r.banned_by_name,
+      bannedByUserId: r.banned_by,
+      bannedAt: r.banned_at,
+      reason: r.reason,
     }));
     // Send the fatal `player-banned` event to the target first so their
     // client has the reason and can redirect. Then broadcast the
@@ -808,14 +884,15 @@ router.delete('/:id/bans/:userId', async (req: Request, res: Response) => {
   const targetUserId = String(req.params.userId);
   await assertSessionDM(sessionId, userId);
 
-  await pool.query(
-    'DELETE FROM session_bans WHERE session_id = $1 AND user_id = $2',
-    [sessionId, targetUserId],
-  );
+  await pool.query('DELETE FROM session_bans WHERE session_id = $1 AND user_id = $2', [
+    sessionId,
+    targetUserId,
+  ]);
 
   const io = getIO();
   if (io) {
-    const { rows: banRows } = await pool.query(`
+    const { rows: banRows } = await pool.query(
+      `
       SELECT b.user_id, b.banned_by, b.banned_at, b.reason,
              u.display_name, u.avatar_url,
              bu.display_name AS banned_by_name
@@ -824,11 +901,17 @@ router.delete('/:id/bans/:userId', async (req: Request, res: Response) => {
       LEFT JOIN users bu ON bu.id = b.banned_by
       WHERE b.session_id = $1
       ORDER BY b.banned_at DESC
-    `, [sessionId]);
-    const bans = banRows.map(r => ({
-      userId: r.user_id, displayName: r.display_name, avatarUrl: r.avatar_url,
-      bannedBy: r.banned_by_name, bannedByUserId: r.banned_by,
-      bannedAt: r.banned_at, reason: r.reason,
+    `,
+      [sessionId]
+    );
+    const bans = banRows.map((r) => ({
+      userId: r.user_id,
+      displayName: r.display_name,
+      avatarUrl: r.avatar_url,
+      bannedBy: r.banned_by_name,
+      bannedByUserId: r.banned_by,
+      bannedAt: r.banned_at,
+      reason: r.reason,
     }));
     io.to(sessionId).emit('session:bans-updated', { bans });
   }
@@ -852,7 +935,7 @@ router.post('/:id/promote', async (req: Request, res: Response) => {
 
   const { rows } = await pool.query(
     'UPDATE session_players SET role = $1 WHERE session_id = $2 AND user_id = $3 RETURNING role',
-    ['dm', sessionId, targetUserId],
+    ['dm', sessionId, targetUserId]
   );
   if (rows.length === 0) {
     res.status(404).json({ error: 'Player not in session' });
@@ -895,7 +978,7 @@ router.post('/:id/demote', async (req: Request, res: Response) => {
 
   const { rows } = await pool.query(
     'UPDATE session_players SET role = $1 WHERE session_id = $2 AND user_id = $3 RETURNING role',
-    ['player', sessionId, targetUserId],
+    ['player', sessionId, targetUserId]
   );
   if (rows.length === 0) {
     res.status(404).json({ error: 'Player not in session' });
@@ -938,7 +1021,7 @@ router.post('/:id/transfer-ownership', async (req: Request, res: Response) => {
 
   const { rows: targetRows } = await pool.query(
     'SELECT role FROM session_players WHERE session_id = $1 AND user_id = $2',
-    [sessionId, newOwnerId],
+    [sessionId, newOwnerId]
   );
   const target = targetRows[0] as { role: string } | undefined;
   if (!target) {
@@ -952,10 +1035,13 @@ router.post('/:id/transfer-ownership', async (req: Request, res: Response) => {
     // Promote the new owner to DM (idempotent for an already-co-DM).
     await client.query(
       "UPDATE session_players SET role = 'dm' WHERE session_id = $1 AND user_id = $2",
-      [sessionId, newOwnerId],
+      [sessionId, newOwnerId]
     );
     // Previous owner stays as a co-DM (role='dm').
-    await client.query('UPDATE sessions SET dm_user_id = $1, updated_at = NOW()::text WHERE id = $2', [newOwnerId, sessionId]);
+    await client.query(
+      'UPDATE sessions SET dm_user_id = $1, updated_at = NOW()::text WHERE id = $2',
+      [newOwnerId, sessionId]
+    );
     await client.query('COMMIT');
   } catch (err) {
     await client.query('ROLLBACK');
@@ -1036,7 +1122,12 @@ router.get('/:id/state', async (req: Request, res: Response) => {
   // inputs (see stateSnapshotEtag); a coarse time bucket bounds staleness
   // for the legacy unwrapped-broadcast paths.
   const etag = stateSnapshotEtag({
-    sessionId, userId, isDM, viewingMapId, nextEventId: room.nextEventId, now: Date.now(),
+    sessionId,
+    userId,
+    isDM,
+    viewingMapId,
+    nextEventId: room.nextEventId,
+    now: Date.now(),
   });
   res.setHeader('ETag', etag);
   if (req.headers['if-none-match'] === etag) {
@@ -1044,11 +1135,8 @@ router.get('/:id/state', async (req: Request, res: Response) => {
     return;
   }
 
-  const allTokens = Array.from(room.tokens.values())
-    .filter((t) => t.mapId === viewingMapId);
-  const visibleTokens = isDM
-    ? allTokens
-    : allTokens.filter((t) => tokenVisibleToPlayer(t, userId));
+  const allTokens = Array.from(room.tokens.values()).filter((t) => t.mapId === viewingMapId);
+  const visibleTokens = isDM ? allTokens : allTokens.filter((t) => tokenVisibleToPlayer(t, userId));
 
   // Combat — filter combatants with the same hidden-token rule so the
   // initiative tracker snapshot doesn't leak NPC names a player can't
@@ -1065,6 +1153,10 @@ router.get('/:id/state', async (req: Request, res: Response) => {
       active: true,
       roundNumber: room.combatState.roundNumber,
       currentTurnIndex: room.combatState.currentTurnIndex,
+      // Position-independent pointer (the filtered list makes the raw
+      // index wrong for players when hidden combatants precede it).
+      currentTokenId:
+        room.combatState.combatants[room.combatState.currentTurnIndex]?.tokenId ?? null,
       combatants: filtered,
       startedAt: room.combatState.startedAt,
     };
@@ -1076,10 +1168,9 @@ router.get('/:id/state', async (req: Request, res: Response) => {
   //   - their own characters (always)
   //   - NPCs linked to visible tokens IF showCreatureStatsToPlayers
   //   - other PCs linked to visible tokens IF showPlayersToPlayers
-  const { rows: sessionRows } = await pool.query(
-    'SELECT settings FROM sessions WHERE id = $1',
-    [sessionId],
-  );
+  const { rows: sessionRows } = await pool.query('SELECT settings FROM sessions WHERE id = $1', [
+    sessionId,
+  ]);
   const settings = sessionRows[0]
     ? safeParseJSON<Record<string, unknown>>(sessionRows[0].settings, {}, 'sessions.settings')
     : {};
@@ -1092,10 +1183,9 @@ router.get('/:id/state', async (req: Request, res: Response) => {
   }
   // Always include the caller's own character row(s) even when their
   // token isn't on this map (late-join / Hero tab access).
-  const { rows: myCharRows } = await pool.query(
-    'SELECT id FROM characters WHERE user_id = $1',
-    [userId],
-  );
+  const { rows: myCharRows } = await pool.query('SELECT id FROM characters WHERE user_id = $1', [
+    userId,
+  ]);
   for (const r of myCharRows) charIds.add(r.id as string);
 
   const characters: Record<string, unknown> = {};
@@ -1103,7 +1193,7 @@ router.get('/:id/state', async (req: Request, res: Response) => {
     const idList = Array.from(charIds);
     const { rows: charRows } = await pool.query(
       `SELECT * FROM characters WHERE id = ANY($1::text[])`,
-      [idList],
+      [idList]
     );
     for (const row of charRows) {
       const ownUserId = row.user_id as string;
@@ -1178,9 +1268,7 @@ router.get('/:id/events', async (req: Request, res: Response) => {
   // visibility the DM has since hidden.
   const player = room.players.get(userId);
   const isDM = player?.role === 'dm';
-  const viewingMapId = isDM
-    ? resolveViewingMapId(room, userId, 'dm')
-    : room.playerMapId;
+  const viewingMapId = isDM ? resolveViewingMapId(room, userId, 'dm') : room.playerMapId;
   const delta = [];
   for (const e of room.eventLog) {
     if (e.id <= since) continue;

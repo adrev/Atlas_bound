@@ -105,6 +105,28 @@ const initialState: CombatState = {
   showRecap: false,
 };
 
+/**
+ * Resolve the local index of the current combatant from the server's
+ * position-independent `currentTokenId`. Clients receive visibility-
+ * FILTERED combatant lists, so the server's raw `currentTurnIndex`
+ * points at the wrong row whenever hidden combatants precede it (wrong
+ * highlight, wrong camera pan, "your turn" firing early). When the
+ * tokenId isn't in the local list — the current combatant is hidden
+ * from this client — returns -1: highlight nothing rather than the
+ * wrong row. Falls back to the raw index for payloads predating the
+ * field (one release of back-compat).
+ */
+export function resolveTurnIndex(
+  combatants: Combatant[],
+  currentTokenId: string | null | undefined,
+  fallbackIndex: number
+): number {
+  if (currentTokenId) {
+    return combatants.findIndex((c) => c.tokenId === currentTokenId);
+  }
+  return fallbackIndex;
+}
+
 export const useCombatStore = create<CombatState & CombatActions>((set) => ({
   ...initialState,
 
@@ -152,15 +174,14 @@ export const useCombatStore = create<CombatState & CombatActions>((set) => ({
       initiativeRolls: new Map(),
       initiativePrompts: [],
       readyCheck: null,
-      lastRecap: state.damageLog.length > 0
-        ? {
-            damageLog: [...state.damageLog],
-            roundCount: state.roundNumber,
-            durationMs: state.combatStartTime
-              ? Date.now() - state.combatStartTime
-              : 0,
-          }
-        : null,
+      lastRecap:
+        state.damageLog.length > 0
+          ? {
+              damageLog: [...state.damageLog],
+              roundCount: state.roundNumber,
+              durationMs: state.combatStartTime ? Date.now() - state.combatStartTime : 0,
+            }
+          : null,
       // Don't pop the recap modal when the DM bailed out of review —
       // an empty damage log plus a zero-round "recap" is noise.
       showRecap: state.damageLog.length > 0,
@@ -187,16 +208,14 @@ export const useCombatStore = create<CombatState & CombatActions>((set) => ({
       // and the tracker kept showing whatever the server broadcast with
       // combat:started (which was often 0 for player-owned tokens).
       const combatants = state.combatants.map((c) =>
-        c.tokenId === tokenId ? { ...c, initiative: total } : c,
+        c.tokenId === tokenId ? { ...c, initiative: total } : c
       );
       return { initiativeRolls: newRolls, combatants };
     }),
 
   setSurprise: (tokenId, surprised) =>
     set((state) => ({
-      combatants: state.combatants.map((c) =>
-        c.tokenId === tokenId ? { ...c, surprised } : c,
-      ),
+      combatants: state.combatants.map((c) => (c.tokenId === tokenId ? { ...c, surprised } : c)),
     })),
 
   addInitiativePrompt: (tokenId, bonus) =>
@@ -206,23 +225,17 @@ export const useCombatStore = create<CombatState & CombatActions>((set) => ({
 
   updateHP: (tokenId, hp, tempHp) =>
     set((state) => ({
-      combatants: state.combatants.map((c) =>
-        c.tokenId === tokenId ? { ...c, hp, tempHp } : c
-      ),
+      combatants: state.combatants.map((c) => (c.tokenId === tokenId ? { ...c, hp, tempHp } : c)),
     })),
 
   addCondition: (tokenId, conditions) =>
     set((state) => ({
-      combatants: state.combatants.map((c) =>
-        c.tokenId === tokenId ? { ...c, conditions } : c
-      ),
+      combatants: state.combatants.map((c) => (c.tokenId === tokenId ? { ...c, conditions } : c)),
     })),
 
   removeCondition: (tokenId, conditions) =>
     set((state) => ({
-      combatants: state.combatants.map((c) =>
-        c.tokenId === tokenId ? { ...c, conditions } : c
-      ),
+      combatants: state.combatants.map((c) => (c.tokenId === tokenId ? { ...c, conditions } : c)),
     })),
 
   updateActionEconomy: (economy) => set({ actionEconomy: economy }),
@@ -237,18 +250,14 @@ export const useCombatStore = create<CombatState & CombatActions>((set) => ({
 
   setDeathSaves: (tokenId, deathSaves) =>
     set((state) => ({
-      combatants: state.combatants.map((c) =>
-        c.tokenId === tokenId ? { ...c, deathSaves } : c
-      ),
+      combatants: state.combatants.map((c) => (c.tokenId === tokenId ? { ...c, deathSaves } : c)),
     })),
 
   setReadyCheck: (data) => set({ readyCheck: data }),
 
   updateReadyResponses: (responses) =>
     set((state) => ({
-      readyCheck: state.readyCheck
-        ? { ...state.readyCheck, responses }
-        : null,
+      readyCheck: state.readyCheck ? { ...state.readyCheck, responses } : null,
     })),
 
   clearReadyCheck: () => set({ readyCheck: null }),

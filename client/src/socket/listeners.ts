@@ -2,7 +2,7 @@ import type { Socket } from 'socket.io-client';
 import type { Combatant } from '@dnd-vtt/shared';
 import { useSessionStore } from '../stores/useSessionStore';
 import { useMapStore } from '../stores/useMapStore';
-import { useCombatStore } from '../stores/useCombatStore';
+import { useCombatStore, resolveTurnIndex } from '../stores/useCombatStore';
 import { useChatStore } from '../stores/useChatStore';
 import { useDiceStore } from '../stores/useDiceStore';
 import { useCharacterStore } from '../stores/useCharacterStore';
@@ -83,7 +83,10 @@ export function registerListeners(socket: Socket): () => void {
     // so they can try to rejoin fresh.
     if (/not a member|not found/i.test(message)) {
       useSessionStore.getState().reset();
-      if (inSession) setTimeout(() => { window.location.href = '/'; }, 800);
+      if (inSession)
+        setTimeout(() => {
+          window.location.href = '/';
+        }, 800);
     }
   });
 
@@ -96,7 +99,9 @@ export function registerListeners(socket: Socket): () => void {
       });
     });
     useSessionStore.getState().reset();
-    setTimeout(() => { window.location.href = '/'; }, 800);
+    setTimeout(() => {
+      window.location.href = '/';
+    }, 800);
   });
 
   // --- Privacy + bans (public/private sessions + role hierarchy) ---
@@ -125,7 +130,9 @@ export function registerListeners(socket: Socket): () => void {
         });
       });
       useSessionStore.getState().reset();
-      setTimeout(() => { window.location.href = '/'; }, 1500);
+      setTimeout(() => {
+        window.location.href = '/';
+      }, 1500);
     } else {
       useSessionStore.getState().removePlayer(userId);
     }
@@ -139,10 +146,13 @@ export function registerListeners(socket: Socket): () => void {
     useSessionStore.getState().setOwner(newOwnerId);
   });
 
-  socket.on('session:music-changed', (data: { track: string | null; fileIndex?: number | null }) => {
-    useSessionStore.getState().setCurrentTrack(data.track);
-    useSessionStore.getState().setCurrentTrackFileIndex(data.fileIndex ?? null);
-  });
+  socket.on(
+    'session:music-changed',
+    (data: { track: string | null; fileIndex?: number | null }) => {
+      useSessionStore.getState().setCurrentTrack(data.track);
+      useSessionStore.getState().setCurrentTrackFileIndex(data.fileIndex ?? null);
+    }
+  );
 
   socket.on('session:music-action-broadcast', (data: { action: string }) => {
     window.dispatchEvent(new CustomEvent('music-action', { detail: data.action }));
@@ -156,9 +166,8 @@ export function registerListeners(socket: Socket): () => void {
 
     // Only preserve the current local imageUrl if we're reloading the SAME map
     // (not switching to a different map, which would carry over the old image)
-    let preservedImageUrl = map.imageUrl
-      ?? (currentMap?.id === map.id ? currentMap?.imageUrl : null)
-      ?? null;
+    let preservedImageUrl =
+      map.imageUrl ?? (currentMap?.id === map.id ? currentMap?.imageUrl : null) ?? null;
 
     // For prebuilt maps, look up the image by name (handles players joining
     // a session or DM switching to a prebuilt map mid-session)
@@ -170,9 +179,11 @@ export function registerListeners(socket: Socket): () => void {
     // map for players (non-preview only). Skip if this is a preview
     // load or if reloading the same map the client already has.
     if (!isPreview && currentMap && currentMap.id !== map.id) {
-      window.dispatchEvent(new CustomEvent('map-transition-start', {
-        detail: { mapName: map.name || 'Unknown' },
-      }));
+      window.dispatchEvent(
+        new CustomEvent('map-transition-start', {
+          detail: { mapName: map.name || 'Unknown' },
+        })
+      );
     }
 
     // Use the new applyMapLoad action which handles the preview flag
@@ -302,31 +313,47 @@ export function registerListeners(socket: Socket): () => void {
    * FogLayer re-renders from the store and the fog alpha / vision
    * tiering update without a full `map:load` round-trip.
    */
-  socket.on('map:lighting-updated', (payload: {
-    mapId: string;
-    ambientLight?: 'bright' | 'dim' | 'dark' | 'custom';
-    ambientOpacity?: number | null;
-  }) => {
-    const current = useMapStore.getState().currentMap;
-    if (!current || current.id !== payload.mapId) return;
-    useMapStore.setState({
-      currentMap: {
-        ...current,
-        ambientLight: payload.ambientLight ?? current.ambientLight,
-        ambientOpacity: payload.ambientOpacity === null
-          ? undefined
-          : (payload.ambientOpacity ?? current.ambientOpacity),
-      },
-    });
-  });
+  socket.on(
+    'map:lighting-updated',
+    (payload: {
+      mapId: string;
+      ambientLight?: 'bright' | 'dim' | 'dark' | 'custom';
+      ambientOpacity?: number | null;
+    }) => {
+      const current = useMapStore.getState().currentMap;
+      if (!current || current.id !== payload.mapId) return;
+      useMapStore.setState({
+        currentMap: {
+          ...current,
+          ambientLight: payload.ambientLight ?? current.ambientLight,
+          ambientOpacity:
+            payload.ambientOpacity === null
+              ? undefined
+              : (payload.ambientOpacity ?? current.ambientOpacity),
+        },
+      });
+    }
+  );
 
   // --- Combat ---
-  socket.on('combat:started', ({ combatants, roundNumber, reviewPhase }) => {
-    console.log('[COMBAT] combat:started received',
-      combatants.map((c: Combatant) => `${c.name}${c.isNPC ? '' : ' (PC)'}=${c.initiative}(bonus ${c.initiativeBonus})`).join(', '),
-      reviewPhase ? '(review phase)' : '',
+  socket.on('combat:started', ({ combatants, roundNumber, currentTokenId, reviewPhase }) => {
+    console.log(
+      '[COMBAT] combat:started received',
+      combatants
+        .map(
+          (c: Combatant) =>
+            `${c.name}${c.isNPC ? '' : ' (PC)'}=${c.initiative}(bonus ${c.initiativeBonus})`
+        )
+        .join(', '),
+      reviewPhase ? '(review phase)' : ''
     );
     useCombatStore.getState().startCombat(combatants, roundNumber, !!reviewPhase);
+    // Our list is visibility-filtered; resolve the opening turn pointer
+    // by tokenId so a hidden ambusher at slot 0 doesn't shift the
+    // highlight onto the wrong combatant.
+    useCombatStore.setState({
+      currentTurnIndex: resolveTurnIndex(combatants, currentTokenId, 0),
+    });
     useSessionStore.getState().setGameMode('combat');
     triggerSnapshot('combat:started');
   });
@@ -341,15 +368,20 @@ export function registerListeners(socket: Socket): () => void {
   // the combatants list, current turn index, and action economy so a
   // page refresh mid-combat rehydrates the initiative tracker UI
   // without starting combat from scratch.
-  socket.on('combat:state-sync', ({ combatants, roundNumber, currentTurnIndex, actionEconomy }) => {
-    useCombatStore.getState().syncCombatState({
-      combatants,
-      roundNumber,
-      currentTurnIndex,
-      actionEconomy,
-    });
-    useSessionStore.getState().setGameMode('combat');
-  });
+  socket.on(
+    'combat:state-sync',
+    ({ combatants, roundNumber, currentTurnIndex, currentTokenId, actionEconomy }) => {
+      useCombatStore.getState().syncCombatState({
+        combatants,
+        roundNumber,
+        // Resolve against OUR filtered list — the raw index is wrong for
+        // players whenever hidden combatants precede the current one.
+        currentTurnIndex: resolveTurnIndex(combatants, currentTokenId, currentTurnIndex),
+        actionEconomy,
+      });
+      useSessionStore.getState().setGameMode('combat');
+    }
+  );
 
   socket.on('combat:ended', () => {
     useCombatStore.getState().endCombat();
@@ -395,35 +427,48 @@ export function registerListeners(socket: Socket): () => void {
   });
 
   socket.on('combat:all-initiatives-ready', ({ combatants }) => {
-    console.log('[COMBAT] all-initiatives-ready',
-      combatants.map((c: Combatant) => `${c.name}${c.isNPC ? '' : ' (PC)'}=${c.initiative}`).join(', '),
+    console.log(
+      '[COMBAT] all-initiatives-ready',
+      combatants
+        .map((c: Combatant) => `${c.name}${c.isNPC ? '' : ' (PC)'}=${c.initiative}`)
+        .join(', ')
     );
     useCombatStore.getState().setCombatants(combatants);
   });
 
-  socket.on('combat:turn-advanced', ({ currentTurnIndex, roundNumber, actionEconomy }) => {
-    useCombatStore.getState().nextTurn(currentTurnIndex, roundNumber, actionEconomy);
-    // End-of-turn triggers the big one: condition expiries, legendary
-    // action refills, lair actions, etc. all fire server-side during
-    // turn advance. Pull the snapshot so the new turn's combatant
-    // starts with the authoritative HP / condition / economy values.
-    triggerSnapshot('combat:turn-advanced');
+  socket.on(
+    'combat:turn-advanced',
+    ({ currentTurnIndex, currentTokenId, roundNumber, actionEconomy }) => {
+      const localIndex = resolveTurnIndex(
+        useCombatStore.getState().combatants,
+        currentTokenId,
+        currentTurnIndex
+      );
+      useCombatStore.getState().nextTurn(localIndex, roundNumber, actionEconomy);
+      // End-of-turn triggers the big one: condition expiries, legendary
+      // action refills, lair actions, etc. all fire server-side during
+      // turn advance. Pull the snapshot so the new turn's combatant
+      // starts with the authoritative HP / condition / economy values.
+      triggerSnapshot('combat:turn-advanced');
 
-    // Pan the camera to whoever's turn it is now. BattleMap listens
-    // for `canvas-center-on` and adjusts the viewport at the current
-    // zoom. We look up the combatant AFTER nextTurn() has written the
-    // new index so we're following the combatant who's actually up.
-    const combat = useCombatStore.getState();
-    const current = combat.combatants[combat.currentTurnIndex];
-    if (current?.tokenId) {
-      window.dispatchEvent(new CustomEvent('canvas-center-on', {
-        detail: { tokenId: current.tokenId },
-      }));
-      // Also select them so the TokenActionPanel and InitiativeTracker
-      // highlight match the camera focus.
-      useMapStore.getState().selectToken(current.tokenId);
+      // Pan the camera to whoever's turn it is now. BattleMap listens
+      // for `canvas-center-on` and adjusts the viewport at the current
+      // zoom. We look up the combatant AFTER nextTurn() has written the
+      // new index so we're following the combatant who's actually up.
+      const combat = useCombatStore.getState();
+      const current = combat.combatants[combat.currentTurnIndex];
+      if (current?.tokenId) {
+        window.dispatchEvent(
+          new CustomEvent('canvas-center-on', {
+            detail: { tokenId: current.tokenId },
+          })
+        );
+        // Also select them so the TokenActionPanel and InitiativeTracker
+        // highlight match the camera focus.
+        useMapStore.getState().selectToken(current.tokenId);
+      }
     }
-  });
+  );
 
   socket.on('combat:hp-changed', ({ tokenId, hp, tempHp }) => {
     const combatState = useCombatStore.getState();
@@ -576,18 +621,21 @@ export function registerListeners(socket: Socket): () => void {
     triggerSnapshot('character:hit-die-spent');
   });
 
-  socket.on('character:spell-slot-adjusted', (payload: { changes: string[]; updates: Record<string, unknown> }) => {
-    if (Object.keys(payload.updates).length === 0) {
-      import('../components/ui/Toast').then(({ showToast }) => {
-        showToast({
-          message: `Spell Slot — ${payload.changes.join(' • ')}`,
-          variant: 'warning',
-          duration: 3000,
+  socket.on(
+    'character:spell-slot-adjusted',
+    (payload: { changes: string[]; updates: Record<string, unknown> }) => {
+      if (Object.keys(payload.updates).length === 0) {
+        import('../components/ui/Toast').then(({ showToast }) => {
+          showToast({
+            message: `Spell Slot — ${payload.changes.join(' • ')}`,
+            variant: 'warning',
+            duration: 3000,
+          });
         });
-      });
+      }
+      triggerSnapshot('character:spell-slot-adjusted');
     }
-    triggerSnapshot('character:spell-slot-adjusted');
-  });
+  );
 
   // --- Chat ---
   socket.on('chat:new-message', (message) => {
@@ -634,11 +682,14 @@ export function registerListeners(socket: Socket): () => void {
     useDrawStore.getState().applyDrawingUpdate(payload.drawingId, payload.geometry);
   });
 
-  socket.on('drawing:cleared', (payload: { scope: 'all' | 'mine'; userId?: string; mapId?: string }) => {
-    if (payload.mapId && payload.mapId !== currentMapId()) return;
-    const currentUserId = useSessionStore.getState().userId ?? undefined;
-    useDrawStore.getState().clearAllLocal(payload.scope, payload.userId, currentUserId);
-  });
+  socket.on(
+    'drawing:cleared',
+    (payload: { scope: 'all' | 'mine'; userId?: string; mapId?: string }) => {
+      if (payload.mapId && payload.mapId !== currentMapId()) return;
+      const currentUserId = useSessionStore.getState().userId ?? undefined;
+      useDrawStore.getState().clearAllLocal(payload.scope, payload.userId, currentUserId);
+    }
+  );
 
   socket.on('drawing:streamed', (payload) => {
     const p = payload as typeof payload & { mapId?: string };

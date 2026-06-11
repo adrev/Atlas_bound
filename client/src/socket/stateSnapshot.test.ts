@@ -377,3 +377,102 @@ describe('pullStateSnapshot — widened token diff', () => {
     expect(useMapStore.getState().tokens['t1'].ownerUserId).toBe('u9');
   });
 });
+
+/**
+ * Regression set 3 — the hidden-ambusher turn pointer (audit #7).
+ * Players receive visibility-FILTERED combatant lists but the server's
+ * raw currentTurnIndex indexes the UNFILTERED array: with a hidden
+ * monster at slot 0, every player's tracker highlighted the wrong row,
+ * the camera panned to the wrong token, and "your turn" fired early.
+ * The server now also sends position-independent currentTokenId;
+ * clients resolve it against their own list.
+ */
+import { resolveTurnIndex } from '../stores/useCombatStore';
+
+describe('resolveTurnIndex', () => {
+  const filtered = [combatant('alice'), combatant('bob')];
+
+  it('resolves by tokenId against the local (filtered) list', () => {
+    // Server list: [hidden, alice, bob], raw index 1 (= alice).
+    // Player list: [alice, bob] — alice is local index 0, not 1.
+    expect(resolveTurnIndex(filtered, 'alice', 1)).toBe(0);
+    expect(resolveTurnIndex(filtered, 'bob', 2)).toBe(1);
+  });
+
+  it('returns -1 when the current combatant is hidden from this client', () => {
+    expect(resolveTurnIndex(filtered, 'hidden-monster', 0)).toBe(-1);
+  });
+
+  it('falls back to the raw index for payloads without the field', () => {
+    expect(resolveTurnIndex(filtered, undefined, 1)).toBe(1);
+    expect(resolveTurnIndex(filtered, null, 0)).toBe(0);
+  });
+});
+
+describe('pullStateSnapshot — tokenId-based turn pointer', () => {
+  beforeEach(() => {
+    resetEventCursor();
+    useSessionStore.setState({ sessionId: 's1' } as never);
+    useMapStore.setState({ tokens: {}, currentMap: { id: 'map-1' } } as never);
+  });
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('resolves the ambush scenario: filtered list + raw index disagree', async () => {
+    useCombatStore.setState({ active: false } as never);
+    // Server array is [hidden, alice, bob] with raw index 1 (alice's
+    // turn); this player's filtered payload only has [alice, bob].
+    mockState(
+      {
+        mapId: 'map-1',
+        tokens: [],
+        combat: {
+          active: true,
+          roundNumber: 1,
+          currentTurnIndex: 1,
+          currentTokenId: 'alice',
+          combatants: [combatant('alice'), combatant('bob')],
+          startedAt: 0,
+        },
+        characters: {},
+        nextEventId: 5,
+        roundNumber: 1,
+      },
+      'W/"t1"'
+    );
+    await pullStateSnapshot();
+    const cs = useCombatStore.getState();
+    // Raw index 1 would have highlighted BOB; resolution lands on alice.
+    expect(cs.currentTurnIndex).toBe(0);
+    expect(cs.combatants[cs.currentTurnIndex].tokenId).toBe('alice');
+  });
+
+  it('highlights nothing when the current combatant is hidden from this client', async () => {
+    useCombatStore.setState({
+      active: true,
+      roundNumber: 2,
+      currentTurnIndex: 0,
+      combatants: [combatant('alice'), combatant('bob')],
+      damageLog: [] as never,
+    } as never);
+    mockState(
+      {
+        mapId: 'map-1',
+        tokens: [],
+        combat: {
+          active: true,
+          roundNumber: 2,
+          currentTurnIndex: 0,
+          currentTokenId: 'hidden-monster',
+          combatants: [combatant('alice'), combatant('bob')],
+          startedAt: 0,
+        },
+        characters: {},
+        nextEventId: 6,
+        roundNumber: 2,
+      },
+      'W/"t2"'
+    );
+    await pullStateSnapshot();
+    expect(useCombatStore.getState().currentTurnIndex).toBe(-1); // no wrong highlight
+  });
+});

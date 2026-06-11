@@ -1,6 +1,6 @@
 import { useMapStore } from '../stores/useMapStore';
 import { useCharacterStore } from '../stores/useCharacterStore';
-import { useCombatStore } from '../stores/useCombatStore';
+import { useCombatStore, resolveTurnIndex } from '../stores/useCombatStore';
 import { useSessionStore } from '../stores/useSessionStore';
 import type { Token } from '@dnd-vtt/shared';
 
@@ -23,10 +23,7 @@ import type { Token } from '@dnd-vtt/shared';
  * ignored — those are low-frequency and typically re-synthesized
  * by the next session:join hydration.
  */
-export function dispatchReplayEvent(
-  kind: string,
-  payload: Record<string, unknown>,
-): void {
+export function dispatchReplayEvent(kind: string, payload: Record<string, unknown>): void {
   switch (kind) {
     case 'map:token-moved': {
       const { tokenId, x, y } = payload as { tokenId: string; x: number; y: number };
@@ -63,13 +60,27 @@ export function dispatchReplayEvent(
       return;
     }
     case 'combat:turn-advanced': {
-      const { currentTurnIndex, roundNumber, actionEconomy } = payload as {
+      const { currentTurnIndex, currentTokenId, roundNumber, actionEconomy } = payload as {
         currentTurnIndex: number;
+        currentTokenId?: string | null;
         roundNumber: number;
-        actionEconomy?: { action: boolean; bonusAction: boolean; movementRemaining: number; movementMax: number; reaction: boolean };
+        actionEconomy?: {
+          action: boolean;
+          bonusAction: boolean;
+          movementRemaining: number;
+          movementMax: number;
+          reaction: boolean;
+        };
       };
       if (actionEconomy) {
-        useCombatStore.getState().nextTurn(currentTurnIndex, roundNumber, actionEconomy);
+        // Same tokenId-based resolution as the live listener — replayed
+        // raw indexes are just as wrong under visibility filtering.
+        const localIndex = resolveTurnIndex(
+          useCombatStore.getState().combatants,
+          currentTokenId,
+          currentTurnIndex
+        );
+        useCombatStore.getState().nextTurn(localIndex, roundNumber, actionEconomy);
       }
       return;
     }
