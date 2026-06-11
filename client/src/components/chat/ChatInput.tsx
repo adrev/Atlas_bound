@@ -108,7 +108,7 @@ export function ChatInput() {
             fontWeight: 600,
             background: 'rgba(155, 89, 182, 0.15)',
             borderRadius: theme.radius.sm,
-            color: '${theme.purple}',
+            color: theme.purple,
             border: '1px solid rgba(155, 89, 182, 0.3)',
           }}
         >
@@ -121,7 +121,7 @@ export function ChatInput() {
             style={{
               background: 'none',
               border: 'none',
-              color: '${theme.purple}',
+              color: theme.purple,
               cursor: 'pointer',
               fontSize: 14,
               padding: '0 2px',
@@ -139,7 +139,7 @@ export function ChatInput() {
           style={{
             ...styles.input,
             ...(whisperTarget
-              ? { borderColor: '${theme.purple}', background: 'rgba(155, 89, 182, 0.05)' }
+              ? { borderColor: theme.purple, background: 'rgba(155, 89, 182, 0.05)' }
               : {}),
           }}
           placeholder={
