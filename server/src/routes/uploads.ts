@@ -37,6 +37,7 @@ const ALLOWED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif
 const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5MB
 const METADATA_TOKEN_URL =
   'http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token';
+const PRIVATE_UPLOAD_GCS_PREFIX = 'uploads';
 let cachedMetadataToken: { token: string; expiresAtMs: number } | null = null;
 
 export class UploadStorageError extends Error {
@@ -149,11 +150,12 @@ async function saveUploadBuffer(
 ): Promise<void> {
   if (UPLOAD_GCS_BUCKET) {
     const token = await getCloudRunAccessToken();
+    const gcsObjectName = privateUploadObjectName(objectName);
     const uploadUrl = new URL(
       `https://storage.googleapis.com/upload/storage/v1/b/${encodeURIComponent(UPLOAD_GCS_BUCKET)}/o`
     );
     uploadUrl.searchParams.set('uploadType', 'media');
-    uploadUrl.searchParams.set('name', objectName);
+    uploadUrl.searchParams.set('name', gcsObjectName);
     const response = await fetch(uploadUrl, {
       method: 'POST',
       headers: {
@@ -177,7 +179,7 @@ async function saveUploadBuffer(
 
 export async function tryServeUploadFromGcs(reqPath: string, res: Response): Promise<boolean> {
   if (!UPLOAD_GCS_BUCKET) return false;
-  const objectName = reqPath.replace(/^\/+/, '');
+  const objectName = privateUploadObjectName(reqPath.replace(/^\/+/, ''));
   const token = await getCloudRunAccessToken();
   const downloadUrl = new URL(
     `https://storage.googleapis.com/storage/v1/b/${encodeURIComponent(UPLOAD_GCS_BUCKET)}/o/${encodeURIComponent(objectName)}`
@@ -201,6 +203,13 @@ export async function tryServeUploadFromGcs(reqPath: string, res: Response): Pro
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.send(Buffer.from(await response.arrayBuffer()));
   return true;
+}
+
+function privateUploadObjectName(logicalObjectName: string): string {
+  // Keep user uploads isolated from public CDN prefixes (`maps/`,
+  // `tokens/`, `items/`, etc.) so we can make public asset buckets or
+  // prefixes readable without ever exposing private table uploads.
+  return `${PRIVATE_UPLOAD_GCS_PREFIX}/${logicalObjectName.replace(/^\/+/, '')}`;
 }
 
 function contentTypeForExt(ext: string): string {
