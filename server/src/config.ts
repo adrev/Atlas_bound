@@ -10,6 +10,14 @@ export const DB_PATH = process.env.DB_PATH ?? path.join(__dirname, '..', 'data',
 
 export const UPLOAD_DIR = process.env.UPLOAD_DIR ?? path.join(__dirname, '..', 'uploads');
 
+/**
+ * Optional private GCS bucket for user-uploaded files. When set, new
+ * uploads are written to this bucket and `/uploads/*` streams from it
+ * after the existing auth/ACL checks. Local filesystem remains the
+ * fallback for dev/tests.
+ */
+export const UPLOAD_GCS_BUCKET = process.env.UPLOAD_GCS_BUCKET || '';
+
 export const CORS_ORIGINS = process.env.CORS_ORIGINS
   ? process.env.CORS_ORIGINS.split(',')
   : ['http://localhost:5173', 'http://localhost:3000', 'http://localhost:3001'];
@@ -55,15 +63,13 @@ export const DISCORD_RELEASES_WEBHOOK_URL = process.env.DISCORD_RELEASES_WEBHOOK
  * footguns at startup instead of as a confusing runtime failure later:
  * no OAuth provider, or a localhost BASE_URL that breaks OAuth redirects.
  */
-export function validateConfig(
-  env: Record<string, string | undefined> = process.env,
-): string[] {
+export function validateConfig(env: Record<string, string | undefined> = process.env): string[] {
   const warnings: string[] = [];
   if (env.NODE_ENV !== 'production') return warnings;
 
   if (!env.DISCORD_CLIENT_ID && !env.GOOGLE_CLIENT_ID && !env.APPLE_CLIENT_ID) {
     warnings.push(
-      'No OAuth provider configured (DISCORD_CLIENT_ID / GOOGLE_CLIENT_ID / APPLE_CLIENT_ID all unset) — only email/password login will work.',
+      'No OAuth provider configured (DISCORD_CLIENT_ID / GOOGLE_CLIENT_ID / APPLE_CLIENT_ID all unset) — only email/password login will work.'
     );
   }
   const baseUrl = env.BASE_URL;
@@ -78,7 +84,7 @@ export function validateConfig(
   }
   if (hasInvalidBaseUrl) {
     warnings.push(
-      `BASE_URL is "${env.BASE_URL ?? '(unset)'}" in production — OAuth redirect callbacks will break. Set it to your public URL.`,
+      `BASE_URL is "${env.BASE_URL ?? '(unset)'}" in production — OAuth redirect callbacks will break. Set it to your public URL.`
     );
   }
   return warnings;

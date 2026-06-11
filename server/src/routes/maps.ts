@@ -3,7 +3,12 @@ import path from 'path';
 import { v4 as uuidv4 } from 'uuid';
 import rateLimit from 'express-rate-limit';
 import pool from '../db/connection.js';
-import { mapUpload, validateAndSaveUpload, saveMapThumbnail } from './uploads.js';
+import {
+  isUploadStorageError,
+  mapUpload,
+  validateAndSaveUpload,
+  saveMapThumbnail,
+} from './uploads.js';
 import { createMapSchema } from '../utils/validation.js';
 import { getAuthUserId, assertSessionDM, assertSessionMember } from '../utils/authorization.js';
 import { safeParseJSON } from '../utils/safeJson.js';
@@ -45,7 +50,9 @@ router.post(
     const userId = getAuthUserId(req);
     const sessionId = String(req.params.sessionId);
 
-    const { rows: sessionRows } = await pool.query('SELECT id FROM sessions WHERE id = $1', [sessionId]);
+    const { rows: sessionRows } = await pool.query('SELECT id FROM sessions WHERE id = $1', [
+      sessionId,
+    ]);
     if (sessionRows.length === 0) {
       res.status(404).json({ error: 'Session not found' });
       return;
@@ -59,12 +66,13 @@ router.post(
       return;
     }
 
-    const { name, width, height, gridSize, gridType, prebuiltKey, ambientLight, ambientOpacity } = parsed.data;
+    const { name, width, height, gridSize, gridType, prebuiltKey, ambientLight, ambientOpacity } =
+      parsed.data;
 
     if (prebuiltKey) {
       const { rows: existingRows } = await pool.query(
         'SELECT * FROM maps WHERE session_id = $1 AND name = $2 LIMIT 1',
-        [sessionId, name],
+        [sessionId, name]
       );
       const existing = existingRows[0] as Record<string, unknown> | undefined;
       if (existing) {
@@ -100,7 +108,7 @@ router.post(
     const thumbnailFile = files.thumbnail?.[0];
     if (imageFile) {
       try {
-        const filename = validateAndSaveUpload(imageFile, 'maps');
+        const filename = await validateAndSaveUpload(imageFile, 'maps');
         imageUrl = `/uploads/maps/${filename}`;
         // Pair the thumbnail with the original by reusing its UUID
         // stem so the auth middleware can lift one from the other if
@@ -109,13 +117,18 @@ router.post(
         if (thumbnailFile) {
           try {
             const baseUuid = path.parse(filename).name;
-            const thumbName = saveMapThumbnail(thumbnailFile, baseUuid);
+            const thumbName = await saveMapThumbnail(thumbnailFile, baseUuid);
             thumbnailUrl = `/uploads/maps/thumbnails/${thumbName}`;
           } catch (err) {
             console.warn('[maps:create] thumbnail save failed:', err);
           }
         }
       } catch (err) {
+        if (isUploadStorageError(err)) {
+          console.error('[maps:create] image storage failed:', err);
+          res.status(500).json({ error: 'Upload storage is temporarily unavailable' });
+          return;
+        }
         const msg = err instanceof Error ? err.message : 'Invalid image file';
         res.status(400).json({ error: msg });
         return;
@@ -128,14 +141,25 @@ router.post(
     // tier without an extra round-trip. `null` for opacity means
     // "use the canonical preset alpha"; only `custom` carries a numeric
     // opacity value.
-    await pool.query(`
+    await pool.query(
+      `
       INSERT INTO maps (id, session_id, name, image_url, thumbnail_url, width, height, grid_size, grid_type, ambient_light, ambient_opacity)
       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-    `, [
-      mapId, sessionId, name, imageUrl, thumbnailUrl, width, height, gridSize, gridType,
-      ambientLight ?? 'bright',
-      ambientLight === 'custom' ? (ambientOpacity ?? null) : null,
-    ]);
+    `,
+      [
+        mapId,
+        sessionId,
+        name,
+        imageUrl,
+        thumbnailUrl,
+        width,
+        height,
+        gridSize,
+        gridType,
+        ambientLight ?? 'bright',
+        ambientLight === 'custom' ? (ambientOpacity ?? null) : null,
+      ]
+    );
 
     const { rows: mapRows } = await pool.query('SELECT * FROM maps WHERE id = $1', [mapId]);
     const map = mapRows[0] as Record<string, unknown>;
@@ -159,7 +183,7 @@ router.post(
       ambientOpacity: (map.ambient_opacity as number | null) ?? undefined,
       reused: false,
     });
-  },
+  }
 );
 
 // GET /api/sessions/:sessionId/maps
@@ -174,43 +198,48 @@ router.get('/sessions/:sessionId/maps', async (req: Request, res: Response) => {
   // scenes or preview maps.
   const { rows: roleRows } = await pool.query(
     'SELECT role FROM session_players WHERE session_id = $1 AND user_id = $2',
-    [sessionId, userId],
+    [sessionId, userId]
   );
   const isDM = roleRows[0]?.role === 'dm';
 
   let maps: Array<Record<string, unknown>>;
   if (isDM) {
-    const { rows } = await pool.query(`
+    const { rows } = await pool.query(
+      `
       SELECT id, session_id, name, image_url, thumbnail_url, width, height, grid_size, grid_type, folder_id, display_order, created_at
       FROM maps WHERE session_id = $1
       ORDER BY created_at DESC
-    `, [sessionId]);
+    `,
+      [sessionId]
+    );
     maps = rows;
   } else {
     const { rows: sessionRows } = await pool.query(
       'SELECT player_map_id FROM sessions WHERE id = $1',
-      [sessionId],
+      [sessionId]
     );
     // Players get the ribbon map only — never `current_map_id`,
     // which on legacy sessions can still be pointing at a DM preview
     // from before the preview-isolation fix shipped. If the ribbon
     // has never been set, players simply see an empty list and
     // wait for the DM to "Move Players Here".
-    const playerMapId =
-      (sessionRows[0]?.player_map_id as string | null | undefined) ?? null;
+    const playerMapId = (sessionRows[0]?.player_map_id as string | null | undefined) ?? null;
     if (!playerMapId) {
       res.json([]);
       return;
     }
-    const { rows } = await pool.query(`
+    const { rows } = await pool.query(
+      `
       SELECT id, session_id, name, image_url, thumbnail_url, width, height, grid_size, grid_type, created_at
       FROM maps WHERE id = $1 AND session_id = $2
-    `, [playerMapId, sessionId]);
+    `,
+      [playerMapId, sessionId]
+    );
     maps = rows;
   }
 
   res.json(
-    maps.map(m => ({
+    maps.map((m) => ({
       id: m.id,
       sessionId: m.session_id,
       name: m.name,
@@ -221,7 +250,7 @@ router.get('/sessions/:sessionId/maps', async (req: Request, res: Response) => {
       gridSize: m.grid_size,
       gridType: m.grid_type,
       createdAt: m.created_at,
-    })),
+    }))
   );
 });
 
@@ -244,19 +273,18 @@ router.get('/maps/:id', async (req: Request, res: Response) => {
   // never a DM's prep/preview scene.
   const { rows: roleRows } = await pool.query(
     'SELECT role FROM session_players WHERE session_id = $1 AND user_id = $2',
-    [mapSessionId, userId],
+    [mapSessionId, userId]
   );
   const isDM = roleRows[0]?.role === 'dm';
   if (!isDM) {
     const { rows: sessionRows } = await pool.query(
       'SELECT player_map_id FROM sessions WHERE id = $1',
-      [mapSessionId],
+      [mapSessionId]
     );
     // Players must see only the ribbon map. The legacy fallback to
     // `current_map_id` used to leak DM prep scenes on sessions that
     // pre-date the preview isolation split.
-    const activeMapId =
-      (sessionRows[0]?.player_map_id as string | null | undefined) ?? null;
+    const activeMapId = (sessionRows[0]?.player_map_id as string | null | undefined) ?? null;
     if (!activeMapId || activeMapId !== id) {
       res.status(403).json({ error: 'Not authorized to view this map' });
       return;
@@ -267,9 +295,7 @@ router.get('/maps/:id', async (req: Request, res: Response) => {
   const allTokens = tokens.map(rowToToken);
   // Filter hidden tokens for non-DMs so they can't inspect the REST
   // response and discover hidden NPC positions / names.
-  const visibleTokens = isDM
-    ? allTokens
-    : allTokens.filter(t => tokenVisibleToPlayer(t, userId));
+  const visibleTokens = isDM ? allTokens : allTokens.filter((t) => tokenVisibleToPlayer(t, userId));
 
   res.json({
     id: map.id,
@@ -328,7 +354,7 @@ router.get('/sessions/:sessionId/map-folders', async (req: Request, res: Respons
        FROM map_folders
       WHERE session_id = $1
    ORDER BY display_order ASC, created_at ASC`,
-    [sessionId],
+    [sessionId]
   );
   res.json(rows);
 });
@@ -346,13 +372,13 @@ router.post('/sessions/:sessionId/map-folders', async (req: Request, res: Respon
   const id = uuidv4();
   const { rows: orderRows } = await pool.query(
     'SELECT COALESCE(MAX(display_order), 0) AS max FROM map_folders WHERE session_id = $1',
-    [sessionId],
+    [sessionId]
   );
   const nextOrder = Number(orderRows[0]?.max ?? 0) + 1;
   await pool.query(
     `INSERT INTO map_folders (id, session_id, name, display_order)
      VALUES ($1, $2, $3, $4)`,
-    [id, sessionId, name, nextOrder],
+    [id, sessionId, name, nextOrder]
   );
   res.status(201).json({ id, sessionId, name, displayOrder: nextOrder });
 });
@@ -362,11 +388,15 @@ router.patch('/map-folders/:id', async (req: Request, res: Response) => {
   const userId = getAuthUserId(req);
   const id = String(req.params.id);
   const { rows } = await pool.query('SELECT session_id FROM map_folders WHERE id = $1', [id]);
-  if (rows.length === 0) { res.status(404).json({ error: 'Folder not found' }); return; }
+  if (rows.length === 0) {
+    res.status(404).json({ error: 'Folder not found' });
+    return;
+  }
   await assertSessionDM(rows[0].session_id, userId);
 
   const name = typeof req.body?.name === 'string' ? req.body.name.trim() : undefined;
-  const displayOrder = typeof req.body?.displayOrder === 'number' ? req.body.displayOrder : undefined;
+  const displayOrder =
+    typeof req.body?.displayOrder === 'number' ? req.body.displayOrder : undefined;
   if (name !== undefined && (!name || name.length > 100)) {
     res.status(400).json({ error: 'Folder name must be 1–100 chars' });
     return;
@@ -374,9 +404,18 @@ router.patch('/map-folders/:id', async (req: Request, res: Response) => {
   const sets: string[] = [];
   const params: unknown[] = [];
   let idx = 1;
-  if (name !== undefined) { sets.push(`name = $${idx++}`); params.push(name); }
-  if (displayOrder !== undefined) { sets.push(`display_order = $${idx++}`); params.push(displayOrder); }
-  if (sets.length === 0) { res.json({ success: true, noop: true }); return; }
+  if (name !== undefined) {
+    sets.push(`name = $${idx++}`);
+    params.push(name);
+  }
+  if (displayOrder !== undefined) {
+    sets.push(`display_order = $${idx++}`);
+    params.push(displayOrder);
+  }
+  if (sets.length === 0) {
+    res.json({ success: true, noop: true });
+    return;
+  }
   params.push(id);
   await pool.query(`UPDATE map_folders SET ${sets.join(', ')} WHERE id = $${idx}`, params);
   res.json({ success: true });
@@ -388,7 +427,10 @@ router.delete('/map-folders/:id', async (req: Request, res: Response) => {
   const userId = getAuthUserId(req);
   const id = String(req.params.id);
   const { rows } = await pool.query('SELECT session_id FROM map_folders WHERE id = $1', [id]);
-  if (rows.length === 0) { res.status(404).json({ error: 'Folder not found' }); return; }
+  if (rows.length === 0) {
+    res.status(404).json({ error: 'Folder not found' });
+    return;
+  }
   await assertSessionDM(rows[0].session_id, userId);
   await pool.query('DELETE FROM map_folders WHERE id = $1', [id]);
   res.json({ success: true });
@@ -400,7 +442,10 @@ router.patch('/maps/:id/folder', async (req: Request, res: Response) => {
   const userId = getAuthUserId(req);
   const id = String(req.params.id);
   const { rows } = await pool.query('SELECT session_id FROM maps WHERE id = $1', [id]);
-  if (rows.length === 0) { res.status(404).json({ error: 'Map not found' }); return; }
+  if (rows.length === 0) {
+    res.status(404).json({ error: 'Map not found' });
+    return;
+  }
   const sessionId = rows[0].session_id;
   await assertSessionDM(sessionId, userId);
 
@@ -409,7 +454,7 @@ router.patch('/maps/:id/folder', async (req: Request, res: Response) => {
   if (folderId) {
     const { rows: check } = await pool.query(
       'SELECT 1 FROM map_folders WHERE id = $1 AND session_id = $2',
-      [folderId, sessionId],
+      [folderId, sessionId]
     );
     if (check.length === 0) {
       res.status(400).json({ error: 'Folder not in this session' });

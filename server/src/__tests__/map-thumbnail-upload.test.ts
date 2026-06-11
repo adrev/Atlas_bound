@@ -25,20 +25,41 @@ describe('saveMapThumbnail magic-byte gate', () => {
   });
   afterAll(() => {
     // Best-effort cleanup of the tempdir tree.
-    try { fs.rmSync(TMP_UPLOAD_DIR, { recursive: true, force: true }); } catch { /* ignore */ }
+    try {
+      fs.rmSync(TMP_UPLOAD_DIR, { recursive: true, force: true });
+    } catch {
+      /* ignore */
+    }
   });
 
   // Minimal valid JPEG header (SOI marker followed by a JFIF block).
   // We don't decode it — just need the magic bytes for detectImageType.
   const VALID_JPEG = Buffer.from([
-    0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00,
+    0xff,
+    0xd8,
+    0xff,
+    0xe0,
+    0x00,
+    0x10,
+    0x4a,
+    0x46,
+    0x49,
+    0x46,
+    0x00,
     // pad so the buffer is large enough to pass the length check
     ...new Array(64).fill(0x00),
   ]);
 
   // PNG header — a real attacker might try to mislabel a PNG as JPEG.
   const PNG_HEADER = Buffer.from([
-    0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+    0x89,
+    0x50,
+    0x4e,
+    0x47,
+    0x0d,
+    0x0a,
+    0x1a,
+    0x0a,
     ...new Array(64).fill(0x00),
   ]);
 
@@ -60,24 +81,24 @@ describe('saveMapThumbnail magic-byte gate', () => {
     };
   }
 
-  it('accepts a real JPEG header', () => {
+  it('accepts a real JPEG header', async () => {
     const baseUuid = `accept-${Date.now()}`;
-    const filename = saveMapThumbnail(fakeFile(VALID_JPEG), baseUuid);
+    const filename = await saveMapThumbnail(fakeFile(VALID_JPEG), baseUuid);
     expect(filename).toBe(`${baseUuid}.jpg`);
     // File should exist on disk after the call.
     const written = path.join(TMP_UPLOAD_DIR, 'maps', 'thumbnails', filename);
     expect(fs.existsSync(written)).toBe(true);
   });
 
-  it('rejects a PNG masquerading as a thumbnail', () => {
-    expect(() => saveMapThumbnail(fakeFile(PNG_HEADER), 'x')).toThrow(/JPEG/);
+  it('rejects a PNG masquerading as a thumbnail', async () => {
+    await expect(saveMapThumbnail(fakeFile(PNG_HEADER), 'x')).rejects.toThrow(/JPEG/);
   });
 
-  it('rejects raw SVG bytes', () => {
-    expect(() => saveMapThumbnail(fakeFile(SVG_BYTES), 'x')).toThrow(/JPEG/);
+  it('rejects raw SVG bytes', async () => {
+    await expect(saveMapThumbnail(fakeFile(SVG_BYTES), 'x')).rejects.toThrow(/JPEG/);
   });
 
-  it('rejects an empty buffer', () => {
-    expect(() => saveMapThumbnail(fakeFile(Buffer.alloc(0)), 'x')).toThrow();
+  it('rejects an empty buffer', async () => {
+    await expect(saveMapThumbnail(fakeFile(Buffer.alloc(0)), 'x')).rejects.toThrow();
   });
 });
