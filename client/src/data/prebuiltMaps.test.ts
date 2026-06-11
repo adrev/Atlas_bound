@@ -13,13 +13,14 @@ describe('prebuilt map lookups', () => {
   });
 
   it('resolves current, legacy, and slugged Elfsong names', () => {
-    const expected = 'https://storage.googleapis.com/atlas-bound-data/maps/elfsong-tavern.png';
+    const expected =
+      'https://storage.googleapis.com/atlas-bound-public-assets-personal/maps/elfsong-tavern.png';
 
     expect(PREBUILT_IMAGE_BY_NAME['The Elfsong Tavern']).toBe(expected);
     expect(PREBUILT_IMAGE_BY_NAME['Elfsong Tavern']).toBe(expected);
     expect(PREBUILT_IMAGE_BY_NAME['elfsong-tavern']).toBe(expected);
     expect(PREBUILT_THUMBNAIL['Elfsong Tavern']).toBe(
-      'https://storage.googleapis.com/atlas-bound-data/maps/thumbnails/elfsong-tavern.jpg',
+      'https://storage.googleapis.com/atlas-bound-public-assets-personal/maps/thumbnails/elfsong-tavern.jpg'
     );
   });
 });

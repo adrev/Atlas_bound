@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import {
-  getSpellImageUrl, getItemImageUrl, getCreatureImageUrl,
+  getSpellImageUrl,
+  getItemImageUrl,
+  getCreatureImageUrl,
   getCompendiumImageUrl,
 } from './compendiumIcons';
 
@@ -10,12 +12,11 @@ import {
 // the authoritative slug, pass it through as-is; bare names get
 // slugified as a best-effort fallback.
 
-const CDN = 'https://storage.googleapis.com/atlas-bound-data';
+const CDN = 'https://storage.googleapis.com/atlas-bound-public-assets-personal';
 
 describe('getSpellImageUrl', () => {
   it('passes an authoritative slug through unchanged', () => {
-    expect(getSpellImageUrl('altered-strike-a5e'))
-      .toBe(`${CDN}/spells/altered-strike-a5e.png`);
+    expect(getSpellImageUrl('altered-strike-a5e')).toBe(`${CDN}/spells/altered-strike-a5e.png`);
   });
 
   it('handles apostrophed DB slugs without mangling', () => {
@@ -23,43 +24,37 @@ describe('getSpellImageUrl', () => {
     // "black-goats-blessing" used to come out as
     // "black-goat-s-blessing" because slugify treated the apostrophe
     // as a separator.
-    expect(getSpellImageUrl('black-goats-blessing'))
-      .toBe(`${CDN}/spells/black-goats-blessing.png`);
+    expect(getSpellImageUrl('black-goats-blessing')).toBe(`${CDN}/spells/black-goats-blessing.png`);
   });
 
-  it('slugifies a raw name only when a slug wasn\'t provided', () => {
-    expect(getSpellImageUrl('Fire Ball'))
-      .toBe(`${CDN}/spells/fire-ball.png`);
+  it("slugifies a raw name only when a slug wasn't provided", () => {
+    expect(getSpellImageUrl('Fire Ball')).toBe(`${CDN}/spells/fire-ball.png`);
   });
 });
 
 describe('getItemImageUrl', () => {
   it('passes a slug through', () => {
-    expect(getItemImageUrl('flame-tongue'))
-      .toBe(`${CDN}/items/flame-tongue.png`);
+    expect(getItemImageUrl('flame-tongue')).toBe(`${CDN}/items/flame-tongue.png`);
   });
 
   it('slugifies a name fallback', () => {
-    expect(getItemImageUrl("Ranger's Bow"))
-      .toBe(`${CDN}/items/ranger-s-bow.png`);
+    expect(getItemImageUrl("Ranger's Bow")).toBe(`${CDN}/items/ranger-s-bow.png`);
   });
 });
 
 describe('getCreatureImageUrl', () => {
   it('passes a slug through', () => {
-    expect(getCreatureImageUrl('adult-red-dragon'))
-      .toBe(`${CDN}/tokens/adult-red-dragon.png`);
+    expect(getCreatureImageUrl('adult-red-dragon')).toBe(`${CDN}/tokens/adult-red-dragon.png`);
   });
 });
 
 describe('getCompendiumImageUrl', () => {
   it('routes by category', () => {
-    expect(getCompendiumImageUrl('fireball', 'spells'))
-      .toBe(`${CDN}/spells/fireball.png`);
-    expect(getCompendiumImageUrl('goblin', 'monsters'))
-      .toBe(`${CDN}/tokens/goblin.png`);
-    expect(getCompendiumImageUrl('bag-of-holding', 'items'))
-      .toBe(`${CDN}/items/bag-of-holding.png`);
+    expect(getCompendiumImageUrl('fireball', 'spells')).toBe(`${CDN}/spells/fireball.png`);
+    expect(getCompendiumImageUrl('goblin', 'monsters')).toBe(`${CDN}/tokens/goblin.png`);
+    expect(getCompendiumImageUrl('bag-of-holding', 'items')).toBe(
+      `${CDN}/items/bag-of-holding.png`
+    );
   });
 
   it('unknown category produces a data: SVG letter-avatar fallback', () => {

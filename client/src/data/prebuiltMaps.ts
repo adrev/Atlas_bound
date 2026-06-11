@@ -7,10 +7,12 @@
  *
  * Images are hosted on the shared GCS bucket (same as tokens, music,
  * spells, items). To add a new map:
- *   1. Upload `{id}.png` to `gs://atlas-bound-data/maps/`
+ *   1. Upload `{id}.png` to `gs://atlas-bound-public-assets-personal/maps/`
  *   2. Add an entry below with a clear story anchor in the description
  *   3. Pick a grid size that frames the art well at the default 70px/cell
  */
+
+import { publicAssetUrl } from '../utils/publicAssets';
 
 export type MapCategory = 'combat' | 'social' | 'dungeon' | 'rest';
 
@@ -33,7 +35,7 @@ export interface PrebuiltMap {
   thumbnailFile: string;
 }
 
-const MAPS_CDN = 'https://storage.googleapis.com/atlas-bound-data/maps';
+const MAPS_CDN = publicAssetUrl('maps');
 const MAPS_THUMB_CDN = `${MAPS_CDN}/thumbnails`;
 
 const map = (
@@ -43,7 +45,7 @@ const map = (
   category: MapCategory,
   gridCols: number,
   gridRows: number,
-  seed: number,
+  seed: number
 ): PrebuiltMap => ({
   id,
   name,
@@ -62,149 +64,1245 @@ const map = (
 
 export const PREBUILT_MAPS: PrebuiltMap[] = [
   // --- Combat / Wilderness -------------------------------------------------
-  map('forest-fork', 'Forked Forest Path', 'Wooded Y-junction where a stream crosses under a small footbridge', 'combat', 30, 22, 101),
-  map('river-crossing', 'River Crossing', 'Wide river with a wooden bridge, rocky fords, and tree cover on both banks', 'combat', 32, 22, 102),
-  map('mountain-pass', 'Snowy Mountain Pass', 'Winter trail winding between cliffs, scattered with a broken cart and boulders', 'combat', 34, 20, 103),
-  map('goblin-ambush-road', 'Ambush Road', 'Misty forest road dotted with wreckage and toppled wagons — prime ambush terrain', 'combat', 30, 22, 104),
-  map('forest-road-ambush', 'Forest Road Ambush', 'Narrow wooded path with fallen trees and deep cover on either side', 'combat', 40, 20, 707),
-  map('forest-ruins-stream', 'Forest Ruins & Stream', 'Overgrown ruins straddling a woodland creek, with tumbled columns for cover', 'combat', 32, 22, 105),
-  map('forest-shrine-crossing', 'Forest Shrine Crossing', 'Moss-covered shrine at a forest crossroads, surrounded by ancient trees', 'combat', 30, 22, 106),
-  map('coastal-cliffs', 'Coastal Cliffs', 'Windswept cliffside with a beach path and breaking surf below', 'combat', 32, 22, 107),
-  map('swamp-hag-causeway', 'Swamp Causeway', 'Boggy wetlands crossed by a raised wooden causeway — ideal hag territory', 'combat', 32, 22, 108),
-  map('city-rooftop-chase', 'City Rooftops', 'Tiled-roof labyrinth at twilight, with gaps and narrow alleys between buildings', 'combat', 30, 22, 109),
-  map('rooftop-chase', 'Rooftop Chase', 'Rain-slick city rooftops with planks, ladders, laundry lines, and narrow alley drops', 'combat', 28, 28, 501),
-  map('city-alley-ambush', 'City Alley Ambush', 'Cramped lantern-lit alley courtyard with rooftops, crates, laundry lines, and a sewer grate', 'combat', 28, 28, 502),
-  map('fey-mushroom-clearing', 'Feywild Clearing', 'Magical woodland glade ringed by softly glowing mushrooms', 'combat', 28, 22, 110),
-  map('desert-oasis-ruins', 'Desert Oasis Ruins', 'Arid ruins clustered around a palm-shaded waterhole', 'combat', 30, 22, 111),
-  map('druid-grove', 'Druid Grove', 'Sacred grove with a stone circle at its heart and branching paths through the trees', 'combat', 35, 35, 303),
-  map('chasm-bridge', 'Chasm Bridge', 'Ancient broken bridge over a deep ravine, blocked by a fallen statue and rubble', 'combat', 34, 26, 503),
-  map('broken-stone-bridge', 'Broken Stone Bridge', 'Wide ravine crossing with cracked stonework, rope repairs, and exposed ledges', 'combat', 34, 26, 504),
-  map('spellfall-crater', 'Spellfall Crater', 'Massive arcane impact crater with black crystal shards, ruined roads, and unstable magic', 'combat', 32, 32, 505),
-  map('arcane-quarantine-zone', 'Arcane Quarantine Zone', 'Ruined city block sealed by barricades around a leaking magical obelisk', 'combat', 32, 26, 506),
-  map('foundry-district', 'Foundry District', 'Smoky forge quarter with molten channels, cranes, coal piles, and heavy cover', 'combat', 32, 26, 507),
-  map('city-gate-checkpoint', 'City Gate Checkpoint', 'Fortified customs gate with barricades, wagons, guard posts, and inspection lanes', 'combat', 30, 30, 508),
-  map('docks-warehouse', 'Harbor Warehouse', 'Nighttime dockside warehouse — crates, cranes, and a pier along the water', 'combat', 30, 22, 509),
-  map('dockside-warehouse-district', 'Dockside Warehouse District', 'Harbor road with cargo yards, docks, boats, cranes, and warehouse rooftops', 'combat', 24, 30, 510),
-  map('ship-deck-boarding', 'Ship Boarding Action', 'Two wooden decks locked in a stormy naval boarding action', 'combat', 30, 22, 511),
-  map('pirate-cove', 'Pirate Cove', 'Secluded coastal camp with a pier, bonfire, boats, and pirate cover positions', 'combat', 30, 22, 512),
-  map('sandstone-arena', 'Sandstone Arena', 'Sunlit colosseum battle pit with gates, spike traps, broken cover, and tiered stone stands', 'combat', 30, 30, 513),
-  map('prison-wagon-ambush', 'Prison Wagon Ambush', 'Muddy woodland road where a barred transport wagon has been wrecked beside ditches and deadfall', 'combat', 36, 24, 514),
-  map('ancient-druid-grove', 'Ancient Druid Grove', 'Moonwell clearing ringed by standing stones, branching forest paths, roots, and a hidden cave mouth', 'combat', 30, 30, 515),
-  map('breached-gatehouse', 'Breached Gatehouse', 'Shattered keep or city gate with rubble, kill lanes, and muddy siege ground outside the walls', 'combat', 32, 22, 516),
-  map('fortified-war-camp', 'Fortified War Camp', 'Entrenched military encampment with command tents, stockades, supply lines, and muddy approach roads', 'combat', 30, 30, 517),
-  map('watchtower-outpost', 'Watchtower Outpost', 'Hilltop border outpost with a stone tower, curtain wall, supply yard, and a skirmish-scarred approach road', 'combat', 30, 30, 518),
-  map('rooftop-chase-district', 'Rooftop Chase District', 'Dense city rooftops of tile runs, rope bridges, bell towers, skylights, and narrow jump lanes above dark alleys', 'combat', 30, 30, 519),
-  map('burning-caravanserai', 'Burning Caravanserai', 'Desert trade inn courtyard under attack, with burning wagons, guest wings, camel pens, and a shattered front gate', 'combat', 36, 24, 520),
-  map('siege-sapper-trench', 'Siege Sapper Trench', 'Muddy siegeworks of zigzag trenches, mantlets, stake fields, and a collapsing tunnel mouth beneath the wall', 'combat', 36, 24, 521),
-  map('arcane-rail-heist', 'Arcane Rail Heist', 'Lightning-rail convoy with cargo cars, roof walkways, coupling gaps, and a glowing treasure carriage at speed', 'combat', 36, 24, 522),
-  map('orc-war-palisade', 'Orc War Palisade', 'Brutal raider stronghold of log walls, hide tents, beast pens, bonfire pits, and a bone totem arena', 'combat', 36, 24, 523),
-  map('goblin-scrap-fort', 'Goblin Scrap Fort', 'Junk-built goblin redoubt in a ruined woodland clearing, packed with cages, trash towers, traps, and scavenged barricades', 'combat', 30, 30, 524),
-  map('blighted-deadwood', 'Blighted Deadwood', 'Corrupted dead forest of blackened trees, thorn tangles, ash clearings, and a necrotic crater ringed by ruined stones', 'combat', 30, 30, 525),
-  map('necromancer-battlefield', 'Necromancer Battlefield', 'Old war ground reawakened with burial trenches, mass graves, broken siege lines, and a dark obelisk humming with death magic', 'combat', 36, 24, 526),
-  map('vampire-castle-courtyard', 'Vampire Castle Courtyard', 'Gothic keep courtyard of dead rose gardens, crypt stairs, moonlit black stone, and a crimson statue plaza', 'combat', 30, 30, 527),
+  map(
+    'forest-fork',
+    'Forked Forest Path',
+    'Wooded Y-junction where a stream crosses under a small footbridge',
+    'combat',
+    30,
+    22,
+    101
+  ),
+  map(
+    'river-crossing',
+    'River Crossing',
+    'Wide river with a wooden bridge, rocky fords, and tree cover on both banks',
+    'combat',
+    32,
+    22,
+    102
+  ),
+  map(
+    'mountain-pass',
+    'Snowy Mountain Pass',
+    'Winter trail winding between cliffs, scattered with a broken cart and boulders',
+    'combat',
+    34,
+    20,
+    103
+  ),
+  map(
+    'goblin-ambush-road',
+    'Ambush Road',
+    'Misty forest road dotted with wreckage and toppled wagons — prime ambush terrain',
+    'combat',
+    30,
+    22,
+    104
+  ),
+  map(
+    'forest-road-ambush',
+    'Forest Road Ambush',
+    'Narrow wooded path with fallen trees and deep cover on either side',
+    'combat',
+    40,
+    20,
+    707
+  ),
+  map(
+    'forest-ruins-stream',
+    'Forest Ruins & Stream',
+    'Overgrown ruins straddling a woodland creek, with tumbled columns for cover',
+    'combat',
+    32,
+    22,
+    105
+  ),
+  map(
+    'forest-shrine-crossing',
+    'Forest Shrine Crossing',
+    'Moss-covered shrine at a forest crossroads, surrounded by ancient trees',
+    'combat',
+    30,
+    22,
+    106
+  ),
+  map(
+    'coastal-cliffs',
+    'Coastal Cliffs',
+    'Windswept cliffside with a beach path and breaking surf below',
+    'combat',
+    32,
+    22,
+    107
+  ),
+  map(
+    'swamp-hag-causeway',
+    'Swamp Causeway',
+    'Boggy wetlands crossed by a raised wooden causeway — ideal hag territory',
+    'combat',
+    32,
+    22,
+    108
+  ),
+  map(
+    'city-rooftop-chase',
+    'City Rooftops',
+    'Tiled-roof labyrinth at twilight, with gaps and narrow alleys between buildings',
+    'combat',
+    30,
+    22,
+    109
+  ),
+  map(
+    'rooftop-chase',
+    'Rooftop Chase',
+    'Rain-slick city rooftops with planks, ladders, laundry lines, and narrow alley drops',
+    'combat',
+    28,
+    28,
+    501
+  ),
+  map(
+    'city-alley-ambush',
+    'City Alley Ambush',
+    'Cramped lantern-lit alley courtyard with rooftops, crates, laundry lines, and a sewer grate',
+    'combat',
+    28,
+    28,
+    502
+  ),
+  map(
+    'fey-mushroom-clearing',
+    'Feywild Clearing',
+    'Magical woodland glade ringed by softly glowing mushrooms',
+    'combat',
+    28,
+    22,
+    110
+  ),
+  map(
+    'desert-oasis-ruins',
+    'Desert Oasis Ruins',
+    'Arid ruins clustered around a palm-shaded waterhole',
+    'combat',
+    30,
+    22,
+    111
+  ),
+  map(
+    'druid-grove',
+    'Druid Grove',
+    'Sacred grove with a stone circle at its heart and branching paths through the trees',
+    'combat',
+    35,
+    35,
+    303
+  ),
+  map(
+    'chasm-bridge',
+    'Chasm Bridge',
+    'Ancient broken bridge over a deep ravine, blocked by a fallen statue and rubble',
+    'combat',
+    34,
+    26,
+    503
+  ),
+  map(
+    'broken-stone-bridge',
+    'Broken Stone Bridge',
+    'Wide ravine crossing with cracked stonework, rope repairs, and exposed ledges',
+    'combat',
+    34,
+    26,
+    504
+  ),
+  map(
+    'spellfall-crater',
+    'Spellfall Crater',
+    'Massive arcane impact crater with black crystal shards, ruined roads, and unstable magic',
+    'combat',
+    32,
+    32,
+    505
+  ),
+  map(
+    'arcane-quarantine-zone',
+    'Arcane Quarantine Zone',
+    'Ruined city block sealed by barricades around a leaking magical obelisk',
+    'combat',
+    32,
+    26,
+    506
+  ),
+  map(
+    'foundry-district',
+    'Foundry District',
+    'Smoky forge quarter with molten channels, cranes, coal piles, and heavy cover',
+    'combat',
+    32,
+    26,
+    507
+  ),
+  map(
+    'city-gate-checkpoint',
+    'City Gate Checkpoint',
+    'Fortified customs gate with barricades, wagons, guard posts, and inspection lanes',
+    'combat',
+    30,
+    30,
+    508
+  ),
+  map(
+    'docks-warehouse',
+    'Harbor Warehouse',
+    'Nighttime dockside warehouse — crates, cranes, and a pier along the water',
+    'combat',
+    30,
+    22,
+    509
+  ),
+  map(
+    'dockside-warehouse-district',
+    'Dockside Warehouse District',
+    'Harbor road with cargo yards, docks, boats, cranes, and warehouse rooftops',
+    'combat',
+    24,
+    30,
+    510
+  ),
+  map(
+    'ship-deck-boarding',
+    'Ship Boarding Action',
+    'Two wooden decks locked in a stormy naval boarding action',
+    'combat',
+    30,
+    22,
+    511
+  ),
+  map(
+    'pirate-cove',
+    'Pirate Cove',
+    'Secluded coastal camp with a pier, bonfire, boats, and pirate cover positions',
+    'combat',
+    30,
+    22,
+    512
+  ),
+  map(
+    'sandstone-arena',
+    'Sandstone Arena',
+    'Sunlit colosseum battle pit with gates, spike traps, broken cover, and tiered stone stands',
+    'combat',
+    30,
+    30,
+    513
+  ),
+  map(
+    'prison-wagon-ambush',
+    'Prison Wagon Ambush',
+    'Muddy woodland road where a barred transport wagon has been wrecked beside ditches and deadfall',
+    'combat',
+    36,
+    24,
+    514
+  ),
+  map(
+    'ancient-druid-grove',
+    'Ancient Druid Grove',
+    'Moonwell clearing ringed by standing stones, branching forest paths, roots, and a hidden cave mouth',
+    'combat',
+    30,
+    30,
+    515
+  ),
+  map(
+    'breached-gatehouse',
+    'Breached Gatehouse',
+    'Shattered keep or city gate with rubble, kill lanes, and muddy siege ground outside the walls',
+    'combat',
+    32,
+    22,
+    516
+  ),
+  map(
+    'fortified-war-camp',
+    'Fortified War Camp',
+    'Entrenched military encampment with command tents, stockades, supply lines, and muddy approach roads',
+    'combat',
+    30,
+    30,
+    517
+  ),
+  map(
+    'watchtower-outpost',
+    'Watchtower Outpost',
+    'Hilltop border outpost with a stone tower, curtain wall, supply yard, and a skirmish-scarred approach road',
+    'combat',
+    30,
+    30,
+    518
+  ),
+  map(
+    'rooftop-chase-district',
+    'Rooftop Chase District',
+    'Dense city rooftops of tile runs, rope bridges, bell towers, skylights, and narrow jump lanes above dark alleys',
+    'combat',
+    30,
+    30,
+    519
+  ),
+  map(
+    'burning-caravanserai',
+    'Burning Caravanserai',
+    'Desert trade inn courtyard under attack, with burning wagons, guest wings, camel pens, and a shattered front gate',
+    'combat',
+    36,
+    24,
+    520
+  ),
+  map(
+    'siege-sapper-trench',
+    'Siege Sapper Trench',
+    'Muddy siegeworks of zigzag trenches, mantlets, stake fields, and a collapsing tunnel mouth beneath the wall',
+    'combat',
+    36,
+    24,
+    521
+  ),
+  map(
+    'arcane-rail-heist',
+    'Arcane Rail Heist',
+    'Lightning-rail convoy with cargo cars, roof walkways, coupling gaps, and a glowing treasure carriage at speed',
+    'combat',
+    36,
+    24,
+    522
+  ),
+  map(
+    'orc-war-palisade',
+    'Orc War Palisade',
+    'Brutal raider stronghold of log walls, hide tents, beast pens, bonfire pits, and a bone totem arena',
+    'combat',
+    36,
+    24,
+    523
+  ),
+  map(
+    'goblin-scrap-fort',
+    'Goblin Scrap Fort',
+    'Junk-built goblin redoubt in a ruined woodland clearing, packed with cages, trash towers, traps, and scavenged barricades',
+    'combat',
+    30,
+    30,
+    524
+  ),
+  map(
+    'blighted-deadwood',
+    'Blighted Deadwood',
+    'Corrupted dead forest of blackened trees, thorn tangles, ash clearings, and a necrotic crater ringed by ruined stones',
+    'combat',
+    30,
+    30,
+    525
+  ),
+  map(
+    'necromancer-battlefield',
+    'Necromancer Battlefield',
+    'Old war ground reawakened with burial trenches, mass graves, broken siege lines, and a dark obelisk humming with death magic',
+    'combat',
+    36,
+    24,
+    526
+  ),
+  map(
+    'vampire-castle-courtyard',
+    'Vampire Castle Courtyard',
+    'Gothic keep courtyard of dead rose gardens, crypt stairs, moonlit black stone, and a crimson statue plaza',
+    'combat',
+    30,
+    30,
+    527
+  ),
 
   // --- Rest / Camp ---------------------------------------------------------
-  map('roadside-night-camp', 'Roadside Night Camp', 'Forest roadside campsite with tents, bedrolls, wagon cover, and campfire light', 'rest', 32, 26, 601),
-  map('forest-night-camp', 'Moonlit Forest Camp', 'Quiet forest campsite beside a stream, with tents, bedrolls, fallen logs, and a warm central fire', 'rest', 35, 28, 602),
-  map('roadside-wagon-camp', 'Roadside Wagon Camp', 'Muddy country roadside camp with wagons, horse pickets, canvas shelters, crates, and a low campfire', 'rest', 35, 28, 603),
-  map('mountain-shelter-camp', 'Mountain Shelter Camp', 'Snowbound mountain trail with a sheltered stone camp, icy stream, boulders, and a small fire', 'rest', 36, 24, 604),
-  map('desert-caravan-camp', 'Desert Caravan Camp', 'Lantern-lit caravan camp among dunes and rocky shelves, with tents, carts, supplies, and a fire pit', 'rest', 35, 28, 605),
-  map('swamp-stilt-camp', 'Swamp Stilt Camp', 'Raised wooden swamp camp connected by plank walks, surrounded by dark water, reeds, and lurking shapes', 'rest', 28, 28, 606),
-  map('ruined-stone-circle-camp', 'Ruined Stone Circle Camp', 'Traveler camp inside mossy circular ruins, where forest paths meet around a glowing fire', 'rest', 24, 30, 607),
-  map('riverbank-fishing-camp', 'Riverbank Fishing Camp', 'Twilight riverside camp with fishing racks, tents, a rowboat, reeds, and shoreline paths', 'rest', 35, 28, 608),
-  map('snowbound-cabin-camp', 'Snowbound Cabin Camp', 'Winter cabin clearing with snowy pines, sled tracks, a well, outdoor bedrolls, and a smoking hearth', 'rest', 24, 30, 609),
-  map('cave-refuge-camp', 'Cave Refuge Camp', 'Rocky cave hideaway with bedrolls, lanterns, supplies, side passages, and a small sheltered fire', 'rest', 35, 28, 610),
-  map('underground-safe-camp', 'Underground Safe Camp', 'Deep cavern rest spot with bedrolls arranged around embers, cave pools, stalagmites, and narrow exits', 'rest', 28, 28, 611),
-  map('nomad-pavilion-camp', 'Nomad Pavilion Camp', 'Elegant traveling camp of bright tents, braziers, carpets, horse lines, and a welcoming reception canopy', 'rest', 36, 24, 612),
+  map(
+    'roadside-night-camp',
+    'Roadside Night Camp',
+    'Forest roadside campsite with tents, bedrolls, wagon cover, and campfire light',
+    'rest',
+    32,
+    26,
+    601
+  ),
+  map(
+    'forest-night-camp',
+    'Moonlit Forest Camp',
+    'Quiet forest campsite beside a stream, with tents, bedrolls, fallen logs, and a warm central fire',
+    'rest',
+    35,
+    28,
+    602
+  ),
+  map(
+    'roadside-wagon-camp',
+    'Roadside Wagon Camp',
+    'Muddy country roadside camp with wagons, horse pickets, canvas shelters, crates, and a low campfire',
+    'rest',
+    35,
+    28,
+    603
+  ),
+  map(
+    'mountain-shelter-camp',
+    'Mountain Shelter Camp',
+    'Snowbound mountain trail with a sheltered stone camp, icy stream, boulders, and a small fire',
+    'rest',
+    36,
+    24,
+    604
+  ),
+  map(
+    'desert-caravan-camp',
+    'Desert Caravan Camp',
+    'Lantern-lit caravan camp among dunes and rocky shelves, with tents, carts, supplies, and a fire pit',
+    'rest',
+    35,
+    28,
+    605
+  ),
+  map(
+    'swamp-stilt-camp',
+    'Swamp Stilt Camp',
+    'Raised wooden swamp camp connected by plank walks, surrounded by dark water, reeds, and lurking shapes',
+    'rest',
+    28,
+    28,
+    606
+  ),
+  map(
+    'ruined-stone-circle-camp',
+    'Ruined Stone Circle Camp',
+    'Traveler camp inside mossy circular ruins, where forest paths meet around a glowing fire',
+    'rest',
+    24,
+    30,
+    607
+  ),
+  map(
+    'riverbank-fishing-camp',
+    'Riverbank Fishing Camp',
+    'Twilight riverside camp with fishing racks, tents, a rowboat, reeds, and shoreline paths',
+    'rest',
+    35,
+    28,
+    608
+  ),
+  map(
+    'snowbound-cabin-camp',
+    'Snowbound Cabin Camp',
+    'Winter cabin clearing with snowy pines, sled tracks, a well, outdoor bedrolls, and a smoking hearth',
+    'rest',
+    24,
+    30,
+    609
+  ),
+  map(
+    'cave-refuge-camp',
+    'Cave Refuge Camp',
+    'Rocky cave hideaway with bedrolls, lanterns, supplies, side passages, and a small sheltered fire',
+    'rest',
+    35,
+    28,
+    610
+  ),
+  map(
+    'underground-safe-camp',
+    'Underground Safe Camp',
+    'Deep cavern rest spot with bedrolls arranged around embers, cave pools, stalagmites, and narrow exits',
+    'rest',
+    28,
+    28,
+    611
+  ),
+  map(
+    'nomad-pavilion-camp',
+    'Nomad Pavilion Camp',
+    'Elegant traveling camp of bright tents, braziers, carpets, horse lines, and a welcoming reception canopy',
+    'rest',
+    36,
+    24,
+    612
+  ),
 
   // --- Dungeon -------------------------------------------------------------
-  map('dragon-lair', 'Dragon\u2019s Lair', 'Cavernous treasure chamber heaped with gold, jewels, and bones', 'dungeon', 30, 24, 201),
-  map('crypt-catacombs', 'Crypt Catacombs', 'Ancient burial chambers with sarcophagi, alcoves, and grave treasures', 'dungeon', 30, 24, 202),
-  map('dark-dungeon', 'Dark Dungeon', 'Classic medieval dungeon — cells, corridors, and a torture chamber', 'dungeon', 30, 24, 203),
-  map('sewer-cistern', 'Sewer Cistern', 'Underground drainage chamber with channels, walkways, and rusted grates', 'dungeon', 28, 24, 204),
-  map('sewer-outfall', 'Sewer Outfall', 'Brick sewer mouth opening onto a foul canal — barred grates, walkways, and a gondola moored under a low arch', 'dungeon', 30, 20, 223),
-  map('collapsed-mine', 'Collapsed Mine', 'Abandoned mineshaft, broken supports, and veins of glowing crystal', 'dungeon', 30, 22, 205),
-  map('ruined-keep-entrance', 'Ruined Keep Entrance', 'Mossy courtyard outside a crumbling fortress gate — the way in', 'dungeon', 30, 26, 206),
-  map('haunted-graveyard', 'Haunted Graveyard', 'Fog-wrapped cemetery clustered around a ruined chapel', 'dungeon', 30, 24, 207),
-  map('stormy-temple-ruins', 'Storm-Wracked Temple', 'Crumbling stone temple battered by rain and lightning', 'dungeon', 32, 22, 208),
-  map('dwarven-forge', 'Dwarven Forge', 'Volcanic forge hall with lava channels, anvils, and massive bellows', 'dungeon', 30, 24, 209),
-  map('cellar-cauldron-cache', 'Witch\u2019s Cellar', 'Low-ceilinged cellar with a bubbling cauldron and shelves of strange cargo', 'dungeon', 22, 18, 210),
-  map('moonrise-towers', 'Moonrise Towers', 'Dark fortress courtyard ringed by looming towers', 'dungeon', 40, 40, 404),
-  map('guardhouse-jail', 'Guardhouse Jail', 'City watch station with intake desk, armory, captain office, bunks, and barred cells', 'dungeon', 22, 28, 211),
-  map('thieves-guild-hideout', 'Thieves Guild Hideout', 'Secret basement with gambling tables, training room, vault, smuggler tunnel, and guild office', 'dungeon', 32, 26, 212),
-  map('ritual-boss-chamber', 'Ritual Boss Chamber', 'Circular boss arena with four entries, broken pillars, magic hazards, and a central summoning circle', 'dungeon', 28, 28, 213),
-  map('arcane-containment-lab', 'Arcane Containment Lab', 'Dangerous magical lab with cracked containment circle, crystal pylons, cages, and workbenches', 'dungeon', 34, 26, 214),
-  map('arcane-laboratory', 'Arcane Laboratory', 'Mage academy lab with experiment hall, potion benches, archive, storage, and blue containment glow', 'dungeon', 34, 26, 215),
-  map('underdark-fungal-cavern', 'Underdark Fungal Cavern', 'Bioluminescent cavern with giant mushrooms, spore clouds, black pools, and hidden tunnels', 'dungeon', 24, 30, 216),
-  map('frozen-tomb', 'Frozen Tomb', 'Ice-buried crypt with slippery corridors, frozen sarcophagi, frost statues, and a sealed tomb', 'dungeon', 24, 30, 217),
-  map('bathhouse-cult-hideout', 'Bathhouse Cult Hideout', 'Luxurious bathhouse hiding cult rooms, service corridors, pools, and a trapdoor route', 'dungeon', 28, 28, 218),
-  map('noble-family-crypt', 'Noble Family Crypt', 'Gothic burial vault with chapel ruins, side tombs, blue ghostlight, and a grand sealed sarcophagus', 'dungeon', 24, 30, 219),
-  map('ship-belowdecks', 'Ship Belowdecks', 'Cramped sailing-ship interior with cargo hold, crew hammocks, galley, armory, and captain cabin', 'dungeon', 24, 36, 220),
-  map('planar-portal-room', 'Planar Portal Room', 'Ancient chamber split by elemental hazards around a glowing central portal and crystal pylons', 'dungeon', 30, 30, 221),
-  map('velvet-cult-dungeon', 'Velvet Cult Dungeon', 'Decadent black-marble cult basement with red curtains, masks, wine cellar, restraint chamber, and altar room', 'dungeon', 28, 28, 222),
-  map('sunken-temple', 'Sunken Temple', 'Flooded temple ruins with submerged halls, broken causeways, and a central altar rising from green water', 'dungeon', 30, 30, 224),
-  map('crystal-geode-cavern', 'Crystal Geode Cavern', 'Glowing subterranean geode cave with jagged crystal cover, dark pools, and ritual-scarred tunnels', 'dungeon', 34, 24, 225),
-  map('gladiator-undercroft', 'Gladiator Undercroft', 'Arena undercroft of cages, fighter cells, training pits, and torchlit service corridors beneath the sands', 'dungeon', 36, 24, 226),
-  map('clockwork-vault', 'Clockwork Vault', 'Ancient brass-and-stone vault of gearworks, maintenance bridges, steam vents, and a massive sealed treasury door', 'dungeon', 36, 24, 227),
-  map('flooded-prison-depths', 'Flooded Prison Depths', 'Drowned fortress prison with broken cells, rusted bars, smugglers tunnels, and a locked warden chamber', 'dungeon', 24, 36, 228),
-  map('fallen-observatory', 'Fallen Observatory', 'Collapsed arcane observatory with a shattered star chamber, meteor scar, and ruined lens halls', 'dungeon', 30, 30, 229),
-  map('spider-queen-nest', 'Spider Queen Nest', 'Web-choked tunnels leading into egg chambers, cocoon halls, venom pits, and a brood sanctum of silk and bone', 'dungeon', 24, 36, 230),
-  map('vampire-banquet-hall', 'Vampire Banquet Hall', 'Decadent subterranean manor with a grand feast table, coffin suites, hidden chapel, and tomb vault', 'dungeon', 36, 24, 231),
-  map('plague-hospital-catacombs', 'Plague Hospital Catacombs', 'Abandoned plague ward catacombs of triage rooms, quarantine cells, furnaces, and a sealed mass grave vault', 'dungeon', 36, 24, 232),
-  map('infernal-ledger-vault', 'Infernal Ledger Vault', 'Hell-marked contract archive with chained lecterns, seal circles, record stacks, and a warded iron strongroom', 'dungeon', 24, 36, 233),
-  map('tidal-smugglers-grotto', 'Tidal Smugglers Grotto', 'Sea-cave smuggler hideout with hidden docks, contraband chambers, shrine alcoves, and flooded escape tunnels', 'dungeon', 36, 24, 234),
-  map('ossuary-maze', 'Ossuary Maze', 'Bone-lined catacomb labyrinth of burial pits, reliquary chambers, blind corners, and a candlelit skull chapel', 'dungeon', 24, 36, 235),
-  map('rootbound-sanctum', 'Rootbound Sanctum', 'Buried shrine overtaken by colossal roots, broken altars, monk cells, mossy halls, and hidden earth tunnels', 'dungeon', 30, 30, 236),
-  map('elemental-waterworks', 'Elemental Waterworks', 'Ancient aqueduct pumpworks of sluice gates, turning wheels, flooded chambers, and a roaring turbine core', 'dungeon', 30, 30, 237),
-  map('giant-kitchen-cellar', 'Giant Kitchen Cellar', 'Oversized stronghold cellar of colossal butcher tables, wagon-sized barrels, roaring hearths, and hanging iron hooks', 'dungeon', 36, 24, 238),
-  map('astral-dockyard', 'Astral Dockyard', 'Ruined planar dock of floating piers, mooring rings, spelljamming skiffs, and arcane gantries over the void', 'dungeon', 36, 24, 239),
-  map('goblin-burrow-warrens', 'Goblin Burrow Warrens', 'Cramped goblin tunnel nest of fungus farms, bolt holes, trap corridors, pit pens, and a central loot cavern', 'dungeon', 33, 24, 240),
-  map('troll-butcher-caves', 'Troll Butcher Caves', 'Filthy cave complex of skinning tables, meat hooks, refuse pits, bubbling cauldrons, and foul sleeping dens', 'dungeon', 36, 25, 241),
-  map('orc-idol-catacombs', 'Orc Idol Catacombs', 'Underground war shrine of pillared halls, ash pits, trophy walls, barracks alcoves, and a tusked stone idol chamber', 'dungeon', 36, 24, 242),
-  map('bone-foundry', 'Bone Foundry', 'Necromantic workshop where green furnaces, sorting racks, cages, and forging circles assemble undead constructs', 'dungeon', 36, 24, 243),
-  map('barrow-king-mausoleum', 'Barrow King Mausoleum', 'Ancient royal barrow of ancestor tombs, burial niches, relic alcoves, and a central throne crypt under ghostlight', 'dungeon', 30, 30, 244),
-  map('worldroot-hollows', 'Worldroot Hollows', 'Twisted underground root maze of hollow tree chambers, rot pools, fungal groves, and a cracked druid altar', 'dungeon', 30, 30, 245),
-  map('flesh-stitch-laboratory', 'Flesh Stitch Laboratory', 'Hidden horror lab of surgical slabs, restraint tables, alchemical vats, corpse drawers, and a crackling stitchwork dais', 'dungeon', 30, 30, 246),
-  map('aether-engine-foundry', 'Aether Engine Foundry', 'Gnomish engineering works of assembly gantries, crystal batteries, gear pits, steam lines, and a radiant aether reactor', 'dungeon', 30, 24, 247),
-  map('blood-mage-tower', 'Blood Mage Tower', 'Sinister ritual floors of a crimson mage keep, with occult libraries, chained crystals, blood channels, and a central summoning chamber', 'dungeon', 30, 30, 248),
+  map(
+    'dragon-lair',
+    'Dragon\u2019s Lair',
+    'Cavernous treasure chamber heaped with gold, jewels, and bones',
+    'dungeon',
+    30,
+    24,
+    201
+  ),
+  map(
+    'crypt-catacombs',
+    'Crypt Catacombs',
+    'Ancient burial chambers with sarcophagi, alcoves, and grave treasures',
+    'dungeon',
+    30,
+    24,
+    202
+  ),
+  map(
+    'dark-dungeon',
+    'Dark Dungeon',
+    'Classic medieval dungeon — cells, corridors, and a torture chamber',
+    'dungeon',
+    30,
+    24,
+    203
+  ),
+  map(
+    'sewer-cistern',
+    'Sewer Cistern',
+    'Underground drainage chamber with channels, walkways, and rusted grates',
+    'dungeon',
+    28,
+    24,
+    204
+  ),
+  map(
+    'sewer-outfall',
+    'Sewer Outfall',
+    'Brick sewer mouth opening onto a foul canal — barred grates, walkways, and a gondola moored under a low arch',
+    'dungeon',
+    30,
+    20,
+    223
+  ),
+  map(
+    'collapsed-mine',
+    'Collapsed Mine',
+    'Abandoned mineshaft, broken supports, and veins of glowing crystal',
+    'dungeon',
+    30,
+    22,
+    205
+  ),
+  map(
+    'ruined-keep-entrance',
+    'Ruined Keep Entrance',
+    'Mossy courtyard outside a crumbling fortress gate — the way in',
+    'dungeon',
+    30,
+    26,
+    206
+  ),
+  map(
+    'haunted-graveyard',
+    'Haunted Graveyard',
+    'Fog-wrapped cemetery clustered around a ruined chapel',
+    'dungeon',
+    30,
+    24,
+    207
+  ),
+  map(
+    'stormy-temple-ruins',
+    'Storm-Wracked Temple',
+    'Crumbling stone temple battered by rain and lightning',
+    'dungeon',
+    32,
+    22,
+    208
+  ),
+  map(
+    'dwarven-forge',
+    'Dwarven Forge',
+    'Volcanic forge hall with lava channels, anvils, and massive bellows',
+    'dungeon',
+    30,
+    24,
+    209
+  ),
+  map(
+    'cellar-cauldron-cache',
+    'Witch\u2019s Cellar',
+    'Low-ceilinged cellar with a bubbling cauldron and shelves of strange cargo',
+    'dungeon',
+    22,
+    18,
+    210
+  ),
+  map(
+    'moonrise-towers',
+    'Moonrise Towers',
+    'Dark fortress courtyard ringed by looming towers',
+    'dungeon',
+    40,
+    40,
+    404
+  ),
+  map(
+    'guardhouse-jail',
+    'Guardhouse Jail',
+    'City watch station with intake desk, armory, captain office, bunks, and barred cells',
+    'dungeon',
+    22,
+    28,
+    211
+  ),
+  map(
+    'thieves-guild-hideout',
+    'Thieves Guild Hideout',
+    'Secret basement with gambling tables, training room, vault, smuggler tunnel, and guild office',
+    'dungeon',
+    32,
+    26,
+    212
+  ),
+  map(
+    'ritual-boss-chamber',
+    'Ritual Boss Chamber',
+    'Circular boss arena with four entries, broken pillars, magic hazards, and a central summoning circle',
+    'dungeon',
+    28,
+    28,
+    213
+  ),
+  map(
+    'arcane-containment-lab',
+    'Arcane Containment Lab',
+    'Dangerous magical lab with cracked containment circle, crystal pylons, cages, and workbenches',
+    'dungeon',
+    34,
+    26,
+    214
+  ),
+  map(
+    'arcane-laboratory',
+    'Arcane Laboratory',
+    'Mage academy lab with experiment hall, potion benches, archive, storage, and blue containment glow',
+    'dungeon',
+    34,
+    26,
+    215
+  ),
+  map(
+    'underdark-fungal-cavern',
+    'Underdark Fungal Cavern',
+    'Bioluminescent cavern with giant mushrooms, spore clouds, black pools, and hidden tunnels',
+    'dungeon',
+    24,
+    30,
+    216
+  ),
+  map(
+    'frozen-tomb',
+    'Frozen Tomb',
+    'Ice-buried crypt with slippery corridors, frozen sarcophagi, frost statues, and a sealed tomb',
+    'dungeon',
+    24,
+    30,
+    217
+  ),
+  map(
+    'bathhouse-cult-hideout',
+    'Bathhouse Cult Hideout',
+    'Luxurious bathhouse hiding cult rooms, service corridors, pools, and a trapdoor route',
+    'dungeon',
+    28,
+    28,
+    218
+  ),
+  map(
+    'noble-family-crypt',
+    'Noble Family Crypt',
+    'Gothic burial vault with chapel ruins, side tombs, blue ghostlight, and a grand sealed sarcophagus',
+    'dungeon',
+    24,
+    30,
+    219
+  ),
+  map(
+    'ship-belowdecks',
+    'Ship Belowdecks',
+    'Cramped sailing-ship interior with cargo hold, crew hammocks, galley, armory, and captain cabin',
+    'dungeon',
+    24,
+    36,
+    220
+  ),
+  map(
+    'planar-portal-room',
+    'Planar Portal Room',
+    'Ancient chamber split by elemental hazards around a glowing central portal and crystal pylons',
+    'dungeon',
+    30,
+    30,
+    221
+  ),
+  map(
+    'velvet-cult-dungeon',
+    'Velvet Cult Dungeon',
+    'Decadent black-marble cult basement with red curtains, masks, wine cellar, restraint chamber, and altar room',
+    'dungeon',
+    28,
+    28,
+    222
+  ),
+  map(
+    'sunken-temple',
+    'Sunken Temple',
+    'Flooded temple ruins with submerged halls, broken causeways, and a central altar rising from green water',
+    'dungeon',
+    30,
+    30,
+    224
+  ),
+  map(
+    'crystal-geode-cavern',
+    'Crystal Geode Cavern',
+    'Glowing subterranean geode cave with jagged crystal cover, dark pools, and ritual-scarred tunnels',
+    'dungeon',
+    34,
+    24,
+    225
+  ),
+  map(
+    'gladiator-undercroft',
+    'Gladiator Undercroft',
+    'Arena undercroft of cages, fighter cells, training pits, and torchlit service corridors beneath the sands',
+    'dungeon',
+    36,
+    24,
+    226
+  ),
+  map(
+    'clockwork-vault',
+    'Clockwork Vault',
+    'Ancient brass-and-stone vault of gearworks, maintenance bridges, steam vents, and a massive sealed treasury door',
+    'dungeon',
+    36,
+    24,
+    227
+  ),
+  map(
+    'flooded-prison-depths',
+    'Flooded Prison Depths',
+    'Drowned fortress prison with broken cells, rusted bars, smugglers tunnels, and a locked warden chamber',
+    'dungeon',
+    24,
+    36,
+    228
+  ),
+  map(
+    'fallen-observatory',
+    'Fallen Observatory',
+    'Collapsed arcane observatory with a shattered star chamber, meteor scar, and ruined lens halls',
+    'dungeon',
+    30,
+    30,
+    229
+  ),
+  map(
+    'spider-queen-nest',
+    'Spider Queen Nest',
+    'Web-choked tunnels leading into egg chambers, cocoon halls, venom pits, and a brood sanctum of silk and bone',
+    'dungeon',
+    24,
+    36,
+    230
+  ),
+  map(
+    'vampire-banquet-hall',
+    'Vampire Banquet Hall',
+    'Decadent subterranean manor with a grand feast table, coffin suites, hidden chapel, and tomb vault',
+    'dungeon',
+    36,
+    24,
+    231
+  ),
+  map(
+    'plague-hospital-catacombs',
+    'Plague Hospital Catacombs',
+    'Abandoned plague ward catacombs of triage rooms, quarantine cells, furnaces, and a sealed mass grave vault',
+    'dungeon',
+    36,
+    24,
+    232
+  ),
+  map(
+    'infernal-ledger-vault',
+    'Infernal Ledger Vault',
+    'Hell-marked contract archive with chained lecterns, seal circles, record stacks, and a warded iron strongroom',
+    'dungeon',
+    24,
+    36,
+    233
+  ),
+  map(
+    'tidal-smugglers-grotto',
+    'Tidal Smugglers Grotto',
+    'Sea-cave smuggler hideout with hidden docks, contraband chambers, shrine alcoves, and flooded escape tunnels',
+    'dungeon',
+    36,
+    24,
+    234
+  ),
+  map(
+    'ossuary-maze',
+    'Ossuary Maze',
+    'Bone-lined catacomb labyrinth of burial pits, reliquary chambers, blind corners, and a candlelit skull chapel',
+    'dungeon',
+    24,
+    36,
+    235
+  ),
+  map(
+    'rootbound-sanctum',
+    'Rootbound Sanctum',
+    'Buried shrine overtaken by colossal roots, broken altars, monk cells, mossy halls, and hidden earth tunnels',
+    'dungeon',
+    30,
+    30,
+    236
+  ),
+  map(
+    'elemental-waterworks',
+    'Elemental Waterworks',
+    'Ancient aqueduct pumpworks of sluice gates, turning wheels, flooded chambers, and a roaring turbine core',
+    'dungeon',
+    30,
+    30,
+    237
+  ),
+  map(
+    'giant-kitchen-cellar',
+    'Giant Kitchen Cellar',
+    'Oversized stronghold cellar of colossal butcher tables, wagon-sized barrels, roaring hearths, and hanging iron hooks',
+    'dungeon',
+    36,
+    24,
+    238
+  ),
+  map(
+    'astral-dockyard',
+    'Astral Dockyard',
+    'Ruined planar dock of floating piers, mooring rings, spelljamming skiffs, and arcane gantries over the void',
+    'dungeon',
+    36,
+    24,
+    239
+  ),
+  map(
+    'goblin-burrow-warrens',
+    'Goblin Burrow Warrens',
+    'Cramped goblin tunnel nest of fungus farms, bolt holes, trap corridors, pit pens, and a central loot cavern',
+    'dungeon',
+    33,
+    24,
+    240
+  ),
+  map(
+    'troll-butcher-caves',
+    'Troll Butcher Caves',
+    'Filthy cave complex of skinning tables, meat hooks, refuse pits, bubbling cauldrons, and foul sleeping dens',
+    'dungeon',
+    36,
+    25,
+    241
+  ),
+  map(
+    'orc-idol-catacombs',
+    'Orc Idol Catacombs',
+    'Underground war shrine of pillared halls, ash pits, trophy walls, barracks alcoves, and a tusked stone idol chamber',
+    'dungeon',
+    36,
+    24,
+    242
+  ),
+  map(
+    'bone-foundry',
+    'Bone Foundry',
+    'Necromantic workshop where green furnaces, sorting racks, cages, and forging circles assemble undead constructs',
+    'dungeon',
+    36,
+    24,
+    243
+  ),
+  map(
+    'barrow-king-mausoleum',
+    'Barrow King Mausoleum',
+    'Ancient royal barrow of ancestor tombs, burial niches, relic alcoves, and a central throne crypt under ghostlight',
+    'dungeon',
+    30,
+    30,
+    244
+  ),
+  map(
+    'worldroot-hollows',
+    'Worldroot Hollows',
+    'Twisted underground root maze of hollow tree chambers, rot pools, fungal groves, and a cracked druid altar',
+    'dungeon',
+    30,
+    30,
+    245
+  ),
+  map(
+    'flesh-stitch-laboratory',
+    'Flesh Stitch Laboratory',
+    'Hidden horror lab of surgical slabs, restraint tables, alchemical vats, corpse drawers, and a crackling stitchwork dais',
+    'dungeon',
+    30,
+    30,
+    246
+  ),
+  map(
+    'aether-engine-foundry',
+    'Aether Engine Foundry',
+    'Gnomish engineering works of assembly gantries, crystal batteries, gear pits, steam lines, and a radiant aether reactor',
+    'dungeon',
+    30,
+    24,
+    247
+  ),
+  map(
+    'blood-mage-tower',
+    'Blood Mage Tower',
+    'Sinister ritual floors of a crimson mage keep, with occult libraries, chained crystals, blood channels, and a central summoning chamber',
+    'dungeon',
+    30,
+    30,
+    248
+  ),
 
   // --- Social / Interior ---------------------------------------------------
-  map('tavern-common-room', 'Tavern Common Room', 'Warm inn common room with bar, hearth, tables, stage, stairs, and kitchen prep area', 'social', 30, 20, 311),
-  map('inn-upper-floor', 'Inn Upper Floor', 'Guest-room hallway with beds, trunks, broken window, loose boards, and a stair landing', 'social', 20, 30, 312),
-  map('apothecary-shop', 'Apothecary Shop', 'Cozy shopfront packed with potions, herbs, and a workbench of reagents', 'social', 18, 16, 301),
-  map('apothecary-shop-and-cellar', 'Apothecary & Cellar', 'Alchemy shop above a storage cellar — two floors connected by a ladder', 'social', 22, 20, 302),
-  map('crossroads-inn-simple', 'Wayside Inn', 'Thatched inn at a rustic country crossroads, with stables and hitching posts', 'social', 28, 22, 303),
-  map('crossroads-inn-exterior', 'Crossroads Inn', 'Cozy inn at twilight where four roads meet — classic adventurer hub', 'social', 30, 22, 304),
-  map('village-square', 'Village Square', 'Market square with stalls, a fountain, and streets running off in every direction', 'social', 32, 26, 305),
-  map('lower-city-market', 'Lower City Market', 'Crowded canal-side market square with stalls, rooftops, awnings, and a central fountain', 'social', 24, 30, 313),
-  map('noble-garden-district', 'Noble Garden District', 'Manicured upper-city gardens with hedges, statues, fountains, and gated paths', 'social', 24, 30, 314),
-  map('temple-district-plaza', 'Temple District Plaza', 'Bright marble temple square with shrines, reflecting pool, benches, and garden paths', 'social', 32, 32, 316),
-  map('noble-manor-ballroom', 'Manor Ballroom', 'Ornate banquet hall with long tables, a dais, and tall arched windows', 'social', 30, 22, 306),
-  map('noble-manor-interior', 'Noble Manor Interior', 'Lavish manor floorplan with dining room, study, trophy room, servants route, and hidden vault', 'social', 32, 32, 317),
-  map('wizards-study', 'Wizard\u2019s Study', 'Arcane study with bookshelves, a desk, and a ritual circle at the center', 'social', 22, 18, 307),
-  map('refugee-camp-outside-walls', 'Refugee Camp Outside the Walls', 'Crowded tent camp outside city gates, split by muddy wagon ruts and cookfires', 'social', 34, 26, 320),
-  map('grand-library-archive', 'Grand Library Archive', 'Vast marble archive with reading tables, book stacks, study rooms, stair towers, and an arcane vault', 'social', 36, 24, 321),
-  map('council-courthouse', 'Council Courthouse', 'Civic council hall with public benches, magistrate office, evidence room, holding cells, and guarded exits', 'social', 28, 28, 322),
-  map('grand-cathedral-interior', 'Grand Cathedral Interior', 'Marble cathedral nave with pews, side chapels, stained-glass light, confession booths, and raised altar', 'social', 24, 36, 323),
-  map('frontier-farmstead', 'Frontier Farmstead', 'Raid-scarred rural homestead with a barn, pens, crop rows, orchard, and a muddy central yard', 'social', 34, 24, 324),
-  map('hilltop-monastery', 'Hilltop Monastery', 'Stone cloister monastery with a quiet central garden, chapel, refectory, cells, and crumbling outer walls', 'social', 30, 30, 325),
-  map('royal-throne-room', 'Royal Throne Room', 'Grand audience chamber with a raised throne dais, side salons, and elegant cover for courtly betrayal', 'social', 36, 24, 326),
-  map('canal-lock-district', 'Canal Lock District', 'Dense canal-side quarter of lock gates, barges, bridges, cranes, and wet cobblestone chokepoints', 'social', 36, 24, 327),
-  map('grand-opera-house', 'Grand Opera House', 'Lavish performance hall with a broad stage, orchestra pit, noble boxes, and backstage intrigue routes', 'social', 36, 24, 328),
-  map('hedge-maze-garden', 'Hedge Maze Garden', 'Formal noble maze garden of hedge corridors, pavilions, statues, and hidden meeting clearings', 'social', 30, 30, 329),
-  map('luxury-bathhouse', 'Luxury Bathhouse', 'Steaming public bath complex with mosaic pools, curtained alcoves, private chambers, and quiet garden corners', 'social', 36, 24, 330),
-  map('gambling-den-club', 'Gambling Den Club', 'Shadowy high-stakes vice club with gaming floor, private booths, counting room, and a guarded back entrance', 'social', 36, 24, 331),
-  map('embassy-reception-hall', 'Embassy Reception Hall', 'Diplomatic reception suite with mirrored salons, negotiation rooms, servant passages, and a formal central hall', 'social', 36, 24, 332),
-  map('artisan-guildhall', 'Artisan Guildhall', 'Workshop complex of council tables, craft rooms, dye vats, ledgers, stores, and a locked masterwork display hall', 'social', 36, 24, 333),
-  map('riverboat-saloon', 'Riverboat Saloon', 'Elegant paddleboat with card tables, stage, bar, private booths, cargo hatches, and narrow side decks over black water', 'social', 36, 24, 334),
-  map('fae-court-glade', 'Fae Court Glade', 'Moonlit forest court of mushroom rings, crystal pools, root paths, petal circles, and a thorn-wreathed audience dais', 'social', 30, 30, 335),
-  map('elven-treehome', 'Elven Treehome', 'Graceful woodland dwelling of living wood platforms, balcony bridges, leaf-roof rooms, and a quiet hearth terrace in the canopy', 'social', 30, 24, 336),
-  map('goblin-night-market', 'Goblin Night Market', 'Crowded underground bazaar of crooked stalls, fungus lanterns, trinket heaps, cage pens, and sneaky side alleys', 'social', 30, 30, 337),
-  map('orc-feast-hall', 'Orc Feast Hall', 'Rough communal longhall with roaring fire trench, trophy poles, barrel stacks, cook pits, and a chieftain’s raised seat', 'social', 36, 24, 338),
-  map('gnomish-tinkerhouse', 'Gnomish Tinkerhouse', 'Inventor’s home workshop packed with gear benches, spring-loaded gadgets, brass pipes, automata parts, and a cozy tea corner', 'social', 30, 30, 339),
-  map('moonwell-sanctuary', 'Moonwell Sanctuary', 'Sacred druid retreat of herb gardens, standing stones, curved paths, small huts, and a glowing moonwell at the heart of the grove', 'social', 30, 30, 340),
-  map('elfsong-tavern', 'The Elfsong Tavern', 'Two-floor inn with a long bar, hearth, and private booths upstairs', 'social', 25, 20, 909),
-  map('cathedral-lathander', 'Cathedral of Lathander', 'Grand worship hall lit by stained-glass windows, with a raised altar', 'social', 35, 30, 1111),
+  map(
+    'tavern-common-room',
+    'Tavern Common Room',
+    'Warm inn common room with bar, hearth, tables, stage, stairs, and kitchen prep area',
+    'social',
+    30,
+    20,
+    311
+  ),
+  map(
+    'inn-upper-floor',
+    'Inn Upper Floor',
+    'Guest-room hallway with beds, trunks, broken window, loose boards, and a stair landing',
+    'social',
+    20,
+    30,
+    312
+  ),
+  map(
+    'apothecary-shop',
+    'Apothecary Shop',
+    'Cozy shopfront packed with potions, herbs, and a workbench of reagents',
+    'social',
+    18,
+    16,
+    301
+  ),
+  map(
+    'apothecary-shop-and-cellar',
+    'Apothecary & Cellar',
+    'Alchemy shop above a storage cellar — two floors connected by a ladder',
+    'social',
+    22,
+    20,
+    302
+  ),
+  map(
+    'crossroads-inn-simple',
+    'Wayside Inn',
+    'Thatched inn at a rustic country crossroads, with stables and hitching posts',
+    'social',
+    28,
+    22,
+    303
+  ),
+  map(
+    'crossroads-inn-exterior',
+    'Crossroads Inn',
+    'Cozy inn at twilight where four roads meet — classic adventurer hub',
+    'social',
+    30,
+    22,
+    304
+  ),
+  map(
+    'village-square',
+    'Village Square',
+    'Market square with stalls, a fountain, and streets running off in every direction',
+    'social',
+    32,
+    26,
+    305
+  ),
+  map(
+    'lower-city-market',
+    'Lower City Market',
+    'Crowded canal-side market square with stalls, rooftops, awnings, and a central fountain',
+    'social',
+    24,
+    30,
+    313
+  ),
+  map(
+    'noble-garden-district',
+    'Noble Garden District',
+    'Manicured upper-city gardens with hedges, statues, fountains, and gated paths',
+    'social',
+    24,
+    30,
+    314
+  ),
+  map(
+    'temple-district-plaza',
+    'Temple District Plaza',
+    'Bright marble temple square with shrines, reflecting pool, benches, and garden paths',
+    'social',
+    32,
+    32,
+    316
+  ),
+  map(
+    'noble-manor-ballroom',
+    'Manor Ballroom',
+    'Ornate banquet hall with long tables, a dais, and tall arched windows',
+    'social',
+    30,
+    22,
+    306
+  ),
+  map(
+    'noble-manor-interior',
+    'Noble Manor Interior',
+    'Lavish manor floorplan with dining room, study, trophy room, servants route, and hidden vault',
+    'social',
+    32,
+    32,
+    317
+  ),
+  map(
+    'wizards-study',
+    'Wizard\u2019s Study',
+    'Arcane study with bookshelves, a desk, and a ritual circle at the center',
+    'social',
+    22,
+    18,
+    307
+  ),
+  map(
+    'refugee-camp-outside-walls',
+    'Refugee Camp Outside the Walls',
+    'Crowded tent camp outside city gates, split by muddy wagon ruts and cookfires',
+    'social',
+    34,
+    26,
+    320
+  ),
+  map(
+    'grand-library-archive',
+    'Grand Library Archive',
+    'Vast marble archive with reading tables, book stacks, study rooms, stair towers, and an arcane vault',
+    'social',
+    36,
+    24,
+    321
+  ),
+  map(
+    'council-courthouse',
+    'Council Courthouse',
+    'Civic council hall with public benches, magistrate office, evidence room, holding cells, and guarded exits',
+    'social',
+    28,
+    28,
+    322
+  ),
+  map(
+    'grand-cathedral-interior',
+    'Grand Cathedral Interior',
+    'Marble cathedral nave with pews, side chapels, stained-glass light, confession booths, and raised altar',
+    'social',
+    24,
+    36,
+    323
+  ),
+  map(
+    'frontier-farmstead',
+    'Frontier Farmstead',
+    'Raid-scarred rural homestead with a barn, pens, crop rows, orchard, and a muddy central yard',
+    'social',
+    34,
+    24,
+    324
+  ),
+  map(
+    'hilltop-monastery',
+    'Hilltop Monastery',
+    'Stone cloister monastery with a quiet central garden, chapel, refectory, cells, and crumbling outer walls',
+    'social',
+    30,
+    30,
+    325
+  ),
+  map(
+    'royal-throne-room',
+    'Royal Throne Room',
+    'Grand audience chamber with a raised throne dais, side salons, and elegant cover for courtly betrayal',
+    'social',
+    36,
+    24,
+    326
+  ),
+  map(
+    'canal-lock-district',
+    'Canal Lock District',
+    'Dense canal-side quarter of lock gates, barges, bridges, cranes, and wet cobblestone chokepoints',
+    'social',
+    36,
+    24,
+    327
+  ),
+  map(
+    'grand-opera-house',
+    'Grand Opera House',
+    'Lavish performance hall with a broad stage, orchestra pit, noble boxes, and backstage intrigue routes',
+    'social',
+    36,
+    24,
+    328
+  ),
+  map(
+    'hedge-maze-garden',
+    'Hedge Maze Garden',
+    'Formal noble maze garden of hedge corridors, pavilions, statues, and hidden meeting clearings',
+    'social',
+    30,
+    30,
+    329
+  ),
+  map(
+    'luxury-bathhouse',
+    'Luxury Bathhouse',
+    'Steaming public bath complex with mosaic pools, curtained alcoves, private chambers, and quiet garden corners',
+    'social',
+    36,
+    24,
+    330
+  ),
+  map(
+    'gambling-den-club',
+    'Gambling Den Club',
+    'Shadowy high-stakes vice club with gaming floor, private booths, counting room, and a guarded back entrance',
+    'social',
+    36,
+    24,
+    331
+  ),
+  map(
+    'embassy-reception-hall',
+    'Embassy Reception Hall',
+    'Diplomatic reception suite with mirrored salons, negotiation rooms, servant passages, and a formal central hall',
+    'social',
+    36,
+    24,
+    332
+  ),
+  map(
+    'artisan-guildhall',
+    'Artisan Guildhall',
+    'Workshop complex of council tables, craft rooms, dye vats, ledgers, stores, and a locked masterwork display hall',
+    'social',
+    36,
+    24,
+    333
+  ),
+  map(
+    'riverboat-saloon',
+    'Riverboat Saloon',
+    'Elegant paddleboat with card tables, stage, bar, private booths, cargo hatches, and narrow side decks over black water',
+    'social',
+    36,
+    24,
+    334
+  ),
+  map(
+    'fae-court-glade',
+    'Fae Court Glade',
+    'Moonlit forest court of mushroom rings, crystal pools, root paths, petal circles, and a thorn-wreathed audience dais',
+    'social',
+    30,
+    30,
+    335
+  ),
+  map(
+    'elven-treehome',
+    'Elven Treehome',
+    'Graceful woodland dwelling of living wood platforms, balcony bridges, leaf-roof rooms, and a quiet hearth terrace in the canopy',
+    'social',
+    30,
+    24,
+    336
+  ),
+  map(
+    'goblin-night-market',
+    'Goblin Night Market',
+    'Crowded underground bazaar of crooked stalls, fungus lanterns, trinket heaps, cage pens, and sneaky side alleys',
+    'social',
+    30,
+    30,
+    337
+  ),
+  map(
+    'orc-feast-hall',
+    'Orc Feast Hall',
+    'Rough communal longhall with roaring fire trench, trophy poles, barrel stacks, cook pits, and a chieftain’s raised seat',
+    'social',
+    36,
+    24,
+    338
+  ),
+  map(
+    'gnomish-tinkerhouse',
+    'Gnomish Tinkerhouse',
+    'Inventor’s home workshop packed with gear benches, spring-loaded gadgets, brass pipes, automata parts, and a cozy tea corner',
+    'social',
+    30,
+    30,
+    339
+  ),
+  map(
+    'moonwell-sanctuary',
+    'Moonwell Sanctuary',
+    'Sacred druid retreat of herb gardens, standing stones, curved paths, small huts, and a glowing moonwell at the heart of the grove',
+    'social',
+    30,
+    30,
+    340
+  ),
+  map(
+    'elfsong-tavern',
+    'The Elfsong Tavern',
+    'Two-floor inn with a long bar, hearth, and private booths upstairs',
+    'social',
+    25,
+    20,
+    909
+  ),
+  map(
+    'cathedral-lathander',
+    'Cathedral of Lathander',
+    'Grand worship hall lit by stained-glass windows, with a raised altar',
+    'social',
+    35,
+    30,
+    1111
+  ),
 ];
 
 // ---------------------------------------------------------------------------
@@ -239,7 +1337,9 @@ function prebuiltLookupKeys(map: PrebuiltMap): string[] {
 }
 
 function buildPrebuiltLookup(selectUrl: (map: PrebuiltMap) => string): Record<string, string> {
-  const entries = PREBUILT_MAPS.flatMap((m) => prebuiltLookupKeys(m).map((key) => [key, selectUrl(m)]));
+  const entries = PREBUILT_MAPS.flatMap((m) =>
+    prebuiltLookupKeys(m).map((key) => [key, selectUrl(m)])
+  );
   return Object.fromEntries(entries);
 }
 
@@ -253,16 +1353,20 @@ function buildPrebuiltLookup(selectUrl: (map: PrebuiltMap) => string): Record<st
  * the canvas needs the full PNG via `PREBUILT_IMAGE_BY_NAME` below or
  * a `m.imageFile` field directly.
  */
-export const PREBUILT_THUMBNAIL: Record<string, string> = buildPrebuiltLookup((m) => m.thumbnailFile);
+export const PREBUILT_THUMBNAIL: Record<string, string> = buildPrebuiltLookup(
+  (m) => m.thumbnailFile
+);
 
 /**
  * Map display-name / legacy slug → full-resolution image URL. Used by
  * the socket map-load listener so prebuilt maps loaded from a session
  * row (which only stores name, not imageUrl) get the right canvas asset.
  */
-export const PREBUILT_IMAGE_BY_NAME: Record<string, string> = buildPrebuiltLookup((m) => m.imageFile);
+export const PREBUILT_IMAGE_BY_NAME: Record<string, string> = buildPrebuiltLookup(
+  (m) => m.imageFile
+);
 
 /** Map id → full entry, for lookups by stable id. */
 export const PREBUILT_BY_ID: Record<string, PrebuiltMap> = Object.fromEntries(
-  PREBUILT_MAPS.map((m) => [m.id, m]),
+  PREBUILT_MAPS.map((m) => [m.id, m])
 );

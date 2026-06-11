@@ -6,7 +6,9 @@
  * (or fails to load), we fall back to an inline SVG colored initial.
  */
 
-const CDN = 'https://storage.googleapis.com/atlas-bound-data';
+import { PUBLIC_ASSET_BASE_URL } from './publicAssets';
+
+const CDN = PUBLIC_ASSET_BASE_URL;
 
 const CREATURE_TYPE_COLORS: Record<string, string> = {
   aberration: '#7b2d8b',
@@ -50,15 +52,18 @@ const ITEM_TYPE_COLORS: Record<string, string> = {
 };
 
 function slugify(name: string): string {
-  return name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
+  return name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/(^-|-$)/g, '');
 }
 
 function makeSvgFallback(initial: string, bgColor: string): string {
   return `data:image/svg+xml,${encodeURIComponent(
     `<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">` +
-    `<circle cx="32" cy="32" r="30" fill="${bgColor}"/>` +
-    `<text x="32" y="40" text-anchor="middle" font-size="28" font-weight="bold" fill="white" font-family="sans-serif">${initial}</text>` +
-    `</svg>`
+      `<circle cx="32" cy="32" r="30" fill="${bgColor}"/>` +
+      `<text x="32" y="40" text-anchor="middle" font-size="28" font-weight="bold" fill="white" font-family="sans-serif">${initial}</text>` +
+      `</svg>`
   )}`;
 }
 
@@ -117,8 +122,8 @@ export function getItemIconUrl(name: string, type?: string): string {
 
 /**
  * BG3-style FLUX.2 portraits for Wiki entries — races (9), classes
- * (13), backgrounds (13). All live under the same `gs://atlas-bound-data/`
- * bucket as the other compendium art, one directory per category.
+ * (13), backgrounds (13). All live under the public GCS asset bucket, one
+ * directory per category.
  * Slug is the lowercase-hyphenated wiki slug (e.g. `half-orc`,
  * `folk-hero`). Fallback is an initial-letter SVG keyed on a
  * category-appropriate hue.
@@ -190,19 +195,39 @@ export function getRuleIconUrl(name: string): string {
  */
 export function getCompendiumImageUrl(
   name: string,
-  category: 'monsters' | 'spells' | 'items' | 'races' | 'classes' | 'backgrounds' | 'feats' | 'conditions' | 'rules' | string,
+  category:
+    | 'monsters'
+    | 'spells'
+    | 'items'
+    | 'races'
+    | 'classes'
+    | 'backgrounds'
+    | 'feats'
+    | 'conditions'
+    | 'rules'
+    | string
 ): string {
   switch (category) {
-    case 'monsters': return getCreatureImageUrl(name);
-    case 'spells': return getSpellImageUrl(name);
-    case 'items': return getItemImageUrl(name);
-    case 'races': return getRaceImageUrl(name);
-    case 'classes': return getClassImageUrl(name);
-    case 'backgrounds': return getBackgroundImageUrl(name);
-    case 'feats': return getFeatImageUrl(name);
-    case 'conditions': return getConditionImageUrl(name);
-    case 'rules': return getRuleImageUrl(name);
-    default: return makeSvgFallback(name.charAt(0).toUpperCase(), '#555');
+    case 'monsters':
+      return getCreatureImageUrl(name);
+    case 'spells':
+      return getSpellImageUrl(name);
+    case 'items':
+      return getItemImageUrl(name);
+    case 'races':
+      return getRaceImageUrl(name);
+    case 'classes':
+      return getClassImageUrl(name);
+    case 'backgrounds':
+      return getBackgroundImageUrl(name);
+    case 'feats':
+      return getFeatImageUrl(name);
+    case 'conditions':
+      return getConditionImageUrl(name);
+    case 'rules':
+      return getRuleImageUrl(name);
+    default:
+      return makeSvgFallback(name.charAt(0).toUpperCase(), '#555');
   }
 }
 
@@ -211,19 +236,39 @@ export function getCompendiumImageUrl(
  */
 export function getCompendiumFallbackUrl(
   name: string,
-  category: 'monsters' | 'spells' | 'items' | 'races' | 'classes' | 'backgrounds' | 'feats' | 'conditions' | 'rules' | string,
-  subtype?: string,
+  category:
+    | 'monsters'
+    | 'spells'
+    | 'items'
+    | 'races'
+    | 'classes'
+    | 'backgrounds'
+    | 'feats'
+    | 'conditions'
+    | 'rules'
+    | string,
+  subtype?: string
 ): string {
   switch (category) {
-    case 'monsters': return getCreatureIconUrl(name, subtype);
-    case 'spells': return getSpellIconUrl(name, subtype);
-    case 'items': return getItemIconUrl(name, subtype);
-    case 'races': return getRaceIconUrl(name);
-    case 'classes': return getClassIconUrl(name);
-    case 'backgrounds': return getBackgroundIconUrl(name);
-    case 'feats': return getFeatIconUrl(name);
-    case 'conditions': return getConditionIconUrl(name);
-    case 'rules': return getRuleIconUrl(name);
-    default: return makeSvgFallback(name.charAt(0).toUpperCase(), '#555');
+    case 'monsters':
+      return getCreatureIconUrl(name, subtype);
+    case 'spells':
+      return getSpellIconUrl(name, subtype);
+    case 'items':
+      return getItemIconUrl(name, subtype);
+    case 'races':
+      return getRaceIconUrl(name);
+    case 'classes':
+      return getClassIconUrl(name);
+    case 'backgrounds':
+      return getBackgroundIconUrl(name);
+    case 'feats':
+      return getFeatIconUrl(name);
+    case 'conditions':
+      return getConditionIconUrl(name);
+    case 'rules':
+      return getRuleIconUrl(name);
+    default:
+      return makeSvgFallback(name.charAt(0).toUpperCase(), '#555');
   }
 }
