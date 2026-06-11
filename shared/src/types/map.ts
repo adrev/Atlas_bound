@@ -74,6 +74,11 @@ export interface MapZone {
 
 export interface FogPolygon {
   points: number[];
+  /**
+   * Legacy rows omitted mode and are treated as reveal polygons.
+   * reveal clears fog from the polygon; hide paints fog back over it.
+   */
+  mode?: 'reveal' | 'hide';
 }
 
 export type TokenFaction = 'friendly' | 'hostile' | 'neutral';

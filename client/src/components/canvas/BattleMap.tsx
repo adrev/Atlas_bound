@@ -14,9 +14,10 @@ import { DrawingLayer } from './layers/DrawingLayer';
 import { LightingLayer } from './layers/LightingLayer';
 import { SpellAnimationLayer } from '../animations/SpellAnimation';
 import { useCombatStore } from '../../stores/useCombatStore';
-import { useEffectStore } from '../../stores/useEffectStore';
+import { useEffectStore, type TargetingSpell } from '../../stores/useEffectStore';
 import { WallDrawLayer } from '../../components/dm/WallDrawTool';
 import { ZoneLayer } from '../../components/dm/ZoneTool';
+import { FogBrush, FogBrushLayer } from '../../components/dm/FogBrush';
 import { MeasureWallLayer, WallContextMenu } from './layers/MeasureWallLayer';
 import { TokenContextMenu } from './TokenContextMenu';
 import { CompendiumOverlay } from '../compendium/CompendiumOverlay';
@@ -28,63 +29,112 @@ import { TokenTooltip } from './TokenTooltip';
 import { DrawToolbar } from './DrawToolbar';
 import { InitiativeOverlay } from './InitiativeOverlay';
 import { AoePalette } from './AoePalette';
-import { emitDrawingStream, emitDrawingStreamEnd } from '../../socket/emitters';
+import { emitDrawingStream } from '../../socket/emitters';
 import { askPrompt } from '../ui';
 import { theme } from '../../styles/theme';
 
 /* ---- Ping animation overlay ---- */
-function PingAnimation({ x, y, displayName, timestamp }: {
-  x: number; y: number; displayName: string; timestamp: number;
+function PingAnimation({
+  x,
+  y,
+  displayName,
+  timestamp,
+}: {
+  x: number;
+  y: number;
+  displayName: string;
+  timestamp: number;
 }) {
   const [opacity, setOpacity] = useState(1);
   const [scale, setScale] = useState(0);
 
   useEffect(() => {
     // Animate in
-    requestAnimationFrame(() => { setScale(1); });
+    requestAnimationFrame(() => {
+      setScale(1);
+    });
     // Fade out after 2s
     const fadeTimer = setTimeout(() => setOpacity(0), 2000);
     // Remove from store after 3s
     const removeTimer = setTimeout(() => {
       useMapStore.getState().removePing(timestamp);
     }, 3000);
-    return () => { clearTimeout(fadeTimer); clearTimeout(removeTimer); };
+    return () => {
+      clearTimeout(fadeTimer);
+      clearTimeout(removeTimer);
+    };
   }, [timestamp]);
 
   return (
-    <div style={{
-      position: 'absolute', left: x, top: y,
-      transform: `translate(-50%, -50%) scale(${scale})`,
-      transition: 'transform 0.4s ease-out, opacity 0.8s ease-out',
-      opacity, pointerEvents: 'none', zIndex: 50,
-    }}>
+    <div
+      style={{
+        position: 'absolute',
+        left: x,
+        top: y,
+        transform: `translate(-50%, -50%) scale(${scale})`,
+        transition: 'transform 0.4s ease-out, opacity 0.8s ease-out',
+        opacity,
+        pointerEvents: 'none',
+        zIndex: 50,
+      }}
+    >
       {/* Outer expanding ring */}
-      <div style={{
-        width: 60, height: 60, borderRadius: '50%',
-        border: '3px solid #d4a843',
-        position: 'absolute', left: -30, top: -30,
-        animation: 'pingExpand 1.5s ease-out infinite',
-      }} />
+      <div
+        style={{
+          width: 60,
+          height: 60,
+          borderRadius: '50%',
+          border: '3px solid #d4a843',
+          position: 'absolute',
+          left: -30,
+          top: -30,
+          animation: 'pingExpand 1.5s ease-out infinite',
+        }}
+      />
       {/* Inner dot */}
-      <div style={{
-        width: 16, height: 16, borderRadius: '50%',
-        background: '#d4a843', boxShadow: '0 0 12px #d4a843',
-        position: 'absolute', left: -8, top: -8,
-      }} />
+      <div
+        style={{
+          width: 16,
+          height: 16,
+          borderRadius: '50%',
+          background: '#d4a843',
+          boxShadow: '0 0 12px #d4a843',
+          position: 'absolute',
+          left: -8,
+          top: -8,
+        }}
+      />
       {/* Name label */}
-      <div style={{
-        position: 'absolute', top: 16, left: '50%',
-        transform: 'translateX(-50%)', whiteSpace: 'nowrap',
-        background: 'rgba(0,0,0,0.75)', color: '#d4a843',
-        padding: '2px 8px', borderRadius: 4, fontSize: 11, fontWeight: 600,
-      }}>
+      <div
+        style={{
+          position: 'absolute',
+          top: 16,
+          left: '50%',
+          transform: 'translateX(-50%)',
+          whiteSpace: 'nowrap',
+          background: 'rgba(0,0,0,0.75)',
+          color: '#d4a843',
+          padding: '2px 8px',
+          borderRadius: 4,
+          fontSize: 11,
+          fontWeight: 600,
+        }}
+      >
         {displayName}
       </div>
     </div>
   );
 }
 
-function PingOverlay({ stageX, stageY, stageScale }: { stageX: number; stageY: number; stageScale: number }) {
+function PingOverlay({
+  stageX,
+  stageY,
+  stageScale,
+}: {
+  stageX: number;
+  stageY: number;
+  stageScale: number;
+}) {
   const activePings = useMapStore((s) => s.activePings);
 
   if (activePings.length === 0) return null;
@@ -116,11 +166,10 @@ export function BattleMap() {
   const currentMap = useMapStore((s) => s.currentMap);
   const isDM = useSessionStore((s) => s.isDM);
   const gridOpacity = useSessionStore((s) => s.settings.gridOpacity);
-  const userId = useSessionStore((s) => s.userId);
   const activeTool = useMapStore((s) => s.activeTool);
   // Read combat state via getState() to avoid re-render loops from array/object deps
   const [isMyTurn, setIsMyTurn] = useState(false);
-  const [targetingSpell, setTargetingSpellLocal] = useState<unknown>(null);
+  const [targetingSpell, setTargetingSpellLocal] = useState<TargetingSpell | null>(null);
   const emptyMapTitle = isDM ? 'No map loaded' : 'Waiting for map';
   const emptyMapBody = isDM
     ? 'Load a map from DM Tools to get started'
@@ -129,15 +178,20 @@ export function BattleMap() {
   useEffect(() => {
     const unsubCombat = useCombatStore.subscribe((s) => {
       const combatant = s.combatants[s.currentTurnIndex];
-      const myTurn = s.active && !!combatant && (
-        useSessionStore.getState().isDM || combatant.characterId === useSessionStore.getState().userId
-      );
+      const myTurn =
+        s.active &&
+        !!combatant &&
+        (useSessionStore.getState().isDM ||
+          combatant.characterId === useSessionStore.getState().userId);
       setIsMyTurn(myTurn);
     });
     const unsubEffect = useEffectStore.subscribe((s) => {
       setTargetingSpellLocal(s.targetingSpell);
     });
-    return () => { unsubCombat(); unsubEffect(); };
+    return () => {
+      unsubCombat();
+      unsubEffect();
+    };
   }, []);
 
   useEffect(() => {
@@ -210,7 +264,7 @@ export function BattleMap() {
       let worldX: number | undefined;
       let worldY: number | undefined;
       if (detail.tokenId) {
-        const tok = useMapStore.getState().tokens[detail.tokenId] as any;
+        const tok = useMapStore.getState().tokens[detail.tokenId];
         if (!tok) return;
         const grid = map.gridSize || 70;
         // Center on the middle of the token, not its top-left corner.
@@ -340,10 +394,10 @@ export function BattleMap() {
       const mapX = (px - stageProps.x) / stageProps.scaleX;
       const mapY = (py - stageProps.y) / stageProps.scaleY;
       window.dispatchEvent(
-        new CustomEvent('kbrt-creature-drop', { detail: { slug, x: mapX, y: mapY } }),
+        new CustomEvent('kbrt-creature-drop', { detail: { slug, x: mapX, y: mapY } })
       );
     },
-    [stageProps.x, stageProps.y, stageProps.scaleX, stageProps.scaleY],
+    [stageProps.x, stageProps.y, stageProps.scaleX, stageProps.scaleY]
   );
 
   return (
@@ -415,12 +469,13 @@ export function BattleMap() {
           const aim = useEffectStore.getState().targetingSpell;
           if (aim) {
             const tokens = useMapStore.getState().tokens;
-            const casterToken = tokens[aim.casterTokenId] as any;
+            const casterToken = tokens[aim.casterTokenId];
             if (aim.aoeType === 'cone' || aim.aoeType === 'line') {
               // Self-range or aimed cone/line: origin = caster, rotation = direction to mouse
               if (casterToken) {
                 useEffectStore.getState().setTargetPosition({ x: casterToken.x, y: casterToken.y });
-                const angle = Math.atan2(mapY - casterToken.y, mapX - casterToken.x) * 180 / Math.PI;
+                const angle =
+                  (Math.atan2(mapY - casterToken.y, mapX - casterToken.x) * 180) / Math.PI;
                 useEffectStore.getState().setTargetRotation(angle);
               }
             } else {
@@ -498,9 +553,11 @@ export function BattleMap() {
                 const mapX = (pointer.x - stageProps.x) / stageProps.scaleX;
                 const mapY = (pointer.y - stageProps.y) / stageProps.scaleY;
                 const rotation = useEffectStore.getState().targetRotation;
-                window.dispatchEvent(new CustomEvent('aoe-spell-confirm', {
-                  detail: { mapX, mapY, rotation },
-                }));
+                window.dispatchEvent(
+                  new CustomEvent('aoe-spell-confirm', {
+                    detail: { mapX, mapY, rotation },
+                  })
+                );
                 return;
               }
             }
@@ -563,14 +620,8 @@ export function BattleMap() {
             </Layer>
 
             <Layer listening={false}>
-              <FogLayer
-                mapWidth={currentMap.width}
-                mapHeight={currentMap.height}
-              />
-              <LightingLayer
-                mapWidth={currentMap.width}
-                mapHeight={currentMap.height}
-              />
+              <FogLayer mapWidth={currentMap.width} mapHeight={currentMap.height} />
+              <LightingLayer mapWidth={currentMap.width} mapHeight={currentMap.height} />
             </Layer>
 
             {/* Tools layer — measure, walls, zones, spell-target template,
@@ -579,9 +630,8 @@ export function BattleMap() {
                 Spell animations rendered last so casts always pop. */}
             <Layer>
               <MeasureWallLayer />
-              {isDM && activeTool === 'wall' && (
-                <WallDrawLayer gridSize={currentMap.gridSize} />
-              )}
+              {isDM && activeTool === 'wall' && <WallDrawLayer gridSize={currentMap.gridSize} />}
+              {isDM && <FogBrushLayer />}
               {isDM && <ZoneLayer />}
               {targetingSpell && <EffectLayer />}
               <DrawingLayer />
@@ -644,14 +694,16 @@ export function BattleMap() {
             }}
           >
             <div style={{ fontSize: 32, opacity: 0.65 }}>🗺️</div>
-            <div style={{
-              fontFamily: theme.font.display,
-              fontSize: 20,
-              fontWeight: 700,
-              letterSpacing: '0.08em',
-              textTransform: 'uppercase',
-              color: theme.gold.primary,
-            }}>
+            <div
+              style={{
+                fontFamily: theme.font.display,
+                fontSize: 20,
+                fontWeight: 700,
+                letterSpacing: '0.08em',
+                textTransform: 'uppercase',
+                color: theme.gold.primary,
+              }}
+            >
               No Map Loaded
             </div>
             <div style={{ fontSize: 13, color: theme.text.secondary, lineHeight: 1.5 }}>
@@ -692,6 +744,7 @@ export function BattleMap() {
       <CompendiumOverlay />
       <LootEditorOverlay />
       <DrawToolbar />
+      <FogBrush />
 
       {/* Tome map-frame chrome — vignette + four corner filigrees +
           decorative inset border. Pointer-events:none so nothing in
@@ -742,10 +795,14 @@ function MapFrameVignette() {
 function MapFrameCorner({ position }: { position: 'tl' | 'tr' | 'bl' | 'br' }) {
   const basePos: React.CSSProperties = (() => {
     switch (position) {
-      case 'tl': return { top: 0, left: 0 };
-      case 'tr': return { top: 0, right: 0, transform: 'scaleX(-1)' };
-      case 'bl': return { bottom: 0, left: 0, transform: 'scaleY(-1)' };
-      case 'br': return { bottom: 0, right: 0, transform: 'scale(-1, -1)' };
+      case 'tl':
+        return { top: 0, left: 0 };
+      case 'tr':
+        return { top: 0, right: 0, transform: 'scaleX(-1)' };
+      case 'bl':
+        return { bottom: 0, left: 0, transform: 'scaleY(-1)' };
+      case 'br':
+        return { bottom: 0, right: 0, transform: 'scale(-1, -1)' };
     }
   })();
   return (

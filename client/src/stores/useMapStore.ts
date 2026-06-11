@@ -95,6 +95,7 @@ interface MapState {
   viewport: Viewport;
   walls: WallSegment[];
   fogRegions: FogPolygon[];
+  fogBrushSize: number;
   zones: MapZone[];
   hoveredTokenId: string | null;
   hoverPosition: { x: number; y: number } | null;
@@ -164,6 +165,7 @@ interface MapActions {
   setTool: (tool: ActiveTool) => void;
   setViewport: (viewport: Partial<Viewport>) => void;
   updateFog: (fogState: FogPolygon[]) => void;
+  setFogBrushSize: (size: number) => void;
   updateWalls: (walls: WallSegment[]) => void;
   updateZones: (zones: MapZone[]) => void;
   setHoveredToken: (id: string | null, pos?: { x: number; y: number }) => void;
@@ -214,6 +216,7 @@ const initialState: MapState = {
   viewport: { x: 0, y: 0, scale: 1 },
   walls: [],
   fogRegions: [],
+  fogBrushSize: 70,
   zones: [],
   hoveredTokenId: null,
   hoverPosition: null,
@@ -307,6 +310,8 @@ export const useMapStore = create<MapState & MapActions>((set) => ({
     })),
 
   updateFog: (fogState) => set({ fogRegions: fogState }),
+
+  setFogBrushSize: (size) => set({ fogBrushSize: Math.max(20, Math.min(400, Math.round(size))) }),
 
   updateWalls: (walls) => set({ walls }),
 
