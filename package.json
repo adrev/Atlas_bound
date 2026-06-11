@@ -13,6 +13,8 @@
     "start": "npm run start --workspace=server",
     "lint": "eslint \"server/src/**/*.ts\" \"client/src/**/*.ts\" \"shared/src/**/*.ts\" --max-warnings 0",
     "format": "prettier --write \"**/*.{ts,tsx,js,jsx,json,css}\"",
+    "assets:audit-public-urls": "npm run public-assets:audit-urls --workspace=server",
+    "assets:migrate-public-urls": "npm run public-assets:migrate-urls --workspace=server",
     "prepare": "node scripts/prepare-husky.cjs",
     "test": "vitest run",
     "coverage": "vitest run --coverage"
