@@ -19,7 +19,7 @@ import {
 import { getRoom, type RoomState } from '../utils/roomState.js';
 import pool from '../db/connection.js';
 import {
-  releaseGrapplesByGrappler,
+  dropConcentrationAndHeldEffects,
   removeCondition as removeConditionEverywhere,
 } from './ConditionService.js';
 
@@ -1320,6 +1320,14 @@ export interface HpChangeResult {
    * broadcast `map:token-updated` for each.
    */
   releasedGrappleTokenIds?: string[];
+  /**
+   * TokenIds whose concentration-sourced conditions were cleared
+   * because this token lost concentration. Caller should broadcast
+   * `map:token-updated` for each.
+   */
+  concentrationClearedTokenIds?: string[];
+  /** True when the backing character's concentrating_on was nulled. */
+  concentrationDropped?: boolean;
 }
 
 export interface ApplyDamageOptions {
@@ -1519,6 +1527,8 @@ export async function applyDamage(
   // that gets re-killed in the same damage tick).
   let autoAppliedConditions: string[] | undefined;
   let releasedGrappleTokenIds: string[] | undefined;
+  let concentrationClearedTokenIds: string[] | undefined;
+  let concentrationDropped: boolean | undefined;
   if (!wasAlreadyDown && combatant.hp === 0 && !combatant.isNPC) {
     const token = room.tokens.get(tokenId);
     if (token) {
@@ -1530,20 +1540,20 @@ export async function applyDamage(
       });
       if (conditionResult.persistPromise) persistence.push(conditionResult.persistPromise);
       if (conditionResult.changed) autoAppliedConditions = conditionResult.conditions;
-      // Drop any concentration the character was holding. Matches the
-      // applyConditionWithMeta rule for incapacitating conditions.
-      if (combatant.characterId) {
-        persistence.push(
-          pool.query(
-            'UPDATE characters SET concentrating_on = NULL WHERE id = $1 AND concentrating_on IS NOT NULL',
-            [combatant.characterId]
-          )
-        );
+      // Unconscious means the character can no longer maintain
+      // concentration or grapples. Use the same canonical cleanup path
+      // as explicit incapacitating conditions so targets and combatants
+      // do not keep stale concentration-sourced conditions.
+      const cleanup = dropConcentrationAndHeldEffects(sessionId, tokenId);
+      if (cleanup.concentrationPersistPromise)
+        persistence.push(cleanup.concentrationPersistPromise);
+      if (cleanup.characterId) concentrationDropped = true;
+      if (cleanup.releasedGrappleTokenIds.length > 0) {
+        releasedGrappleTokenIds = cleanup.releasedGrappleTokenIds;
       }
-      // Release any creature this PC was grappling — unconscious
-      // automatically breaks the hold per RAW.
-      const freed = releaseGrapplesByGrappler(sessionId, tokenId);
-      if (freed.length > 0) releasedGrappleTokenIds = freed;
+      if (cleanup.clearedConcentrationConditions.length > 0) {
+        concentrationClearedTokenIds = cleanup.clearedConcentrationConditions.map((c) => c.tokenId);
+      }
     }
   }
 
@@ -1575,6 +1585,8 @@ export async function applyDamage(
     autoAppliedConditions,
     autoRemovedConditions,
     releasedGrappleTokenIds,
+    concentrationClearedTokenIds,
+    concentrationDropped,
   };
 }
 
@@ -1743,6 +1755,81 @@ export function getCombatant(sessionId: string, tokenId: string): Combatant | nu
   const room = getRoom(sessionId);
   if (!room?.combatState) return null;
   return room.combatState.combatants.find((c) => c.tokenId === tokenId) ?? null;
+}
+
+export interface TokenRemovalCombatCleanup {
+  combatStateChanged: boolean;
+  releasedGrappleTokenIds: string[];
+  concentrationClearedTokenIds: string[];
+}
+
+export function cleanupRemovedTokenFromCombat(
+  sessionId: string,
+  tokenId: string
+): TokenRemovalCombatCleanup {
+  const room = getRoom(sessionId);
+  if (!room) {
+    return {
+      combatStateChanged: false,
+      releasedGrappleTokenIds: [],
+      concentrationClearedTokenIds: [],
+    };
+  }
+
+  const concentrationCleanup = dropConcentrationAndHeldEffects(sessionId, tokenId);
+  const concentrationClearedTokenIds = concentrationCleanup.clearedConcentrationConditions.map(
+    (c) => c.tokenId
+  );
+
+  // Conditions on the removed token no longer have a live target.
+  room.conditionMeta.delete(tokenId);
+
+  room.actionEconomies.delete(tokenId);
+  room.tokenMeleeReach.delete(tokenId);
+  room.mobileMeleeTargets.delete(tokenId);
+  for (const targets of room.mobileMeleeTargets.values()) targets.delete(tokenId);
+  room.polearmMasters.delete(tokenId);
+  room.legendaryActions.delete(tokenId);
+  room.lairActionTokens.delete(tokenId);
+  room.rechargePools.delete(tokenId);
+
+  const state = room.combatState;
+  if (!state) {
+    return {
+      combatStateChanged: false,
+      releasedGrappleTokenIds: concentrationCleanup.releasedGrappleTokenIds,
+      concentrationClearedTokenIds,
+    };
+  }
+
+  const removeIndex = state.combatants.findIndex((c) => c.tokenId === tokenId);
+  if (removeIndex < 0) {
+    return {
+      combatStateChanged: false,
+      releasedGrappleTokenIds: concentrationCleanup.releasedGrappleTokenIds,
+      concentrationClearedTokenIds,
+    };
+  }
+
+  const currentTokenId = state.combatants[state.currentTurnIndex]?.tokenId ?? null;
+  state.combatants.splice(removeIndex, 1);
+
+  if (state.combatants.length === 0) {
+    state.currentTurnIndex = 0;
+  } else if (currentTokenId && currentTokenId !== tokenId) {
+    const newCurrentIndex = state.combatants.findIndex((c) => c.tokenId === currentTokenId);
+    state.currentTurnIndex =
+      newCurrentIndex >= 0 ? newCurrentIndex : Math.min(removeIndex, state.combatants.length - 1);
+  } else {
+    state.currentTurnIndex = Math.min(removeIndex, state.combatants.length - 1);
+  }
+
+  persistCombatState(state);
+  return {
+    combatStateChanged: true,
+    releasedGrappleTokenIds: concentrationCleanup.releasedGrappleTokenIds,
+    concentrationClearedTokenIds,
+  };
 }
 
 async function persistCombatStateAsync(state: CombatState): Promise<void> {

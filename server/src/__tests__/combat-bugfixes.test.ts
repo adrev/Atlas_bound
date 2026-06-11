@@ -1030,6 +1030,11 @@ describe('ConditionService — grapple auto-release', () => {
 
     expect(freed).toContain('tVictim');
     expect((victim.conditions as string[]).includes('grappled')).toBe(false);
+    expect(
+      (
+        room.combatState!.combatants.find((c) => c.tokenId === 'tVictim')!.conditions as string[]
+      ).includes('grappled')
+    ).toBe(false);
   });
 
   it('does not release unrelated grapples when an innocent token gets stunned', async () => {
@@ -1067,6 +1072,131 @@ describe('ConditionService — grapple auto-release', () => {
 
     expect(freed).toEqual([]);
     expect((victim.conditions as string[]).includes('grappled')).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Concentration / token-removal cleanup — concentration-sourced effects
+// and held grapples must not outlive the caster/grappler.
+// ---------------------------------------------------------------------------
+
+describe('CombatService — concentration and token removal cleanup', () => {
+  it('clears concentration-sourced conditions when a concentrating PC drops to 0 HP', async () => {
+    const sessionId = 's-conc-drop-zero';
+    const caster = makeToken('tCaster', {
+      characterId: 'char-caster',
+      ownerUserId: 'player-1',
+    });
+    const target = makeToken('tTarget');
+    seedRoom(
+      sessionId,
+      [caster, target],
+      [
+        makeCombatant('tCaster', {
+          characterId: 'char-caster',
+          hp: 4,
+          maxHp: 10,
+          isNPC: false,
+        }),
+        makeCombatant('tTarget', {
+          conditions: ['restrained' as unknown as Condition],
+        }),
+      ]
+    );
+    const { getRoom } = await import('../utils/roomState.js');
+    const room = getRoom(sessionId)!;
+    ConditionService.applyConditionWithMeta(sessionId, 'tTarget', {
+      name: 'restrained',
+      source: 'Hold Person',
+      appliedRound: 1,
+      casterTokenId: 'tCaster',
+      saveAtEndOfTurn: { ability: 'wis', dc: 14 },
+    });
+
+    const result = await CombatService.applyDamage(sessionId, 'tCaster', 5);
+
+    expect(result.hp).toBe(0);
+    expect(result.concentrationDropped).toBe(true);
+    expect(result.concentrationClearedTokenIds).toEqual(['tTarget']);
+    expect(caster.conditions).toContain('unconscious');
+    expect(target.conditions).not.toContain('restrained');
+    expect(
+      (
+        room.combatState!.combatants.find((c) => c.tokenId === 'tTarget')!.conditions as string[]
+      ).includes('restrained')
+    ).toBe(false);
+    expect(room.conditionMeta.get('tTarget')?.has('restrained') ?? false).toBe(false);
+  });
+
+  it('cleans combatants, concentration effects, and grapples when a token is removed', async () => {
+    const sessionId = 's-token-remove-cleanup';
+    const caster = makeToken('tCaster', { characterId: 'char-caster' });
+    const heldTarget = makeToken('tHeld', {
+      conditions: ['restrained' as unknown as Condition],
+    });
+    const grappleVictim = makeToken('tVictim', {
+      conditions: ['grappled' as unknown as Condition],
+    });
+    seedRoom(
+      sessionId,
+      [caster, heldTarget, grappleVictim],
+      [
+        makeCombatant('tCaster'),
+        makeCombatant('tHeld', { conditions: ['restrained' as unknown as Condition] }),
+        makeCombatant('tVictim', { conditions: ['grappled' as unknown as Condition] }),
+      ]
+    );
+    const { getRoom } = await import('../utils/roomState.js');
+    const room = getRoom(sessionId)!;
+    room.conditionMeta.set(
+      'tHeld',
+      new Map([
+        [
+          'restrained',
+          {
+            name: 'restrained',
+            source: 'Hold Person',
+            appliedRound: 1,
+            casterTokenId: 'tCaster',
+          },
+        ],
+      ])
+    );
+    room.conditionMeta.set(
+      'tVictim',
+      new Map([
+        [
+          'grappled',
+          {
+            name: 'grappled',
+            source: 'tCaster (!grapple)',
+            appliedRound: 1,
+            casterTokenId: 'tCaster',
+          },
+        ],
+      ])
+    );
+
+    const cleanup = CombatService.cleanupRemovedTokenFromCombat(sessionId, 'tCaster');
+
+    expect(cleanup.combatStateChanged).toBe(true);
+    expect(cleanup.concentrationClearedTokenIds).toEqual(['tHeld']);
+    expect(cleanup.releasedGrappleTokenIds).toEqual(['tVictim']);
+    expect(room.combatState!.combatants.map((c) => c.tokenId)).toEqual(['tHeld', 'tVictim']);
+    expect(heldTarget.conditions).not.toContain('restrained');
+    expect(grappleVictim.conditions).not.toContain('grappled');
+    expect(
+      (
+        room.combatState!.combatants.find((c) => c.tokenId === 'tHeld')!.conditions as string[]
+      ).includes('restrained')
+    ).toBe(false);
+    expect(
+      (
+        room.combatState!.combatants.find((c) => c.tokenId === 'tVictim')!.conditions as string[]
+      ).includes('grappled')
+    ).toBe(false);
+    expect(room.conditionMeta.get('tHeld')?.has('restrained') ?? false).toBe(false);
+    expect(room.conditionMeta.get('tVictim')?.has('grappled') ?? false).toBe(false);
   });
 });
 

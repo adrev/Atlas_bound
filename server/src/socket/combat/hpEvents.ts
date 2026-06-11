@@ -1,6 +1,9 @@
 import type { Server, Socket } from 'socket.io';
 import {
-  getPlayerBySocketId, canHealToken, canTargetToken, isTokenOwnerOrDM,
+  getPlayerBySocketId,
+  canHealToken,
+  canTargetToken,
+  isTokenOwnerOrDM,
   isTokenActionable,
 } from '../../utils/roomState.js';
 import * as CombatService from '../../services/CombatService.js';
@@ -8,7 +11,9 @@ import * as DiscordService from '../../services/DiscordService.js';
 import * as DiceService from '../../services/DiceService.js';
 import { applyDamageSideEffects } from '../../services/damageEffects.js';
 import {
-  combatDamageSchema, combatHealSchema, combatDeathSaveSchema,
+  combatDamageSchema,
+  combatHealSchema,
+  combatDeathSaveSchema,
 } from '../../utils/validation.js';
 import { safeHandler } from '../../utils/socketHelpers.js';
 import { tokenConditionChanges } from '../../utils/conditionSources.js';
@@ -25,336 +30,396 @@ import type { SaveBreakdown } from '@dnd-vtt/shared';
  * runs the same post-HP-change rules.
  */
 export function registerCombatHp(io: Server, socket: Socket): void {
-  socket.on('combat:damage', safeHandler(socket, async (data) => {
-    const parsed = combatDamageSchema.safeParse(data);
-    if (!parsed.success) return;
+  socket.on(
+    'combat:damage',
+    safeHandler(socket, async (data) => {
+      const parsed = combatDamageSchema.safeParse(data);
+      if (!parsed.success) return;
 
-    const ctx = getPlayerBySocketId(socket.id);
-    if (!ctx) return;
+      const ctx = getPlayerBySocketId(socket.id);
+      if (!ctx) return;
 
-    // Target token must exist in this room.
-    const targetToken = ctx.room.tokens.get(parsed.data.tokenId);
-    if (!targetToken) return;
+      // Target token must exist in this room.
+      const targetToken = ctx.room.tokens.get(parsed.data.tokenId);
+      if (!targetToken) return;
 
-    // Defense in depth beyond the Zod cap \u2014 reject any non-finite or
-    // implausibly large amount even if the schema is relaxed later.
-    const amount = parsed.data.amount;
-    if (!Number.isFinite(amount) || amount < 0 || amount > 9999) return;
+      // Defense in depth beyond the Zod cap \u2014 reject any non-finite or
+      // implausibly large amount even if the schema is relaxed later.
+      const amount = parsed.data.amount;
+      if (!Number.isFinite(amount) || amount < 0 || amount > 9999) return;
 
-    // Existing targeting rule (players \u2192 NPCs or self-tokens only; DM can
-    // hit anyone). Kept as the primary cross-player anti-grief check.
-    if (!canTargetToken(ctx, parsed.data.tokenId)) return;
+      // Existing targeting rule (players \u2192 NPCs or self-tokens only; DM can
+      // hit anyone). Kept as the primary cross-player anti-grief check.
+      if (!canTargetToken(ctx, parsed.data.tokenId)) return;
 
-    // Additional combat-turn restriction: during active combat, a player
-    // may only apply damage while their own token is the current turn,
-    // AND that token must be alive (HP > 0, not unconscious/dead).
-    const isDM = ctx.player.role === 'dm';
-    if (!isDM) {
-      const combatState = ctx.room.combatState;
-      if (combatState?.active) {
-        const currentCombatant = combatState.combatants[combatState.currentTurnIndex];
-        if (!currentCombatant) return;
-        const turnToken = ctx.room.tokens.get(currentCombatant.tokenId);
-        if (!turnToken || turnToken.ownerUserId !== ctx.player.userId) return;
-        if (!isTokenActionable(ctx, currentCombatant.tokenId)) return;
-      }
-    }
-
-    try {
-      const result = await CombatService.applyDamage(ctx.room.sessionId, parsed.data.tokenId, parsed.data.amount, {
-        criticalHit: parsed.data.criticalHit,
-      });
-      emitToTokenViewers(io, ctx.room, parsed.data.tokenId, 'combat:hp-changed', {
-        tokenId: parsed.data.tokenId,
-        hp: result.hp,
-        tempHp: result.tempHp,
-        change: result.change,
-        type: 'damage',
-      });
-      // Fan out a character update so sheet views stay in sync with the
-      // combat tracker. Without this the character store keeps the old
-      // HP and the owning player sees themselves alive even after the
-      // combatant is at 0.
-      if (result.characterId) {
-        const changes: Record<string, unknown> = {
-          hitPoints: result.hp,
-          tempHitPoints: result.tempHp,
-        };
-        if (result.autoDeathSaveFailure) {
-          changes.deathSaves = result.autoDeathSaveFailure;
+      // Additional combat-turn restriction: during active combat, a player
+      // may only apply damage while their own token is the current turn,
+      // AND that token must be alive (HP > 0, not unconscious/dead).
+      const isDM = ctx.player.role === 'dm';
+      if (!isDM) {
+        const combatState = ctx.room.combatState;
+        if (combatState?.active) {
+          const currentCombatant = combatState.combatants[combatState.currentTurnIndex];
+          if (!currentCombatant) return;
+          const turnToken = ctx.room.tokens.get(currentCombatant.tokenId);
+          if (!turnToken || turnToken.ownerUserId !== ctx.player.userId) return;
+          if (!isTokenActionable(ctx, currentCombatant.tokenId)) return;
         }
-        emitToTokenViewers(io, ctx.room, parsed.data.tokenId, 'character:updated', {
-          characterId: result.characterId,
-          changes,
-        }, { includeOwner: true });
       }
-      if (result.autoRemovedConditions && result.autoRemovedConditions.length > 0) {
-        emitToTokenViewers(io, ctx.room, parsed.data.tokenId, 'map:token-updated', {
+
+      try {
+        const result = await CombatService.applyDamage(
+          ctx.room.sessionId,
+          parsed.data.tokenId,
+          parsed.data.amount,
+          {
+            criticalHit: parsed.data.criticalHit,
+          }
+        );
+        emitToTokenViewers(io, ctx.room, parsed.data.tokenId, 'combat:hp-changed', {
           tokenId: parsed.data.tokenId,
-          changes: tokenConditionChanges(ctx.room, parsed.data.tokenId),
+          hp: result.hp,
+          tempHp: result.tempHp,
+          change: result.change,
+          type: 'damage',
         });
-      }
-      // 5e: damage while at 0 HP = automatic death-save failure.
-      // CombatService.applyDamage increments the failure tally if the
-      // combatant was already down; fan out the updated tracker so
-      // every client sees the \u2717 land without the player having to
-      // re-roll manually.
-      if (result.autoDeathSaveFailure) {
-        emitToTokenViewers(io, ctx.room, parsed.data.tokenId, 'combat:death-save-updated', {
-          tokenId: parsed.data.tokenId,
-          deathSaves: result.autoDeathSaveFailure,
-          roll: 0,
-        });
-      }
-      // PC dropped to 0 HP \u2192 unconscious auto-applied. Broadcast the
-      // token's new condition list so every client's badge tray
-      // reflects the new state.
-      if (result.autoAppliedConditions || (result.autoRemovedConditions && result.autoRemovedConditions.length > 0)) {
-        // Pulls fresh conditions from the live token (CombatService
-        // has already mutated the token's conditions array in-place),
-        // so we don't need to pass the string[] from the result \u2014 the
-        // helper reads the room's Condition[]-typed array directly.
-        emitToTokenViewers(io, ctx.room, parsed.data.tokenId, 'map:token-updated', {
-          tokenId: parsed.data.tokenId,
-          changes: tokenConditionChanges(ctx.room, parsed.data.tokenId),
-        });
-      }
-      // Any creatures this PC was grappling now go free \u2014 broadcast
-      // their updated condition arrays so badges clear on every client.
-      if (result.releasedGrappleTokenIds) {
-        for (const freedId of result.releasedGrappleTokenIds) {
-          const freedToken = ctx.room.tokens.get(freedId);
-          if (!freedToken) continue;
-          emitToTokenViewers(io, ctx.room, freedId, 'map:token-updated', {
-            tokenId: freedId,
-            changes: tokenConditionChanges(ctx.room, freedId),
+        // Fan out a character update so sheet views stay in sync with the
+        // combat tracker. Without this the character store keeps the old
+        // HP and the owning player sees themselves alive even after the
+        // combatant is at 0.
+        if (result.characterId) {
+          const changes: Record<string, unknown> = {
+            hitPoints: result.hp,
+            tempHitPoints: result.tempHp,
+          };
+          if (result.concentrationDropped) {
+            changes.concentratingOn = null;
+          }
+          if (result.autoDeathSaveFailure) {
+            changes.deathSaves = result.autoDeathSaveFailure;
+          }
+          emitToTokenViewers(
+            io,
+            ctx.room,
+            parsed.data.tokenId,
+            'character:updated',
+            {
+              characterId: result.characterId,
+              changes,
+            },
+            { includeOwner: true }
+          );
+        }
+        if (result.autoRemovedConditions && result.autoRemovedConditions.length > 0) {
+          emitToTokenViewers(io, ctx.room, parsed.data.tokenId, 'map:token-updated', {
+            tokenId: parsed.data.tokenId,
+            changes: tokenConditionChanges(ctx.room, parsed.data.tokenId),
           });
         }
-      }
-      // R2: auto-run damage side effects (concentration save, Sleep
-      // break, etc.). Used to require the client to emit a separate
-      // `damage:side-effects` event; now it runs server-side the moment
-      // HP actually changes so a DM-initiated damage or a macro
-      // bypasses no longer skip concentration.
-      await applyDamageSideEffects(io, ctx.room, parsed.data.tokenId, parsed.data.amount);
-    } catch (err) {
-      socket.emit('session:error', {
-        message: err instanceof Error ? err.message : 'Failed to apply damage',
-      });
-    }
-  }));
-
-  socket.on('combat:heal', safeHandler(socket, async (data) => {
-    const parsed = combatHealSchema.safeParse(data);
-    if (!parsed.success) return;
-
-    const ctx = getPlayerBySocketId(socket.id);
-    if (!ctx) return;
-
-    // Target token must exist in this room.
-    if (!ctx.room.tokens.get(parsed.data.tokenId)) return;
-
-    // Defense in depth for the heal amount.
-    const amount = parsed.data.amount;
-    if (!Number.isFinite(amount) || amount < 0 || amount > 9999) return;
-
-    if (!canHealToken(ctx, parsed.data.tokenId)) return;
-
-    // During active combat, non-DMs can only heal on their own turn
-    // (same restriction as damage). Outside combat, healing is
-    // unrestricted (potions, short/long rest, etc.).
-    const isDMHeal = ctx.player.role === 'dm';
-    if (!isDMHeal) {
-      const combatState = ctx.room.combatState;
-      if (combatState?.active) {
-        const currentCombatant = combatState.combatants[combatState.currentTurnIndex];
-        if (!currentCombatant) return;
-        const turnToken = ctx.room.tokens.get(currentCombatant.tokenId);
-        if (!turnToken || turnToken.ownerUserId !== ctx.player.userId) return;
-      }
-    }
-
-    try {
-      const result = await CombatService.applyHeal(ctx.room.sessionId, parsed.data.tokenId, parsed.data.amount);
-      emitToTokenViewers(io, ctx.room, parsed.data.tokenId, 'combat:hp-changed', {
-        tokenId: parsed.data.tokenId,
-        hp: result.hp,
-        tempHp: result.tempHp,
-        change: result.change,
-        type: 'heal',
-      });
-      if (result.characterId) {
-        const changes: Record<string, unknown> = {
-          hitPoints: result.hp,
-          tempHitPoints: result.tempHp,
-        };
-        if (result.hp > 0) {
-          changes.deathSaves = { successes: 0, failures: 0 };
+        // 5e: damage while at 0 HP = automatic death-save failure.
+        // CombatService.applyDamage increments the failure tally if the
+        // combatant was already down; fan out the updated tracker so
+        // every client sees the \u2717 land without the player having to
+        // re-roll manually.
+        if (result.autoDeathSaveFailure) {
+          emitToTokenViewers(io, ctx.room, parsed.data.tokenId, 'combat:death-save-updated', {
+            tokenId: parsed.data.tokenId,
+            deathSaves: result.autoDeathSaveFailure,
+            roll: 0,
+          });
         }
-        emitToTokenViewers(io, ctx.room, parsed.data.tokenId, 'character:updated', {
-          characterId: result.characterId,
-          changes,
-        }, { includeOwner: true });
-      }
-      if (result.autoRemovedConditions && result.autoRemovedConditions.length > 0) {
-        emitToTokenViewers(io, ctx.room, parsed.data.tokenId, 'map:token-updated', {
-          tokenId: parsed.data.tokenId,
-          changes: tokenConditionChanges(ctx.room, parsed.data.tokenId),
+        // PC dropped to 0 HP \u2192 unconscious auto-applied. Broadcast the
+        // token's new condition list so every client's badge tray
+        // reflects the new state.
+        if (
+          result.autoAppliedConditions ||
+          (result.autoRemovedConditions && result.autoRemovedConditions.length > 0)
+        ) {
+          // Pulls fresh conditions from the live token (CombatService
+          // has already mutated the token's conditions array in-place),
+          // so we don't need to pass the string[] from the result \u2014 the
+          // helper reads the room's Condition[]-typed array directly.
+          emitToTokenViewers(io, ctx.room, parsed.data.tokenId, 'map:token-updated', {
+            tokenId: parsed.data.tokenId,
+            changes: tokenConditionChanges(ctx.room, parsed.data.tokenId),
+          });
+        }
+        // Any creatures this PC was grappling now go free \u2014 broadcast
+        // their updated condition arrays so badges clear on every client.
+        if (result.releasedGrappleTokenIds) {
+          for (const freedId of result.releasedGrappleTokenIds) {
+            const freedToken = ctx.room.tokens.get(freedId);
+            if (!freedToken) continue;
+            emitToTokenViewers(io, ctx.room, freedId, 'map:token-updated', {
+              tokenId: freedId,
+              changes: tokenConditionChanges(ctx.room, freedId),
+            });
+          }
+        }
+        if (result.concentrationClearedTokenIds) {
+          for (const affectedId of result.concentrationClearedTokenIds) {
+            const affectedToken = ctx.room.tokens.get(affectedId);
+            if (!affectedToken) continue;
+            emitToTokenViewers(io, ctx.room, affectedId, 'map:token-updated', {
+              tokenId: affectedId,
+              changes: tokenConditionChanges(ctx.room, affectedId),
+            });
+          }
+        }
+        // R2: auto-run damage side effects (concentration save, Sleep
+        // break, etc.). Used to require the client to emit a separate
+        // `damage:side-effects` event; now it runs server-side the moment
+        // HP actually changes so a DM-initiated damage or a macro
+        // bypasses no longer skip concentration.
+        await applyDamageSideEffects(io, ctx.room, parsed.data.tokenId, parsed.data.amount);
+      } catch (err) {
+        socket.emit('session:error', {
+          message: err instanceof Error ? err.message : 'Failed to apply damage',
         });
       }
-    } catch (err) {
-      socket.emit('session:error', {
-        message: err instanceof Error ? err.message : 'Failed to apply healing',
-      });
-    }
-  }));
+    })
+  );
 
-  socket.on('combat:death-save', safeHandler(socket, async (data) => {
-    const parsed = combatDeathSaveSchema.safeParse(data);
-    if (!parsed.success) return;
+  socket.on(
+    'combat:heal',
+    safeHandler(socket, async (data) => {
+      const parsed = combatHealSchema.safeParse(data);
+      if (!parsed.success) return;
 
-    const ctx = getPlayerBySocketId(socket.id);
-    if (!ctx) return;
-    if (!isTokenOwnerOrDM(ctx, parsed.data.tokenId)) return;
+      const ctx = getPlayerBySocketId(socket.id);
+      if (!ctx) return;
 
-    const { tokenId } = parsed.data;
-    const combatant = CombatService.getCombatant(ctx.room.sessionId, tokenId);
-    if (!combatant) return;
+      // Target token must exist in this room.
+      if (!ctx.room.tokens.get(parsed.data.tokenId)) return;
 
-    // Only tokens at 0 HP can roll death saves. Without this check,
-    // a player could spam death saves on a conscious token until they
-    // hit a nat 20 (which heals 1 HP) or manipulate the death save
-    // counters outside the intended game state.
-    if (combatant.hp > 0) return;
+      // Defense in depth for the heal amount.
+      const amount = parsed.data.amount;
+      if (!Number.isFinite(amount) || amount < 0 || amount > 9999) return;
 
-    const isDM = ctx.player.role === 'dm';
-    const combatState = ctx.room.combatState;
-    if (!combatState?.active) return;
-    const currentCombatant = combatState.combatants[combatState.currentTurnIndex];
-    if (!isDM && currentCombatant?.tokenId !== tokenId) return;
-    if (!isDM && combatant.deathSaveRolledRound === combatState.roundNumber) return;
-    const token = ctx.room.tokens.get(tokenId);
-    const tokenConditions = ((token?.conditions || []) as string[]).map((c) => c.toLowerCase());
-    if (tokenConditions.includes('stable')) return;
+      if (!canHealToken(ctx, parsed.data.tokenId)) return;
 
-    const result = DiceService.rollDeathSave();
-    combatant.deathSaveRolledRound = combatState.roundNumber;
+      // During active combat, non-DMs can only heal on their own turn
+      // (same restriction as damage). Outside combat, healing is
+      // unrestricted (potions, short/long rest, etc.).
+      const isDMHeal = ctx.player.role === 'dm';
+      if (!isDMHeal) {
+        const combatState = ctx.room.combatState;
+        if (combatState?.active) {
+          const currentCombatant = combatState.combatants[combatState.currentTurnIndex];
+          if (!currentCombatant) return;
+          const turnToken = ctx.room.tokens.get(currentCombatant.tokenId);
+          if (!turnToken || turnToken.ownerUserId !== ctx.player.userId) return;
+        }
+      }
 
-    // Apply death save result
-    if (result.isCritSuccess) {
-      // Nat 20: regain 1 HP
-      const healResult = await CombatService.applyHeal(ctx.room.sessionId, tokenId, 1);
-      combatant.deathSaves = { successes: 0, failures: 0 };
-      if (healResult.autoRemovedConditions && healResult.autoRemovedConditions.length > 0) {
+      try {
+        const result = await CombatService.applyHeal(
+          ctx.room.sessionId,
+          parsed.data.tokenId,
+          parsed.data.amount
+        );
+        emitToTokenViewers(io, ctx.room, parsed.data.tokenId, 'combat:hp-changed', {
+          tokenId: parsed.data.tokenId,
+          hp: result.hp,
+          tempHp: result.tempHp,
+          change: result.change,
+          type: 'heal',
+        });
+        if (result.characterId) {
+          const changes: Record<string, unknown> = {
+            hitPoints: result.hp,
+            tempHitPoints: result.tempHp,
+          };
+          if (result.hp > 0) {
+            changes.deathSaves = { successes: 0, failures: 0 };
+          }
+          emitToTokenViewers(
+            io,
+            ctx.room,
+            parsed.data.tokenId,
+            'character:updated',
+            {
+              characterId: result.characterId,
+              changes,
+            },
+            { includeOwner: true }
+          );
+        }
+        if (result.autoRemovedConditions && result.autoRemovedConditions.length > 0) {
+          emitToTokenViewers(io, ctx.room, parsed.data.tokenId, 'map:token-updated', {
+            tokenId: parsed.data.tokenId,
+            changes: tokenConditionChanges(ctx.room, parsed.data.tokenId),
+          });
+        }
+      } catch (err) {
+        socket.emit('session:error', {
+          message: err instanceof Error ? err.message : 'Failed to apply healing',
+        });
+      }
+    })
+  );
+
+  socket.on(
+    'combat:death-save',
+    safeHandler(socket, async (data) => {
+      const parsed = combatDeathSaveSchema.safeParse(data);
+      if (!parsed.success) return;
+
+      const ctx = getPlayerBySocketId(socket.id);
+      if (!ctx) return;
+      if (!isTokenOwnerOrDM(ctx, parsed.data.tokenId)) return;
+
+      const { tokenId } = parsed.data;
+      const combatant = CombatService.getCombatant(ctx.room.sessionId, tokenId);
+      if (!combatant) return;
+
+      // Only tokens at 0 HP can roll death saves. Without this check,
+      // a player could spam death saves on a conscious token until they
+      // hit a nat 20 (which heals 1 HP) or manipulate the death save
+      // counters outside the intended game state.
+      if (combatant.hp > 0) return;
+
+      const isDM = ctx.player.role === 'dm';
+      const combatState = ctx.room.combatState;
+      if (!combatState?.active) return;
+      const currentCombatant = combatState.combatants[combatState.currentTurnIndex];
+      if (!isDM && currentCombatant?.tokenId !== tokenId) return;
+      if (!isDM && combatant.deathSaveRolledRound === combatState.roundNumber) return;
+      const token = ctx.room.tokens.get(tokenId);
+      const tokenConditions = ((token?.conditions || []) as string[]).map((c) => c.toLowerCase());
+      if (tokenConditions.includes('stable')) return;
+
+      const result = DiceService.rollDeathSave();
+      combatant.deathSaveRolledRound = combatState.roundNumber;
+
+      // Apply death save result
+      if (result.isCritSuccess) {
+        // Nat 20: regain 1 HP
+        const healResult = await CombatService.applyHeal(ctx.room.sessionId, tokenId, 1);
+        combatant.deathSaves = { successes: 0, failures: 0 };
+        if (healResult.autoRemovedConditions && healResult.autoRemovedConditions.length > 0) {
+          emitToTokenViewers(io, ctx.room, tokenId, 'map:token-updated', {
+            tokenId,
+            changes: tokenConditionChanges(ctx.room, tokenId),
+          });
+        }
+      } else if (result.isCritFail) {
+        // Nat 1: two failures
+        combatant.deathSaves.failures = Math.min(3, combatant.deathSaves.failures + 2);
+      } else if (result.isSuccess) {
+        combatant.deathSaves.successes = Math.min(3, combatant.deathSaves.successes + 1);
+      } else {
+        combatant.deathSaves.failures = Math.min(3, combatant.deathSaves.failures + 1);
+      }
+
+      // Stabilize on 3 successes. Core 5e leaves the creature at 0 HP
+      // and unconscious; it only stops future death-save rolls.
+      if (combatant.deathSaves.successes >= 3) {
+        CombatService.markStable(ctx.room.sessionId, tokenId);
         emitToTokenViewers(io, ctx.room, tokenId, 'map:token-updated', {
           tokenId,
           changes: tokenConditionChanges(ctx.room, tokenId),
         });
       }
-    } else if (result.isCritFail) {
-      // Nat 1: two failures
-      combatant.deathSaves.failures = Math.min(3, combatant.deathSaves.failures + 2);
-    } else if (result.isSuccess) {
-      combatant.deathSaves.successes = Math.min(3, combatant.deathSaves.successes + 1);
-    } else {
-      combatant.deathSaves.failures = Math.min(3, combatant.deathSaves.failures + 1);
-    }
+      CombatService.persistSessionCombatState(ctx.room.sessionId);
 
-    // Stabilize on 3 successes. Core 5e leaves the creature at 0 HP
-    // and unconscious; it only stops future death-save rolls.
-    if (combatant.deathSaves.successes >= 3) {
-      CombatService.markStable(ctx.room.sessionId, tokenId);
-      emitToTokenViewers(io, ctx.room, tokenId, 'map:token-updated', {
+      emitToTokenViewers(io, ctx.room, tokenId, 'combat:death-save-updated', {
         tokenId,
-        changes: tokenConditionChanges(ctx.room, tokenId),
+        deathSaves: combatant.deathSaves,
+        roll: result.roll,
       });
-    }
-    CombatService.persistSessionCombatState(ctx.room.sessionId);
 
-    emitToTokenViewers(io, ctx.room, tokenId, 'combat:death-save-updated', {
-      tokenId,
-      deathSaves: combatant.deathSaves,
-      roll: result.roll,
-    });
-
-    // Structured SaveResultCard alongside the tracker update so
-    // chat shows every death-save roll with its counter, not just
-    // the dramatic outcomes. DC 10 is implied for death saves.
-    const dead = combatant.deathSaves.failures >= 3;
-    const stabilized = ((ctx.room.tokens.get(tokenId)?.conditions || []) as string[])
-      .map((c) => c.toLowerCase())
-      .includes('stable');
-    const deathSaveBreakdown: SaveBreakdown = {
-      roller: {
-        name: combatant.name,
-        tokenId,
-        characterId: combatant.characterId ?? undefined,
-      },
-      context: 'Death Save',
-      ability: 'death',
-      d20: result.roll,
-      advantage: 'normal',
-      modifiers: [],
-      total: result.roll,
-      dc: 10,
-      passed: result.isSuccess || result.isCritSuccess,
-      deathSave: {
-        successes: combatant.deathSaves.successes,
-        failures: combatant.deathSaves.failures,
-        stabilized: stabilized || undefined,
-        dead: dead || undefined,
-        critSuccess: result.isCritSuccess || undefined,
-        critFailure: result.isCritFail || undefined,
-      },
-    };
-    const chatContent = result.isCritSuccess
-      ? `\u2728 ${combatant.name} rolled a NAT 20 on their death save — regains 1 HP!`
-      : result.isCritFail
-        ? `\u2620\uFE0F ${combatant.name} rolled a NAT 1 on their death save — counts as 2 failures.`
-        : result.isSuccess
-          ? stabilized
-            ? `\u2713 ${combatant.name} is stable at 0 HP and remains unconscious.`
-            : `\u2713 ${combatant.name} succeeded a death save (d20=${result.roll}).`
-          : `\u2717 ${combatant.name} failed a death save (d20=${result.roll}).`;
-    const msgId = uuidv4();
-    const createdAt = new Date().toISOString();
-    const hidden = tokenScopedChatIsPrivate(ctx.room, tokenId);
-    pool.query(
-      `INSERT INTO chat_messages (id, session_id, user_id, display_name, type, content, character_name, save_result, hidden, created_at)
+      // Structured SaveResultCard alongside the tracker update so
+      // chat shows every death-save roll with its counter, not just
+      // the dramatic outcomes. DC 10 is implied for death saves.
+      const dead = combatant.deathSaves.failures >= 3;
+      const stabilized = ((ctx.room.tokens.get(tokenId)?.conditions || []) as string[])
+        .map((c) => c.toLowerCase())
+        .includes('stable');
+      const deathSaveBreakdown: SaveBreakdown = {
+        roller: {
+          name: combatant.name,
+          tokenId,
+          characterId: combatant.characterId ?? undefined,
+        },
+        context: 'Death Save',
+        ability: 'death',
+        d20: result.roll,
+        advantage: 'normal',
+        modifiers: [],
+        total: result.roll,
+        dc: 10,
+        passed: result.isSuccess || result.isCritSuccess,
+        deathSave: {
+          successes: combatant.deathSaves.successes,
+          failures: combatant.deathSaves.failures,
+          stabilized: stabilized || undefined,
+          dead: dead || undefined,
+          critSuccess: result.isCritSuccess || undefined,
+          critFailure: result.isCritFail || undefined,
+        },
+      };
+      const chatContent = result.isCritSuccess
+        ? `\u2728 ${combatant.name} rolled a NAT 20 on their death save — regains 1 HP!`
+        : result.isCritFail
+          ? `\u2620\uFE0F ${combatant.name} rolled a NAT 1 on their death save — counts as 2 failures.`
+          : result.isSuccess
+            ? stabilized
+              ? `\u2713 ${combatant.name} is stable at 0 HP and remains unconscious.`
+              : `\u2713 ${combatant.name} succeeded a death save (d20=${result.roll}).`
+            : `\u2717 ${combatant.name} failed a death save (d20=${result.roll}).`;
+      const msgId = uuidv4();
+      const createdAt = new Date().toISOString();
+      const hidden = tokenScopedChatIsPrivate(ctx.room, tokenId);
+      pool
+        .query(
+          `INSERT INTO chat_messages (id, session_id, user_id, display_name, type, content, character_name, save_result, hidden, created_at)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
-      [msgId, ctx.room.sessionId, 'system', 'System', 'system', chatContent, null,
-       JSON.stringify(deathSaveBreakdown), hidden ? 1 : 0, createdAt],
-    ).catch((e) => console.warn('[death-save] persist failed:', e));
-    emitTokenScopedChat(io, ctx.room, tokenId, {
-      id: msgId,
-      sessionId: ctx.room.sessionId,
-      userId: 'system',
-      displayName: 'System',
-      type: 'system',
-      content: chatContent,
-      characterName: null,
-      whisperTo: null,
-      rollData: null,
-      saveResult: deathSaveBreakdown,
-      hidden,
-      createdAt,
-    });
-
-    // Only notify Discord on the dramatic outcomes \u2014 a successful
-    // save every round would spam the channel. Nat-20 stabilises,
-    // nat-1 is 2 failures, 3 failures = dead.
-    if (!hidden && (result.isCritSuccess || result.isCritFail || dead)) {
-      const title = dead
-        ? `\uD83D\uDC80 ${combatant.name} has died`
-        : result.isCritSuccess
-          ? `\u2728 ${combatant.name} stabilised on a Nat 20`
-          : `\u2620\uFE0F ${combatant.name} rolled a Nat 1 on a Death Save`;
-      const color = dead ? 0x6b1d1d : result.isCritSuccess ? 0x27ae60 : 0xc0392b;
-      void DiscordService.notifySession(ctx.room.sessionId, {
-        title,
-        description: `Death saves: ${combatant.deathSaves.successes}\u2713 / ${combatant.deathSaves.failures}\u2717`,
-        color,
+          [
+            msgId,
+            ctx.room.sessionId,
+            'system',
+            'System',
+            'system',
+            chatContent,
+            null,
+            JSON.stringify(deathSaveBreakdown),
+            hidden ? 1 : 0,
+            createdAt,
+          ]
+        )
+        .catch((e) => console.warn('[death-save] persist failed:', e));
+      emitTokenScopedChat(io, ctx.room, tokenId, {
+        id: msgId,
+        sessionId: ctx.room.sessionId,
+        userId: 'system',
+        displayName: 'System',
+        type: 'system',
+        content: chatContent,
+        characterName: null,
+        whisperTo: null,
+        rollData: null,
+        saveResult: deathSaveBreakdown,
+        hidden,
+        createdAt,
       });
-    }
-  }));
+
+      // Only notify Discord on the dramatic outcomes \u2014 a successful
+      // save every round would spam the channel. Nat-20 stabilises,
+      // nat-1 is 2 failures, 3 failures = dead.
+      if (!hidden && (result.isCritSuccess || result.isCritFail || dead)) {
+        const title = dead
+          ? `\uD83D\uDC80 ${combatant.name} has died`
+          : result.isCritSuccess
+            ? `\u2728 ${combatant.name} stabilised on a Nat 20`
+            : `\u2620\uFE0F ${combatant.name} rolled a Nat 1 on a Death Save`;
+        const color = dead ? 0x6b1d1d : result.isCritSuccess ? 0x27ae60 : 0xc0392b;
+        void DiscordService.notifySession(ctx.room.sessionId, {
+          title,
+          description: `Death saves: ${combatant.deathSaves.successes}\u2713 / ${combatant.deathSaves.failures}\u2717`,
+          color,
+        });
+      }
+    })
+  );
 }
