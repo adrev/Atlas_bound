@@ -21,7 +21,11 @@ vi.mock('../db/connection.js', () => ({ default: { query: mockQuery } }));
 import { registerMapEvents } from '../socket/mapEvents.js';
 import { createRoom, getAllRooms, addPlayerToRoom } from '../utils/roomState.js';
 
-interface Emission { channelId: string; event: string; payload: unknown }
+interface Emission {
+  channelId: string;
+  event: string;
+  payload: unknown;
+}
 
 function makeHarness(actorSocketId: string, actorUserId: string) {
   const handlers: Record<string, (data: unknown) => Promise<void> | void> = {};
@@ -33,8 +37,11 @@ function makeHarness(actorSocketId: string, actorUserId: string) {
   const socket = {
     id: actorSocketId,
     data: { userId: actorUserId, displayName: actorUserId },
-    on: (event: string, handler: (d: unknown) => Promise<void> | void) => { handlers[event] = handler; },
-    emit: (event: string, payload: unknown) => emissions.push({ channelId: actorSocketId, event, payload }),
+    on: (event: string, handler: (d: unknown) => Promise<void> | void) => {
+      handlers[event] = handler;
+    },
+    emit: (event: string, payload: unknown) =>
+      emissions.push({ channelId: actorSocketId, event, payload }),
     join: () => {},
     to: record,
   } as never;
@@ -49,8 +56,20 @@ function seedRoom(): void {
   room.currentMapId = 'map-1';
   room.playerMapId = 'map-1';
   room.gameMode = 'free-roam';
-  addPlayerToRoom(SESSION, { userId: 'dm-user', displayName: 'DM', socketId: 'dm-sock', role: 'dm', characterId: null });
-  addPlayerToRoom(SESSION, { userId: 'player-user', displayName: 'Pip', socketId: 'player-sock', role: 'player', characterId: null });
+  addPlayerToRoom(SESSION, {
+    userId: 'dm-user',
+    displayName: 'DM',
+    socketId: 'dm-sock',
+    role: 'dm',
+    characterId: null,
+  });
+  addPlayerToRoom(SESSION, {
+    userId: 'player-user',
+    displayName: 'Pip',
+    socketId: 'player-sock',
+    role: 'player',
+    characterId: null,
+  });
 }
 
 function token(id: string, overrides: Partial<Token> = {}): Token {
@@ -102,10 +121,16 @@ function tokenRow(t: Token): Record<string, unknown> {
 }
 
 function channelsFor(emissions: Emission[], event: string): string[] {
-  return emissions.filter((e) => e.event === event).map((e) => e.channelId).sort();
+  return emissions
+    .filter((e) => e.event === event)
+    .map((e) => e.channelId)
+    .sort();
 }
 
-function mapLoadedFor(emissions: Emission[], channelId: string): { tokens: Array<{ id: string }> } | undefined {
+function mapLoadedFor(
+  emissions: Emission[],
+  channelId: string
+): { tokens: Array<{ id: string }> } | undefined {
   return emissions.find((e) => e.channelId === channelId && e.event === 'map:loaded')?.payload as
     | { tokens: Array<{ id: string }> }
     | undefined;
@@ -176,6 +201,41 @@ describe('map:fog scoping (DM-only)', () => {
 
     expect(channelsFor(emissions, 'map:fog-updated')).toEqual(['dm-sock', 'player-sock']);
   });
+
+  it('persists fog-hide as a hide operation instead of exact-match deletion', async () => {
+    seedRoom();
+    mockQuery.mockImplementation((sql: unknown) => {
+      const s = String(sql);
+      if (/SELECT fog_state/i.test(s)) {
+        return Promise.resolve({
+          rows: [
+            { fog_state: JSON.stringify([{ points: [0, 0, 70, 0, 70, 70], mode: 'reveal' }]) },
+          ],
+        });
+      }
+      if (/UPDATE maps SET fog_state/i.test(s)) return Promise.resolve({ rows: [] });
+      if (/COUNT\(\*\)/i.test(s)) return Promise.resolve({ rows: [{ n: 0 }] });
+      return Promise.resolve({ rows: [] });
+    });
+    const { io, socket, handlers, emissions } = makeHarness('dm-sock', 'dm-user');
+    registerMapEvents(io, socket);
+
+    await handlers['map:fog-hide']!({ points: [10, 10, 80, 10, 80, 80] });
+
+    const updateCall = mockQuery.mock.calls.find(([sql]) =>
+      /UPDATE maps SET fog_state/i.test(String(sql))
+    );
+    expect(updateCall).toBeTruthy();
+    const savedFogState = JSON.parse(String(updateCall![1][0]));
+    expect(savedFogState).toEqual([
+      { points: [0, 0, 70, 0, 70, 70], mode: 'reveal' },
+      { points: [10, 10, 80, 10, 80, 80], mode: 'hide' },
+    ]);
+    const payload = emissions.find((e) => e.event === 'map:fog-updated')?.payload as {
+      fogState: Array<{ points: number[]; mode?: string }>;
+    };
+    expect(payload.fogState).toEqual(savedFogState);
+  });
 });
 
 describe('map:zone scoping (DM-only data)', () => {
@@ -218,22 +278,24 @@ describe('map:load token visibility', () => {
       if (/SELECT 1 FROM maps/i.test(s)) return Promise.resolve({ rows: [{ '?column?': 1 }] });
       if (/SELECT \* FROM maps WHERE id/i.test(s)) {
         return Promise.resolve({
-          rows: [{
-            id: 'map-1',
-            session_id: SESSION,
-            name: 'Active Map',
-            image_url: null,
-            width: 1400,
-            height: 1050,
-            grid_size: 70,
-            grid_type: 'square',
-            grid_offset_x: 0,
-            grid_offset_y: 0,
-            walls: '[]',
-            fog_state: '[]',
-            ambient_light: 'bright',
-            ambient_opacity: null,
-          }],
+          rows: [
+            {
+              id: 'map-1',
+              session_id: SESSION,
+              name: 'Active Map',
+              image_url: null,
+              width: 1400,
+              height: 1050,
+              grid_size: 70,
+              grid_type: 'square',
+              grid_offset_x: 0,
+              grid_offset_y: 0,
+              walls: '[]',
+              fog_state: '[]',
+              ambient_light: 'bright',
+              ambient_opacity: null,
+            },
+          ],
         });
       }
       if (/SELECT \* FROM tokens WHERE map_id/i.test(s)) {
@@ -248,17 +310,23 @@ describe('map:load token visibility', () => {
 
     await handlers['map:load']!({ mapId: 'map-1' });
 
-    expect(mapLoadedFor(emissions, 'dm-sock')?.tokens.map((t) => t.id).sort())
-      .toEqual(['invisible-npc', 'visible-token']);
-    expect(mapLoadedFor(emissions, 'player-sock')?.tokens.map((t) => t.id))
-      .toEqual(['visible-token']);
+    expect(
+      mapLoadedFor(emissions, 'dm-sock')
+        ?.tokens.map((t) => t.id)
+        .sort()
+    ).toEqual(['invisible-npc', 'visible-token']);
+    expect(mapLoadedFor(emissions, 'player-sock')?.tokens.map((t) => t.id)).toEqual([
+      'visible-token',
+    ]);
   });
 });
 
 describe('token:update-vision-overrides scoping', () => {
   it('does not leak hidden-token vision changes to players', async () => {
     seedRoom();
-    getAllRooms().get(SESSION)!.tokens.set('hidden-npc', token('hidden-npc', { visible: false }));
+    getAllRooms()
+      .get(SESSION)!
+      .tokens.set('hidden-npc', token('hidden-npc', { visible: false }));
     const { io, socket, handlers, emissions } = makeHarness('dm-sock', 'dm-user');
     registerMapEvents(io, socket);
 
@@ -272,7 +340,9 @@ describe('token:update-vision-overrides scoping', () => {
 
   it('delivers visible-token vision changes to every socket on the map', async () => {
     seedRoom();
-    getAllRooms().get(SESSION)!.tokens.set('visible-npc', token('visible-npc', { visible: true }));
+    getAllRooms()
+      .get(SESSION)!
+      .tokens.set('visible-npc', token('visible-npc', { visible: true }));
     const { io, socket, handlers, emissions } = makeHarness('dm-sock', 'dm-user');
     registerMapEvents(io, socket);
 

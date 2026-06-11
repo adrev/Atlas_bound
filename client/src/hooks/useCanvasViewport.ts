@@ -52,49 +52,48 @@ export function useCanvasViewport() {
     [viewport]
   );
 
-  const handleMouseDown = useCallback(
-    (e: KonvaEventObject<MouseEvent>) => {
-      // Right-click = context menu, NOT panning
-      if (e.evt.button === 2) return;
+  const handleMouseDown = useCallback((e: KonvaEventObject<MouseEvent>) => {
+    // Right-click = context menu, NOT panning
+    if (e.evt.button === 2) return;
 
-      // Check if a tool is active - don't pan during tool use. Zones
-      // are included so a DM drawing a new zone on empty map space
-      // gets the drag captured by ZoneLayer instead of panning.
-      const tool = useMapStore.getState().activeTool;
-      const isToolActive = tool === 'measure' || tool === 'wall' || tool === 'zone';
+    // Check if a tool is active - don't pan during tool use. Zones
+    // are included so a DM drawing a new zone on empty map space
+    // gets the drag captured by ZoneLayer instead of panning.
+    const tool = useMapStore.getState().activeTool;
+    const isToolActive =
+      tool === 'measure' ||
+      tool === 'wall' ||
+      tool === 'zone' ||
+      tool === 'fog-reveal' ||
+      tool === 'fog-hide';
 
-      // Middle mouse button ALWAYS pans (even during tool use)
-      if (e.evt.button === 1) {
-        e.evt.preventDefault();
-        isPanning.current = true;
-        lastPointer.current = { x: e.evt.clientX, y: e.evt.clientY };
-        return;
-      }
-      // Left-click on empty space = pan ONLY if no tool is active
-      if (e.evt.button === 0 && e.target === e.target.getStage() && !isToolActive) {
-        isPanning.current = true;
-        lastPointer.current = { x: e.evt.clientX, y: e.evt.clientY };
-      }
-    },
-    []
-  );
-
-  const handleMouseMove = useCallback(
-    (e: KonvaEventObject<MouseEvent>) => {
-      if (!isPanning.current) return;
-
-      const dx = e.evt.clientX - lastPointer.current.x;
-      const dy = e.evt.clientY - lastPointer.current.y;
+    // Middle mouse button ALWAYS pans (even during tool use)
+    if (e.evt.button === 1) {
+      e.evt.preventDefault();
+      isPanning.current = true;
       lastPointer.current = { x: e.evt.clientX, y: e.evt.clientY };
+      return;
+    }
+    // Left-click on empty space = pan ONLY if no tool is active
+    if (e.evt.button === 0 && e.target === e.target.getStage() && !isToolActive) {
+      isPanning.current = true;
+      lastPointer.current = { x: e.evt.clientX, y: e.evt.clientY };
+    }
+  }, []);
 
-      setViewport((prev) => ({
-        ...prev,
-        x: prev.x + dx,
-        y: prev.y + dy,
-      }));
-    },
-    []
-  );
+  const handleMouseMove = useCallback((e: KonvaEventObject<MouseEvent>) => {
+    if (!isPanning.current) return;
+
+    const dx = e.evt.clientX - lastPointer.current.x;
+    const dy = e.evt.clientY - lastPointer.current.y;
+    lastPointer.current = { x: e.evt.clientX, y: e.evt.clientY };
+
+    setViewport((prev) => ({
+      ...prev,
+      x: prev.x + dx,
+      y: prev.y + dy,
+    }));
+  }, []);
 
   const handleMouseUp = useCallback((_e?: KonvaEventObject<MouseEvent>) => {
     isPanning.current = false;
@@ -111,38 +110,51 @@ export function useCanvasViewport() {
   // the map context-menu dispatcher above.
   const touch = useRef<{
     mode: 'none' | 'pan' | 'pinch';
-    lastX: number; lastY: number;
+    lastX: number;
+    lastY: number;
     startDist: number;
     startScale: number;
-    anchorMapX: number; anchorMapY: number;
-  }>({ mode: 'none', lastX: 0, lastY: 0, startDist: 0, startScale: 1, anchorMapX: 0, anchorMapY: 0 });
+    anchorMapX: number;
+    anchorMapY: number;
+  }>({
+    mode: 'none',
+    lastX: 0,
+    lastY: 0,
+    startDist: 0,
+    startScale: 1,
+    anchorMapX: 0,
+    anchorMapY: 0,
+  });
 
-  const handleTouchStart = useCallback((e: KonvaEventObject<TouchEvent>) => {
-    const touches = e.evt.touches;
-    const stage = e.target.getStage();
-    if (!stage) return;
-    if (touches.length === 1) {
-      // Only pan on empty-stage touch — tokens / tools catch their own.
-      if (e.target !== stage) return;
-      touch.current.mode = 'pan';
-      touch.current.lastX = touches[0].clientX;
-      touch.current.lastY = touches[0].clientY;
-    } else if (touches.length === 2) {
-      const dx = touches[0].clientX - touches[1].clientX;
-      const dy = touches[0].clientY - touches[1].clientY;
-      const rect = stage.container().getBoundingClientRect();
-      const midX = (touches[0].clientX + touches[1].clientX) / 2 - rect.left;
-      const midY = (touches[0].clientY + touches[1].clientY) / 2 - rect.top;
-      touch.current.mode = 'pinch';
-      touch.current.startDist = Math.hypot(dx, dy) || 1;
-      touch.current.startScale = viewport.scale;
-      // Anchor in map-space: the spot under the midpoint stays under
-      // the midpoint while the user pinches.
-      touch.current.anchorMapX = (midX - viewport.x) / viewport.scale;
-      touch.current.anchorMapY = (midY - viewport.y) / viewport.scale;
-      e.evt.preventDefault();
-    }
-  }, [viewport]);
+  const handleTouchStart = useCallback(
+    (e: KonvaEventObject<TouchEvent>) => {
+      const touches = e.evt.touches;
+      const stage = e.target.getStage();
+      if (!stage) return;
+      if (touches.length === 1) {
+        // Only pan on empty-stage touch — tokens / tools catch their own.
+        if (e.target !== stage) return;
+        touch.current.mode = 'pan';
+        touch.current.lastX = touches[0].clientX;
+        touch.current.lastY = touches[0].clientY;
+      } else if (touches.length === 2) {
+        const dx = touches[0].clientX - touches[1].clientX;
+        const dy = touches[0].clientY - touches[1].clientY;
+        const rect = stage.container().getBoundingClientRect();
+        const midX = (touches[0].clientX + touches[1].clientX) / 2 - rect.left;
+        const midY = (touches[0].clientY + touches[1].clientY) / 2 - rect.top;
+        touch.current.mode = 'pinch';
+        touch.current.startDist = Math.hypot(dx, dy) || 1;
+        touch.current.startScale = viewport.scale;
+        // Anchor in map-space: the spot under the midpoint stays under
+        // the midpoint while the user pinches.
+        touch.current.anchorMapX = (midX - viewport.x) / viewport.scale;
+        touch.current.anchorMapY = (midY - viewport.y) / viewport.scale;
+        e.evt.preventDefault();
+      }
+    },
+    [viewport]
+  );
 
   const handleTouchMove = useCallback((e: KonvaEventObject<TouchEvent>) => {
     const touches = e.evt.touches;
@@ -162,8 +174,10 @@ export function useCanvasViewport() {
       const midX = (touches[0].clientX + touches[1].clientX) / 2 - rect.left;
       const midY = (touches[0].clientY + touches[1].clientY) / 2 - rect.top;
       const dist = Math.hypot(dx, dy) || 1;
-      const nextScale = Math.max(MIN_SCALE, Math.min(MAX_SCALE,
-        touch.current.startScale * (dist / touch.current.startDist)));
+      const nextScale = Math.max(
+        MIN_SCALE,
+        Math.min(MAX_SCALE, touch.current.startScale * (dist / touch.current.startDist))
+      );
       setViewport({
         scale: nextScale,
         x: midX - touch.current.anchorMapX * nextScale,
@@ -199,13 +213,16 @@ export function useCanvasViewport() {
         const container = stage.container().getBoundingClientRect();
         const mapX = (pointer.x - viewport.x) / viewport.scale;
         const mapY = (pointer.y - viewport.y) / viewport.scale;
-        window.dispatchEvent(new CustomEvent('map-context-menu', {
-          detail: {
-            screenX: pointer.x + container.left,
-            screenY: pointer.y + container.top,
-            mapX, mapY,
-          }
-        }));
+        window.dispatchEvent(
+          new CustomEvent('map-context-menu', {
+            detail: {
+              screenX: pointer.x + container.left,
+              screenY: pointer.y + container.top,
+              mapX,
+              mapY,
+            },
+          })
+        );
       }
     },
     [viewport]

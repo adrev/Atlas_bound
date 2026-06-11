@@ -1,14 +1,12 @@
-import { useState, useCallback, useRef } from 'react';
+import { useCallback, useRef, useState } from 'react';
+import { Group, Line, Rect } from 'react-konva';
+import type Konva from 'konva';
 import { useMapStore } from '../../stores/useMapStore';
+import { useSessionStore } from '../../stores/useSessionStore';
 import { emitFogReveal, emitFogHide } from '../../socket/emitters';
 import { theme } from '../../styles/theme';
 
 type BrushMode = 'reveal' | 'hide';
-
-interface FogBrushState {
-  brushSize: number;
-  brushMode: BrushMode;
-}
 
 /**
  * FogBrush renders DM controls for painting fog reveal/hide areas,
@@ -18,15 +16,13 @@ interface FogBrushState {
  * On mouse-up, the polygon is emitted to the server as a fog reveal or hide event.
  */
 export function FogBrush() {
-  const [state, setState] = useState<FogBrushState>({
-    brushSize: 70,
-    brushMode: 'reveal',
-  });
-
+  const isDM = useSessionStore((s) => s.isDM);
   const activeTool = useMapStore((s) => s.activeTool);
+  const fogBrushSize = useMapStore((s) => s.fogBrushSize);
   const isFogTool = activeTool === 'fog-reveal' || activeTool === 'fog-hide';
+  const brushMode: BrushMode = activeTool === 'fog-hide' ? 'hide' : 'reveal';
 
-  if (!isFogTool) return null;
+  if (!isDM || !isFogTool) return null;
 
   return (
     <div style={styles.container}>
@@ -37,10 +33,9 @@ export function FogBrush() {
         <button
           style={{
             ...styles.modeButton,
-            ...(state.brushMode === 'reveal' ? styles.modeActive : {}),
+            ...(brushMode === 'reveal' ? styles.modeActive : {}),
           }}
           onClick={() => {
-            setState((s) => ({ ...s, brushMode: 'reveal' }));
             useMapStore.getState().setTool('fog-reveal');
           }}
         >
@@ -49,10 +44,9 @@ export function FogBrush() {
         <button
           style={{
             ...styles.modeButton,
-            ...(state.brushMode === 'hide' ? styles.modeHideActive : {}),
+            ...(brushMode === 'hide' ? styles.modeHideActive : {}),
           }}
           onClick={() => {
-            setState((s) => ({ ...s, brushMode: 'hide' }));
             useMapStore.getState().setTool('fog-hide');
           }}
         >
@@ -62,26 +56,86 @@ export function FogBrush() {
 
       {/* Brush size slider */}
       <div style={styles.sliderSection}>
-        <label style={styles.label}>
-          Brush Size: {state.brushSize}px
-        </label>
+        <label style={styles.label}>Brush Size: {fogBrushSize}px</label>
         <input
           type="range"
           min={20}
           max={400}
           step={10}
-          value={state.brushSize}
-          onChange={(e) =>
-            setState((s) => ({ ...s, brushSize: Number(e.target.value) }))
-          }
+          value={fogBrushSize}
+          onChange={(e) => useMapStore.getState().setFogBrushSize(Number(e.target.value))}
           style={styles.slider}
         />
       </div>
 
       <div style={styles.hint}>
-        Click and drag on the map to {state.brushMode} fog.
+        Click and drag on the map to {brushMode === 'reveal' ? 'reveal' : 're-fog'} an area.
       </div>
+
+      <button
+        type="button"
+        style={styles.doneButton}
+        onClick={() => useMapStore.getState().setTool('select')}
+      >
+        Exit Fog Brush
+      </button>
     </div>
+  );
+}
+
+export function FogBrushLayer() {
+  const isDM = useSessionStore((s) => s.isDM);
+  const activeTool = useMapStore((s) => s.activeTool);
+  const currentMap = useMapStore((s) => s.currentMap);
+  const fogBrushSize = useMapStore((s) => s.fogBrushSize);
+  const { brushPoints, previewPoints, onMouseDown, onMouseMove, onMouseUp } =
+    useFogBrush(fogBrushSize);
+
+  const isFogTool = activeTool === 'fog-reveal' || activeTool === 'fog-hide';
+
+  if (!isDM) return null;
+
+  return (
+    <Group
+      listening={isFogTool}
+      onMouseDown={onMouseDown}
+      onMouseMove={onMouseMove}
+      onMouseUp={onMouseUp}
+      onMouseLeave={onMouseUp}
+    >
+      {isFogTool && currentMap && (
+        <Rect
+          x={0}
+          y={0}
+          width={currentMap.width}
+          height={currentMap.height}
+          fill="rgba(0,0,0,0.001)"
+          listening
+        />
+      )}
+      {previewPoints.length >= 6 && (
+        <Line
+          points={previewPoints}
+          closed
+          fill={activeTool === 'fog-hide' ? 'rgba(0,0,0,0.45)' : 'rgba(39,174,96,0.22)'}
+          stroke={activeTool === 'fog-hide' ? theme.danger : theme.heal}
+          strokeWidth={2}
+          dash={[10, 6]}
+          listening={false}
+        />
+      )}
+      {brushPoints.length >= 2 && (
+        <Line
+          points={brushPoints}
+          stroke={activeTool === 'fog-hide' ? theme.danger : theme.heal}
+          strokeWidth={Math.max(2, fogBrushSize)}
+          opacity={0.18}
+          lineCap="round"
+          lineJoin="round"
+          listening={false}
+        />
+      )}
+    </Group>
   );
 }
 
@@ -94,68 +148,82 @@ export function FogBrush() {
  */
 export function useFogBrush(brushSize: number) {
   const [brushPoints, setBrushPoints] = useState<number[]>([]);
+  const brushPointsRef = useRef<number[]>([]);
   const isDrawing = useRef(false);
   const activeTool = useMapStore((s) => s.activeTool);
 
   const onMouseDown = useCallback(
-    (e: { evt: MouseEvent; target: { getStage: () => { getPointerPosition: () => { x: number; y: number } | null } | null } }) => {
+    (e: Konva.KonvaEventObject<MouseEvent>) => {
       if (activeTool !== 'fog-reveal' && activeTool !== 'fog-hide') return;
-      const stage = e.target.getStage?.();
-      const pos = stage?.getPointerPosition();
+      const pos = getMapPointer(e);
       if (!pos) return;
 
+      e.evt.preventDefault();
       isDrawing.current = true;
-
-      // Create a square brush stamp centered on click position
-      const half = brushSize / 2;
-      const stampPoints = [
-        pos.x - half, pos.y - half,
-        pos.x + half, pos.y - half,
-        pos.x + half, pos.y + half,
-        pos.x - half, pos.y + half,
-      ];
-      setBrushPoints(stampPoints);
+      brushPointsRef.current = [pos.x, pos.y];
+      setBrushPoints(brushPointsRef.current);
     },
-    [activeTool, brushSize]
+    [activeTool]
   );
 
   const onMouseMove = useCallback(
-    (e: { evt: MouseEvent; target: { getStage: () => { getPointerPosition: () => { x: number; y: number } | null } | null } }) => {
+    (e: Konva.KonvaEventObject<MouseEvent>) => {
       if (!isDrawing.current) return;
       if (activeTool !== 'fog-reveal' && activeTool !== 'fog-hide') return;
-      const stage = e.target.getStage?.();
-      const pos = stage?.getPointerPosition();
+      const pos = getMapPointer(e);
       if (!pos) return;
 
-      // Accumulate points along the drag path to build a polygon
-      setBrushPoints((prev) => [...prev, pos.x, pos.y]);
+      e.evt.preventDefault();
+      const lastX = brushPointsRef.current[brushPointsRef.current.length - 2];
+      const lastY = brushPointsRef.current[brushPointsRef.current.length - 1];
+      if (lastX !== undefined && lastY !== undefined) {
+        const minStep = Math.max(8, brushSize / 4);
+        if (Math.hypot(pos.x - lastX, pos.y - lastY) < minStep) return;
+      }
+      brushPointsRef.current = [...brushPointsRef.current, pos.x, pos.y];
+      setBrushPoints(brushPointsRef.current);
     },
-    [activeTool]
+    [activeTool, brushSize]
   );
 
   const onMouseUp = useCallback(() => {
     if (!isDrawing.current) return;
     isDrawing.current = false;
 
-    if (brushPoints.length < 6) {
+    const points = brushPointsRef.current;
+    if (points.length < 2) {
+      brushPointsRef.current = [];
       setBrushPoints([]);
       return;
     }
 
-    // Build a convex hull-ish polygon from accumulated brush points
-    // For simplicity, send all accumulated points as the fog polygon
-    const points = computeBrushPolygon(brushPoints, brushSize);
+    const polygon = computeBrushPolygon(points, brushSize);
 
     if (activeTool === 'fog-reveal') {
-      emitFogReveal(points);
+      emitFogReveal(polygon);
     } else if (activeTool === 'fog-hide') {
-      emitFogHide(points);
+      emitFogHide(polygon);
     }
 
+    brushPointsRef.current = [];
     setBrushPoints([]);
-  }, [brushPoints, activeTool, brushSize]);
+  }, [activeTool, brushSize]);
 
-  return { brushPoints, onMouseDown, onMouseMove, onMouseUp };
+  return {
+    brushPoints,
+    previewPoints: computeBrushPolygon(brushPoints, brushSize),
+    onMouseDown,
+    onMouseMove,
+    onMouseUp,
+  };
+}
+
+function getMapPointer(e: Konva.KonvaEventObject<MouseEvent>): { x: number; y: number } | null {
+  const stage = e.target.getStage();
+  const pos = stage?.getPointerPosition();
+  if (!stage || !pos) return null;
+  const transform = stage.getAbsoluteTransform().copy().invert();
+  return transform.point(pos);
 }
 
 /**
@@ -215,10 +283,20 @@ function computeBrushPolygon(rawPoints: number[], brushSize: number): number[] {
 
 const styles: Record<string, React.CSSProperties> = {
   container: {
+    position: 'absolute',
+    top: 76,
+    right: 16,
+    zIndex: 30,
     display: 'flex',
     flexDirection: 'column',
     gap: 8,
-    padding: '8px 0',
+    width: 260,
+    padding: 12,
+    background: 'rgba(18, 14, 9, 0.92)',
+    border: `1px solid ${theme.gold.border}`,
+    borderRadius: theme.radius.md,
+    boxShadow: '0 8px 32px rgba(0,0,0,0.45)',
+    pointerEvents: 'auto',
   },
   header: {
     fontSize: 12,
@@ -270,5 +348,15 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 11,
     color: theme.text.muted,
     fontStyle: 'italic',
+  },
+  doneButton: {
+    padding: '7px 10px',
+    border: `1px solid ${theme.border.default}`,
+    borderRadius: theme.radius.sm,
+    background: theme.bg.hover,
+    color: theme.text.secondary,
+    cursor: 'pointer',
+    fontSize: 12,
+    fontFamily: theme.font.body,
   },
 };

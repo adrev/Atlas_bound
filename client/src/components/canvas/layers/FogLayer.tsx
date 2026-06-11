@@ -4,6 +4,8 @@ import { useMapStore } from '../../../stores/useMapStore';
 import { useSessionStore } from '../../../stores/useSessionStore';
 import { useCharacterStore } from '../../../stores/useCharacterStore';
 import type { AmbientLight, Token } from '@dnd-vtt/shared';
+import type Konva from 'konva';
+import { splitManualFogRegions } from '../../../utils/fogRegions';
 
 interface FogLayerProps {
   mapWidth: number;
@@ -19,7 +21,7 @@ interface FogLayerProps {
  */
 function resolveAmbient(
   tier: AmbientLight | undefined,
-  opacity: number | undefined,
+  opacity: number | undefined
 ): { tier: 'bright' | 'dim' | 'dark'; alpha: number } {
   if (tier === 'custom') {
     const a = typeof opacity === 'number' ? Math.max(0, Math.min(1, opacity)) : 0;
@@ -48,7 +50,7 @@ function resolveAmbient(
 function darkvisionReachPx(
   tier: 'bright' | 'dim' | 'dark',
   darkvisionFt: number,
-  gridSize: number,
+  gridSize: number
 ): number {
   if (tier !== 'dark') return 0;
   return (darkvisionFt / 5) * gridSize;
@@ -62,11 +64,14 @@ function darkvisionReachPx(
  */
 function resolveTokenSenses(
   token: Token,
-  char: { senses?: unknown } | null | undefined,
+  char: { senses?: unknown } | null | undefined
 ): { darkvision: number; blindsight: number; truesight: number; tremorsense: number } {
   let fromChar = { darkvision: 0, blindsight: 0, truesight: 0, tremorsense: 0 };
   if (char?.senses) {
-    const raw = typeof char.senses === 'string' ? tryParse(char.senses) : (char.senses as Record<string, unknown>);
+    const raw =
+      typeof char.senses === 'string'
+        ? tryParse(char.senses)
+        : (char.senses as Record<string, unknown>);
     if (raw && typeof raw === 'object') {
       fromChar = {
         darkvision: toNumber(raw.darkvision),
@@ -87,7 +92,11 @@ function resolveTokenSenses(
 }
 
 function tryParse(s: string): Record<string, unknown> | null {
-  try { return JSON.parse(s); } catch { return null; }
+  try {
+    return JSON.parse(s);
+  } catch {
+    return null;
+  }
 }
 
 function toNumber(v: unknown): number {
@@ -120,7 +129,12 @@ export function FogLayer({ mapWidth, mapHeight }: FogLayerProps) {
   const ambientLight = useMapStore((s) => s.currentMap?.ambientLight) as AmbientLight | undefined;
   const ambientOpacity = useMapStore((s) => s.currentMap?.ambientOpacity);
   const fogPreviewCharacterId = useMapStore((s) => s.fogPreviewCharacterId);
+  const manualFogRegions = useMapStore((s) => s.fogRegions);
   const ambient = resolveAmbient(ambientLight, ambientOpacity);
+  const { revealRegions, hideRegions } = useMemo(
+    () => splitManualFogRegions(manualFogRegions),
+    [manualFogRegions]
+  );
 
   // Find all tokens owned by this player (heroes). When the DM has
   // opted into "see player fog" mode, we treat every PC token (any
@@ -139,16 +153,17 @@ export function FogLayer({ mapWidth, mapHeight }: FogLayerProps) {
   // These reveal fog around themselves regardless of ownership.
   const litTokens = useMemo(() => {
     return Object.values(tokens).filter(
-      (t) => t.visible && t.hasLight && (t.lightDimRadius > 0 || t.lightRadius > 0),
+      (t) => t.visible && t.hasLight && (t.lightDimRadius > 0 || t.lightRadius > 0)
     );
   }, [tokens]);
 
   // Find the token being previewed (DM-only feature)
   const previewToken = useMemo(() => {
     if (!fogPreviewCharacterId) return null;
-    return Object.values(tokens).find(
-      (t) => t.characterId === fogPreviewCharacterId && t.visible,
-    ) ?? null;
+    return (
+      Object.values(tokens).find((t) => t.characterId === fogPreviewCharacterId && t.visible) ??
+      null
+    );
   }, [tokens, fogPreviewCharacterId]);
 
   // Vision radius in pixels. DM configurable via the session
@@ -191,7 +206,9 @@ export function FogLayer({ mapWidth, mapHeight }: FogLayerProps) {
   //     obscurement — fog represents "you can't see" rather than "you
   //     haven't explored"). This lets a DM drop the party into a dark
   //     cavern without needing to also toggle the fog setting.
-  if (!enableFog && ambient.tier === 'bright') return null;
+  const shouldRenderBaseFog = enableFog || ambient.tier !== 'bright' || revealRegions.length > 0;
+  const hasHidePatches = hideRegions.length > 0;
+  if (!shouldRenderBaseFog && !hasHidePatches) return null;
 
   // Preset alpha from the mechanical ambient tier. DM viewing player
   // fog gets a lighter overlay so the map underneath stays readable —
@@ -201,20 +218,18 @@ export function FogLayer({ mapWidth, mapHeight }: FogLayerProps) {
   // 0.85 so the exploration mask still reads as pitch-black outside
   // vision radius.
   const presetAlpha = ambient.tier === 'bright' ? 0.85 : ambient.alpha;
-  const fogAlpha = isDM && dmSeesPlayerFog
-    ? Math.min(presetAlpha, 0.45)
-    : presetAlpha;
+  const fogAlpha = isDM && dmSeesPlayerFog ? Math.min(presetAlpha, 0.45) : presetAlpha;
 
   return (
     <Group listening={false}>
       {/* Base fog: covers entire map */}
-      <Rect
-        x={0}
-        y={0}
-        width={mapWidth}
-        height={mapHeight}
-        fill={`rgba(0, 0, 0, ${fogAlpha})`}
-      />
+      {shouldRenderBaseFog && (
+        <Rect x={0} y={0} width={mapWidth} height={mapHeight} fill={`rgba(0, 0, 0, ${fogAlpha})`} />
+      )}
+
+      {revealRegions.map((region, idx) => (
+        <ManualFogCutout key={`manual-reveal-${idx}`} points={region.points} />
+      ))}
 
       {/* Cut out vision circles around each hero token. Radius math:
           - In BRIGHT / DIM ambient: regular sight works; darkvision
@@ -238,9 +253,10 @@ export function FogLayer({ mapWidth, mapHeight }: FogLayerProps) {
         const bsPx = (senses.blindsight / 5) * gridSize;
         const tsPx = (senses.truesight / 5) * gridSize;
         const specialPx = Math.max(dvPx, bsPx, tsPx);
-        const radius = ambient.tier === 'dark'
-          ? Math.max(specialPx, visionRadius)
-          : Math.max(visionRadius, bsPx, tsPx);
+        const radius =
+          ambient.tier === 'dark'
+            ? Math.max(specialPx, visionRadius)
+            : Math.max(visionRadius, bsPx, tsPx);
         return (
           <VisionCutout
             key={token.id}
@@ -264,6 +280,10 @@ export function FogLayer({ mapWidth, mapHeight }: FogLayerProps) {
         />
       ))}
 
+      {hideRegions.map((region, idx) => (
+        <ManualFogPatch key={`manual-hide-${idx}`} points={region.points} alpha={fogAlpha} />
+      ))}
+
       {/* If player has no tokens placed yet, show a message-like dim overlay */}
       {heroTokens.length === 0 && litTokens.length === 0 && (
         <Rect
@@ -279,6 +299,49 @@ export function FogLayer({ mapWidth, mapHeight }: FogLayerProps) {
   );
 }
 
+type PolygonPathContext = Pick<
+  CanvasRenderingContext2D,
+  'beginPath' | 'moveTo' | 'lineTo' | 'closePath'
+>;
+
+function drawPolygon(ctx: PolygonPathContext, points: number[]) {
+  if (points.length < 6) return;
+  ctx.beginPath();
+  ctx.moveTo(points[0], points[1]);
+  for (let i = 2; i < points.length; i += 2) {
+    ctx.lineTo(points[i], points[i + 1]);
+  }
+  ctx.closePath();
+}
+
+function ManualFogCutout({ points }: { points: number[] }) {
+  return (
+    <Shape
+      sceneFunc={(ctx) => {
+        ctx.globalCompositeOperation = 'destination-out';
+        drawPolygon(ctx, points);
+        ctx.fillStyle = 'rgba(255, 255, 255, 1)';
+        ctx.fill();
+        ctx.globalCompositeOperation = 'source-over';
+      }}
+      listening={false}
+    />
+  );
+}
+
+function ManualFogPatch({ points, alpha }: { points: number[]; alpha: number }) {
+  return (
+    <Shape
+      sceneFunc={(ctx) => {
+        drawPolygon(ctx, points);
+        ctx.fillStyle = `rgba(0, 0, 0, ${alpha})`;
+        ctx.fill();
+      }}
+      listening={false}
+    />
+  );
+}
+
 /**
  * Circular vision cutout using destination-out compositing.
  * Creates a smooth radial fade from clear center to foggy edges.
@@ -291,10 +354,10 @@ function VisionCutout({ x, y, radius }: { x: number; y: number; radius: number }
 
         // Create radial gradient for soft vision edge
         const gradient = ctx.createRadialGradient(x, y, 0, x, y, radius);
-        gradient.addColorStop(0, 'rgba(255, 255, 255, 1)');     // fully clear at center
-        gradient.addColorStop(0.6, 'rgba(255, 255, 255, 1)');   // still clear
+        gradient.addColorStop(0, 'rgba(255, 255, 255, 1)'); // fully clear at center
+        gradient.addColorStop(0.6, 'rgba(255, 255, 255, 1)'); // still clear
         gradient.addColorStop(0.85, 'rgba(255, 255, 255, 0.5)'); // dim light zone
-        gradient.addColorStop(1, 'rgba(255, 255, 255, 0)');      // fully fogged at edge
+        gradient.addColorStop(1, 'rgba(255, 255, 255, 0)'); // fully fogged at edge
 
         ctx.beginPath();
         ctx.arc(x, y, radius, 0, Math.PI * 2);
@@ -313,7 +376,6 @@ function VisionCutout({ x, y, radius }: { x: number; y: number; radius: number }
 // player character can see. The area outside the vision radius is
 // darkened; the vision circle has a pulsing gold border.
 
-const GOLD_RING = 'rgba(212, 168, 67, 0.7)';
 const GOLD_FILL = 'rgba(212, 168, 67, 0.06)';
 const DARK_OVERLAY = 'rgba(0, 0, 0, 0.45)';
 
@@ -332,7 +394,7 @@ function VisionPreviewOverlay({
 }) {
   // Animate a pulsing ring using a simple frame counter.
   // We track a Konva Shape ref and use Konva's built-in animation.
-  const shapeRef = useRef<any>(null);
+  const shapeRef = useRef<Konva.Shape | null>(null);
 
   return (
     <>
