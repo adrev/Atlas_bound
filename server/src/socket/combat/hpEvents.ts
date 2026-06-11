@@ -80,6 +80,9 @@ export function registerCombatHp(io: Server, socket: Socket): void {
           hitPoints: result.hp,
           tempHitPoints: result.tempHp,
         };
+        if (result.concentrationDropped) {
+          changes.concentratingOn = null;
+        }
         if (result.autoDeathSaveFailure) {
           changes.deathSaves = result.autoDeathSaveFailure;
         }
@@ -128,6 +131,16 @@ export function registerCombatHp(io: Server, socket: Socket): void {
           emitToTokenViewers(io, ctx.room, freedId, 'map:token-updated', {
             tokenId: freedId,
             changes: tokenConditionChanges(ctx.room, freedId),
+          });
+        }
+      }
+      if (result.concentrationClearedTokenIds) {
+        for (const affectedId of result.concentrationClearedTokenIds) {
+          const affectedToken = ctx.room.tokens.get(affectedId);
+          if (!affectedToken) continue;
+          emitToTokenViewers(io, ctx.room, affectedId, 'map:token-updated', {
+            tokenId: affectedId,
+            changes: tokenConditionChanges(ctx.room, affectedId),
           });
         }
       }

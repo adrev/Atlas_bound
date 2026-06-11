@@ -28,10 +28,11 @@ function dropsConcentrationOnApply(conditionName: string): boolean {
 }
 
 /**
- * Returns tokenIds of creatures whose `grappled` condition was auto-
- * released because the grappler became incapacitated. Callers should
+ * Returns tokenIds whose visible condition state changed as a side
+ * effect of the applied condition. For incapacitating conditions this
+ * includes released grapples and caster-linked ongoing effects cleared
+ * because the token can no longer maintain them. Callers should
  * broadcast `map:token-updated` for each so clients repaint badges.
- * Empty array when no side-effect fired.
  */
 export function applyConditionWithMeta(
   sessionId: string,
@@ -72,18 +73,12 @@ export function applyConditionWithMeta(
   // shared `dropsConcentration` flag so adding a new condition that
   // breaks focus needs only a data edit.
   if (dropsConcentrationOnApply(meta.name)) {
-    if (token.characterId) {
-      pool
-        .query(
-          'UPDATE characters SET concentrating_on = NULL WHERE id = $1 AND concentrating_on IS NOT NULL',
-          [token.characterId]
-        )
-        .catch((err) => console.warn('[applyConditionWithMeta] concentration drop failed:', err));
-    }
-    // Auto-release any grapple this token was holding. RAW: "the
-    // grappled condition ends if the grappler is incapacitated."
-    for (const id of releaseGrapplesByGrappler(sessionId, tokenId)) {
+    const cleanup = dropConcentrationAndHeldEffects(sessionId, tokenId);
+    for (const id of cleanup.releasedGrappleTokenIds) {
       freedTokenIds.push(id);
+    }
+    for (const { tokenId: affectedTokenId } of cleanup.clearedConcentrationConditions) {
+      if (!freedTokenIds.includes(affectedTokenId)) freedTokenIds.push(affectedTokenId);
     }
   }
 
@@ -434,21 +429,12 @@ export function releaseGrapplesByGrappler(sessionId: string, grapplerTokenId: st
   const room = getRoom(sessionId);
   if (!room) return [];
   const freed: string[] = [];
-  for (const [otherTokenId, otherMeta] of room.conditionMeta.entries()) {
+  for (const [otherTokenId, otherMeta] of Array.from(room.conditionMeta.entries())) {
     const grappleMeta = otherMeta.get('grappled');
     if (!grappleMeta || grappleMeta.casterTokenId !== grapplerTokenId) continue;
     const other = room.tokens.get(otherTokenId);
     if (!other) continue;
-    other.conditions = (other.conditions as string[]).filter(
-      (c) => c.toLowerCase() !== 'grappled'
-    ) as never;
-    otherMeta.delete('grappled');
-    pool
-      .query('UPDATE tokens SET conditions = $1 WHERE id = $2', [
-        JSON.stringify(other.conditions),
-        otherTokenId,
-      ])
-      .catch((e) => console.warn('[releaseGrapplesByGrappler] DB update failed:', e));
+    removeCondition(sessionId, otherTokenId, 'grappled');
     freed.push(otherTokenId);
   }
   return freed;
@@ -457,15 +443,19 @@ export function releaseGrapplesByGrappler(sessionId: string, grapplerTokenId: st
 export function clearConcentrationConditions(
   sessionId: string,
   casterTokenId: string,
-  spellName: string
+  spellName?: string
 ): { tokenId: string; removed: string[] }[] {
   const room = getRoom(sessionId);
   if (!room) return [];
+  const normalizedSpellName = spellName?.toLowerCase();
   const results: { tokenId: string; removed: string[] }[] = [];
   for (const [tokenId, metaMap] of room.conditionMeta.entries()) {
     const removed: string[] = [];
     for (const [name, meta] of Array.from(metaMap.entries())) {
-      if (meta.casterTokenId === casterTokenId && meta.source === spellName) {
+      if (name.toLowerCase() === 'grappled') continue;
+      const sourceMatches =
+        normalizedSpellName === undefined || meta.source.toLowerCase() === normalizedSpellName;
+      if (meta.casterTokenId === casterTokenId && sourceMatches) {
         removed.push(name);
         removeCondition(sessionId, tokenId, name);
       }
@@ -473,4 +463,50 @@ export function clearConcentrationConditions(
     if (removed.length > 0) results.push({ tokenId, removed });
   }
   return results;
+}
+
+export interface ConcentrationCleanupResult {
+  clearedConcentrationConditions: { tokenId: string; removed: string[] }[];
+  releasedGrappleTokenIds: string[];
+  characterId: string | null;
+  concentrationPersistPromise?: Promise<unknown>;
+}
+
+/**
+ * Canonical cleanup for "this token can no longer maintain effects":
+ * nulls the character's concentrating_on field, clears every condition
+ * sourced from that caster's concentration, and releases grapples held
+ * by the token. Used when a caster drops to 0 HP, is incapacitated, or
+ * is removed from the map mid-combat.
+ */
+export function dropConcentrationAndHeldEffects(
+  sessionId: string,
+  casterTokenId: string,
+  spellName?: string
+): ConcentrationCleanupResult {
+  const room = getRoom(sessionId);
+  const token = room?.tokens.get(casterTokenId);
+  const characterId = token?.characterId ?? null;
+  let concentrationPersistPromise: Promise<unknown> | undefined;
+
+  if (characterId) {
+    concentrationPersistPromise = pool.query(
+      'UPDATE characters SET concentrating_on = NULL WHERE id = $1 AND concentrating_on IS NOT NULL',
+      [characterId]
+    );
+    concentrationPersistPromise.catch((err) =>
+      console.warn('[dropConcentrationAndHeldEffects] concentration drop failed:', err)
+    );
+  }
+
+  return {
+    clearedConcentrationConditions: clearConcentrationConditions(
+      sessionId,
+      casterTokenId,
+      spellName
+    ),
+    releasedGrappleTokenIds: releaseGrapplesByGrappler(sessionId, casterTokenId),
+    characterId,
+    concentrationPersistPromise,
+  };
 }

@@ -18,6 +18,8 @@ import { safeHandler } from '../utils/socketHelpers.js';
 import { rowToToken } from '../utils/tokenMapper.js';
 import { tokenVisibleToPlayer } from '../utils/tokenVisibility.js';
 import { emitToTokenViewers } from '../utils/combatBroadcast.js';
+import { tokenConditionChanges } from '../utils/conditionSources.js';
+import { emitCombatStateSync } from '../utils/combatStateVisibility.js';
 
 function rejectTokenMove(
   io: Server,
@@ -454,8 +456,24 @@ export function registerTokenEvents(io: Server, socket: Socket): void {
       return;
     }
 
+    const cleanup = CombatService.cleanupRemovedTokenFromCombat(ctx.room.sessionId, tokenId);
+    for (const affectedTokenId of [
+      ...cleanup.releasedGrappleTokenIds,
+      ...cleanup.concentrationClearedTokenIds,
+    ]) {
+      if (!ctx.room.tokens.has(affectedTokenId)) continue;
+      emitToTokenViewers(io, ctx.room, affectedTokenId, 'map:token-updated', {
+        tokenId: affectedTokenId,
+        changes: tokenConditionChanges(ctx.room, affectedTokenId),
+      });
+    }
+
     if (inMem) ctx.room.tokens.delete(tokenId);
     await pool.query('DELETE FROM tokens WHERE id = $1', [tokenId]);
+
+    if (cleanup.combatStateChanged) {
+      emitCombatStateSync(io, ctx.room);
+    }
 
     // Broadcast removal only to sockets rendering this map. The
     // `mapId` in the payload lets map-scoped UI decide whether to
