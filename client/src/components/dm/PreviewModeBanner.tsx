@@ -6,9 +6,7 @@ import { useMapStore } from '../../stores/useMapStore';
 import { useSessionStore } from '../../stores/useSessionStore';
 import { useCharacterStore } from '../../stores/useCharacterStore';
 import { useSceneStore } from '../../stores/useSceneStore';
-import {
-  emitPreviewLoadMap, emitActivateMapForPlayers, emitTokenAdd,
-} from '../../socket/emitters';
+import { emitPreviewLoadMap, emitActivateMapForPlayers } from '../../socket/emitters';
 import { Button } from '../ui';
 
 const EMPTY_STAGED: never[] = [];
@@ -35,7 +33,7 @@ export function PreviewModeBanner() {
 
   const playerMapSummary = useMemo(
     () => maps.find((m) => m.id === playerMapId) ?? null,
-    [maps, playerMapId],
+    [maps, playerMapId]
   );
 
   // Tracks the currentMap.id the DM manually dismissed the banner
@@ -93,7 +91,7 @@ export function PreviewModeBanner() {
     const existing = useMapStore.getState().stagedHeroes[mapId] ?? [];
     // Offset each new hero so they don't stack on top of each other
     const offset = existing.length * gridSize;
-    const x = Math.round(currentMap.width / 2) + offset - (existing.length * gridSize / 2);
+    const x = Math.round(currentMap.width / 2) + offset - (existing.length * gridSize) / 2;
     const y = Math.round(currentMap.height / 2);
 
     useMapStore.getState().stageHeroes(mapId, [
@@ -102,7 +100,8 @@ export function PreviewModeBanner() {
         characterId: player.characterId,
         name: char?.name ?? player.displayName,
         portraitUrl: char?.portraitUrl ?? null,
-        x, y,
+        x,
+        y,
         ownerUserId: player.userId,
       },
     ]);
@@ -120,16 +119,28 @@ export function PreviewModeBanner() {
     const allChars = useCharacterStore.getState().allCharacters;
 
     // Build a characterId -> player lookup for online status
-    const charToPlayer: Record<string, { userId: string; displayName: string; connected: boolean }> = {};
+    const charToPlayer: Record<
+      string,
+      { userId: string; displayName: string; connected: boolean }
+    > = {};
     for (const p of players) {
-      if (p.characterId) charToPlayer[p.characterId] = { userId: p.userId, displayName: p.displayName, connected: p.connected };
+      if (p.characterId)
+        charToPlayer[p.characterId] = {
+          userId: p.userId,
+          displayName: p.displayName,
+          connected: p.connected,
+        };
     }
 
     // Collect from both sources, dedup by characterId
     const seen = new Set<string>();
     const result: Array<{
-      userId: string; characterId: string; displayName: string;
-      characterName: string; portraitUrl: string | null; connected: boolean;
+      userId: string;
+      characterId: string;
+      displayName: string;
+      characterName: string;
+      portraitUrl: string | null;
+      connected: boolean;
     }> = [];
 
     // Source 1: session players with characters
@@ -149,7 +160,7 @@ export function PreviewModeBanner() {
 
     // Source 2: all non-NPC characters in the store not already covered
     for (const [id, char] of Object.entries(allChars)) {
-      if (!char || (char as any).userId === 'npc' || seen.has(id)) continue;
+      if (!char || char.userId === 'npc' || seen.has(id)) continue;
       seen.add(id);
       const player = charToPlayer[id];
       result.push({
@@ -239,9 +250,7 @@ export function PreviewModeBanner() {
         }}
       >
         Viewing{' '}
-        <strong style={{ color: theme.gold.primary, fontWeight: 600 }}>
-          {currentMap.name}
-        </strong>
+        <strong style={{ color: theme.gold.primary, fontWeight: 600 }}>{currentMap.name}</strong>
         {' · '}
         Players on{' '}
         <strong style={{ color: theme.text.primary, fontWeight: 600 }}>
@@ -249,14 +258,23 @@ export function PreviewModeBanner() {
         </strong>
         {playerMapSummary && (
           <span style={{ color: theme.text.muted, fontWeight: 400 }}>
-            {' '}({playerMapSummary.tokenCount} token
+            {' '}
+            ({playerMapSummary.tokenCount} token
             {playerMapSummary.tokenCount !== 1 ? 's' : ''})
           </span>
         )}
       </span>
 
       {/* Actions */}
-      <div style={{ display: 'flex', gap: theme.space.sm, flexShrink: 0, marginLeft: theme.space.sm, position: 'relative' }}>
+      <div
+        style={{
+          display: 'flex',
+          gap: theme.space.sm,
+          flexShrink: 0,
+          marginLeft: theme.space.sm,
+          position: 'relative',
+        }}
+      >
         {playerMapId && (
           <Button variant="ghost" size="sm" onClick={handleJumpToPlayers}>
             Jump to Players
@@ -274,132 +292,194 @@ export function PreviewModeBanner() {
             {hasStaged ? `Staged (${stagedHeroes.length})` : 'Stage Heroes'}
           </Button>
 
-          {showHeroPicker && (() => {
-            const allHeroes = getStageable();
-            const stagedIds = new Set(stagedHeroes.map((h) => h.characterId));
-            // Show staged heroes first, then un-staged
-            const sorted = [
-              ...allHeroes.filter((h) => stagedIds.has(h.characterId)),
-              ...allHeroes.filter((h) => !stagedIds.has(h.characterId)),
-            ];
-            return (
-              <div
-                ref={pickerRef}
-                style={{
-                  position: 'absolute',
-                  top: '100%',
-                  right: 0,
-                  marginTop: 6,
-                  background: theme.bg.card,
-                  border: `1px solid ${theme.gold.border}`,
-                  borderRadius: theme.radius.md,
-                  boxShadow: theme.shadow.lg,
-                  minWidth: 240,
-                  zIndex: 100,
-                  overflow: 'hidden',
-                  whiteSpace: 'normal',
-                }}
-              >
-                <div style={{
-                  padding: '8px 12px',
-                  borderBottom: `1px solid ${theme.border.default}`,
-                  fontSize: 10,
-                  fontWeight: 700,
-                  color: theme.gold.dim,
-                  textTransform: 'uppercase',
-                  letterSpacing: '0.1em',
-                }}>
-                  Click to stage / un-stage heroes
-                </div>
-                {sorted.map((p) => {
-                  const isStaged = stagedIds.has(p.characterId);
-                  return (
-                    <button
-                      key={p.characterId}
-                      onClick={() => {
-                        if (isStaged) {
-                          // Un-stage: remove from stagedHeroes
-                          const remaining = stagedHeroes.filter((h) => h.characterId !== p.characterId);
-                          useMapStore.getState().stageHeroes(currentMap.id, remaining);
-                        } else {
-                          stageHero(p);
-                        }
-                      }}
-                      style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: 10,
-                        width: '100%',
-                        padding: '8px 12px',
-                        background: isStaged ? 'rgba(232,196,85,0.08)' : 'transparent',
-                        border: 'none',
-                        borderBottom: `1px solid ${theme.border.default}`,
-                        color: theme.text.primary,
-                        cursor: 'pointer',
-                        textAlign: 'left',
-                        fontFamily: theme.font.body,
-                        fontSize: 12,
-                      }}
-                      onMouseEnter={(e) => { e.currentTarget.style.background = isStaged ? 'rgba(232,196,85,0.15)' : theme.bg.hover; }}
-                      onMouseLeave={(e) => { e.currentTarget.style.background = isStaged ? 'rgba(232,196,85,0.08)' : 'transparent'; }}
-                    >
-                      {/* Staged indicator */}
-                      <span style={{
-                        width: 18, height: 18, borderRadius: '50%',
-                        display: 'flex', alignItems: 'center', justifyContent: 'center',
-                        fontSize: 11, flexShrink: 0,
-                        background: isStaged ? theme.gold.bg : theme.bg.elevated,
-                        border: `1px solid ${isStaged ? theme.gold.primary : theme.border.default}`,
-                        color: isStaged ? theme.gold.primary : theme.text.muted,
-                      }}>
-                        {isStaged ? '✓' : ''}
-                      </span>
-                      {p.portraitUrl ? (
-                        <img src={p.portraitUrl} alt="" style={{
-                          width: 28, height: 28, borderRadius: '50%', objectFit: 'cover',
-                          border: `1px solid ${p.connected ? theme.state.success : theme.border.default}`,
-                          flexShrink: 0, opacity: isStaged ? 1 : 0.6,
-                        }} />
-                      ) : (
-                        <div style={{
-                          width: 28, height: 28, borderRadius: '50%',
-                          background: theme.bg.elevated,
-                          border: `1px solid ${theme.border.default}`,
-                          display: 'flex', alignItems: 'center', justifyContent: 'center',
-                          fontSize: 12, fontWeight: 700, flexShrink: 0, opacity: isStaged ? 1 : 0.6,
-                        }}>{p.characterName[0]}</div>
-                      )}
-                      <div style={{ flex: 1 }}>
-                        <div style={{ fontWeight: 600, color: isStaged ? theme.gold.primary : theme.text.primary }}>
-                          {p.characterName}
-                          {isStaged && <span style={{ fontSize: 9, color: theme.state.success, marginLeft: 6 }}>STAGED</span>}
-                        </div>
-                        <div style={{ fontSize: 9, color: p.connected ? theme.state.success : theme.text.muted }}>
-                          {p.connected ? 'Online' : 'Offline'} · {p.displayName}
-                          {!isStaged && ' · will land at center'}
-                        </div>
-                      </div>
-                    </button>
-                  );
-                })}
-                {hasStaged && (
-                  <button
-                    onClick={() => { useMapStore.getState().clearStagedHeroes(currentMap.id); }}
+          {showHeroPicker &&
+            (() => {
+              const allHeroes = getStageable();
+              const stagedIds = new Set(stagedHeroes.map((h) => h.characterId));
+              // Show staged heroes first, then un-staged
+              const sorted = [
+                ...allHeroes.filter((h) => stagedIds.has(h.characterId)),
+                ...allHeroes.filter((h) => !stagedIds.has(h.characterId)),
+              ];
+              return (
+                <div
+                  ref={pickerRef}
+                  style={{
+                    position: 'absolute',
+                    top: '100%',
+                    right: 0,
+                    marginTop: 6,
+                    background: theme.bg.card,
+                    border: `1px solid ${theme.gold.border}`,
+                    borderRadius: theme.radius.md,
+                    boxShadow: theme.shadow.lg,
+                    minWidth: 240,
+                    zIndex: 100,
+                    overflow: 'hidden',
+                    whiteSpace: 'normal',
+                  }}
+                >
+                  <div
                     style={{
-                      width: '100%', padding: '8px 12px',
-                      background: theme.state.dangerBg,
-                      border: 'none', borderTop: `1px solid ${theme.border.default}`,
-                      color: theme.state.danger,
-                      fontSize: 11, fontWeight: 600, cursor: 'pointer',
-                      fontFamily: theme.font.body, textAlign: 'center',
+                      padding: '8px 12px',
+                      borderBottom: `1px solid ${theme.border.default}`,
+                      fontSize: 10,
+                      fontWeight: 700,
+                      color: theme.gold.dim,
+                      textTransform: 'uppercase',
+                      letterSpacing: '0.1em',
                     }}
                   >
-                    Clear All Staged
-                  </button>
-                )}
-              </div>
-            );
-          })()}
+                    Click to stage / un-stage heroes
+                  </div>
+                  {sorted.map((p) => {
+                    const isStaged = stagedIds.has(p.characterId);
+                    return (
+                      <button
+                        key={p.characterId}
+                        onClick={() => {
+                          if (isStaged) {
+                            // Un-stage: remove from stagedHeroes
+                            const remaining = stagedHeroes.filter(
+                              (h) => h.characterId !== p.characterId
+                            );
+                            useMapStore.getState().stageHeroes(currentMap.id, remaining);
+                          } else {
+                            stageHero(p);
+                          }
+                        }}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: 10,
+                          width: '100%',
+                          padding: '8px 12px',
+                          background: isStaged ? 'rgba(232,196,85,0.08)' : 'transparent',
+                          border: 'none',
+                          borderBottom: `1px solid ${theme.border.default}`,
+                          color: theme.text.primary,
+                          cursor: 'pointer',
+                          textAlign: 'left',
+                          fontFamily: theme.font.body,
+                          fontSize: 12,
+                        }}
+                        onMouseEnter={(e) => {
+                          e.currentTarget.style.background = isStaged
+                            ? 'rgba(232,196,85,0.15)'
+                            : theme.bg.hover;
+                        }}
+                        onMouseLeave={(e) => {
+                          e.currentTarget.style.background = isStaged
+                            ? 'rgba(232,196,85,0.08)'
+                            : 'transparent';
+                        }}
+                      >
+                        {/* Staged indicator */}
+                        <span
+                          style={{
+                            width: 18,
+                            height: 18,
+                            borderRadius: '50%',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            fontSize: 11,
+                            flexShrink: 0,
+                            background: isStaged ? theme.gold.bg : theme.bg.elevated,
+                            border: `1px solid ${isStaged ? theme.gold.primary : theme.border.default}`,
+                            color: isStaged ? theme.gold.primary : theme.text.muted,
+                          }}
+                        >
+                          {isStaged ? '✓' : ''}
+                        </span>
+                        {p.portraitUrl ? (
+                          <img
+                            src={p.portraitUrl}
+                            alt=""
+                            style={{
+                              width: 28,
+                              height: 28,
+                              borderRadius: '50%',
+                              objectFit: 'cover',
+                              border: `1px solid ${p.connected ? theme.state.success : theme.border.default}`,
+                              flexShrink: 0,
+                              opacity: isStaged ? 1 : 0.6,
+                            }}
+                          />
+                        ) : (
+                          <div
+                            style={{
+                              width: 28,
+                              height: 28,
+                              borderRadius: '50%',
+                              background: theme.bg.elevated,
+                              border: `1px solid ${theme.border.default}`,
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              fontSize: 12,
+                              fontWeight: 700,
+                              flexShrink: 0,
+                              opacity: isStaged ? 1 : 0.6,
+                            }}
+                          >
+                            {p.characterName[0]}
+                          </div>
+                        )}
+                        <div style={{ flex: 1 }}>
+                          <div
+                            style={{
+                              fontWeight: 600,
+                              color: isStaged ? theme.gold.primary : theme.text.primary,
+                            }}
+                          >
+                            {p.characterName}
+                            {isStaged && (
+                              <span
+                                style={{ fontSize: 9, color: theme.state.success, marginLeft: 6 }}
+                              >
+                                STAGED
+                              </span>
+                            )}
+                          </div>
+                          <div
+                            style={{
+                              fontSize: 9,
+                              color: p.connected ? theme.state.success : theme.text.muted,
+                            }}
+                          >
+                            {p.connected ? 'Online' : 'Offline'} · {p.displayName}
+                            {!isStaged && ' · will land at center'}
+                          </div>
+                        </div>
+                      </button>
+                    );
+                  })}
+                  {hasStaged && (
+                    <button
+                      onClick={() => {
+                        useMapStore.getState().clearStagedHeroes(currentMap.id);
+                      }}
+                      style={{
+                        width: '100%',
+                        padding: '8px 12px',
+                        background: theme.state.dangerBg,
+                        border: 'none',
+                        borderTop: `1px solid ${theme.border.default}`,
+                        color: theme.state.danger,
+                        fontSize: 11,
+                        fontWeight: 600,
+                        cursor: 'pointer',
+                        fontFamily: theme.font.body,
+                        textAlign: 'center',
+                      }}
+                    >
+                      Clear All Staged
+                    </button>
+                  )}
+                </div>
+              );
+            })()}
         </div>
 
         <Button variant="primary" size="sm" onClick={handleMovePlayersHere}>

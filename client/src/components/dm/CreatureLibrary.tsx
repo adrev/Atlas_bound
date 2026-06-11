@@ -4,8 +4,13 @@ import { useSessionStore } from '../../stores/useSessionStore';
 import { emitTokenAdd } from '../../socket/emitters';
 import { theme } from '../../styles/theme';
 import type { CompendiumMonster, Condition } from '@dnd-vtt/shared';
-import { getCreatureImageUrl, getCreatureImageSvgUrl, getCreatureIconUrl } from '../../utils/compendiumIcons';
-import { splitCommaList, accentForSense, accentForLanguage, SENSE_LANG_CHIP_BASE } from '../../utils/senseLanguageChips';
+import { getCreatureImageUrl, getCreatureImageSvgUrl } from '../../utils/compendiumIcons';
+import {
+  splitCommaList,
+  accentForSense,
+  accentForLanguage,
+  SENSE_LANG_CHIP_BASE,
+} from '../../utils/senseLanguageChips';
 
 // --- Helpers ---
 
@@ -58,21 +63,36 @@ function formatCR(cr: string | number): string {
 
 // Size -> token grid size mapping
 const SIZE_MAP: Record<string, number> = {
-  Tiny: 0.5, tiny: 0.5,
-  Small: 1, small: 1,
-  Medium: 1, medium: 1,
-  Large: 2, large: 2,
-  Huge: 3, huge: 3,
-  Gargantuan: 4, gargantuan: 4,
+  Tiny: 0.5,
+  tiny: 0.5,
+  Small: 1,
+  small: 1,
+  Medium: 1,
+  medium: 1,
+  Large: 2,
+  large: 2,
+  Huge: 3,
+  huge: 3,
+  Gargantuan: 4,
+  gargantuan: 4,
 };
 
 // Type color for visual variety
 const TYPE_COLORS: Record<string, string> = {
-  Aberration: '#7b2d8e', Beast: '#6b8e23', Celestial: '#f0d866',
-  Construct: '#8e8e8e', Dragon: '#c53131', Elemental: '#3a86c8',
-  Fey: '#a0d468', Fiend: '#b22222', Giant: '#8b6f47',
-  Humanoid: '#6a8ca0', Monstrosity: '#8b4513', Ooze: '#4caf50',
-  Plant: '#2e7d32', Undead: '#5c5c7a',
+  Aberration: '#7b2d8e',
+  Beast: '#6b8e23',
+  Celestial: '#f0d866',
+  Construct: '#8e8e8e',
+  Dragon: '#c53131',
+  Elemental: '#3a86c8',
+  Fey: '#a0d468',
+  Fiend: '#b22222',
+  Giant: '#8b6f47',
+  Humanoid: '#6a8ca0',
+  Monstrosity: '#8b4513',
+  Ooze: '#4caf50',
+  Plant: '#2e7d32',
+  Undead: '#5c5c7a',
 };
 
 function getTokenColor(type: string): string {
@@ -110,7 +130,9 @@ function extractAttackStats(a: MonsterActionShape): {
   // "Melee Weapon Attack: +X to hit" / "Ranged Weapon Attack: +X to hit"
   const hitMatch = desc.match(/([+-]\d+)\s+to\s+hit/i);
   // "Hit: NdM+K bludgeoning/piercing/slashing/… damage"
-  const dmgMatch = desc.match(/(\d+d\d+(?:\s*[+-]\s*\d+)?)\s*(?:\([^)]*\))?\s*\b(?:bludgeoning|piercing|slashing|fire|cold|lightning|thunder|acid|poison|necrotic|radiant|force|psychic)?\s*damage/i);
+  const dmgMatch = desc.match(
+    /(\d+d\d+(?:\s*[+-]\s*\d+)?)\s*(?:\([^)]*\))?\s*\b(?:bludgeoning|piercing|slashing|fire|cold|lightning|thunder|acid|poison|necrotic|radiant|force|psychic)?\s*damage/i
+  );
   const attackBonus = hitMatch ? parseInt(hitMatch[1], 10) : null;
   const damage = dmgMatch ? dmgMatch[1].replace(/\s+/g, '') : null;
   // Summary fallback: first phrase of the description, capped so
@@ -128,9 +150,21 @@ function extractAttackStats(a: MonsterActionShape): {
 // --- Filter options ---
 
 const TYPE_OPTIONS = [
-  'All', 'Aberration', 'Beast', 'Celestial', 'Construct', 'Dragon',
-  'Elemental', 'Fey', 'Fiend', 'Giant', 'Humanoid', 'Monstrosity',
-  'Ooze', 'Plant', 'Undead',
+  'All',
+  'Aberration',
+  'Beast',
+  'Celestial',
+  'Construct',
+  'Dragon',
+  'Elemental',
+  'Fey',
+  'Fiend',
+  'Giant',
+  'Humanoid',
+  'Monstrosity',
+  'Ooze',
+  'Plant',
+  'Undead',
 ];
 
 type CRRange = 'all' | '0-1' | '2-5' | '6-10' | '11+';
@@ -145,11 +179,16 @@ const CR_OPTIONS: Array<{ label: string; value: CRRange }> = [
 
 function getCRParams(range: CRRange): { cr_min?: number; cr_max?: number } {
   switch (range) {
-    case '0-1': return { cr_min: 0, cr_max: 1 };
-    case '2-5': return { cr_min: 2, cr_max: 5 };
-    case '6-10': return { cr_min: 6, cr_max: 10 };
-    case '11+': return { cr_min: 11 };
-    default: return {};
+    case '0-1':
+      return { cr_min: 0, cr_max: 1 };
+    case '2-5':
+      return { cr_min: 2, cr_max: 5 };
+    case '6-10':
+      return { cr_min: 6, cr_max: 10 };
+    case '11+':
+      return { cr_min: 11 };
+    default:
+      return {};
   }
 }
 
@@ -189,16 +228,19 @@ export function CreatureLibrary() {
           // Search SRD compendium + homebrew custom monsters in parallel
           const sid = useSessionStore.getState().sessionId || 'default';
           const [srdData, customAll] = await Promise.all([
-            fetch(`/api/compendium/search?q=${encodeURIComponent(search.trim())}&category=monsters&limit=20`, { signal: controller.signal })
-              .then(r => r.ok ? r.json() : { results: [] }),
-            fetch(`/api/custom/monsters?sessionId=${sid}`, { signal: controller.signal })
-              .then(r => r.ok ? r.json() : []),
+            fetch(
+              `/api/compendium/search?q=${encodeURIComponent(search.trim())}&category=monsters&limit=20`,
+              { signal: controller.signal }
+            ).then((r) => (r.ok ? r.json() : { results: [] })),
+            fetch(`/api/custom/monsters?sessionId=${sid}`, { signal: controller.signal }).then(
+              (r) => (r.ok ? r.json() : [])
+            ),
           ]);
           const srdSlugs: string[] = (srdData.results || []).map((r: { slug: string }) => r.slug);
           // Filter custom monsters by search query
           const q = search.trim().toLowerCase();
-          const customMatches = (customAll as CompendiumMonster[]).filter(
-            (m: any) => m.name.toLowerCase().includes(q)
+          const customMatches = (customAll as CompendiumMonster[]).filter((m) =>
+            m.name.toLowerCase().includes(q)
           );
           if (srdSlugs.length === 0 && customMatches.length === 0) {
             setMonsters([]);
@@ -212,12 +254,16 @@ export function CreatureLibrary() {
             const batch = await Promise.all(
               srdSlugs.slice(i, i + 5).map(async (slug) => {
                 try {
-                  const r = await fetch(`/api/compendium/monsters/${slug}`, { signal: controller.signal });
-                  return r.ok ? r.json() as Promise<CompendiumMonster> : null;
-                } catch { return null; }
+                  const r = await fetch(`/api/compendium/monsters/${slug}`, {
+                    signal: controller.signal,
+                  });
+                  return r.ok ? (r.json() as Promise<CompendiumMonster>) : null;
+                } catch {
+                  return null;
+                }
               })
             );
-            fullMonsters.push(...batch.filter(Boolean) as CompendiumMonster[]);
+            fullMonsters.push(...(batch.filter(Boolean) as CompendiumMonster[]));
           }
           setMonsters(fullMonsters);
           setTotalHint(`${fullMonsters.length} result${fullMonsters.length !== 1 ? 's' : ''}`);
@@ -225,7 +271,7 @@ export function CreatureLibrary() {
           url = `/api/compendium/monsters?${params.toString()}`;
           const resp = await fetch(url, { signal: controller.signal });
           if (!resp.ok) throw new Error('Failed to fetch');
-          const data = await resp.json() as CompendiumMonster[];
+          const data = (await resp.json()) as CompendiumMonster[];
           setMonsters(data);
           setTotalHint(`${data.length} creature${data.length !== 1 ? 's' : ''}`);
         }
@@ -240,7 +286,10 @@ export function CreatureLibrary() {
 
     const delay = search.trim().length >= 2 ? 300 : 0;
     const timeout = setTimeout(fetchMonsters, delay);
-    return () => { clearTimeout(timeout); controller.abort(); };
+    return () => {
+      clearTimeout(timeout);
+      controller.abort();
+    };
   }, [search, typeFilter, crFilter]);
 
   // Load more on scroll
@@ -257,13 +306,15 @@ export function CreatureLibrary() {
       if (crParams.cr_max !== undefined) params.set('cr_max', String(crParams.cr_max));
       const resp = await fetch(`/api/compendium/monsters?${params.toString()}`);
       if (resp.ok) {
-        const data = await resp.json() as CompendiumMonster[];
+        const data = (await resp.json()) as CompendiumMonster[];
         if (data.length > 0) {
-          setMonsters(prev => [...prev, ...data]);
+          setMonsters((prev) => [...prev, ...data]);
           setTotalHint(`${monsters.length + data.length}+ creatures`);
         }
       }
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
     setLoading(false);
   }, [loading, search, typeFilter, crFilter, monsters.length]);
 
@@ -273,7 +324,9 @@ export function CreatureLibrary() {
   // coordinates in map-space.
   useEffect(() => {
     const onDrop = async (e: Event) => {
-      const detail = (e as CustomEvent).detail as { slug: string; x: number; y: number } | undefined;
+      const detail = (e as CustomEvent).detail as
+        | { slug: string; x: number; y: number }
+        | undefined;
       if (!detail?.slug) return;
       try {
         const r = await fetch(`/api/compendium/monsters/${detail.slug}`);
@@ -314,7 +367,11 @@ export function CreatureLibrary() {
       const hasInvisibilityTrait = specials.some((sa) => {
         const name = (sa?.name ?? '').toLowerCase();
         const desc = (sa?.desc ?? '').toLowerCase();
-        if (name.includes('invisibility') || name === 'incorporeal movement' && desc.includes('invisible')) return true;
+        if (
+          name.includes('invisibility') ||
+          (name === 'incorporeal movement' && desc.includes('invisible'))
+        )
+          return true;
         // Heuristic: trait body says the creature is invisible at-will
         // or at all times, rather than as an activated ability.
         return (
@@ -399,7 +456,7 @@ export function CreatureLibrary() {
         });
       }
     },
-    [currentMap],
+    [currentMap]
   );
 
   return (
@@ -446,9 +503,7 @@ export function CreatureLibrary() {
       </div>
 
       {/* Results count */}
-      <div style={styles.resultCount}>
-        {loading ? 'Loading...' : totalHint}
-      </div>
+      <div style={styles.resultCount}>{loading ? 'Loading...' : totalHint}</div>
 
       {/* Creature cards */}
       <div style={styles.cardList}>
@@ -501,7 +556,10 @@ function CreatureCard({
   // MIME type so stray drags from other pages / apps don't trigger
   // an accidental creature spawn.
   const handleDragStart = (e: React.DragEvent<HTMLDivElement>) => {
-    if (disabled) { e.preventDefault(); return; }
+    if (disabled) {
+      e.preventDefault();
+      return;
+    }
     e.dataTransfer.effectAllowed = 'copy';
     e.dataTransfer.setData('application/x-kbrt-creature', monster.slug);
     e.dataTransfer.setData('text/plain', monster.name);
@@ -516,7 +574,9 @@ function CreatureCard({
     >
       <div style={styles.cardHeader} onClick={() => setExpanded(!expanded)}>
         {/* Token image: try PNG (real art) -> SVG (generated) -> initial fallback */}
-        <div style={{ ...styles.tokenCircle, overflow: 'hidden', padding: 0, position: 'relative' }}>
+        <div
+          style={{ ...styles.tokenCircle, overflow: 'hidden', padding: 0, position: 'relative' }}
+        >
           <img
             src={imgSrc}
             alt={monster.name}
@@ -542,8 +602,17 @@ function CreatureCard({
           />
           {monster.tokenImageSource === 'generated' && (
             <div style={styles.generatedBadge} title="Placeholder — no artwork yet">
-              <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3">
-                <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
+              <svg
+                width="8"
+                height="8"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="3"
+              >
+                <circle cx="12" cy="12" r="10" />
+                <line x1="12" y1="8" x2="12" y2="12" />
+                <line x1="12" y1="16" x2="12.01" y2="16" />
               </svg>
             </div>
           )}
@@ -555,12 +624,14 @@ function CreatureCard({
           <div style={styles.cardMeta}>
             <span style={styles.typeBadge}>{monster.type}</span>
             <span style={styles.crBadge}>CR {formatCR(monster.challengeRating)}</span>
-            <span style={{
-              ...styles.levelBadge,
-              backgroundColor: getDifficultyColor(cr) + '22',
-              color: getDifficultyColor(cr),
-              borderColor: getDifficultyColor(cr) + '55',
-            }}>
+            <span
+              style={{
+                ...styles.levelBadge,
+                backgroundColor: getDifficultyColor(cr) + '22',
+                color: getDifficultyColor(cr),
+                borderColor: getDifficultyColor(cr) + '55',
+              }}
+            >
               {getRecommendedLevel(cr)}
             </span>
           </div>
@@ -589,7 +660,9 @@ function CreatureCard({
           <div style={styles.detailRow}>
             <span style={styles.detailLabel}>Speed:</span>
             <span style={styles.detailValue}>
-              {Object.entries(monster.speed || {}).map(([k, v]) => `${k} ${v} ft.`).join(', ') || `${walkSpeed} ft.`}
+              {Object.entries(monster.speed || {})
+                .map(([k, v]) => `${k} ${v} ft.`)
+                .join(', ') || `${walkSpeed} ft.`}
             </span>
           </div>
           <div style={styles.detailRow}>
@@ -612,7 +685,9 @@ function CreatureCard({
               <span style={styles.detailLabel}>Senses:</span>
               <span style={styles.detailChipRow}>
                 {splitCommaList(monster.senses).map((s, i) => (
-                  <span key={i} style={{ ...SENSE_LANG_CHIP_BASE, ...accentForSense(s) }}>{s}</span>
+                  <span key={i} style={{ ...SENSE_LANG_CHIP_BASE, ...accentForSense(s) }}>
+                    {s}
+                  </span>
                 ))}
               </span>
             </div>
@@ -622,7 +697,9 @@ function CreatureCard({
               <span style={styles.detailLabel}>Languages:</span>
               <span style={styles.detailChipRow}>
                 {splitCommaList(monster.languages).map((s, i) => (
-                  <span key={i} style={{ ...SENSE_LANG_CHIP_BASE, ...accentForLanguage(s) }}>{s}</span>
+                  <span key={i} style={{ ...SENSE_LANG_CHIP_BASE, ...accentForLanguage(s) }}>
+                    {s}
+                  </span>
                 ))}
               </span>
             </div>
@@ -630,18 +707,16 @@ function CreatureCard({
 
           {/* Ability scores */}
           <div style={styles.abilityScoresRow}>
-            {(Object.entries(monster.abilityScores) as [string, number][]).map(
-              ([key, val]) => (
-                <div key={key} style={styles.abilityScore}>
-                  <span style={styles.abilityLabel}>{key.toUpperCase()}</span>
-                  <span style={styles.abilityValue}>{val}</span>
-                  <span style={styles.abilityMod}>
-                    {Math.floor((val - 10) / 2) >= 0 ? '+' : ''}
-                    {Math.floor((val - 10) / 2)}
-                  </span>
-                </div>
-              ),
-            )}
+            {(Object.entries(monster.abilityScores) as [string, number][]).map(([key, val]) => (
+              <div key={key} style={styles.abilityScore}>
+                <span style={styles.abilityLabel}>{key.toUpperCase()}</span>
+                <span style={styles.abilityValue}>{val}</span>
+                <span style={styles.abilityMod}>
+                  {Math.floor((val - 10) / 2) >= 0 ? '+' : ''}
+                  {Math.floor((val - 10) / 2)}
+                </span>
+              </div>
+            ))}
           </div>
 
           {/* Actions preview. Structured attack_bonus + damage_dice
@@ -652,21 +727,37 @@ function CreatureCard({
               show a short description snippet so the card isn't a
               wall of bare action names. */}
           {monster.actions && monster.actions.length > 0 && (
-            <div style={{ marginTop: 4, borderTop: `1px solid ${theme.border.default}`, paddingTop: 4 }}>
-              <div style={{ fontSize: 9, fontWeight: 700, color: theme.gold.dim, marginBottom: 2, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+            <div
+              style={{
+                marginTop: 4,
+                borderTop: `1px solid ${theme.border.default}`,
+                paddingTop: 4,
+              }}
+            >
+              <div
+                style={{
+                  fontSize: 9,
+                  fontWeight: 700,
+                  color: theme.gold.dim,
+                  marginBottom: 2,
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.04em',
+                }}
+              >
                 Actions
               </div>
               {monster.actions.slice(0, 4).map((a, i) => {
                 const stats = extractAttackStats(a);
                 return (
-                  <div key={i} style={{ fontSize: 10, color: theme.text.secondary, padding: '1px 0' }}>
+                  <div
+                    key={i}
+                    style={{ fontSize: 10, color: theme.text.secondary, padding: '1px 0' }}
+                  >
                     <span style={{ fontWeight: 600, color: theme.text.primary }}>{a.name}</span>
                     {stats.attackBonus != null && (
                       <span style={{ color: theme.text.muted }}> +{stats.attackBonus}</span>
                     )}
-                    {stats.damage && (
-                      <span style={{ color: theme.danger }}> ({stats.damage})</span>
-                    )}
+                    {stats.damage && <span style={{ color: theme.danger }}> ({stats.damage})</span>}
                     {!stats.attackBonus && !stats.damage && stats.summary && (
                       <span style={{ color: theme.text.muted }}> — {stats.summary}</span>
                     )}
@@ -674,7 +765,9 @@ function CreatureCard({
                 );
               })}
               {monster.actions.length > 4 && (
-                <div style={{ fontSize: 9, color: theme.text.muted }}>+{monster.actions.length - 4} more</div>
+                <div style={{ fontSize: 9, color: theme.text.muted }}>
+                  +{monster.actions.length - 4} more
+                </div>
               )}
             </div>
           )}
@@ -692,9 +785,11 @@ function CreatureCard({
           style={styles.wikiButton}
           onClick={(e) => {
             e.stopPropagation();
-            window.dispatchEvent(new CustomEvent('open-compendium-detail', {
-              detail: { slug: monster.slug, category: 'monsters', name: monster.name },
-            }));
+            window.dispatchEvent(
+              new CustomEvent('open-compendium-detail', {
+                detail: { slug: monster.slug, category: 'monsters', name: monster.name },
+              })
+            );
           }}
         >
           View Full Stats
