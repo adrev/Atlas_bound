@@ -161,7 +161,16 @@ export function emitUpdateTokenVisionOverrides(
 }
 
 export function emitTokenMove(tokenId: string, x: number, y: number) {
-  getSocket().emit('map:token-move', { tokenId, x, y });
+  const currentVersion = useMapStore.getState().tokens[tokenId]?.version;
+  getSocket().emit('map:token-move', {
+    tokenId,
+    x,
+    y,
+    ...(currentVersion !== undefined ? { expectedVersion: currentVersion } : {}),
+  });
+  if (currentVersion !== undefined) {
+    useMapStore.getState().updateToken(tokenId, { version: currentVersion + 1 });
+  }
 }
 
 export function emitTokenAdd(token: Omit<Token, 'id' | 'createdAt'>) {
@@ -186,9 +195,17 @@ export function emitTokenUpdate(
   changes: Partial<Token>,
   opts: { skipLocal?: boolean } = {}
 ) {
-  getSocket().emit('map:token-update', { tokenId, changes });
+  const currentVersion = useMapStore.getState().tokens[tokenId]?.version;
+  getSocket().emit('map:token-update', {
+    tokenId,
+    changes,
+    ...(currentVersion !== undefined ? { expectedVersion: currentVersion } : {}),
+  });
   if (!opts.skipLocal) {
-    useMapStore.getState().updateToken(tokenId, changes);
+    useMapStore.getState().updateToken(tokenId, {
+      ...changes,
+      ...(currentVersion !== undefined ? { version: currentVersion + 1 } : {}),
+    });
   }
   triggerSnapshot('token:update');
 }
@@ -583,13 +600,25 @@ export function emitCharacterUpdate(
   changes: Record<string, unknown>,
   opts: { skipLocal?: boolean } = {}
 ) {
+  const currentVersion =
+    useCharacterStore.getState().allCharacters[characterId]?.version ??
+    (useCharacterStore.getState().myCharacter?.id === characterId
+      ? useCharacterStore.getState().myCharacter?.version
+      : undefined);
   if (isSocketConnected()) {
-    getSocket().emit('character:update', { characterId, changes });
+    getSocket().emit('character:update', {
+      characterId,
+      changes,
+      ...(currentVersion !== undefined ? { expectedVersion: currentVersion } : {}),
+    });
   } else {
     void restPersistCharacter(characterId, changes);
   }
   if (!opts.skipLocal) {
-    useCharacterStore.getState().applyRemoteUpdate(characterId, changes);
+    useCharacterStore.getState().applyRemoteUpdate(characterId, {
+      ...changes,
+      ...(currentVersion !== undefined ? { version: currentVersion + 1 } : {}),
+    });
   }
   // Every character edit (HP, inventory, spells, conditions, class
   // features) potentially ripples into server-authoritative state we

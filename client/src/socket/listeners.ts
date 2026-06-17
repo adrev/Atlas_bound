@@ -255,9 +255,12 @@ export function registerListeners(socket: Socket): () => void {
     return !currentId || currentId === mapId;
   };
 
-  socket.on('map:token-moved', ({ tokenId, x, y, mapId }) => {
+  socket.on('map:token-moved', ({ tokenId, x, y, mapId, version }) => {
     if (!isForCurrentMap(mapId)) return;
     useMapStore.getState().moveToken(tokenId, x, y);
+    if (version !== undefined) {
+      useMapStore.getState().updateToken(tokenId, { version });
+    }
     // Movement can imply conditions changing (triggered opportunity
     // attacks, difficult terrain halting a move, etc.). Debounced
     // so a 30 Hz drag collapses to one server pull at the end of
@@ -282,6 +285,12 @@ export function registerListeners(socket: Socket): () => void {
     if (!isForCurrentMap(mapId)) return;
     useMapStore.getState().updateToken(tokenId, changes);
     triggerSnapshot('map:token-updated');
+  });
+
+  socket.on('map:token-conflict', ({ token }) => {
+    if (!isForCurrentMap(token.mapId)) return;
+    useMapStore.getState().addToken(token);
+    triggerSnapshot('map:token-conflict');
   });
 
   socket.on('map:fog-updated', ({ fogState, mapId }) => {
@@ -594,6 +603,11 @@ export function registerListeners(socket: Socket): () => void {
     triggerSnapshot('character:updated');
   });
 
+  socket.on('character:update-conflict', ({ character }) => {
+    useCharacterStore.getState().applyRemoteSync(character as Record<string, unknown>);
+    triggerSnapshot('character:update-conflict');
+  });
+
   socket.on('character:synced', ({ character }) => {
     useCharacterStore.getState().applyRemoteSync(character as Record<string, unknown>);
     triggerSnapshot('character:synced');
@@ -740,6 +754,7 @@ export function registerListeners(socket: Socket): () => void {
     socket.off('map:token-added');
     socket.off('map:token-removed');
     socket.off('map:token-updated');
+    socket.off('map:token-conflict');
     socket.off('map:fog-updated');
     socket.off('map:walls-updated');
     socket.off('map:zones-updated');
@@ -771,6 +786,7 @@ export function registerListeners(socket: Socket): () => void {
     socket.off('combat:ready-update');
     socket.off('combat:ready-check-complete');
     socket.off('character:updated');
+    socket.off('character:update-conflict');
     socket.off('character:synced');
     socket.off('character:rested');
     socket.off('character:hit-die-spent');

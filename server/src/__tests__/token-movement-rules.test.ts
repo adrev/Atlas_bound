@@ -23,8 +23,11 @@ function makeHarness(actorSocketId: string) {
   const io = { to: record } as unknown as Server;
   const socket = {
     id: actorSocketId,
-    on: (event: string, handler: (d: unknown) => Promise<void> | void) => { handlers[event] = handler; },
-    emit: (event: string, payload: unknown) => emissions.push({ channelId: actorSocketId, event, payload }),
+    on: (event: string, handler: (d: unknown) => Promise<void> | void) => {
+      handlers[event] = handler;
+    },
+    emit: (event: string, payload: unknown) =>
+      emissions.push({ channelId: actorSocketId, event, payload }),
     join: () => {},
     to: record,
   } as unknown as Socket;
@@ -67,22 +70,24 @@ function seedCombatRoom(sessionId: string, overrides: Partial<Token> = {}) {
     active: true,
     roundNumber: 1,
     currentTurnIndex: 0,
-    combatants: [{
-      tokenId: hero.id,
-      characterId: hero.characterId,
-      name: hero.name,
-      initiative: 15,
-      initiativeBonus: 0,
-      hp: 20,
-      maxHp: 20,
-      tempHp: 0,
-      armorClass: 14,
-      speed: 30,
-      isNPC: false,
-      conditions: [],
-      deathSaves: { successes: 0, failures: 0 },
-      portraitUrl: null,
-    }],
+    combatants: [
+      {
+        tokenId: hero.id,
+        characterId: hero.characterId,
+        name: hero.name,
+        initiative: 15,
+        initiativeBonus: 0,
+        hp: 20,
+        maxHp: 20,
+        tempHp: 0,
+        armorClass: 14,
+        speed: 30,
+        isNPC: false,
+        conditions: [],
+        deathSaves: { successes: 0, failures: 0 },
+        portraitUrl: null,
+      },
+    ],
     startedAt: new Date().toISOString(),
   } satisfies CombatState;
   room.actionEconomies.set(hero.id, {
@@ -115,7 +120,10 @@ function events(emissions: Emission[], event: string): Emission[] {
 
 beforeEach(() => {
   mockQuery.mockReset();
-  mockQuery.mockResolvedValue({ rows: [] });
+  mockQuery.mockImplementation(async (sql: string) => {
+    if (sql.trim().startsWith('UPDATE tokens SET')) return { rows: [{ version: 2 }] };
+    return { rows: [] };
+  });
   for (const id of Array.from(getAllRooms().keys())) getAllRooms().delete(id);
 });
 
@@ -137,7 +145,10 @@ describe('server movement rules', () => {
     ]);
     const whisper = events(emissions, 'chat:new-message')[0]?.payload as { content?: string };
     expect(whisper.content).toContain('tried to move 35 ft but only 30 ft remain');
-    expect(mockQuery).not.toHaveBeenCalledWith(expect.stringContaining('UPDATE tokens'), expect.anything());
+    expect(mockQuery).not.toHaveBeenCalledWith(
+      expect.stringContaining('UPDATE tokens'),
+      expect.anything()
+    );
   });
 
   it('spends movement server-side when a player moves the current combatant', async () => {
@@ -150,17 +161,19 @@ describe('server movement rules', () => {
 
     expect(room.tokens.get('hero-token')).toMatchObject({ x: 210, y: 210 });
     expect(room.actionEconomies.get('hero-token')?.movementRemaining).toBe(15);
-    expect(events(emissions, 'combat:movement-used').map((e) => e.channelId).sort()).toEqual([
-      `dm-${sessionId}`,
-      `player-${sessionId}`,
-    ]);
+    expect(
+      events(emissions, 'combat:movement-used')
+        .map((e) => e.channelId)
+        .sort()
+    ).toEqual([`dm-${sessionId}`, `player-${sessionId}`]);
     for (const event of events(emissions, 'combat:movement-used')) {
       expect(event.payload).toEqual({ tokenId: 'hero-token', remaining: 15 });
     }
-    expect(events(emissions, 'map:token-moved').map((e) => e.channelId).sort()).toEqual([
-      `dm-${sessionId}`,
-      `player-${sessionId}`,
-    ]);
+    expect(
+      events(emissions, 'map:token-moved')
+        .map((e) => e.channelId)
+        .sort()
+    ).toEqual([`dm-${sessionId}`, `player-${sessionId}`]);
   });
 
   it('does not leak hidden combat movement spend to uninvolved players', async () => {
@@ -178,10 +191,11 @@ describe('server movement rules', () => {
 
     await handlers['map:token-move']!({ tokenId: 'hero-token', x: 210, y: 210 });
 
-    expect(events(emissions, 'combat:movement-used').map((e) => e.channelId).sort()).toEqual([
-      `dm-${sessionId}`,
-      `player-${sessionId}`,
-    ]);
+    expect(
+      events(emissions, 'combat:movement-used')
+        .map((e) => e.channelId)
+        .sort()
+    ).toEqual([`dm-${sessionId}`, `player-${sessionId}`]);
   });
 
   it('rejects player movement when it is not that token turn', async () => {

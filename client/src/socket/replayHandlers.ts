@@ -26,9 +26,19 @@ import type { Token } from '@dnd-vtt/shared';
 export function dispatchReplayEvent(kind: string, payload: Record<string, unknown>): void {
   switch (kind) {
     case 'map:token-moved': {
-      const { tokenId, x, y } = payload as { tokenId: string; x: number; y: number };
+      const { tokenId, x, y, version } = payload as {
+        tokenId: string;
+        x: number;
+        y: number;
+        version?: number;
+      };
       const token = useMapStore.getState().tokens[tokenId];
-      if (token) useMapStore.getState().moveToken(tokenId, x, y);
+      if (token) {
+        useMapStore.getState().moveToken(tokenId, x, y);
+        if (version !== undefined) {
+          useMapStore.getState().updateToken(tokenId, { version });
+        }
+      }
       return;
     }
     case 'map:token-added': {

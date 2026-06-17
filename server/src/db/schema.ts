@@ -103,6 +103,7 @@ export async function initDatabase(): Promise<void> {
       concentrating_on TEXT,
       compendium_slug TEXT DEFAULT NULL,
       exhaustion_level INTEGER NOT NULL DEFAULT 0,
+      version INTEGER NOT NULL DEFAULT 1,
       created_at TEXT NOT NULL DEFAULT (NOW()::text),
       updated_at TEXT NOT NULL DEFAULT (NOW()::text)
     );
@@ -111,6 +112,7 @@ export async function initDatabase(): Promise<void> {
     -- engine pass. ALTER is idempotent so an existing DB just gets the
     -- column bolted on with the default 0 (no prior exhaustion).
     ALTER TABLE characters ADD COLUMN IF NOT EXISTS exhaustion_level INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE characters ADD COLUMN IF NOT EXISTS version INTEGER NOT NULL DEFAULT 1;
 
     CREATE TABLE IF NOT EXISTS maps (
       id TEXT PRIMARY KEY,
@@ -194,10 +196,12 @@ export async function initDatabase(): Promise<void> {
       owner_user_id TEXT,
       faction TEXT NOT NULL DEFAULT 'neutral',
       aura TEXT,
+      version INTEGER NOT NULL DEFAULT 1,
       created_at TEXT NOT NULL DEFAULT (NOW()::text)
     );
 
     ALTER TABLE tokens ADD COLUMN IF NOT EXISTS faction TEXT NOT NULL DEFAULT 'neutral';
+    ALTER TABLE tokens ADD COLUMN IF NOT EXISTS version INTEGER NOT NULL DEFAULT 1;
 
     -- Backfill: tokens created before the DM staging flow started
     -- explicitly setting faction all landed as 'neutral' even when
@@ -229,6 +233,26 @@ export async function initDatabase(): Promise<void> {
     -- TEXT because the renderer is the only consumer — no server-side
     -- queries need the fields individually.
     ALTER TABLE tokens ADD COLUMN IF NOT EXISTS vision_overrides TEXT;
+
+    CREATE OR REPLACE FUNCTION increment_row_version()
+    RETURNS TRIGGER AS $$
+    BEGIN
+      NEW.version = COALESCE(OLD.version, 0) + 1;
+      RETURN NEW;
+    END;
+    $$ LANGUAGE plpgsql;
+
+    DROP TRIGGER IF EXISTS characters_version_trigger ON characters;
+    CREATE TRIGGER characters_version_trigger
+      BEFORE UPDATE ON characters
+      FOR EACH ROW
+      EXECUTE FUNCTION increment_row_version();
+
+    DROP TRIGGER IF EXISTS tokens_version_trigger ON tokens;
+    CREATE TRIGGER tokens_version_trigger
+      BEFORE UPDATE ON tokens
+      FOR EACH ROW
+      EXECUTE FUNCTION increment_row_version();
 
     CREATE TABLE IF NOT EXISTS combat_state (
       session_id TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,
@@ -765,7 +789,7 @@ export async function initDatabase(): Promise<void> {
   // for each NULL row on boot.
   try {
     const { rows: needInvite } = await pool.query<{ id: string }>(
-      'SELECT id FROM sessions WHERE invite_code IS NULL',
+      'SELECT id FROM sessions WHERE invite_code IS NULL'
     );
     if (needInvite.length > 0) {
       const { generateInviteCode } = await import('../utils/sessionPassword.js');
@@ -774,14 +798,19 @@ export async function initDatabase(): Promise<void> {
         // but we retry up to 3x per row just in case.
         for (let attempt = 0; attempt < 3; attempt++) {
           try {
-            await pool.query('UPDATE sessions SET invite_code = $1 WHERE id = $2', [generateInviteCode(), row.id]);
+            await pool.query('UPDATE sessions SET invite_code = $1 WHERE id = $2', [
+              generateInviteCode(),
+              row.id,
+            ]);
             break;
           } catch (err) {
             if (attempt === 2) throw err;
           }
         }
       }
-      console.log(`[migration] Backfilled invite_code on ${needInvite.length} legacy session${needInvite.length !== 1 ? 's' : ''}`);
+      console.log(
+        `[migration] Backfilled invite_code on ${needInvite.length} legacy session${needInvite.length !== 1 ? 's' : ''}`
+      );
     }
   } catch (err) {
     console.warn('[migration] Failed to backfill invite_code:', err);
@@ -793,20 +822,55 @@ export async function initDatabase(): Promise<void> {
   // so a DELETE on the parent row would orphan children. Postgres has no
   // "ADD CONSTRAINT IF NOT EXISTS" so we probe first and add the constraint
   // only when it's missing. Safe to re-run on every boot.
-  const CASCADE_FKS: Array<{ table: string; column: string; ref: string; onDelete: 'CASCADE' | 'SET NULL'; constraint: string }> = [
-    { table: 'custom_items',    column: 'session_id',   ref: 'sessions(id)',   onDelete: 'CASCADE',  constraint: 'custom_items_session_fk' },
-    { table: 'custom_monsters', column: 'session_id',   ref: 'sessions(id)',   onDelete: 'CASCADE',  constraint: 'custom_monsters_session_fk' },
-    { table: 'custom_spells',   column: 'session_id',   ref: 'sessions(id)',   onDelete: 'CASCADE',  constraint: 'custom_spells_session_fk' },
-    { table: 'loot_entries',    column: 'character_id', ref: 'characters(id)', onDelete: 'CASCADE',  constraint: 'loot_entries_character_fk' },
-    { table: 'tokens',          column: 'character_id', ref: 'characters(id)', onDelete: 'SET NULL', constraint: 'tokens_character_fk' },
+  const CASCADE_FKS: Array<{
+    table: string;
+    column: string;
+    ref: string;
+    onDelete: 'CASCADE' | 'SET NULL';
+    constraint: string;
+  }> = [
+    {
+      table: 'custom_items',
+      column: 'session_id',
+      ref: 'sessions(id)',
+      onDelete: 'CASCADE',
+      constraint: 'custom_items_session_fk',
+    },
+    {
+      table: 'custom_monsters',
+      column: 'session_id',
+      ref: 'sessions(id)',
+      onDelete: 'CASCADE',
+      constraint: 'custom_monsters_session_fk',
+    },
+    {
+      table: 'custom_spells',
+      column: 'session_id',
+      ref: 'sessions(id)',
+      onDelete: 'CASCADE',
+      constraint: 'custom_spells_session_fk',
+    },
+    {
+      table: 'loot_entries',
+      column: 'character_id',
+      ref: 'characters(id)',
+      onDelete: 'CASCADE',
+      constraint: 'loot_entries_character_fk',
+    },
+    {
+      table: 'tokens',
+      column: 'character_id',
+      ref: 'characters(id)',
+      onDelete: 'SET NULL',
+      constraint: 'tokens_character_fk',
+    },
   ];
 
   for (const fk of CASCADE_FKS) {
     try {
-      const { rows } = await pool.query(
-        'SELECT 1 FROM pg_constraint WHERE conname = $1',
-        [fk.constraint],
-      );
+      const { rows } = await pool.query('SELECT 1 FROM pg_constraint WHERE conname = $1', [
+        fk.constraint,
+      ]);
       if (rows.length > 0) continue;
 
       // Purge orphans before adding the constraint, otherwise ADD CONSTRAINT
@@ -814,16 +878,16 @@ export async function initDatabase(): Promise<void> {
       const parentTable = fk.ref.split('(')[0];
       if (fk.onDelete === 'CASCADE') {
         await pool.query(
-          `DELETE FROM ${fk.table} WHERE ${fk.column} IS NOT NULL AND ${fk.column} NOT IN (SELECT id FROM ${parentTable})`,
+          `DELETE FROM ${fk.table} WHERE ${fk.column} IS NOT NULL AND ${fk.column} NOT IN (SELECT id FROM ${parentTable})`
         );
       } else {
         await pool.query(
-          `UPDATE ${fk.table} SET ${fk.column} = NULL WHERE ${fk.column} IS NOT NULL AND ${fk.column} NOT IN (SELECT id FROM ${parentTable})`,
+          `UPDATE ${fk.table} SET ${fk.column} = NULL WHERE ${fk.column} IS NOT NULL AND ${fk.column} NOT IN (SELECT id FROM ${parentTable})`
         );
       }
 
       await pool.query(
-        `ALTER TABLE ${fk.table} ADD CONSTRAINT ${fk.constraint} FOREIGN KEY (${fk.column}) REFERENCES ${fk.ref} ON DELETE ${fk.onDelete}`,
+        `ALTER TABLE ${fk.table} ADD CONSTRAINT ${fk.constraint} FOREIGN KEY (${fk.column}) REFERENCES ${fk.ref} ON DELETE ${fk.onDelete}`
       );
       console.log(`[migration] Added FK ${fk.constraint} (${fk.table}.${fk.column} -> ${fk.ref})`);
     } catch (err) {
@@ -838,7 +902,9 @@ export async function initDatabase(): Promise<void> {
   `);
 
   // Backfill spellcasting fields for existing DDB-imported characters
-  try { await backfillSpellcastingFromExistingChars(); } catch (err) {
+  try {
+    await backfillSpellcastingFromExistingChars();
+  } catch (err) {
     console.warn('[migration] Failed to backfill spellcasting fields:', err);
   }
 }
@@ -850,8 +916,14 @@ export async function initDatabase(): Promise<void> {
  */
 async function backfillSpellcastingFromExistingChars(): Promise<void> {
   const CLASS_ABILITY: Record<string, string> = {
-    bard: 'cha', cleric: 'wis', druid: 'wis', paladin: 'cha',
-    ranger: 'wis', sorcerer: 'cha', warlock: 'cha', wizard: 'int',
+    bard: 'cha',
+    cleric: 'wis',
+    druid: 'wis',
+    paladin: 'cha',
+    ranger: 'wis',
+    sorcerer: 'cha',
+    warlock: 'cha',
+    wizard: 'int',
     artificer: 'int',
   };
 
@@ -871,12 +943,19 @@ async function backfillSpellcastingFromExistingChars(): Promise<void> {
     const lowerClass = classStr.toLowerCase();
     let ability: string | null = null;
     for (const [key, val] of Object.entries(CLASS_ABILITY)) {
-      if (lowerClass.includes(key)) { ability = val; break; }
+      if (lowerClass.includes(key)) {
+        ability = val;
+        break;
+      }
     }
     if (!ability) continue;
 
     let scores: Record<string, number> = {};
-    try { scores = JSON.parse((row.ability_scores as string) || '{}'); } catch { /* ignore */ }
+    try {
+      scores = JSON.parse((row.ability_scores as string) || '{}');
+    } catch {
+      /* ignore */
+    }
     const score = scores[ability] ?? 10;
     const mod = Math.floor((score - 10) / 2);
     const profBonus = (row.proficiency_bonus as number) || 2;
@@ -885,12 +964,14 @@ async function backfillSpellcastingFromExistingChars(): Promise<void> {
 
     await pool.query(
       'UPDATE characters SET spellcasting_ability = $1, spell_attack_bonus = $2, spell_save_dc = $3 WHERE id = $4',
-      [ability, atkBonus, dc, row.id],
+      [ability, atkBonus, dc, row.id]
     );
     updated++;
   }
 
   if (updated > 0) {
-    console.log(`[migration] Backfilled spellcasting fields on ${updated} character${updated !== 1 ? 's' : ''}`);
+    console.log(
+      `[migration] Backfilled spellcasting fields on ${updated} character${updated !== 1 ? 's' : ''}`
+    );
   }
 }

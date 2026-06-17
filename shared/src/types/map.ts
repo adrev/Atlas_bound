@@ -85,6 +85,12 @@ export type TokenFaction = 'friendly' | 'hostile' | 'neutral';
 
 export interface Token {
   id: string;
+  /**
+   * Monotonic server-side row version. Clients include the version they
+   * edited from so the server can reject stale token/HP writes instead
+   * of silently overwriting a newer state from another tab or player.
+   */
+  version?: number;
   mapId: string;
   characterId: string | null;
   name: string;

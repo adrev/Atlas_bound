@@ -6,18 +6,28 @@ import { broadcastEvent } from '../utils/eventBroadcast.js';
 import { dbRowToCharacter } from '../utils/characterMapper.js';
 import { safeHandler } from '../utils/socketHelpers.js';
 import { broadcastSystem } from '../services/ChatCommands.js';
-import { computeAdjustSpellSlot, computeRest, computeSpendHitDie, persistRestUpdates, syncRestToCombatants } from '../services/RestService.js';
+import {
+  computeAdjustSpellSlot,
+  computeRest,
+  computeSpendHitDie,
+  persistRestUpdates,
+  syncRestToCombatants,
+} from '../services/RestService.js';
 
 const characterUpdateSchema = z.object({
   characterId: z.string().min(1),
-  changes: z.record(z.string(), z.union([
+  expectedVersion: z.number().int().min(1).optional(),
+  changes: z.record(
     z.string(),
-    z.number(),
-    z.boolean(),
-    z.null(),
-    z.array(z.unknown()),
-    z.record(z.string(), z.unknown()),
-  ])),
+    z.union([
+      z.string(),
+      z.number(),
+      z.boolean(),
+      z.null(),
+      z.array(z.unknown()),
+      z.record(z.string(), z.unknown()),
+    ])
+  ),
 });
 
 const characterSyncRequestSchema = z.object({
@@ -31,7 +41,10 @@ const characterRestSchema = z.object({
 
 const spendHitDieSchema = z.object({
   characterId: z.string().min(1),
-  dieSize: z.number().int().refine((value) => [6, 8, 10, 12].includes(value)),
+  dieSize: z
+    .number()
+    .int()
+    .refine((value) => [6, 8, 10, 12].includes(value)),
 });
 
 const spellSlotAdjustSchema = z.object({
@@ -84,7 +97,7 @@ async function characterIsInSession(characterId: string, sessionId: string): Pro
        FROM session_players
       WHERE session_id = $1 AND character_id = $2
       LIMIT 1`,
-    [sessionId, characterId],
+    [sessionId, characterId]
   );
   if (rows.length > 0) return true;
 
@@ -94,294 +107,339 @@ async function characterIsInSession(characterId: string, sessionId: string): Pro
        JOIN maps m ON m.id = t.map_id
       WHERE t.character_id = $1 AND m.session_id = $2
       LIMIT 1`,
-    [characterId, sessionId],
+    [characterId, sessionId]
   );
   return tokenCheck.rows.length > 0;
 }
 
 export function registerCharacterEvents(io: Server, socket: Socket): void {
+  socket.on(
+    'character:update',
+    safeHandler(socket, async (data) => {
+      const parsed = characterUpdateSchema.safeParse(data);
+      if (!parsed.success) return;
 
-  socket.on('character:update', safeHandler(socket, async (data) => {
-    const parsed = characterUpdateSchema.safeParse(data);
-    if (!parsed.success) return;
+      const ctx = getPlayerBySocketId(socket.id);
+      if (!ctx) return;
 
-    const ctx = getPlayerBySocketId(socket.id);
-    if (!ctx) return;
+      const { characterId, changes } = parsed.data;
+      const { expectedVersion } = parsed.data;
 
-    const { characterId, changes } = parsed.data;
+      const { rows: existingRows } = await pool.query(
+        'SELECT id, user_id, version FROM characters WHERE id = $1',
+        [characterId]
+      );
+      if (existingRows.length === 0) return;
+      const existing = existingRows[0];
 
-    const { rows: existingRows } = await pool.query('SELECT id, user_id FROM characters WHERE id = $1', [characterId]);
-    if (existingRows.length === 0) return;
-    const existing = existingRows[0];
+      const charUserId = existing.user_id as string;
+      const isDM = playerIsDM(ctx);
 
-    const charUserId = existing.user_id as string;
-    const isDM = playerIsDM(ctx);
-
-    if (charUserId === 'npc') {
-      // NPCs are DM-writable for anything. Players can ONLY write HP
-      // fields (hitPoints / tempHp) on NPCs that live on a map in THIS
-      // session — so a player who resolves an attack client-side can
-      // persist the damage to the shared NPC record (prior behaviour:
-      // the server rejected silently, so the creature bounced back to
-      // full HP on any reload). Any other NPC field change from a non-
-      // DM is still dropped. The NPC-in-session check stops a cross-
-      // session guess-UUID attack.
-      const { rows: sessionTokenRows } = await pool.query(
-        `SELECT 1 FROM tokens t
+      if (charUserId === 'npc') {
+        // NPCs are DM-writable for anything. Players can ONLY write HP
+        // fields (hitPoints / tempHp) on NPCs that live on a map in THIS
+        // session — so a player who resolves an attack client-side can
+        // persist the damage to the shared NPC record (prior behaviour:
+        // the server rejected silently, so the creature bounced back to
+        // full HP on any reload). Any other NPC field change from a non-
+        // DM is still dropped. The NPC-in-session check stops a cross-
+        // session guess-UUID attack.
+        const { rows: sessionTokenRows } = await pool.query(
+          `SELECT 1 FROM tokens t
            JOIN maps m ON m.id = t.map_id
           WHERE t.character_id = $1 AND m.session_id = $2
           LIMIT 1`,
-        [characterId, ctx.room.sessionId],
-      );
-      if (sessionTokenRows.length === 0) return;
+          [characterId, ctx.room.sessionId]
+        );
+        if (sessionTokenRows.length === 0) return;
 
-      if (!isDM) {
-        const allowedNpcFields = new Set(['hitPoints', 'tempHp', 'tempHitPoints']);
-        const requestedFields = Object.keys(changes);
-        const hasDisallowed = requestedFields.some((f) => !allowedNpcFields.has(f));
-        if (hasDisallowed) return;
-      }
-    } else {
-      // PCs: either owner-writes-their-own, OR a DM of THIS session
-      // writing a PC that's actually linked to this session (via
-      // session_players.character_id) or has a token on one of this
-      // session's maps. Raw "DM in any session" is not enough — that
-      // would let a DM in session A mutate a PC whose only link is
-      // to session B.
-      if (charUserId === ctx.player.userId) {
-        // owner — allow
-      } else if (isDM) {
-        const { rows: linkRows } = await pool.query(
-          `SELECT 1 FROM session_players
+        if (!isDM) {
+          const allowedNpcFields = new Set(['hitPoints', 'tempHp', 'tempHitPoints']);
+          const requestedFields = Object.keys(changes);
+          const hasDisallowed = requestedFields.some((f) => !allowedNpcFields.has(f));
+          if (hasDisallowed) return;
+        }
+      } else {
+        // PCs: either owner-writes-their-own, OR a DM of THIS session
+        // writing a PC that's actually linked to this session (via
+        // session_players.character_id) or has a token on one of this
+        // session's maps. Raw "DM in any session" is not enough — that
+        // would let a DM in session A mutate a PC whose only link is
+        // to session B.
+        if (charUserId === ctx.player.userId) {
+          // owner — allow
+        } else if (isDM) {
+          const { rows: linkRows } = await pool.query(
+            `SELECT 1 FROM session_players
             WHERE session_id = $1 AND character_id = $2
             LIMIT 1`,
-          [ctx.room.sessionId, characterId],
-        );
-        if (linkRows.length === 0) {
-          // Fall back: is there a token for this character on a map
-          // in this session?
-          const { rows: tokRows } = await pool.query(
-            `SELECT 1 FROM tokens t
+            [ctx.room.sessionId, characterId]
+          );
+          if (linkRows.length === 0) {
+            // Fall back: is there a token for this character on a map
+            // in this session?
+            const { rows: tokRows } = await pool.query(
+              `SELECT 1 FROM tokens t
                JOIN maps m ON m.id = t.map_id
               WHERE t.character_id = $1 AND m.session_id = $2
               LIMIT 1`,
-            [characterId, ctx.room.sessionId],
-          );
-          if (tokRows.length === 0) return;
+              [characterId, ctx.room.sessionId]
+            );
+            if (tokRows.length === 0) return;
+          }
+        } else {
+          return;
         }
-      } else {
-        return;
       }
-    }
 
-    const setClauses: string[] = [];
-    const params: unknown[] = [];
-    let paramIdx = 1;
+      const setClauses: string[] = [];
+      const params: unknown[] = [];
+      let paramIdx = 1;
 
-    for (const [key, value] of Object.entries(changes)) {
-      const mapping = FIELD_TO_COLUMN[key];
-      if (!mapping) continue;
-      setClauses.push(`${mapping.col} = $${paramIdx++}`);
-      params.push(mapping.json ? JSON.stringify(value) : value);
-    }
+      for (const [key, value] of Object.entries(changes)) {
+        const mapping = FIELD_TO_COLUMN[key];
+        if (!mapping) continue;
+        setClauses.push(`${mapping.col} = $${paramIdx++}`);
+        params.push(mapping.json ? JSON.stringify(value) : value);
+      }
 
-    if (setClauses.length > 0) {
+      if (setClauses.length === 0) return;
+
       setClauses.push(`updated_at = NOW()::text`);
       params.push(characterId);
-      await pool.query(`UPDATE characters SET ${setClauses.join(', ')} WHERE id = $${paramIdx}`, params);
-    }
-
-    // Broadcast via event cursor so missed frames (dead socket,
-    // Cloud Run instance churn) can be replayed on reconnect. The
-    // sender is excluded via socket.to(...) emulation: we still fire
-    // the broadcast room-wide, but the sender already applied the
-    // change optimistically and applyRemoteUpdate is idempotent, so
-    // the echo is harmless. Token id is not tagged because character
-    // updates don't have a single authoritative token (a creature can
-    // share a character record across multiple map instances); the
-    // visibility filter for character data is looser anyway.
-    broadcastEvent(
-      io, ctx.room, 'character:updated',
-      { characterId, changes },
-    );
-  }));
-
-  socket.on('character:rest', safeHandler(socket, async (data) => {
-    const parsed = characterRestSchema.safeParse(data);
-    if (!parsed.success) return;
-
-    const ctx = getPlayerBySocketId(socket.id);
-    if (!ctx) return;
-
-    const { characterId, kind } = parsed.data;
-    const { rows } = await pool.query('SELECT * FROM characters WHERE id = $1', [characterId]);
-    if (rows.length === 0) return;
-
-    const row = rows[0] as Record<string, unknown>;
-    const charUserId = String(row.user_id ?? '');
-    const isDM = playerIsDM(ctx);
-    const inSession = await characterIsInSession(characterId, ctx.room.sessionId);
-    if (!inSession) return;
-    if (!isDM && charUserId !== ctx.player.userId) return;
-    if (!isDM && charUserId === 'npc') return;
-
-    const result = computeRest(row, kind);
-    const client = await pool.connect();
-    try {
-      await client.query('BEGIN');
-      await persistRestUpdates(client, result.characterId, result.updates);
-      await client.query('COMMIT');
-    } catch (err) {
-      await client.query('ROLLBACK');
-      throw err;
-    } finally {
-      client.release();
-    }
-
-    const hasUpdates = Object.keys(result.updates).length > 0;
-    if (hasUpdates) {
-      syncRestToCombatants(ctx.room, result.characterId, result.updates);
-      broadcastEvent(io, ctx.room, 'character:updated', {
-        characterId: result.characterId,
-        changes: result.updates,
-      });
-    }
-
-    socket.emit('character:rested', {
-      characterId: result.characterId,
-      kind,
-      changes: result.changes,
-      updates: result.updates,
-    });
-    if (hasUpdates) {
-      broadcastSystem(
-        io,
-        ctx,
-        `🛌 ${result.name} finishes a ${kind === 'long' ? 'Long' : 'Short'} Rest\n   ${result.changes.join(' • ')}`,
-      );
-    }
-  }));
-
-  socket.on('character:spend-hit-die', safeHandler(socket, async (data) => {
-    const parsed = spendHitDieSchema.safeParse(data);
-    if (!parsed.success) return;
-
-    const ctx = getPlayerBySocketId(socket.id);
-    if (!ctx) return;
-
-    const { characterId, dieSize } = parsed.data;
-    let result: ReturnType<typeof computeSpendHitDie> | null = null;
-    const client = await pool.connect();
-    try {
-      await client.query('BEGIN');
-      const { rows } = await client.query('SELECT * FROM characters WHERE id = $1 FOR UPDATE', [characterId]);
-      if (rows.length > 0) {
-        const row = rows[0] as Record<string, unknown>;
-        const charUserId = String(row.user_id ?? '');
-        const isDM = playerIsDM(ctx);
-        const inSession = await characterIsInSession(characterId, ctx.room.sessionId);
-        if (inSession && (isDM || charUserId === ctx.player.userId) && (isDM || charUserId !== 'npc')) {
-          result = computeSpendHitDie(row, dieSize);
-          await persistRestUpdates(client, result.characterId, result.updates);
-        }
+      let updateSql = `UPDATE characters SET ${setClauses.join(', ')} WHERE id = $${paramIdx}`;
+      if (expectedVersion !== undefined) {
+        params.push(expectedVersion);
+        updateSql += ` AND version = $${paramIdx + 1}`;
       }
-      await client.query('COMMIT');
-    } catch (err) {
-      await client.query('ROLLBACK');
-      throw err;
-    } finally {
-      client.release();
-    }
-
-    if (!result) return;
-
-    const hasUpdates = Object.keys(result.updates).length > 0;
-    if (hasUpdates) {
-      syncRestToCombatants(ctx.room, result.characterId, result.updates);
-      broadcastEvent(io, ctx.room, 'character:updated', {
-        characterId: result.characterId,
-        changes: result.updates,
-      });
-    }
-
-    socket.emit('character:hit-die-spent', result);
-    if (hasUpdates) {
-      broadcastSystem(
-        io,
-        ctx,
-        `💤 ${result.name} spends 1d${dieSize} Hit Die\n   ${result.changes.join(' • ')}`,
-      );
-    }
-  }));
-
-  socket.on('character:spell-slot-adjust', safeHandler(socket, async (data) => {
-    const parsed = spellSlotAdjustSchema.safeParse(data);
-    if (!parsed.success) return;
-
-    const ctx = getPlayerBySocketId(socket.id);
-    if (!ctx) return;
-
-    const { characterId, level, delta } = parsed.data;
-    let result: ReturnType<typeof computeAdjustSpellSlot> | null = null;
-    const client = await pool.connect();
-    try {
-      await client.query('BEGIN');
-      const { rows } = await client.query('SELECT * FROM characters WHERE id = $1 FOR UPDATE', [characterId]);
-      if (rows.length > 0) {
-        const row = rows[0] as Record<string, unknown>;
-        const charUserId = String(row.user_id ?? '');
-        const isDM = playerIsDM(ctx);
-        const inSession = await characterIsInSession(characterId, ctx.room.sessionId);
-        if (inSession && (isDM || charUserId === ctx.player.userId) && (isDM || charUserId !== 'npc')) {
-          result = computeAdjustSpellSlot(row, level, delta);
-          await persistRestUpdates(client, result.characterId, result.updates);
+      updateSql += ' RETURNING version';
+      const { rows: updatedRows } = await pool.query(updateSql, params);
+      if (updatedRows.length === 0) {
+        const { rows: latestRows } = await pool.query('SELECT * FROM characters WHERE id = $1', [
+          characterId,
+        ]);
+        if (latestRows[0]) {
+          io.to(socket.id).emit('character:update-conflict', {
+            character: dbRowToCharacter(latestRows[0] as Record<string, unknown>),
+          });
         }
+        return;
       }
-      await client.query('COMMIT');
-    } catch (err) {
-      await client.query('ROLLBACK');
-      throw err;
-    } finally {
-      client.release();
-    }
+      changes.version = Number(updatedRows[0].version ?? expectedVersion ?? existing.version ?? 1);
 
-    if (!result) return;
+      // Broadcast via event cursor so missed frames (dead socket,
+      // Cloud Run instance churn) can be replayed on reconnect. The
+      // sender is excluded via socket.to(...) emulation: we still fire
+      // the broadcast room-wide, but the sender already applied the
+      // change optimistically and applyRemoteUpdate is idempotent, so
+      // the echo is harmless. Token id is not tagged because character
+      // updates don't have a single authoritative token (a creature can
+      // share a character record across multiple map instances); the
+      // visibility filter for character data is looser anyway.
+      broadcastEvent(io, ctx.room, 'character:updated', { characterId, changes });
+    })
+  );
 
-    const hasUpdates = Object.keys(result.updates).length > 0;
-    if (hasUpdates) {
-      broadcastEvent(io, ctx.room, 'character:updated', {
+  socket.on(
+    'character:rest',
+    safeHandler(socket, async (data) => {
+      const parsed = characterRestSchema.safeParse(data);
+      if (!parsed.success) return;
+
+      const ctx = getPlayerBySocketId(socket.id);
+      if (!ctx) return;
+
+      const { characterId, kind } = parsed.data;
+      const { rows } = await pool.query('SELECT * FROM characters WHERE id = $1', [characterId]);
+      if (rows.length === 0) return;
+
+      const row = rows[0] as Record<string, unknown>;
+      const charUserId = String(row.user_id ?? '');
+      const isDM = playerIsDM(ctx);
+      const inSession = await characterIsInSession(characterId, ctx.room.sessionId);
+      if (!inSession) return;
+      if (!isDM && charUserId !== ctx.player.userId) return;
+      if (!isDM && charUserId === 'npc') return;
+
+      const result = computeRest(row, kind);
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+        await persistRestUpdates(client, result.characterId, result.updates);
+        await client.query('COMMIT');
+      } catch (err) {
+        await client.query('ROLLBACK');
+        throw err;
+      } finally {
+        client.release();
+      }
+
+      const hasUpdates = Object.keys(result.updates).length > 0;
+      if (hasUpdates) {
+        syncRestToCombatants(ctx.room, result.characterId, result.updates);
+        broadcastEvent(io, ctx.room, 'character:updated', {
+          characterId: result.characterId,
+          changes: result.updates,
+        });
+      }
+
+      socket.emit('character:rested', {
         characterId: result.characterId,
-        changes: result.updates,
+        kind,
+        changes: result.changes,
+        updates: result.updates,
       });
-    }
+      if (hasUpdates) {
+        broadcastSystem(
+          io,
+          ctx,
+          `🛌 ${result.name} finishes a ${kind === 'long' ? 'Long' : 'Short'} Rest\n   ${result.changes.join(' • ')}`
+        );
+      }
+    })
+  );
 
-    socket.emit('character:spell-slot-adjusted', result);
-  }));
+  socket.on(
+    'character:spend-hit-die',
+    safeHandler(socket, async (data) => {
+      const parsed = spendHitDieSchema.safeParse(data);
+      if (!parsed.success) return;
 
-  socket.on('character:sync-request', safeHandler(socket, async (data) => {
-    const parsed = characterSyncRequestSchema.safeParse(data);
-    if (!parsed.success) return;
+      const ctx = getPlayerBySocketId(socket.id);
+      if (!ctx) return;
 
-    const ctx = getPlayerBySocketId(socket.id);
-    if (!ctx) return;
+      const { characterId, dieSize } = parsed.data;
+      let result: ReturnType<typeof computeSpendHitDie> | null = null;
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+        const { rows } = await client.query('SELECT * FROM characters WHERE id = $1 FOR UPDATE', [
+          characterId,
+        ]);
+        if (rows.length > 0) {
+          const row = rows[0] as Record<string, unknown>;
+          const charUserId = String(row.user_id ?? '');
+          const isDM = playerIsDM(ctx);
+          const inSession = await characterIsInSession(characterId, ctx.room.sessionId);
+          if (
+            inSession &&
+            (isDM || charUserId === ctx.player.userId) &&
+            (isDM || charUserId !== 'npc')
+          ) {
+            result = computeSpendHitDie(row, dieSize);
+            await persistRestUpdates(client, result.characterId, result.updates);
+          }
+        }
+        await client.query('COMMIT');
+      } catch (err) {
+        await client.query('ROLLBACK');
+        throw err;
+      } finally {
+        client.release();
+      }
 
-    const { characterId } = parsed.data;
+      if (!result) return;
 
-    // Verify character belongs to a player in this session
-    const { rows: linkCheck } = await pool.query(
-      'SELECT 1 FROM session_players WHERE session_id = $1 AND character_id = $2',
-      [ctx.room.sessionId, characterId],
-    );
-    if (linkCheck.length === 0) return;
+      const hasUpdates = Object.keys(result.updates).length > 0;
+      if (hasUpdates) {
+        syncRestToCombatants(ctx.room, result.characterId, result.updates);
+        broadcastEvent(io, ctx.room, 'character:updated', {
+          characterId: result.characterId,
+          changes: result.updates,
+        });
+      }
 
-    const { rows } = await pool.query('SELECT * FROM characters WHERE id = $1', [characterId]);
-    if (rows.length === 0) return;
+      socket.emit('character:hit-die-spent', result);
+      if (hasUpdates) {
+        broadcastSystem(
+          io,
+          ctx,
+          `💤 ${result.name} spends 1d${dieSize} Hit Die\n   ${result.changes.join(' • ')}`
+        );
+      }
+    })
+  );
 
-    // Broadcast to the whole session room (requester included) so the
-    // DM and every other connected player refresh their copy of this
-    // character. Previously only the requester got the synced data,
-    // which left the DM viewing stale stats after a player re-imported
-    // from D&D Beyond.
-    io.to(ctx.room.sessionId).emit('character:synced', { character: dbRowToCharacter(rows[0]) });
-  }));
+  socket.on(
+    'character:spell-slot-adjust',
+    safeHandler(socket, async (data) => {
+      const parsed = spellSlotAdjustSchema.safeParse(data);
+      if (!parsed.success) return;
+
+      const ctx = getPlayerBySocketId(socket.id);
+      if (!ctx) return;
+
+      const { characterId, level, delta } = parsed.data;
+      let result: ReturnType<typeof computeAdjustSpellSlot> | null = null;
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+        const { rows } = await client.query('SELECT * FROM characters WHERE id = $1 FOR UPDATE', [
+          characterId,
+        ]);
+        if (rows.length > 0) {
+          const row = rows[0] as Record<string, unknown>;
+          const charUserId = String(row.user_id ?? '');
+          const isDM = playerIsDM(ctx);
+          const inSession = await characterIsInSession(characterId, ctx.room.sessionId);
+          if (
+            inSession &&
+            (isDM || charUserId === ctx.player.userId) &&
+            (isDM || charUserId !== 'npc')
+          ) {
+            result = computeAdjustSpellSlot(row, level, delta);
+            await persistRestUpdates(client, result.characterId, result.updates);
+          }
+        }
+        await client.query('COMMIT');
+      } catch (err) {
+        await client.query('ROLLBACK');
+        throw err;
+      } finally {
+        client.release();
+      }
+
+      if (!result) return;
+
+      const hasUpdates = Object.keys(result.updates).length > 0;
+      if (hasUpdates) {
+        broadcastEvent(io, ctx.room, 'character:updated', {
+          characterId: result.characterId,
+          changes: result.updates,
+        });
+      }
+
+      socket.emit('character:spell-slot-adjusted', result);
+    })
+  );
+
+  socket.on(
+    'character:sync-request',
+    safeHandler(socket, async (data) => {
+      const parsed = characterSyncRequestSchema.safeParse(data);
+      if (!parsed.success) return;
+
+      const ctx = getPlayerBySocketId(socket.id);
+      if (!ctx) return;
+
+      const { characterId } = parsed.data;
+
+      // Verify character belongs to a player in this session
+      const { rows: linkCheck } = await pool.query(
+        'SELECT 1 FROM session_players WHERE session_id = $1 AND character_id = $2',
+        [ctx.room.sessionId, characterId]
+      );
+      if (linkCheck.length === 0) return;
+
+      const { rows } = await pool.query('SELECT * FROM characters WHERE id = $1', [characterId]);
+      if (rows.length === 0) return;
+
+      // Broadcast to the whole session room (requester included) so the
+      // DM and every other connected player refresh their copy of this
+      // character. Previously only the requester got the synced data,
+      // which left the DM viewing stale stats after a player re-imported
+      // from D&D Beyond.
+      io.to(ctx.room.sessionId).emit('character:synced', { character: dbRowToCharacter(rows[0]) });
+    })
+  );
 }
