@@ -3,8 +3,14 @@ import { useCharacterStore } from '../../stores/useCharacterStore';
 import { useSessionStore } from '../../stores/useSessionStore';
 import { useMapStore } from '../../stores/useMapStore';
 import { useCombatStore } from '../../stores/useCombatStore';
-import { emitShieldCast, emitSpellSlotAdjust, emitUseAction, emitSystemMessage } from '../../socket/emitters';
+import {
+  emitShieldCast,
+  emitSpellSlotAdjust,
+  emitUseAction,
+  emitSystemMessage,
+} from '../../socket/emitters';
 import { theme } from '../../styles/theme';
+import type { Character, Condition, Spell, Token } from '@dnd-vtt/shared';
 
 /**
  * Shield spell prompt.
@@ -33,6 +39,7 @@ interface ShieldPromptData {
 }
 
 const DISMISS_MS = 1_400;
+const SHIELD_SPELL_CONDITION = 'shield-spell' as Condition;
 
 const queue: ShieldPromptData[] = [];
 const listeners = new Set<() => void>();
@@ -55,21 +62,24 @@ export function ShieldModal() {
   useEffect(() => {
     const handler = () => force((n) => n + 1);
     listeners.add(handler);
-    return () => { listeners.delete(handler); };
+    return () => {
+      listeners.delete(handler);
+    };
   }, []);
 
   const head = queue[0];
+  const headAttackId = head?.attackId;
 
   // Auto-dismiss after DISMISS_MS — Shield is the most time-sensitive
   // reaction so it gets the shortest window.
   useEffect(() => {
-    if (!head) return;
+    if (!headAttackId) return;
     const t = setTimeout(() => {
       queue.shift();
       notify();
     }, DISMISS_MS);
     return () => clearTimeout(t);
-  }, [head?.attackId]);
+  }, [headAttackId]);
 
   const eligibility = head ? checkEligibility(head, myCharacter, userId, tokens) : null;
 
@@ -85,13 +95,13 @@ export function ShieldModal() {
     // which is +2). It clears at the start of the defender's next
     // turn — same flow that clears Dodge/Disengage in the server's
     // next-turn handler.
-    const myToken = Object.values(tokens).find((t: any) =>
-      t.characterId === myCharacter?.id || t.ownerUserId === userId,
-    ) as any;
+    const myToken = Object.values(tokens).find(
+      (t) => t.characterId === myCharacter?.id || t.ownerUserId === userId
+    );
     if (myToken) {
-      const next = [...((myToken.conditions || []) as string[])];
-      if (!next.includes('shield-spell')) next.push('shield-spell');
-      useMapStore.getState().updateToken(myToken.id, { conditions: next as any });
+      const next = [...(myToken.conditions || [])];
+      if (!next.includes(SHIELD_SPELL_CONDITION)) next.push(SHIELD_SPELL_CONDITION);
+      useMapStore.getState().updateToken(myToken.id, { conditions: next });
     }
     // Broadcast the shield cast so the attacker's resolver recomputes.
     // Pass the defender's token id so the server can verify ownership.
@@ -101,7 +111,7 @@ export function ShieldModal() {
       defenderTokenId: myToken?.id,
     });
     emitSystemMessage(
-      `🛡 ${myCharacter?.name ?? 'Caster'} casts SHIELD — +5 AC against ${head.attackerName}'s attack (1st-level slot, reaction)`,
+      `🛡 ${myCharacter?.name ?? 'Caster'} casts SHIELD — +5 AC against ${head.attackerName}'s attack (1st-level slot, reaction)`
     );
     queue.shift();
     notify();
@@ -118,12 +128,14 @@ export function ShieldModal() {
   // body, which triggered React 19's "setState during render" warning
   // because the listeners.notify() it eventually called could fire
   // during a still-in-progress render of another modal in the queue.
+  const hasEligibility = eligibility !== null;
+  const canCast = eligibility?.canCast ?? false;
   useEffect(() => {
-    if (head && eligibility && !eligibility.canCast) {
+    if (headAttackId && hasEligibility && !canCast) {
       queue.shift();
       notify();
     }
-  }, [head, eligibility?.canCast]);
+  }, [headAttackId, hasEligibility, canCast]);
 
   if (!head) return null;
   if (!eligibility?.canCast) return null;
@@ -162,10 +174,15 @@ export function ShieldModal() {
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
           <span style={{ fontSize: 22 }}>🛡</span>
           <div style={{ flex: 1 }}>
-            <div style={{
-              fontSize: 11, fontWeight: 700, color: theme.blue,
-              textTransform: 'uppercase', letterSpacing: '1px',
-            }}>
+            <div
+              style={{
+                fontSize: 11,
+                fontWeight: 700,
+                color: theme.blue,
+                textTransform: 'uppercase',
+                letterSpacing: '1px',
+              }}
+            >
               Shield Reaction
             </div>
             <div style={{ fontSize: 14, fontWeight: 600, color: theme.text.primary, marginTop: 2 }}>
@@ -174,13 +191,17 @@ export function ShieldModal() {
           </div>
         </div>
 
-        <div style={{
-          fontSize: 12, color: theme.text.secondary, lineHeight: 1.5,
-          padding: '8px 0',
-          borderTop: `1px solid ${theme.border.default}`,
-          borderBottom: `1px solid ${theme.border.default}`,
-          marginBottom: 12,
-        }}>
+        <div
+          style={{
+            fontSize: 12,
+            color: theme.text.secondary,
+            lineHeight: 1.5,
+            padding: '8px 0',
+            borderTop: `1px solid ${theme.border.default}`,
+            borderBottom: `1px solid ${theme.border.default}`,
+            marginBottom: 12,
+          }}
+        >
           Cast <strong style={{ color: theme.blue }}>Shield</strong> as a reaction (1st-level slot)
           for <strong>+5 AC</strong> until your next turn.{' '}
           {stillHits ? (
@@ -253,29 +274,35 @@ interface Eligibility {
 
 function checkEligibility(
   head: ShieldPromptData,
-  myCharacter: any,
+  myCharacter: Character | null,
   userId: string | null,
-  tokens: Record<string, any>,
+  tokens: Record<string, Token>
 ): Eligibility {
   const empty: Eligibility = { canCast: false, slotLevel: 0, slots: {} };
   if (!myCharacter) return empty;
 
   // Must be the target.
-  const myToken = Object.values(tokens).find((t: any) =>
-    t.characterId === myCharacter.id || t.ownerUserId === userId,
-  ) as any;
+  const myToken = Object.values(tokens).find(
+    (t) => t.characterId === myCharacter.id || t.ownerUserId === userId
+  );
   if (!myToken || myToken.id !== head.targetTokenId) return empty;
 
   // Must have Shield in spell list.
-  const spells = parseJson<any[]>(myCharacter.spells, []);
+  const spells = parseJson<Spell[]>(myCharacter.spells, []);
   if (!spells.some((s) => s?.name?.toLowerCase() === 'shield')) return empty;
 
   // Must have a slot of level ≥ 1.
-  const slots = parseJson<Record<string, { max: number; used: number }>>(myCharacter.spellSlots, {});
+  const slots = parseJson<Record<string, { max: number; used: number }>>(
+    myCharacter.spellSlots,
+    {}
+  );
   let slotLevel = 0;
   for (let lvl = 1; lvl <= 9; lvl++) {
     const s = slots[lvl] || slots[String(lvl)];
-    if (s && (s.max - s.used) > 0) { slotLevel = lvl; break; }
+    if (s && s.max - s.used > 0) {
+      slotLevel = lvl;
+      break;
+    }
   }
   if (slotLevel === 0) return empty;
 
@@ -288,7 +315,11 @@ function checkEligibility(
 
 function parseJson<T>(val: unknown, fallback: T): T {
   if (typeof val === 'string') {
-    try { return JSON.parse(val); } catch { return fallback; }
+    try {
+      return JSON.parse(val);
+    } catch {
+      return fallback;
+    }
   }
   return (val as T) ?? fallback;
 }
