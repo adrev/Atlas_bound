@@ -3,6 +3,7 @@ import { useCharacterStore } from '../../stores/useCharacterStore';
 import { useSessionStore } from '../../stores/useSessionStore';
 import { useMapStore } from '../../stores/useMapStore';
 import { theme } from '../../styles/theme';
+import type { Character, Token } from '@dnd-vtt/shared';
 
 const C = {
   bg: theme.bg.deep,
@@ -54,20 +55,25 @@ export function LootBagPanel({ characterId, creatureName }: LootBagPanelProps) {
   const fetchLoot = useCallback(() => {
     setLoading(true);
     fetch(`/api/characters/${characterId}/loot`)
-      .then(r => r.ok ? r.json() : [])
-      .then(data => { setLoot(data); setLoading(false); })
+      .then((r) => (r.ok ? r.json() : []))
+      .then((data: LootEntry[]) => {
+        setLoot(data);
+        setLoading(false);
+      })
       .catch(() => setLoading(false));
   }, [characterId]);
 
-  useEffect(() => { fetchLoot(); }, [fetchLoot]);
+  useEffect(() => {
+    fetchLoot();
+  }, [fetchLoot]);
 
   // Get player characters (non-NPC) for the "Give to" / "Take" feature
   const playerCharacters = Object.values(allCharacters).filter(
-    c => c.userId !== 'npc' && c.id !== characterId
+    (c) => c.userId !== 'npc' && c.id !== characterId
   );
 
   // Also derive from tokens for player characters that may not be in allCharacters
-  const playerTokens = Object.values(tokens).filter(t => t.ownerUserId && t.characterId);
+  const playerTokens = Object.values(tokens).filter((t) => t.ownerUserId && t.characterId);
 
   const takeItem = async (entryId: string, targetCharacterId: string) => {
     setTakingId(entryId);
@@ -80,20 +86,22 @@ export function LootBagPanel({ characterId, creatureName }: LootBagPanelProps) {
       if (resp.ok) {
         const data = await resp.json();
         if (data.inventory && data.targetCharacterId) {
-          useCharacterStore.getState().applyRemoteUpdate(data.targetCharacterId, { inventory: data.inventory });
+          useCharacterStore
+            .getState()
+            .applyRemoteUpdate(data.targetCharacterId, { inventory: data.inventory });
         }
       }
       // Re-fetch loot — if empty, remove the dropped item token from map
       const lootResp = await fetch(`/api/characters/${characterId}/loot`);
-      const remaining = lootResp.ok ? await lootResp.json() : [];
+      const remaining: LootEntry[] = lootResp.ok ? await lootResp.json() : [];
       setLoot(remaining);
       if (remaining.length === 0) {
         // Find and remove the token for this loot bag
         const tokens = useMapStore.getState().tokens;
-        const lootToken = Object.values(tokens).find((t: any) => t.characterId === characterId);
+        const lootToken = Object.values(tokens).find((t) => t.characterId === characterId);
         if (lootToken) {
           const { emitTokenRemove } = await import('../../socket/emitters');
-          emitTokenRemove((lootToken as any).id);
+          emitTokenRemove(lootToken.id);
         }
       }
       window.dispatchEvent(new Event('loot-updated'));
@@ -102,22 +110,50 @@ export function LootBagPanel({ characterId, creatureName }: LootBagPanelProps) {
       // client without waiting for the 5 s tick.
       const { triggerSnapshot } = await import('../../socket/stateSnapshot');
       triggerSnapshot('loot:take');
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
     setTakingId(null);
   };
 
   return (
     <div style={{ padding: '6px 0' }}>
       {/* Loot bag header */}
-      <div style={{
-        display: 'flex', alignItems: 'center', gap: 8, padding: '0 10px', marginBottom: 6,
-      }}>
-        <div style={{
-          width: 28, height: 28, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center',
-          background: 'rgba(197,49,49,0.15)', border: '1px solid rgba(197,49,49,0.3)', fontSize: 14, flexShrink: 0,
-        }}>💀</div>
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 8,
+          padding: '0 10px',
+          marginBottom: 6,
+        }}
+      >
+        <div
+          style={{
+            width: 28,
+            height: 28,
+            borderRadius: '50%',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            background: 'rgba(197,49,49,0.15)',
+            border: '1px solid rgba(197,49,49,0.3)',
+            fontSize: 14,
+            flexShrink: 0,
+          }}
+        >
+          💀
+        </div>
         <div>
-          <div style={{ fontSize: 8, fontWeight: 700, color: C.red, textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+          <div
+            style={{
+              fontSize: 8,
+              fontWeight: 700,
+              color: C.red,
+              textTransform: 'uppercase',
+              letterSpacing: '0.5px',
+            }}
+          >
             Remains
           </div>
           <div style={{ fontSize: 12, fontWeight: 600, color: C.text }}>{creatureName}</div>
@@ -126,7 +162,9 @@ export function LootBagPanel({ characterId, creatureName }: LootBagPanelProps) {
 
       {/* Loot list */}
       {loading ? (
-        <div style={{ fontSize: 10, color: C.textMuted, textAlign: 'center', padding: 12 }}>Loading loot...</div>
+        <div style={{ fontSize: 10, color: C.textMuted, textAlign: 'center', padding: 12 }}>
+          Loading loot...
+        </div>
       ) : loot.length === 0 ? (
         <div style={{ fontSize: 10, color: C.textMuted, textAlign: 'center', padding: 12 }}>
           No loot found on this creature.
@@ -138,16 +176,25 @@ export function LootBagPanel({ characterId, creatureName }: LootBagPanelProps) {
         </div>
       ) : (
         <div style={{ padding: '0 10px' }}>
-          {loot.map(entry => (
-            <div key={entry.id} style={{
-              padding: '5px 0', borderBottom: `1px solid ${C.borderDim}`,
-              display: 'flex', alignItems: 'center', gap: 6,
-            }}>
+          {loot.map((entry) => (
+            <div
+              key={entry.id}
+              style={{
+                padding: '5px 0',
+                borderBottom: `1px solid ${C.borderDim}`,
+                display: 'flex',
+                alignItems: 'center',
+                gap: 6,
+              }}
+            >
               <div style={{ flex: 1 }}>
-                <div style={{
-                  fontSize: 11, fontWeight: 600,
-                  color: RARITY_COLORS[entry.item_rarity?.toLowerCase()] || C.text,
-                }}>
+                <div
+                  style={{
+                    fontSize: 11,
+                    fontWeight: 600,
+                    color: RARITY_COLORS[entry.item_rarity?.toLowerCase()] || C.text,
+                  }}
+                >
                   {entry.item_name}
                   {entry.quantity > 1 && (
                     <span style={{ color: C.textMuted, fontWeight: 400 }}> x{entry.quantity}</span>
@@ -175,9 +222,15 @@ export function LootBagPanel({ characterId, creatureName }: LootBagPanelProps) {
                     if (myChar) takeItem(entry.id, myChar.id);
                   }}
                   style={{
-                    padding: '3px 10px', fontSize: 9, fontWeight: 600,
-                    background: `${C.green}22`, border: `1px solid ${C.green}44`,
-                    borderRadius: 4, color: C.green, cursor: 'pointer', fontFamily: 'inherit',
+                    padding: '3px 10px',
+                    fontSize: 9,
+                    fontWeight: 600,
+                    background: `${C.green}22`,
+                    border: `1px solid ${C.green}44`,
+                    borderRadius: 4,
+                    color: C.green,
+                    cursor: 'pointer',
+                    fontFamily: 'inherit',
                     opacity: takingId === entry.id ? 0.5 : 1,
                   }}
                 >
@@ -193,14 +246,20 @@ export function LootBagPanel({ characterId, creatureName }: LootBagPanelProps) {
 }
 
 interface DmGiveDropdownProps {
-  playerCharacters: any[];
-  playerTokens: any[];
-  allCharacters: Record<string, any>;
+  playerCharacters: Character[];
+  playerTokens: Token[];
+  allCharacters: Record<string, Character>;
   disabled: boolean;
   onGive: (targetCharId: string) => void;
 }
 
-function DmGiveDropdown({ playerCharacters, playerTokens, allCharacters, disabled, onGive }: DmGiveDropdownProps) {
+function DmGiveDropdown({
+  playerCharacters,
+  playerTokens,
+  allCharacters,
+  disabled,
+  onGive,
+}: DmGiveDropdownProps) {
   const [open, setOpen] = useState(false);
 
   // Combine sources of player characters
@@ -226,9 +285,15 @@ function DmGiveDropdown({ playerCharacters, playerTokens, allCharacters, disable
         disabled={disabled}
         onClick={() => onGive(charId)}
         style={{
-          padding: '3px 8px', fontSize: 9, fontWeight: 600,
-          background: `${C.gold}22`, border: `1px solid ${C.gold}44`,
-          borderRadius: 4, color: C.gold, cursor: 'pointer', fontFamily: 'inherit',
+          padding: '3px 8px',
+          fontSize: 9,
+          fontWeight: 600,
+          background: `${C.gold}22`,
+          border: `1px solid ${C.gold}44`,
+          borderRadius: 4,
+          color: C.gold,
+          cursor: 'pointer',
+          fontFamily: 'inherit',
           opacity: disabled ? 0.5 : 1,
         }}
       >
@@ -243,29 +308,50 @@ function DmGiveDropdown({ playerCharacters, playerTokens, allCharacters, disable
         disabled={disabled}
         onClick={() => setOpen(!open)}
         style={{
-          padding: '3px 8px', fontSize: 9, fontWeight: 600,
-          background: `${C.gold}22`, border: `1px solid ${C.gold}44`,
-          borderRadius: 4, color: C.gold, cursor: 'pointer', fontFamily: 'inherit',
+          padding: '3px 8px',
+          fontSize: 9,
+          fontWeight: 600,
+          background: `${C.gold}22`,
+          border: `1px solid ${C.gold}44`,
+          borderRadius: 4,
+          color: C.gold,
+          cursor: 'pointer',
+          fontFamily: 'inherit',
           opacity: disabled ? 0.5 : 1,
         }}
       >
         Give to...
       </button>
       {open && (
-        <div style={{
-          position: 'absolute', right: 0, top: '100%', marginTop: 2,
-          background: C.bg, border: `1px solid ${C.border}`, borderRadius: 4,
-          boxShadow: '0 4px 16px rgba(0,0,0,0.6)', minWidth: 120, zIndex: 10,
-        }}>
+        <div
+          style={{
+            position: 'absolute',
+            right: 0,
+            top: '100%',
+            marginTop: 2,
+            background: C.bg,
+            border: `1px solid ${C.border}`,
+            borderRadius: 4,
+            boxShadow: '0 4px 16px rgba(0,0,0,0.6)',
+            minWidth: 120,
+            zIndex: 10,
+          }}
+        >
           {[...targets.entries()].map(([charId, charName]) => (
             <div
               key={charId}
-              onClick={() => { onGive(charId); setOpen(false); }}
-              style={{
-                padding: '5px 10px', fontSize: 10, cursor: 'pointer', color: C.text,
+              onClick={() => {
+                onGive(charId);
+                setOpen(false);
               }}
-              onMouseEnter={e => (e.currentTarget.style.background = C.bgHover)}
-              onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
+              style={{
+                padding: '5px 10px',
+                fontSize: 10,
+                cursor: 'pointer',
+                color: C.text,
+              }}
+              onMouseEnter={(e) => (e.currentTarget.style.background = C.bgHover)}
+              onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
             >
               {charName}
             </div>

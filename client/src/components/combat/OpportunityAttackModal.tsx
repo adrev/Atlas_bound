@@ -37,7 +37,11 @@ function notifyListeners() {
  */
 export function pushOpportunityAttack(data: OAPromptData) {
   // De-dupe: don't queue the same attacker/mover pair twice.
-  if (oaQueue.some((q) => q.attackerTokenId === data.attackerTokenId && q.moverTokenId === data.moverTokenId)) {
+  if (
+    oaQueue.some(
+      (q) => q.attackerTokenId === data.attackerTokenId && q.moverTokenId === data.moverTokenId
+    )
+  ) {
     return;
   }
   oaQueue.push(data);
@@ -58,10 +62,12 @@ export function OpportunityAttackModal() {
   }, []);
 
   const head = oaQueue[0];
+  const headAttackerTokenId = head?.attackerTokenId;
+  const headMoverTokenId = head?.moverTokenId;
 
   // Auto-dismiss countdown — resets whenever the head changes.
   useEffect(() => {
-    if (!head) return;
+    if (!headAttackerTokenId || !headMoverTokenId) return;
     setSecondsLeft(Math.ceil(DISMISS_MS / 1000));
     const startedAt = Date.now();
     const tick = setInterval(() => {
@@ -71,13 +77,13 @@ export function OpportunityAttackModal() {
       if (remaining <= 0) {
         clearInterval(tick);
         // auto-decline
-        emitOADecline(head.attackerTokenId, head.moverTokenId);
+        emitOADecline(headAttackerTokenId, headMoverTokenId);
         oaQueue.shift();
         notifyListeners();
       }
     }, 200);
     return () => clearInterval(tick);
-  }, [head?.attackerTokenId, head?.moverTokenId]);
+  }, [headAttackerTokenId, headMoverTokenId]);
 
   const handleAttack = useCallback(() => {
     if (!head) return;
@@ -126,37 +132,51 @@ export function OpportunityAttackModal() {
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
           <span style={{ fontSize: 22 }}>⚡</span>
           <div style={{ flex: 1 }}>
-            <div style={{
-              fontSize: 11, fontWeight: 700, color: theme.state.danger,
-              textTransform: 'uppercase', letterSpacing: '1px',
-            }}>
+            <div
+              style={{
+                fontSize: 11,
+                fontWeight: 700,
+                color: theme.state.danger,
+                textTransform: 'uppercase',
+                letterSpacing: '1px',
+              }}
+            >
               Opportunity Attack
             </div>
             <div style={{ fontSize: 14, fontWeight: 600, color: theme.text.primary, marginTop: 2 }}>
               {head.moverName} is leaving {head.attackerName}'s reach!
             </div>
           </div>
-          <div style={{
-            fontSize: 10, fontWeight: 700, color: theme.text.muted,
-            padding: '2px 8px', background: theme.bg.elevated,
-            borderRadius: 10,
-          }}>
+          <div
+            style={{
+              fontSize: 10,
+              fontWeight: 700,
+              color: theme.text.muted,
+              padding: '2px 8px',
+              background: theme.bg.elevated,
+              borderRadius: 10,
+            }}
+          >
             {secondsLeft}s
           </div>
         </div>
 
         {/* Body */}
-        <div style={{
-          fontSize: 12, color: theme.text.secondary, lineHeight: 1.5,
-          padding: '8px 0',
-          borderTop: `1px solid ${theme.border.default}`,
-          borderBottom: `1px solid ${theme.border.default}`,
-          marginBottom: 12,
-        }}>
+        <div
+          style={{
+            fontSize: 12,
+            color: theme.text.secondary,
+            lineHeight: 1.5,
+            padding: '8px 0',
+            borderTop: `1px solid ${theme.border.default}`,
+            borderBottom: `1px solid ${theme.border.default}`,
+            marginBottom: 12,
+          }}
+        >
           <strong style={{ color: theme.gold.primary }}>{head.attackerName}</strong> may spend their{' '}
           <strong style={{ color: theme.purple }}>Reaction</strong> to make one melee weapon attack
-          against <strong style={{ color: theme.text.primary }}>{head.moverName}</strong> before they move out
-          of reach.
+          against <strong style={{ color: theme.text.primary }}>{head.moverName}</strong> before
+          they move out of reach.
         </div>
 
         {/* Actions */}
@@ -206,10 +226,14 @@ export function OpportunityAttackModal() {
 
         {/* Queue indicator */}
         {oaQueue.length > 1 && (
-          <div style={{
-            marginTop: 10, textAlign: 'center',
-            fontSize: 10, color: theme.text.muted,
-          }}>
+          <div
+            style={{
+              marginTop: 10,
+              textAlign: 'center',
+              fontSize: 10,
+              color: theme.text.muted,
+            }}
+          >
             +{oaQueue.length - 1} more opportunity attack{oaQueue.length - 1 > 1 ? 's' : ''} waiting
           </div>
         )}

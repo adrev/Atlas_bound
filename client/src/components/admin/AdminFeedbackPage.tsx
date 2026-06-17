@@ -1,6 +1,15 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, RefreshCw, Filter, MessageSquare, Bug, Sparkles, Wand2, ExternalLink } from 'lucide-react';
+import {
+  ArrowLeft,
+  RefreshCw,
+  Filter,
+  MessageSquare,
+  Bug,
+  Sparkles,
+  Wand2,
+  ExternalLink,
+} from 'lucide-react';
 import { theme } from '../../styles/theme';
 import { useAuthStore } from '../../stores/useAuthStore';
 import { Button, Select, Textarea, Badge, Card, Section, FieldGroup } from '../ui';
@@ -41,18 +50,18 @@ interface FeedbackEntry {
 }
 
 const STATUS_LABEL: Record<FeedbackStatus, string> = {
-  open:     'Open',
-  triaged:  'Triaged',
-  planned:  'Planned',
-  shipped:  'Shipped',
-  wontfix:  'Won\u2019t Fix',
+  open: 'Open',
+  triaged: 'Triaged',
+  planned: 'Planned',
+  shipped: 'Shipped',
+  wontfix: 'Won\u2019t Fix',
 };
 
 // Map feedback status onto the existing Badge variants. Keep the
 // "open" state highlight gold so it's the obvious eye-magnet
 // the moment the panel opens.
 const STATUS_VARIANT: Record<FeedbackStatus, 'gold' | 'success' | 'info' | 'warning' | 'danger'> = {
-  open:    'gold',
+  open: 'gold',
   triaged: 'info',
   planned: 'warning',
   shipped: 'success',
@@ -60,10 +69,10 @@ const STATUS_VARIANT: Record<FeedbackStatus, 'gold' | 'success' | 'info' | 'warn
 };
 
 const CATEGORY_ICON: Record<FeedbackCategory, React.ReactNode> = {
-  bug:     <Bug size={12} />,
+  bug: <Bug size={12} />,
   feature: <Sparkles size={12} />,
-  ux:      <Wand2 size={12} />,
-  other:   <MessageSquare size={12} />,
+  ux: <Wand2 size={12} />,
+  other: <MessageSquare size={12} />,
 };
 
 export function AdminFeedbackPage() {
@@ -122,7 +131,7 @@ export function AdminFeedbackPage() {
   // persist across selection changes.
   const selected = useMemo(
     () => items.find((it) => it.id === selectedId) ?? null,
-    [items, selectedId],
+    [items, selectedId]
   );
 
   useEffect(() => {
@@ -133,7 +142,7 @@ export function AdminFeedbackPage() {
       setDraftStatus('open');
       setDraftNotes('');
     }
-  }, [selected?.id, selected?.status, selected?.adminNotes]);
+  }, [selected]);
 
   const handleSave = async () => {
     if (!selected) return;
@@ -159,10 +168,8 @@ export function AdminFeedbackPage() {
       // Optimistic local update so the list reflects new status without re-fetching.
       setItems((prev) =>
         prev.map((it) =>
-          it.id === selected.id
-            ? { ...it, status: draftStatus, adminNotes: draftNotes }
-            : it,
-        ),
+          it.id === selected.id ? { ...it, status: draftStatus, adminNotes: draftNotes } : it
+        )
       );
       showToast({ message: 'Feedback updated', variant: 'success' });
     } catch {
@@ -174,7 +181,11 @@ export function AdminFeedbackPage() {
 
   const counts = useMemo(() => {
     const c: Record<FeedbackStatus, number> = {
-      open: 0, triaged: 0, planned: 0, shipped: 0, wontfix: 0,
+      open: 0,
+      triaged: 0,
+      planned: 0,
+      shipped: 0,
+      wontfix: 0,
     };
     for (const it of items) c[it.status]++;
     return c;
@@ -188,7 +199,9 @@ export function AdminFeedbackPage() {
       <div style={styles.notAuthorized}>
         <h2 style={{ ...theme.type.h1, color: theme.gold.primary }}>Admin only</h2>
         <p style={{ color: theme.text.secondary }}>This page is for site administrators.</p>
-        <Button variant="primary" onClick={() => navigate('/')}>Back to lobby</Button>
+        <Button variant="primary" onClick={() => navigate('/')}>
+          Back to lobby
+        </Button>
       </div>
     );
   }
@@ -223,9 +236,7 @@ export function AdminFeedbackPage() {
           </button>
         </div>
         <div style={{ flex: 1, display: 'flex', alignItems: 'baseline', gap: 12 }}>
-          <h1 style={{ ...theme.type.display, color: theme.gold.primary, margin: 0 }}>
-            Feedback
-          </h1>
+          <h1 style={{ ...theme.type.display, color: theme.gold.primary, margin: 0 }}>Feedback</h1>
           <span style={{ color: theme.text.muted, fontSize: 12 }}>
             {items.length} entr{items.length === 1 ? 'y' : 'ies'}
             {Object.values(counts).some((c) => c > 0) && (
@@ -261,7 +272,9 @@ export function AdminFeedbackPage() {
           >
             <option value="">All statuses</option>
             {(Object.keys(STATUS_LABEL) as FeedbackStatus[]).map((s) => (
-              <option key={s} value={s}>{STATUS_LABEL[s]}</option>
+              <option key={s} value={s}>
+                {STATUS_LABEL[s]}
+              </option>
             ))}
           </Select>
         </div>
@@ -280,9 +293,7 @@ export function AdminFeedbackPage() {
         </div>
       </div>
 
-      {error && (
-        <div style={styles.error}>{error}</div>
-      )}
+      {error && <div style={styles.error}>{error}</div>}
 
       {/* Body — list on the left, detail pane on the right */}
       <div style={styles.body}>
@@ -336,18 +347,20 @@ export function AdminFeedbackPage() {
             <Card variant="elevated" accentBar="gold">
               <Section title={selected.category.toUpperCase()}>
                 <div style={styles.detailHeader}>
-                  <Badge variant={STATUS_VARIANT[selected.status]}>{STATUS_LABEL[selected.status]}</Badge>
+                  <Badge variant={STATUS_VARIANT[selected.status]}>
+                    {STATUS_LABEL[selected.status]}
+                  </Badge>
                   <span style={styles.detailMeta}>
                     {selected.anonymous
                       ? '(anonymous)'
-                      : selected.userDisplayName ?? selected.userEmail ?? '—'}
-                    <span style={{ marginLeft: 8 }}>· Submitted {formatRelative(selected.createdAt)}</span>
+                      : (selected.userDisplayName ?? selected.userEmail ?? '—')}
+                    <span style={{ marginLeft: 8 }}>
+                      · Submitted {formatRelative(selected.createdAt)}
+                    </span>
                   </span>
                 </div>
 
-                <div style={styles.detailContent}>
-                  {selected.content}
-                </div>
+                <div style={styles.detailContent}>{selected.content}</div>
 
                 {/* Auto-captured context */}
                 <div style={styles.contextGrid}>
@@ -391,19 +404,31 @@ export function AdminFeedbackPage() {
                 </div>
 
                 {/* Editable fields */}
-                <div style={{ display: 'flex', flexDirection: 'column', gap: theme.space.lg, marginTop: theme.space.lg }}>
+                <div
+                  style={{
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: theme.space.lg,
+                    marginTop: theme.space.lg,
+                  }}
+                >
                   <FieldGroup label="Status">
                     <Select
                       value={draftStatus}
                       onChange={(e) => setDraftStatus(e.target.value as FeedbackStatus)}
                     >
                       {(Object.keys(STATUS_LABEL) as FeedbackStatus[]).map((s) => (
-                        <option key={s} value={s}>{STATUS_LABEL[s]}</option>
+                        <option key={s} value={s}>
+                          {STATUS_LABEL[s]}
+                        </option>
                       ))}
                     </Select>
                   </FieldGroup>
 
-                  <FieldGroup label="Admin notes" helperText="Internal — not shown to the submitter.">
+                  <FieldGroup
+                    label="Admin notes"
+                    helperText="Internal — not shown to the submitter."
+                  >
                     <Textarea
                       value={draftNotes}
                       onChange={(e) => setDraftNotes(e.target.value)}

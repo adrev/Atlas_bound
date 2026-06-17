@@ -30,7 +30,7 @@
  * CSS is mostly verbatim from the prototype; class names are namespaced
  * to avoid collisions with existing inline-styled components.
  */
-import { lazy, Suspense, useEffect, useMemo, useState } from 'react';
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   Bell,
@@ -644,18 +644,19 @@ export function SessionLobby() {
 
   // Pre-fill the join modal from `?roomCode=`. InviteLanding sends the
   // user back here after rotating an expired token.
+  const initialRoomCodeRef = useRef(searchParams.get('roomCode'));
   useEffect(() => {
-    const code = searchParams.get('roomCode');
+    const code = initialRoomCodeRef.current;
     if (code) {
+      initialRoomCodeRef.current = null;
       setJoinCode(code.toUpperCase());
-      openJoin();
-      searchParams.delete('roomCode');
-      setSearchParams(searchParams, { replace: true });
+      setError(null);
+      setJoinOpen(true);
+      const nextSearchParams = new URLSearchParams(searchParams);
+      nextSearchParams.delete('roomCode');
+      setSearchParams(nextSearchParams, { replace: true });
     }
-    // run once on mount only (the react-hooks plugin isn't installed,
-    // so its disable directive errors under the per-file lint; restore
-    // the directive when the plugin lands)
-  }, []);
+  }, [searchParams, setSearchParams]);
 
   // ── Derived view data ─────────────────────────────────────────
   const filteredGames = useMemo(() => {

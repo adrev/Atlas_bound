@@ -14,9 +14,12 @@ export function LootEditorOverlay() {
 
   useEffect(() => {
     const handler = (e: Event) => {
-      const detail = (e as CustomEvent).detail;
-      if (detail?.characterId) {
-        setState({ characterId: detail.characterId, tokenName: detail.tokenName || '' });
+      const detail = (e as CustomEvent<{ characterId?: unknown; tokenName?: unknown }>).detail;
+      if (typeof detail?.characterId === 'string') {
+        setState({
+          characterId: detail.characterId,
+          tokenName: typeof detail.tokenName === 'string' ? detail.tokenName : '',
+        });
       }
     };
     window.addEventListener('open-loot-editor', handler);
@@ -28,10 +31,8 @@ export function LootEditorOverlay() {
   // Determine if the current user can edit this character's inventory.
   // DM can always edit. Players can only edit their own characters.
   const tokens = useMapStore.getState().tokens;
-  const ownerToken = Object.values(tokens).find(
-    (t: any) => t.characterId === state.characterId,
-  );
-  const canEdit = isDM || (ownerToken && (ownerToken as any).ownerUserId === userId);
+  const ownerToken = Object.values(tokens).find((t) => t.characterId === state.characterId);
+  const canEdit = isDM || (ownerToken && ownerToken.ownerUserId === userId);
 
   return (
     <LootEditor
