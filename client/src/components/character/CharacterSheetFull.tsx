@@ -638,11 +638,11 @@ export function CharacterSheetFull({
     s.myCharacter?.id === character.id ? s.myCharacter : s.allCharacters[character.id]
   );
   const inventory = parse<InventoryItem[]>(storeChar?.inventory ?? character.inventory, []);
+  const hasUnmatchedInventory = inventory.some((i) => !i.slug && i.name);
 
   // Auto-enrich inventory items on first load (match to compendium)
   useEffect(() => {
-    const hasUnmatched = inventory.some((i) => !i.slug && i.name);
-    if (!hasUnmatched) return;
+    if (!hasUnmatchedInventory) return;
     fetch(`/api/characters/${character.id}/inventory/enrich`, { method: 'POST' })
       .then((r) => (r.ok ? r.json() : null))
       .then((data) => {
@@ -653,7 +653,7 @@ export function CharacterSheetFull({
         }
       })
       .catch(() => {});
-  }, [character.id]);
+  }, [character.id, hasUnmatchedInventory]);
   const background = parse<CharacterBackground>(character.background, {
     name: '',
     description: '',

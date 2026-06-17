@@ -3,6 +3,7 @@ import { useMapStore } from '../../stores/useMapStore';
 import { useCharacterStore } from '../../stores/useCharacterStore';
 import { useCombatStore } from '../../stores/useCombatStore';
 import { useSessionStore } from '../../stores/useSessionStore';
+import type { AbilityScores, Spell } from '@dnd-vtt/shared';
 import { abilityModifier } from '@dnd-vtt/shared';
 import { theme } from '../../styles/theme';
 
@@ -28,19 +29,37 @@ const C = {
 };
 
 const CONDITION_COLORS: Record<string, string> = {
-  blinded: '#4a4a4a', charmed: '#ff69b4', deafened: '#95a5a6',
-  frightened: '#9b59b6', grappled: '#e67e22', incapacitated: '#7f8c8d',
-  invisible: '#3498db', paralyzed: '#f1c40f', petrified: '#bdc3c7',
-  poisoned: '#27ae60', prone: '#e74c3c', restrained: '#c0392b',
-  stunned: '#f39c12', unconscious: '#2c3e50', stable: '#27ae60', exhaustion: '#8e44ad',
+  blinded: '#4a4a4a',
+  charmed: '#ff69b4',
+  deafened: '#95a5a6',
+  frightened: '#9b59b6',
+  grappled: '#e67e22',
+  incapacitated: '#7f8c8d',
+  invisible: '#3498db',
+  paralyzed: '#f1c40f',
+  petrified: '#bdc3c7',
+  poisoned: '#27ae60',
+  prone: '#e74c3c',
+  restrained: '#c0392b',
+  stunned: '#f39c12',
+  unconscious: '#2c3e50',
+  stable: '#27ae60',
+  exhaustion: '#8e44ad',
 };
 
 function parse<T>(val: unknown, fallback: T): T {
-  if (typeof val === 'string') try { return JSON.parse(val); } catch { return fallback; }
+  if (typeof val === 'string')
+    try {
+      return JSON.parse(val);
+    } catch {
+      return fallback;
+    }
   return (val as T) ?? fallback;
 }
 
-function fmtMod(n: number): string { return n >= 0 ? `+${n}` : String(n); }
+function fmtMod(n: number): string {
+  return n >= 0 ? `+${n}` : String(n);
+}
 
 export function TokenTooltip() {
   const hoveredTokenId = useMapStore((s) => s.hoveredTokenId);
@@ -59,7 +78,11 @@ export function TokenTooltip() {
 
   // Show tooltip after hover delay
   useEffect(() => {
-    if (!hoveredTokenId) { setVisibleTokenId(null); setDismissed(false); return; }
+    if (!hoveredTokenId) {
+      setVisibleTokenId(null);
+      setDismissed(false);
+      return;
+    }
     const timer = setTimeout(() => {
       setVisibleTokenId(hoveredTokenId);
       setDismissed(false);
@@ -98,8 +121,8 @@ export function TokenTooltip() {
     if (allCharacters[charId] || fetchedIds.has(charId)) return;
     fetchedIds.add(charId);
     fetch(`/api/characters/${charId}`)
-      .then(r => r.ok ? r.json() : null)
-      .then(data => {
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
         if (data) {
           useCharacterStore.getState().setAllCharacters({
             ...useCharacterStore.getState().allCharacters,
@@ -128,92 +151,161 @@ export function TokenTooltip() {
   const portraitUrl = token.imageUrl || character?.portraitUrl || null;
 
   // Parse character data for GM view
-  const abilityScores = character ? parse<Record<string, number>>(character.abilityScores, {}) : null;
-  const spells = character ? parse<any[]>(character.spells, []) : [];
+  const abilityScores = character
+    ? parse<Partial<AbilityScores>>(character.abilityScores, {})
+    : null;
+  const spells = character ? parse<Spell[]>(character.spells, []) : [];
   const speed = character?.speed ?? combatant?.speed ?? null;
 
   // Position - keep tooltip on screen
-  const tooltipX = Math.min(hoverPosition.x + 16, typeof window !== 'undefined' ? window.innerWidth - 340 : 600);
+  const tooltipX = Math.min(
+    hoverPosition.x + 16,
+    typeof window !== 'undefined' ? window.innerWidth - 340 : 600
+  );
   const tooltipY = Math.max(hoverPosition.y - 8, 20);
 
   return (
     <div
       style={{
-        position: 'fixed', left: tooltipX, top: tooltipY, zIndex: 10000,
-        pointerEvents: 'auto', transform: 'translateY(-100%)',
+        position: 'fixed',
+        left: tooltipX,
+        top: tooltipY,
+        zIndex: 10000,
+        pointerEvents: 'auto',
+        transform: 'translateY(-100%)',
         animation: 'tooltipFadeIn 0.15s ease',
       }}
       onMouseEnter={() => setIsHoveringTooltip(true)}
       onMouseLeave={() => setIsHoveringTooltip(false)}
     >
-      <div style={{
-        position: 'relative',
-        background: C.bg, border: `1px solid ${C.border}`, borderRadius: 8,
-        boxShadow: '0 8px 32px rgba(0,0,0,0.6)', padding: 0,
-        minWidth: showFullInfo ? 280 : 160, maxWidth: 320,
-        fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
-        color: C.text, fontSize: 12, overflow: 'hidden',
-      }}>
+      <div
+        style={{
+          position: 'relative',
+          background: C.bg,
+          border: `1px solid ${C.border}`,
+          borderRadius: 8,
+          boxShadow: '0 8px 32px rgba(0,0,0,0.6)',
+          padding: 0,
+          minWidth: showFullInfo ? 280 : 160,
+          maxWidth: 320,
+          fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+          color: C.text,
+          fontSize: 12,
+          overflow: 'hidden',
+        }}
+      >
         {/* Close button */}
         <button
           onClick={handleDismiss}
           style={{
-            position: 'absolute', top: 4, right: 4, zIndex: 1,
-            width: 18, height: 18, borderRadius: '50%',
-            background: 'rgba(255,255,255,0.1)', border: 'none',
-            color: C.textMuted, fontSize: 12, lineHeight: '16px',
-            cursor: 'pointer', display: 'flex', alignItems: 'center',
-            justifyContent: 'center', padding: 0,
+            position: 'absolute',
+            top: 4,
+            right: 4,
+            zIndex: 1,
+            width: 18,
+            height: 18,
+            borderRadius: '50%',
+            background: 'rgba(255,255,255,0.1)',
+            border: 'none',
+            color: C.textMuted,
+            fontSize: 12,
+            lineHeight: '16px',
+            cursor: 'pointer',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: 0,
           }}
-          onMouseEnter={(e) => { (e.target as HTMLElement).style.background = 'rgba(255,255,255,0.25)'; }}
-          onMouseLeave={(e) => { (e.target as HTMLElement).style.background = 'rgba(255,255,255,0.1)'; }}
+          onMouseEnter={(e) => {
+            (e.target as HTMLElement).style.background = 'rgba(255,255,255,0.25)';
+          }}
+          onMouseLeave={(e) => {
+            (e.target as HTMLElement).style.background = 'rgba(255,255,255,0.1)';
+          }}
         >
           x
         </button>
         {/* Large portrait */}
         {showFullInfo && portraitUrl && (
-          <div style={{
-            display: 'flex', justifyContent: 'center', padding: '12px 12px 0',
-            background: C.bgCard,
-          }}>
-            <div style={{
-              width: 100, height: 100, borderRadius: '50%', overflow: 'hidden',
-              border: `3px solid ${isOwner ? C.green : token.ownerUserId ? theme.blue : C.red}`,
-              boxShadow: `0 0 12px ${isOwner ? 'rgba(69,160,73,0.4)' : 'rgba(197,49,49,0.4)'}`,
-            }}>
-              <img src={portraitUrl} alt={token.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+          <div
+            style={{
+              display: 'flex',
+              justifyContent: 'center',
+              padding: '12px 12px 0',
+              background: C.bgCard,
+            }}
+          >
+            <div
+              style={{
+                width: 100,
+                height: 100,
+                borderRadius: '50%',
+                overflow: 'hidden',
+                border: `3px solid ${isOwner ? C.green : token.ownerUserId ? theme.blue : C.red}`,
+                boxShadow: `0 0 12px ${isOwner ? 'rgba(69,160,73,0.4)' : 'rgba(197,49,49,0.4)'}`,
+              }}
+            >
+              <img
+                src={portraitUrl}
+                alt={token.name}
+                style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+              />
             </div>
           </div>
         )}
 
         {/* Header info */}
-        <div style={{
-          display: 'flex', gap: 10, padding: showFullInfo && portraitUrl ? '6px 12px 10px' : '10px 12px',
-          background: C.bgCard, borderBottom: `1px solid ${C.border}`,
-          alignItems: 'center', justifyContent: showFullInfo && portraitUrl ? 'center' : 'flex-start',
-          flexDirection: showFullInfo && portraitUrl ? 'column' : 'row',
-        }}>
+        <div
+          style={{
+            display: 'flex',
+            gap: 10,
+            padding: showFullInfo && portraitUrl ? '6px 12px 10px' : '10px 12px',
+            background: C.bgCard,
+            borderBottom: `1px solid ${C.border}`,
+            alignItems: 'center',
+            justifyContent: showFullInfo && portraitUrl ? 'center' : 'flex-start',
+            flexDirection: showFullInfo && portraitUrl ? 'column' : 'row',
+          }}
+        >
           {/* Small portrait fallback when no image or not GM */}
-          {(!showFullInfo || !portraitUrl) && (
-            portraitUrl ? (
-              <div style={{
-                width: 40, height: 40, borderRadius: '50%', overflow: 'hidden', flexShrink: 0,
-                border: `2px solid ${isOwner ? C.green : C.red}`,
-              }}>
-                <img src={portraitUrl} alt={token.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+          {(!showFullInfo || !portraitUrl) &&
+            (portraitUrl ? (
+              <div
+                style={{
+                  width: 40,
+                  height: 40,
+                  borderRadius: '50%',
+                  overflow: 'hidden',
+                  flexShrink: 0,
+                  border: `2px solid ${isOwner ? C.green : C.red}`,
+                }}
+              >
+                <img
+                  src={portraitUrl}
+                  alt={token.name}
+                  style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                />
               </div>
             ) : (
-              <div style={{
-                width: 40, height: 40, borderRadius: '50%', flexShrink: 0,
-                background: token.color || '#555',
-                border: `2px solid ${isOwner ? C.green : C.red}`,
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                fontSize: 16, fontWeight: 700, color: '#fff',
-              }}>
+              <div
+                style={{
+                  width: 40,
+                  height: 40,
+                  borderRadius: '50%',
+                  flexShrink: 0,
+                  background: token.color || '#555',
+                  border: `2px solid ${isOwner ? C.green : C.red}`,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  fontSize: 16,
+                  fontWeight: 700,
+                  color: '#fff',
+                }}
+              >
                 {token.name[0]}
               </div>
-            )
-          )}
+            ))}
           <div style={{ textAlign: showFullInfo && portraitUrl ? 'center' : 'left', minWidth: 0 }}>
             <div style={{ fontWeight: 700, fontSize: 15, color: C.text, lineHeight: 1.2 }}>
               {token.name}
@@ -225,18 +317,36 @@ export function TokenTooltip() {
             )}
             {/* Quick stats inline */}
             {showFullInfo && (
-              <div style={{ display: 'flex', gap: 8, marginTop: 4, fontSize: 11, flexWrap: 'wrap' }}>
+              <div
+                style={{ display: 'flex', gap: 8, marginTop: 4, fontSize: 11, flexWrap: 'wrap' }}
+              >
                 {ac !== null && (
-                  <span><span style={{ color: C.textMuted }}>AC</span> <strong>{ac}</strong></span>
+                  <span>
+                    <span style={{ color: C.textMuted }}>AC</span> <strong>{ac}</strong>
+                  </span>
                 )}
                 {speed !== null && (
-                  <span><span style={{ color: C.textMuted }}>SPD</span> <strong>{speed}ft</strong></span>
+                  <span>
+                    <span style={{ color: C.textMuted }}>SPD</span> <strong>{speed}ft</strong>
+                  </span>
                 )}
                 {character?.initiative !== undefined && (
-                  <span><span style={{ color: C.textMuted }}>INIT</span> <strong>{fmtMod(character.initiative)}</strong></span>
+                  <span>
+                    <span style={{ color: C.textMuted }}>INIT</span>{' '}
+                    <strong>{fmtMod(character.initiative)}</strong>
+                  </span>
                 )}
                 {hp !== null && maxHp !== null && (
-                  <span><span style={{ color: C.textMuted }}>HP</span> <strong style={{ color: hp / maxHp > 0.5 ? C.green : hp / maxHp > 0.25 ? C.yellow : C.red }}>{hp}/{maxHp}</strong></span>
+                  <span>
+                    <span style={{ color: C.textMuted }}>HP</span>{' '}
+                    <strong
+                      style={{
+                        color: hp / maxHp > 0.5 ? C.green : hp / maxHp > 0.25 ? C.yellow : C.red,
+                      }}
+                    >
+                      {hp}/{maxHp}
+                    </strong>
+                  </span>
                 )}
                 {/* Passive Perception — DM-facing stealth comparison.
                     Parses from character.senses which can be either a
@@ -249,10 +359,14 @@ export function TokenTooltip() {
                     const senses = typeof s === 'string' ? JSON.parse(s) : s;
                     const raw = (senses as { passivePerception?: number })?.passivePerception;
                     if (typeof raw === 'number' && raw > 0) pp = raw;
-                  } catch { /* ignore */ }
+                  } catch {
+                    /* ignore */
+                  }
                   if (pp === null) return null;
                   return (
-                    <span><span style={{ color: C.textMuted }}>PP</span> <strong>{pp}</strong></span>
+                    <span>
+                      <span style={{ color: C.textMuted }}>PP</span> <strong>{pp}</strong>
+                    </span>
                   );
                 })()}
               </div>
@@ -263,16 +377,24 @@ export function TokenTooltip() {
         {/* HP Bar */}
         {showFullInfo && hp !== null && maxHp !== null && maxHp > 0 && (
           <div style={{ padding: '6px 12px 4px', background: C.bgCard }}>
-            <div style={{
-              width: '100%', height: 8, background: 'rgba(0,0,0,0.5)',
-              borderRadius: 4, overflow: 'hidden',
-            }}>
-              <div style={{
-                height: '100%', borderRadius: 4,
-                width: `${Math.max(0, Math.min(100, (hp / maxHp) * 100))}%`,
-                background: hp / maxHp > 0.5 ? C.green : hp / maxHp > 0.25 ? C.yellow : C.red,
-                transition: 'width 0.2s ease',
-              }} />
+            <div
+              style={{
+                width: '100%',
+                height: 8,
+                background: 'rgba(0,0,0,0.5)',
+                borderRadius: 4,
+                overflow: 'hidden',
+              }}
+            >
+              <div
+                style={{
+                  height: '100%',
+                  borderRadius: 4,
+                  width: `${Math.max(0, Math.min(100, (hp / maxHp) * 100))}%`,
+                  background: hp / maxHp > 0.5 ? C.green : hp / maxHp > 0.25 ? C.yellow : C.red,
+                  transition: 'width 0.2s ease',
+                }}
+              />
             </div>
           </div>
         )}
@@ -281,13 +403,24 @@ export function TokenTooltip() {
         {showFullInfo && abilityScores && Object.keys(abilityScores).length > 0 && (
           <div style={{ padding: '6px 12px', borderTop: `1px solid ${C.border}` }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', gap: 2 }}>
-              {(['str', 'dex', 'con', 'int', 'wis', 'cha'] as const).map(ab => {
+              {(['str', 'dex', 'con', 'int', 'wis', 'cha'] as const).map((ab) => {
                 const score = abilityScores[ab] ?? 10;
                 const mod = abilityModifier(score);
                 return (
                   <div key={ab} style={{ textAlign: 'center', flex: 1 }}>
-                    <div style={{ fontSize: 8, fontWeight: 700, color: C.textMuted, textTransform: 'uppercase' }}>{ab}</div>
-                    <div style={{ fontSize: 14, fontWeight: 700, color: C.text }}>{fmtMod(mod)}</div>
+                    <div
+                      style={{
+                        fontSize: 8,
+                        fontWeight: 700,
+                        color: C.textMuted,
+                        textTransform: 'uppercase',
+                      }}
+                    >
+                      {ab}
+                    </div>
+                    <div style={{ fontSize: 14, fontWeight: 700, color: C.text }}>
+                      {fmtMod(mod)}
+                    </div>
                     <div style={{ fontSize: 9, color: C.textMuted }}>{score}</div>
                   </div>
                 );
@@ -299,16 +432,30 @@ export function TokenTooltip() {
         {/* GM: Spells summary */}
         {showFullInfo && spells.length > 0 && (
           <div style={{ padding: '4px 12px 6px', borderTop: `1px solid ${C.border}` }}>
-            <div style={{ fontSize: 9, fontWeight: 700, color: C.red, textTransform: 'uppercase', marginBottom: 3 }}>
+            <div
+              style={{
+                fontSize: 9,
+                fontWeight: 700,
+                color: C.red,
+                textTransform: 'uppercase',
+                marginBottom: 3,
+              }}
+            >
               Spells ({spells.length})
             </div>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 3 }}>
-              {spells.slice(0, 8).map((s: any, i: number) => (
-                <span key={i} style={{
-                  padding: '1px 5px', fontSize: 9, borderRadius: 3,
-                  background: C.bgElevated, border: `1px solid ${C.border}`,
-                  color: s.level === 0 ? C.textSec : C.text,
-                }}>
+              {spells.slice(0, 8).map((s, i) => (
+                <span
+                  key={i}
+                  style={{
+                    padding: '1px 5px',
+                    fontSize: 9,
+                    borderRadius: 3,
+                    background: C.bgElevated,
+                    border: `1px solid ${C.border}`,
+                    color: s.level === 0 ? C.textSec : C.text,
+                  }}
+                >
                   {s.name}
                 </span>
               ))}
@@ -321,15 +468,29 @@ export function TokenTooltip() {
 
         {/* Conditions */}
         {conditions.length > 0 && (
-          <div style={{ padding: '4px 12px 6px', borderTop: `1px solid ${C.border}`, display: 'flex', flexWrap: 'wrap', gap: 3 }}>
+          <div
+            style={{
+              padding: '4px 12px 6px',
+              borderTop: `1px solid ${C.border}`,
+              display: 'flex',
+              flexWrap: 'wrap',
+              gap: 3,
+            }}
+          >
             {conditions.map((cond) => (
-              <span key={cond} style={{
-                padding: '1px 6px', fontSize: 9, fontWeight: 600,
-                background: `${CONDITION_COLORS[cond] || '#888'}33`,
-                border: `1px solid ${CONDITION_COLORS[cond] || '#888'}`,
-                borderRadius: 8, color: CONDITION_COLORS[cond] || '#888',
-                textTransform: 'capitalize',
-              }}>
+              <span
+                key={cond}
+                style={{
+                  padding: '1px 6px',
+                  fontSize: 9,
+                  fontWeight: 600,
+                  background: `${CONDITION_COLORS[cond] || '#888'}33`,
+                  border: `1px solid ${CONDITION_COLORS[cond] || '#888'}`,
+                  borderRadius: 8,
+                  color: CONDITION_COLORS[cond] || '#888',
+                  textTransform: 'capitalize',
+                }}
+              >
                 {cond}
               </span>
             ))}
@@ -338,7 +499,14 @@ export function TokenTooltip() {
 
         {/* Non-GM: just show name for enemy tokens */}
         {!showFullInfo && !isOwner && (
-          <div style={{ padding: '4px 12px 6px', fontSize: 10, color: C.textMuted, fontStyle: 'italic' }}>
+          <div
+            style={{
+              padding: '4px 12px 6px',
+              fontSize: 10,
+              color: C.textMuted,
+              fontStyle: 'italic',
+            }}
+          >
             Enemy creature
           </div>
         )}

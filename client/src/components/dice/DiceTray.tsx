@@ -80,10 +80,12 @@ export function DiceTray() {
   } | null>(null);
   const spinTimeoutRef = useRef<number | null>(null);
   const settleTimeoutRef = useRef<number | null>(null);
+  const rollingDieSides = rollingDie?.sides;
+  const rollingDieFinalValue = rollingDie?.finalValue;
 
   // While rolling, cycle random values every ~60ms for a tumbling feel.
   useEffect(() => {
-    if (!rollingDie || rollingDie.finalValue != null) return;
+    if (!rollingDieSides || rollingDieFinalValue != null) return;
     const id = window.setInterval(() => {
       setRollingDie((prev) =>
         prev && prev.finalValue == null
@@ -92,15 +94,15 @@ export function DiceTray() {
       );
     }, 60);
     return () => window.clearInterval(id);
-  }, [rollingDie?.sides, rollingDie?.finalValue]);
+  }, [rollingDieSides, rollingDieFinalValue]);
 
   // When the server result arrives for the current rolling die, settle.
   useEffect(() => {
-    if (!rollingDie || rollingDie.finalValue != null || !lastResult) return;
+    if (!rollingDieSides || rollingDieFinalValue != null || !lastResult) return;
     // Only settle on results for a single die of the right size.
     const matches =
       lastResult.dice.length >= 1 &&
-      lastResult.notation?.toLowerCase().includes(`d${rollingDie.sides}`);
+      lastResult.notation?.toLowerCase().includes(`d${rollingDieSides}`);
     if (!matches) return;
     setRollingDie((prev) =>
       prev ? { ...prev, finalValue: lastResult.total, displayValue: lastResult.total } : prev
@@ -109,17 +111,17 @@ export function DiceTray() {
     return () => {
       if (settleTimeoutRef.current) window.clearTimeout(settleTimeoutRef.current);
     };
-  }, [lastResult, rollingDie?.sides, rollingDie?.finalValue]);
+  }, [lastResult, rollingDieSides, rollingDieFinalValue]);
 
   // Safety net: if the server result never arrives (e.g. offline), end
   // the spin after 1.8s so the overlay doesn't stick forever.
   useEffect(() => {
-    if (!rollingDie) return;
+    if (!rollingDieSides) return;
     spinTimeoutRef.current = window.setTimeout(() => setRollingDie(null), 1800);
     return () => {
       if (spinTimeoutRef.current) window.clearTimeout(spinTimeoutRef.current);
     };
-  }, [rollingDie?.sides]);
+  }, [rollingDieSides]);
 
   const handleDiceClick = (sides: number) => {
     // Advantage / disadvantage only matters for d20 rolls — doubled to

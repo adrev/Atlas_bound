@@ -35,11 +35,14 @@ export function HandoutSender() {
         showToast({ message: `Upload failed: ${err.error || resp.statusText}`, variant: 'danger' });
         return;
       }
-      const data = await resp.json() as { url: string };
+      const data = (await resp.json()) as { url: string };
       setImageUrl(data.url);
       showToast({ message: 'Image attached.', variant: 'success' });
     } catch (err) {
-      showToast({ message: `Upload failed: ${err instanceof Error ? err.message : 'unknown'}`, variant: 'danger' });
+      showToast({
+        message: `Upload failed: ${err instanceof Error ? err.message : 'unknown'}`,
+        variant: 'danger',
+      });
     } finally {
       setUploading(false);
       // Reset the input so picking the same file again still fires onChange.
@@ -59,7 +62,7 @@ export function HandoutSender() {
     if (!sendToAll && selectedPlayers.size > 0) {
       data.targetUserIds = Array.from(selectedPlayers);
     }
-    getSocket().emit('session:handout' as any, data);
+    getSocket().emit('session:handout', data);
 
     // Reset form
     setTitle('');
@@ -154,7 +157,9 @@ export function HandoutSender() {
               src={imageUrl}
               alt="Handout preview"
               style={styles.previewImg}
-              onError={(e) => { e.currentTarget.style.display = 'none'; }}
+              onError={(e) => {
+                e.currentTarget.style.display = 'none';
+              }}
             />
             <button
               style={styles.clearImageBtn}
@@ -180,10 +185,13 @@ export function HandoutSender() {
 
           <div style={styles.playerList}>
             {connectedPlayers.map((p) => (
-              <label key={p.userId} style={{
-                ...styles.checkLabel,
-                opacity: sendToAll ? 0.5 : 1,
-              }}>
+              <label
+                key={p.userId}
+                style={{
+                  ...styles.checkLabel,
+                  opacity: sendToAll ? 0.5 : 1,
+                }}
+              >
                 <input
                   type="checkbox"
                   checked={sendToAll || selectedPlayers.has(p.userId)}
@@ -195,9 +203,7 @@ export function HandoutSender() {
               </label>
             ))}
             {connectedPlayers.length === 0 && (
-              <span style={{ fontSize: 11, color: theme.text.muted }}>
-                No players connected
-              </span>
+              <span style={{ fontSize: 11, color: theme.text.muted }}>No players connected</span>
             )}
           </div>
         </div>
