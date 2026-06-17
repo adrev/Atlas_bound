@@ -70,7 +70,7 @@ Each item below needs a verification pass. "Unit-testable" = I can pin it headle
 | T3.1 | Lucia v3 deprecated → migration plan (Auth.js / Better-Auth / DIY) | ⬜ | no security patches incoming; not urgent |
 | T3.2 | `npm audit fix` — 5 moderate vulns (uuid, express-rate-limit, postcss, brace-expansion) | ✅ | Done in PR #8; CI now runs `npm audit --audit-level=moderate` green |
 | T3.3 | Boot-time config validation warnings | ✅ | Merged/deployed in PR #64; warns on missing OAuth provider or invalid production `BASE_URL` without blocking boot |
-| T3.4 | Version/seq field for tokens + HP → detect concurrent writes | ⬜ | LWW currently silent |
+| T3.4 | Version/seq field for tokens + HP → detect concurrent writes | ✅ | Done in PR #131; token + character rows now carry DB-backed `version`, socket writes can send `expectedVersion`, stale writes return sender-only conflict sync events |
 | T3.5 | Await DB writes in `CombatService.applyDamage` (no fire-and-forget) | ✅ | Done in PR #88 for async HP mutation paths; `applyDamage`/`applyHeal` await combat-state, token-condition, and concentration persistence |
 | T3.6 | Wrap character DDB import+merge in a transaction | ✅ | Done in PR #92; DDB import/sync and character JSON re-import lock existing rows with `FOR UPDATE` inside transactions, with rollback regression coverage |
 | T3.7 | Tag `/state` snapshot with explicit `mapId` | ✅ | Done in PR #67; state payload carries map scope and client no longer infers empty snapshots from current map |
@@ -97,7 +97,7 @@ Each item below needs a verification pass. "Unit-testable" = I can pin it headle
 | O.1 | Post-deploy verification: Discord OAuth, Google OAuth, char save round-trip, image upload round-trip, DGX Chronicle worker poll | ⬜ | needs new personal OAuth clients live + Andrew |
 | O.2 | `UPLOAD_DIR` writes to local FS on Cloud Run — user uploads may not persist | ✅ | Done in PR #117; optional `UPLOAD_GCS_BUCKET` streams authorized uploads through `gs://atlas-bound-data-personal`, with local fallback for dev/tests |
 | O.3 | Move secrets to Google Secret Manager (`--set-secrets`) | ⬜ | currently plain env vars on the revision |
-| O.4 | Apple OAuth not plumbed through `deploy.sh` | ⬜ | defined in `.env.example`, decide if wanted |
+| O.4 | Apple OAuth not plumbed through `deploy.sh` | ✅ | Done in PR #132; deploy env file now includes Apple OAuth vars and preserves live values when local env is unset |
 | O.5 | Public static asset bucket + CORS strategy | ✅ | Done in PR #120; public assets now live in `atlas-bound-public-assets-personal`, runtime client URLs use it, and PNG/JPG/SVG/MP3 content types + CORS were verified |
 | O.6 | Audit/migrate persisted DB URLs from old bucket (`atlas-bound-data`) to the new public asset bucket | ⚠️ | Dry-run/apply maintenance tooling is merged in PR #123/#124; production DB still needs `npm run assets:audit-public-urls` first, then `npm run assets:migrate-public-urls` only if the report looks right |
 
