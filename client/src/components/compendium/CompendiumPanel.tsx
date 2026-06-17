@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { Search, Plus } from 'lucide-react';
 import { theme } from '../../styles/theme';
 import { Button } from '../ui';
@@ -7,7 +7,7 @@ import { CompendiumDetailPopup } from './CompendiumDetailPopup';
 import { CreateMonsterForm } from './CreateMonsterForm';
 import { CreateSpellForm } from './CreateSpellForm';
 import { CreateItemForm } from './CreateItemForm';
-import type { CompendiumSearchResult, CompendiumCategory } from '@dnd-vtt/shared';
+import type { CompendiumSearchResult, CompendiumCategory, ItemRarity } from '@dnd-vtt/shared';
 import { CONDITIONS } from '@dnd-vtt/shared';
 import { SPELL_BUFFS } from './spellBuffsGlossary';
 import { getCompendiumImageUrl, getCompendiumFallbackUrl } from '../../utils/compendiumIcons';
@@ -17,7 +17,50 @@ import { CLASSES } from './classesGlossary';
 import { BACKGROUNDS } from './backgroundsGlossary';
 import { RACES } from './racesGlossary';
 
-type FilterCategory = 'all' | 'monsters' | 'spells' | 'items' | 'homebrew' | 'conditions' | 'rules' | 'feats' | 'classes' | 'backgrounds' | 'races';
+type FilterCategory =
+  | 'all'
+  | 'monsters'
+  | 'spells'
+  | 'items'
+  | 'homebrew'
+  | 'conditions'
+  | 'rules'
+  | 'feats'
+  | 'classes'
+  | 'backgrounds'
+  | 'races';
+type SearchResultWithRawType = CompendiumSearchResult & { _rawType?: string };
+
+interface MonsterListEntry {
+  slug: string;
+  name: string;
+  size?: string | null;
+  type?: string | null;
+  challengeRating?: string | null;
+}
+
+interface SpellListEntry {
+  slug: string;
+  name: string;
+  level?: number | null;
+  school?: string | null;
+  castingTime?: string | null;
+}
+
+interface ItemListEntry {
+  id?: string | null;
+  slug?: string | null;
+  name: string;
+  type?: string | null;
+  damage?: string | null;
+  rarity?: string | null;
+}
+
+type CompendiumListEntry = MonsterListEntry & SpellListEntry & ItemListEntry;
+
+interface SearchResponse {
+  results?: CompendiumSearchResult[];
+}
 
 // Wiki is a lookup surface for both DM + players — Homebrew lives
 // under DM Tools (HomebrewPanel) so players don't see the authoring
@@ -56,6 +99,74 @@ const RARITY_COLORS: Record<string, string> = {
   legendary: '#e67e22',
   artifact: '#c0392b',
 };
+
+const ITEM_RARITY_VALUES = new Set<ItemRarity>([
+  'common',
+  'uncommon',
+  'rare',
+  'very_rare',
+  'legendary',
+  'artifact',
+]);
+
+function isItemRarity(value: string): value is ItemRarity {
+  return ITEM_RARITY_VALUES.has(value as ItemRarity);
+}
+
+function toItemRarity(value: string | null | undefined): ItemRarity | undefined {
+  const normalized = value?.trim().toLowerCase().replace(/\s+/g, '_');
+  return normalized && isItemRarity(normalized) ? normalized : undefined;
+}
+
+async function fetchJsonArray<T>(url: string): Promise<T[]> {
+  const response = await fetch(url);
+  if (!response.ok) return [];
+  const data: unknown = await response.json();
+  return Array.isArray(data) ? (data as T[]) : [];
+}
+
+function matchesName<T extends { name: string }>(item: T, searchQ: string): boolean {
+  return item.name.toLowerCase().includes(searchQ);
+}
+
+function homebrewSnippet(...parts: Array<string | null | undefined>): string {
+  const details = parts
+    .map((part) => part?.trim())
+    .filter(Boolean)
+    .join(' ');
+  return details ? `Homebrew · ${details}` : 'Homebrew';
+}
+
+function mapMonsterResult(m: MonsterListEntry, snippetPrefix = ''): CompendiumSearchResult {
+  return {
+    slug: m.slug,
+    name: m.name,
+    category: 'monsters',
+    snippet: snippetPrefix || [m.size, m.type].filter(Boolean).join(' ') || 'Custom Monster',
+    cr: m.challengeRating ?? undefined,
+  };
+}
+
+function mapSpellResult(s: SpellListEntry, snippetPrefix = ''): CompendiumSearchResult {
+  return {
+    slug: s.slug,
+    name: s.name,
+    category: 'spells',
+    snippet:
+      snippetPrefix || [s.school, s.castingTime].filter(Boolean).join(' · ') || 'Custom Spell',
+    level: s.level ?? undefined,
+  };
+}
+
+function mapItemResult(i: ItemListEntry, snippetPrefix = ''): CompendiumSearchResult {
+  return {
+    slug: i.id || i.slug || i.name,
+    name: i.name,
+    category: 'items',
+    snippet: snippetPrefix || [i.type, i.damage].filter(Boolean).join(' · ') || 'Custom Item',
+    rarity: toItemRarity(i.rarity),
+  };
+}
 
 function spellLevelLabel(level: number): string {
   if (level === 0) return 'Cantrip';
@@ -113,10 +224,12 @@ export function CompendiumPanel({
   const sessionId = useSessionStore((s) => s.sessionId);
   const isDM = useSessionStore((s) => s.isDM);
   const ruleSources = useSessionStore((s) => s.settings.ruleSources ?? ['phb']);
-  // Memoize the Set so the effect deps stay stable across renders —
-  // `ruleSources` is fresh on every render, but its content rarely
-  // changes, so a stable-by-content comparison is what we want.
-  const activeRuleSources = new Set(ruleSources);
+  const ruleSourcesKey = ruleSources.join(',');
+  // `ruleSources` may be a fresh array each render, so key it by content.
+  const activeRuleSources = useMemo(
+    () => new Set(ruleSourcesKey.split(',').filter(Boolean)),
+    [ruleSourcesKey]
+  );
 
   // Load default entries when no search
   useEffect(() => {
@@ -149,15 +262,17 @@ export function CompendiumPanel({
       return;
     }
     if (cat === 'rules') {
-      setResults(RULES_GLOSSARY.map((r) => ({
-        slug: r.slug,
-        name: r.name,
-        // CompendiumCategory doesn't include 'rules' yet; cast to the
-        // nearest enum member so the badge renderer has a color. The
-        // detail popup keys off slug for the rule glossary lookup.
-        category: 'conditions' as const,
-        snippet: r.snippet,
-      })));
+      setResults(
+        RULES_GLOSSARY.map((r) => ({
+          slug: r.slug,
+          name: r.name,
+          // CompendiumCategory doesn't include 'rules' yet; cast to the
+          // nearest enum member so the badge renderer has a color. The
+          // detail popup keys off slug for the rule glossary lookup.
+          category: 'conditions' as const,
+          snippet: r.snippet,
+        }))
+      );
       setLoading(false);
       return;
     }
@@ -169,44 +284,52 @@ export function CompendiumPanel({
       (src ?? 'phb') === 'phb' || activeRuleSources.has(src as string);
 
     if (cat === 'feats') {
-      setResults(FEATS.filter((f) => isSourceEnabled(f.source)).map((f) => ({
-        slug: f.slug,
-        name: f.name,
-        category: 'feats' as const,
-        snippet: f.prerequisite ? `${f.prerequisite} — ${f.snippet}` : f.snippet,
-      })));
+      setResults(
+        FEATS.filter((f) => isSourceEnabled(f.source)).map((f) => ({
+          slug: f.slug,
+          name: f.name,
+          category: 'feats' as const,
+          snippet: f.prerequisite ? `${f.prerequisite} — ${f.snippet}` : f.snippet,
+        }))
+      );
       setLoading(false);
       return;
     }
     if (cat === 'classes') {
-      setResults(CLASSES.filter((c) => isSourceEnabled(c.source)).map((c) => ({
-        slug: c.slug,
-        name: c.name,
-        category: 'classes' as const,
-        snippet: `d${c.hitDie} HD · ${c.primaryAbility} · ${c.snippet}`,
-      })));
+      setResults(
+        CLASSES.filter((c) => isSourceEnabled(c.source)).map((c) => ({
+          slug: c.slug,
+          name: c.name,
+          category: 'classes' as const,
+          snippet: `d${c.hitDie} HD · ${c.primaryAbility} · ${c.snippet}`,
+        }))
+      );
       setLoading(false);
       return;
     }
     if (cat === 'races') {
-      setResults(RACES.filter((r) => isSourceEnabled(r.source)).map((r) => ({
-        slug: r.slug,
-        name: r.name,
-        // Races share the 'classes' badge color; no dedicated category
-        // in the shared CompendiumCategory union yet.
-        category: 'races' as const,
-        snippet: `${r.size} · ${r.speed}ft · ${r.snippet}`,
-      })));
+      setResults(
+        RACES.filter((r) => isSourceEnabled(r.source)).map((r) => ({
+          slug: r.slug,
+          name: r.name,
+          // Races share the 'classes' badge color; no dedicated category
+          // in the shared CompendiumCategory union yet.
+          category: 'races' as const,
+          snippet: `${r.size} · ${r.speed}ft · ${r.snippet}`,
+        }))
+      );
       setLoading(false);
       return;
     }
     if (cat === 'backgrounds') {
-      setResults(BACKGROUNDS.filter((b) => isSourceEnabled(b.source)).map((b) => ({
-        slug: b.slug,
-        name: b.name,
-        category: 'backgrounds' as const,
-        snippet: `${b.skills.join(', ')} · ${b.snippet}`,
-      })));
+      setResults(
+        BACKGROUNDS.filter((b) => isSourceEnabled(b.source)).map((b) => ({
+          slug: b.slug,
+          name: b.name,
+          category: 'backgrounds' as const,
+          snippet: `${b.skills.join(', ')} · ${b.snippet}`,
+        }))
+      );
       setLoading(false);
       return;
     }
@@ -215,26 +338,14 @@ export function CompendiumPanel({
       // Fetch custom content from our session
       const sid = sessionId || 'default';
       Promise.all([
-        fetch(`/api/custom/monsters?sessionId=${sid}`).then(r => r.json()).catch(() => []),
-        fetch(`/api/custom/spells?sessionId=${sid}`).then(r => r.json()).catch(() => []),
-        fetch(`/api/custom/items?sessionId=${sid}`).then(r => r.json()).catch(() => []),
+        fetchJsonArray<MonsterListEntry>(`/api/custom/monsters?sessionId=${sid}`),
+        fetchJsonArray<SpellListEntry>(`/api/custom/spells?sessionId=${sid}`),
+        fetchJsonArray<ItemListEntry>(`/api/custom/items?sessionId=${sid}`),
       ]).then(([monsters, spells, items]) => {
         const results: CompendiumSearchResult[] = [];
-        (monsters as any[]).forEach((m: any) => results.push({
-          slug: m.slug, name: m.name, category: 'monsters',
-          snippet: [m.size, m.type].filter(Boolean).join(' ') || 'Custom Monster',
-          cr: m.challengeRating,
-        }));
-        (spells as any[]).forEach((s: any) => results.push({
-          slug: s.slug, name: s.name, category: 'spells',
-          snippet: [s.school, s.castingTime].filter(Boolean).join(' · ') || 'Custom Spell',
-          level: s.level,
-        }));
-        (items as any[]).forEach((i: any) => results.push({
-          slug: i.id || i.slug, name: i.name, category: 'items',
-          snippet: [i.type, i.damage].filter(Boolean).join(' · ') || 'Custom Item',
-          rarity: i.rarity as any,
-        }));
+        monsters.forEach((m) => results.push(mapMonsterResult(m)));
+        spells.forEach((s) => results.push(mapSpellResult(s)));
+        items.forEach((i) => results.push(mapItemResult(i)));
         if (results.length === 0) {
           setResults([]);
         } else {
@@ -247,20 +358,18 @@ export function CompendiumPanel({
 
     if (cat === 'all') {
       Promise.all([
-        fetch('/api/compendium/monsters?cr_min=0&cr_max=1&limit=10').then(r => r.json()).catch(() => []),
-        fetch('/api/compendium/spells?level=0&limit=10').then(r => r.json()).catch(() => []),
-        fetch('/api/compendium/items?rarity=common&limit=5').then(r => r.json()).catch(() => []),
+        fetchJsonArray<MonsterListEntry>('/api/compendium/monsters?cr_min=0&cr_max=1&limit=10'),
+        fetchJsonArray<SpellListEntry>('/api/compendium/spells?level=0&limit=10'),
+        fetchJsonArray<ItemListEntry>('/api/compendium/items?rarity=common&limit=5'),
       ]).then(([monsters, spells, items]) => {
         const results: CompendiumSearchResult[] = [];
-        (monsters as any[]).slice(0, 8).forEach((m: any) => results.push({
-          slug: m.slug, name: m.name, category: 'monsters', snippet: '', cr: m.challengeRating,
-        }));
-        (spells as any[]).slice(0, 8).forEach((s: any) => results.push({
-          slug: s.slug, name: s.name, category: 'spells', snippet: '', level: s.level,
-        }));
-        (items as any[]).slice(0, 4).forEach((i: any) => results.push({
-          slug: i.slug, name: i.name, category: 'items', snippet: '', rarity: i.rarity as any,
-        }));
+        monsters.slice(0, 8).forEach((m) => results.push({ ...mapMonsterResult(m), snippet: '' }));
+        spells.slice(0, 8).forEach((s) => results.push({ ...mapSpellResult(s), snippet: '' }));
+        items
+          .slice(0, 4)
+          .forEach((i) =>
+            results.push({ ...mapItemResult(i), slug: i.slug || i.id || i.name, snippet: '' })
+          );
         setResults(results);
         setLoading(false);
       });
@@ -293,96 +402,148 @@ export function CompendiumPanel({
         if (itemRarity) qs.set('rarity', itemRarity);
         endpoint = `/api/compendium/items?${qs}`;
       }
-      fetch(endpoint).then(r => r.json()).then((data: any[]) => {
-        let mapped = data.map((d: any) => ({
-          slug: d.slug, name: d.name, category: cat as CompendiumCategory,
-          snippet: cat === 'spells'
-            ? [d.school, d.level === 0 ? 'Cantrip' : `L${d.level}`].filter(Boolean).join(' · ')
-            : cat === 'monsters'
-            ? [d.size, d.type, d.challengeRating ? `CR ${d.challengeRating}` : ''].filter(Boolean).join(' · ')
-            : [d.type, d.rarity].filter(Boolean).join(' · '),
-          cr: d.challengeRating, level: d.level, rarity: d.rarity,
-          // Keep the original `type` around so we can post-filter items
-          // by type substring (API doesn't support an item-type filter).
-          _rawType: d.type as string | undefined,
-        }));
-        // Items: client-side type filter (API doesn't support it).
-        if (cat === 'items' && itemType) {
-          const needle = itemType.toLowerCase();
-          mapped = mapped.filter((r) => (r._rawType ?? '').toLowerCase().includes(needle));
-        }
-        setResults(mapped);
-        setLoading(false);
-      }).catch(() => { setResults([]); setLoading(false); });
+      fetchJsonArray<CompendiumListEntry>(endpoint)
+        .then((data) => {
+          let mapped: SearchResultWithRawType[] = data.map((d) => ({
+            slug: d.slug || d.id || d.name,
+            name: d.name,
+            category: cat as CompendiumCategory,
+            snippet:
+              cat === 'spells'
+                ? [d.school, d.level === 0 ? 'Cantrip' : `L${d.level}`].filter(Boolean).join(' · ')
+                : cat === 'monsters'
+                  ? [d.size, d.type, d.challengeRating ? `CR ${d.challengeRating}` : '']
+                      .filter(Boolean)
+                      .join(' · ')
+                  : [d.type, d.rarity].filter(Boolean).join(' · '),
+            cr: d.challengeRating ?? undefined,
+            level: d.level ?? undefined,
+            rarity: toItemRarity(d.rarity),
+            // Keep the original `type` around so we can post-filter items
+            // by type substring (API doesn't support an item-type filter).
+            _rawType: d.type ?? undefined,
+          }));
+          // Items: client-side type filter (API doesn't support it).
+          if (cat === 'items' && itemType) {
+            const needle = itemType.toLowerCase();
+            mapped = mapped.filter((r) => (r._rawType ?? '').toLowerCase().includes(needle));
+          }
+          setResults(mapped);
+          setLoading(false);
+        })
+        .catch(() => {
+          setResults([]);
+          setLoading(false);
+        });
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [category, query, sessionId, refreshKey, ruleSources.join(','),
-      spellLevel, spellSchool, spellClass,
-      itemRarity, itemType,
-      monsterCrBand, monsterType]);
+  }, [
+    category,
+    query,
+    sessionId,
+    refreshKey,
+    activeRuleSources,
+    spellLevel,
+    spellSchool,
+    spellClass,
+    itemRarity,
+    itemType,
+    monsterCrBand,
+    monsterType,
+  ]);
 
-  const fetchResults = useCallback((q: string, cat: FilterCategory) => {
-    if (!q.trim()) return; // Default browse handles empty state
+  const fetchResults = useCallback(
+    (q: string, cat: FilterCategory) => {
+      if (!q.trim()) return; // Default browse handles empty state
 
-    setResults([]);
-    setLoading(true);
-    const sid = sessionId || 'default';
-    const searchQ = q.trim().toLowerCase();
-
-    if (cat === 'homebrew') {
-      // Homebrew-only: search custom content, no SRD
-      Promise.all([
-        fetch(`/api/custom/monsters?sessionId=${sid}`).then(r => r.ok ? r.json() : [])
-          .then((items: any[]) => items.filter((i: any) => i.name.toLowerCase().includes(searchQ))
-            .map((m: any) => ({ slug: m.slug, name: m.name, category: 'monsters' as const, snippet: `Homebrew · ${m.size} ${m.type}`, cr: m.challengeRating }))),
-        fetch(`/api/custom/spells?sessionId=${sid}`).then(r => r.ok ? r.json() : [])
-          .then((items: any[]) => items.filter((i: any) => i.name.toLowerCase().includes(searchQ))
-            .map((s: any) => ({ slug: s.slug, name: s.name, category: 'spells' as const, snippet: `Homebrew · ${s.school}`, level: s.level }))),
-        fetch(`/api/custom/items?sessionId=${sid}`).then(r => r.ok ? r.json() : [])
-          .then((items: any[]) => items.filter((i: any) => i.name.toLowerCase().includes(searchQ))
-            .map((i: any) => ({ slug: i.id || i.slug, name: i.name, category: 'items' as const, snippet: `Homebrew · ${i.type}`, rarity: i.rarity }))),
-      ]).then(([monsters, spells, items]) => {
-        setResults([...monsters, ...spells, ...items]);
-        setLoading(false);
-      }).catch(() => {
-        setResults([]);
-        setLoading(false);
-      });
-      return;
-    }
-
-    const params = new URLSearchParams({ q: q.trim(), limit: '20' });
-    if (cat !== 'all') params.set('category', cat);
-
-    // Search SRD compendium + homebrew in parallel, merge results
-    Promise.all([
-      fetch(`/api/compendium/search?${params}`).then(r => r.json()).catch(() => ({ results: [] })),
-      // Also search custom content matching the query
-      ...(cat === 'all' || cat === 'monsters' ? [
-        fetch(`/api/custom/monsters?sessionId=${sid}`).then(r => r.ok ? r.json() : [])
-          .then((items: any[]) => items.filter((i: any) => i.name.toLowerCase().includes(searchQ)).slice(0, 5)
-            .map((m: any) => ({ slug: m.slug, name: m.name, category: 'monsters' as const, snippet: `Homebrew · ${m.size} ${m.type}`, cr: m.challengeRating })))
-      ] : []),
-      ...(cat === 'all' || cat === 'spells' ? [
-        fetch(`/api/custom/spells?sessionId=${sid}`).then(r => r.ok ? r.json() : [])
-          .then((items: any[]) => items.filter((i: any) => i.name.toLowerCase().includes(searchQ)).slice(0, 5)
-            .map((s: any) => ({ slug: s.slug, name: s.name, category: 'spells' as const, snippet: `Homebrew · ${s.school}`, level: s.level })))
-      ] : []),
-      ...(cat === 'all' || cat === 'items' ? [
-        fetch(`/api/custom/items?sessionId=${sid}`).then(r => r.ok ? r.json() : [])
-          .then((items: any[]) => items.filter((i: any) => i.name.toLowerCase().includes(searchQ)).slice(0, 5)
-            .map((i: any) => ({ slug: i.id || i.slug, name: i.name, category: 'items' as const, snippet: `Homebrew · ${i.type}`, rarity: i.rarity })))
-      ] : []),
-    ]).then(([srdData, ...customArrays]) => {
-      const customResults = customArrays.flat();
-      // Homebrew first, then SRD
-      setResults([...customResults, ...(srdData.results ?? [])]);
-      setLoading(false);
-    }).catch(() => {
       setResults([]);
-      setLoading(false);
-    });
-  }, [sessionId]);
+      setLoading(true);
+      const sid = sessionId || 'default';
+      const searchQ = q.trim().toLowerCase();
+
+      if (cat === 'homebrew') {
+        // Homebrew-only: search custom content, no SRD
+        Promise.all([
+          fetchJsonArray<MonsterListEntry>(`/api/custom/monsters?sessionId=${sid}`).then((items) =>
+            items
+              .filter((i) => matchesName(i, searchQ))
+              .map((m) => mapMonsterResult(m, homebrewSnippet(m.size, m.type)))
+          ),
+          fetchJsonArray<SpellListEntry>(`/api/custom/spells?sessionId=${sid}`).then((items) =>
+            items
+              .filter((i) => matchesName(i, searchQ))
+              .map((s) => mapSpellResult(s, homebrewSnippet(s.school)))
+          ),
+          fetchJsonArray<ItemListEntry>(`/api/custom/items?sessionId=${sid}`).then((items) =>
+            items
+              .filter((i) => matchesName(i, searchQ))
+              .map((i) => mapItemResult(i, homebrewSnippet(i.type)))
+          ),
+        ])
+          .then(([monsters, spells, items]) => {
+            setResults([...monsters, ...spells, ...items]);
+            setLoading(false);
+          })
+          .catch(() => {
+            setResults([]);
+            setLoading(false);
+          });
+        return;
+      }
+
+      const params = new URLSearchParams({ q: q.trim(), limit: '20' });
+      if (cat !== 'all') params.set('category', cat);
+
+      // Search SRD compendium + homebrew in parallel, merge results
+      Promise.all([
+        fetch(`/api/compendium/search?${params}`)
+          .then((r) => (r.ok ? (r.json() as Promise<SearchResponse>) : { results: [] }))
+          .catch(() => ({ results: [] })),
+        // Also search custom content matching the query
+        ...(cat === 'all' || cat === 'monsters'
+          ? [
+              fetchJsonArray<MonsterListEntry>(`/api/custom/monsters?sessionId=${sid}`).then(
+                (items) =>
+                  items
+                    .filter((i) => matchesName(i, searchQ))
+                    .slice(0, 5)
+                    .map((m) => mapMonsterResult(m, homebrewSnippet(m.size, m.type)))
+              ),
+            ]
+          : []),
+        ...(cat === 'all' || cat === 'spells'
+          ? [
+              fetchJsonArray<SpellListEntry>(`/api/custom/spells?sessionId=${sid}`).then((items) =>
+                items
+                  .filter((i) => matchesName(i, searchQ))
+                  .slice(0, 5)
+                  .map((s) => mapSpellResult(s, homebrewSnippet(s.school)))
+              ),
+            ]
+          : []),
+        ...(cat === 'all' || cat === 'items'
+          ? [
+              fetchJsonArray<ItemListEntry>(`/api/custom/items?sessionId=${sid}`).then((items) =>
+                items
+                  .filter((i) => matchesName(i, searchQ))
+                  .slice(0, 5)
+                  .map((i) => mapItemResult(i, homebrewSnippet(i.type)))
+              ),
+            ]
+          : []),
+      ])
+        .then(([srdData, ...customArrays]) => {
+          const customResults = customArrays.flat();
+          // Homebrew first, then SRD
+          setResults([...customResults, ...(srdData.results ?? [])]);
+          setLoading(false);
+        })
+        .catch(() => {
+          setResults([]);
+          setLoading(false);
+        });
+    },
+    [sessionId]
+  );
 
   // Debounced search on query change
   useEffect(() => {
@@ -435,36 +596,59 @@ export function CompendiumPanel({
       {!lockCategory && !query.trim() && (
         <SubFilterBar
           category={category}
-          spellLevel={spellLevel} setSpellLevel={setSpellLevel}
-          spellSchool={spellSchool} setSpellSchool={setSpellSchool}
-          spellClass={spellClass} setSpellClass={setSpellClass}
-          itemRarity={itemRarity} setItemRarity={setItemRarity}
-          itemType={itemType} setItemType={setItemType}
-          monsterCrBand={monsterCrBand} setMonsterCrBand={setMonsterCrBand}
-          monsterType={monsterType} setMonsterType={setMonsterType}
+          spellLevel={spellLevel}
+          setSpellLevel={setSpellLevel}
+          spellSchool={spellSchool}
+          setSpellSchool={setSpellSchool}
+          spellClass={spellClass}
+          setSpellClass={setSpellClass}
+          itemRarity={itemRarity}
+          setItemRarity={setItemRarity}
+          itemType={itemType}
+          setItemType={setItemType}
+          monsterCrBand={monsterCrBand}
+          setMonsterCrBand={setMonsterCrBand}
+          monsterType={monsterType}
+          setMonsterType={setMonsterType}
         />
       )}
 
       {/* Homebrew creation buttons */}
       {category === 'homebrew' && !createMode && (
-        <div style={{
-          display: 'flex', gap: 6, padding: '8px 12px',
-          borderBottom: `1px solid ${theme.border.default}`,
-          flexShrink: 0,
-        }}>
-          <Button variant="ghost" size="sm" leadingIcon={<Plus size={12} />}
+        <div
+          style={{
+            display: 'flex',
+            gap: 6,
+            padding: '8px 12px',
+            borderBottom: `1px solid ${theme.border.default}`,
+            flexShrink: 0,
+          }}
+        >
+          <Button
+            variant="ghost"
+            size="sm"
+            leadingIcon={<Plus size={12} />}
             onClick={() => setCreateMode('monster')}
-            style={{ flex: 1, color: theme.gold.primary, borderColor: theme.gold.border }}>
+            style={{ flex: 1, color: theme.gold.primary, borderColor: theme.gold.border }}
+          >
             New Monster
           </Button>
-          <Button variant="ghost" size="sm" leadingIcon={<Plus size={12} />}
+          <Button
+            variant="ghost"
+            size="sm"
+            leadingIcon={<Plus size={12} />}
             onClick={() => setCreateMode('spell')}
-            style={{ flex: 1, color: theme.gold.primary, borderColor: theme.gold.border }}>
+            style={{ flex: 1, color: theme.gold.primary, borderColor: theme.gold.border }}
+          >
             New Spell
           </Button>
-          <Button variant="ghost" size="sm" leadingIcon={<Plus size={12} />}
+          <Button
+            variant="ghost"
+            size="sm"
+            leadingIcon={<Plus size={12} />}
             onClick={() => setCreateMode('item')}
-            style={{ flex: 1, color: theme.gold.primary, borderColor: theme.gold.border }}>
+            style={{ flex: 1, color: theme.gold.primary, borderColor: theme.gold.border }}
+          >
             New Item
           </Button>
         </div>
@@ -472,28 +656,58 @@ export function CompendiumPanel({
 
       {/* Inline creation forms */}
       {createMode === 'monster' && (
-        <div style={{ padding: '8px 12px', borderBottom: `1px solid ${theme.border.default}`, maxHeight: '60vh', overflowY: 'auto' }}>
+        <div
+          style={{
+            padding: '8px 12px',
+            borderBottom: `1px solid ${theme.border.default}`,
+            maxHeight: '60vh',
+            overflowY: 'auto',
+          }}
+        >
           <CreateMonsterForm
             sessionId={sessionId || 'default'}
-            onCreated={() => { setCreateMode(null); setRefreshKey((k) => k + 1); }}
+            onCreated={() => {
+              setCreateMode(null);
+              setRefreshKey((k) => k + 1);
+            }}
             onCancel={() => setCreateMode(null)}
           />
         </div>
       )}
       {createMode === 'spell' && (
-        <div style={{ padding: '8px 12px', borderBottom: `1px solid ${theme.border.default}`, maxHeight: '60vh', overflowY: 'auto' }}>
+        <div
+          style={{
+            padding: '8px 12px',
+            borderBottom: `1px solid ${theme.border.default}`,
+            maxHeight: '60vh',
+            overflowY: 'auto',
+          }}
+        >
           <CreateSpellForm
             sessionId={sessionId || 'default'}
-            onCreated={() => { setCreateMode(null); setRefreshKey((k) => k + 1); }}
+            onCreated={() => {
+              setCreateMode(null);
+              setRefreshKey((k) => k + 1);
+            }}
             onCancel={() => setCreateMode(null)}
           />
         </div>
       )}
       {createMode === 'item' && (
-        <div style={{ padding: '8px 12px', borderBottom: `1px solid ${theme.border.default}`, maxHeight: '60vh', overflowY: 'auto' }}>
+        <div
+          style={{
+            padding: '8px 12px',
+            borderBottom: `1px solid ${theme.border.default}`,
+            maxHeight: '60vh',
+            overflowY: 'auto',
+          }}
+        >
           <CreateItemForm
             sessionId={sessionId || 'default'}
-            onCreated={() => { setCreateMode(null); setRefreshKey((k) => k + 1); }}
+            onCreated={() => {
+              setCreateMode(null);
+              setRefreshKey((k) => k + 1);
+            }}
             onCancel={() => setCreateMode(null)}
           />
         </div>
@@ -504,14 +718,23 @@ export function CompendiumPanel({
         {category === 'homebrew' && !loading && results.length === 0 && !createMode && (
           <div style={{ textAlign: 'center', padding: 24, color: theme.text.muted }}>
             <div style={{ fontSize: 24, marginBottom: 8 }}>🔨</div>
-            <div style={{ fontSize: 13, fontWeight: 600, color: theme.text.secondary, marginBottom: 4 }}>No Homebrew Content Yet</div>
-            <div style={{ fontSize: 11 }}>Use the buttons above to create custom monsters or spells.</div>
+            <div
+              style={{
+                fontSize: 13,
+                fontWeight: 600,
+                color: theme.text.secondary,
+                marginBottom: 4,
+              }}
+            >
+              No Homebrew Content Yet
+            </div>
+            <div style={{ fontSize: 11 }}>
+              Use the buttons above to create custom monsters or spells.
+            </div>
           </div>
         )}
 
-        {loading && query.trim() && (
-          <p style={styles.hintText}>Searching...</p>
-        )}
+        {loading && query.trim() && <p style={styles.hintText}>Searching...</p>}
 
         {!loading && query.trim() && results.length === 0 && (
           <p style={styles.hintText}>No results found.</p>
@@ -525,88 +748,103 @@ export function CompendiumPanel({
           // We reuse that exact plumbing here — nothing else needed.
           const isDraggable = isDM && r.category === 'monsters';
           return (
-          <button
-            key={`${r.category}-${r.slug}`}
-            style={styles.resultItem}
-            onClick={() => setSelected(r)}
-            draggable={isDraggable}
-            onDragStart={isDraggable ? (e) => {
-              e.dataTransfer.effectAllowed = 'copy';
-              e.dataTransfer.setData('application/x-kbrt-creature', r.slug);
-              e.dataTransfer.setData('text/plain', r.name);
-            } : undefined}
-            title={isDraggable ? 'Drag onto the map to place' : undefined}
-            onMouseEnter={(e) => {
-              (e.currentTarget as HTMLButtonElement).style.background = theme.bg.hover;
-            }}
-            onMouseLeave={(e) => {
-              (e.currentTarget as HTMLButtonElement).style.background = 'transparent';
-            }}
-          >
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <img
-                src={getCompendiumImageUrl(r.slug, r.category)}
-                alt=""
-                loading="lazy"
-                style={{ width: 28, height: 28, borderRadius: '50%', objectFit: 'cover', flexShrink: 0, border: `1.5px solid ${theme.border.default}` }}
-                onError={(e) => { (e.currentTarget).src = getCompendiumFallbackUrl(r.name, r.category, r.snippet); }}
-              />
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={styles.resultTop}>
-                  <span
-                    style={{
-                      ...styles.categoryBadge,
-                      background: `${CATEGORY_BADGE_COLORS[r.category] ?? '#888'}22`,
-                      color: CATEGORY_BADGE_COLORS[r.category] ?? '#888',
-                      borderColor: `${CATEGORY_BADGE_COLORS[r.category] ?? '#888'}44`,
-                    }}
-                  >
-                    {r.category === 'monsters' ? 'Monster'
-                      : r.category === 'spells' ? 'Spell'
-                      : r.category === 'items' ? 'Item'
-                      : r.category === 'classes' ? 'Class'
-                      : r.category === 'races' ? 'Race'
-                      : r.category === 'backgrounds' ? 'Background'
-                      : r.category === 'feats' ? 'Feat'
-                      : r.category === 'conditions'
-                        // Rules, backgrounds, and spell-buffs all ride
-                        // the 'conditions' badge color. Pick the right
-                        // label by looking up the slug against each
-                        // glossary so "Advantage & Disadvantage" reads
-                        // as "Rule" and "Acolyte" reads as "Background".
-                        ? (RULES_GLOSSARY.some((x) => x.slug === r.slug) ? 'Rule'
-                          : BACKGROUNDS.some((x) => x.slug === r.slug) ? 'Background'
-                          : 'Condition')
-                      : 'Item'}
-                  </span>
-                  <span style={styles.resultName}>{r.name}</span>
-                  <span style={styles.resultMeta}>
-                    {r.category === 'monsters' && r.cr != null && `CR ${r.cr}`}
-                    {r.category === 'spells' && r.level != null && spellLevelLabel(r.level)}
-                    {r.category === 'items' && r.rarity && (
-                      <span style={{ color: RARITY_COLORS[r.rarity.toLowerCase()] ?? '#888' }}>
-                        {r.rarity}
-                      </span>
-                    )}
-                  </span>
+            <button
+              key={`${r.category}-${r.slug}`}
+              style={styles.resultItem}
+              onClick={() => setSelected(r)}
+              draggable={isDraggable}
+              onDragStart={
+                isDraggable
+                  ? (e) => {
+                      e.dataTransfer.effectAllowed = 'copy';
+                      e.dataTransfer.setData('application/x-kbrt-creature', r.slug);
+                      e.dataTransfer.setData('text/plain', r.name);
+                    }
+                  : undefined
+              }
+              title={isDraggable ? 'Drag onto the map to place' : undefined}
+              onMouseEnter={(e) => {
+                (e.currentTarget as HTMLButtonElement).style.background = theme.bg.hover;
+              }}
+              onMouseLeave={(e) => {
+                (e.currentTarget as HTMLButtonElement).style.background = 'transparent';
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <img
+                  src={getCompendiumImageUrl(r.slug, r.category)}
+                  alt=""
+                  loading="lazy"
+                  style={{
+                    width: 28,
+                    height: 28,
+                    borderRadius: '50%',
+                    objectFit: 'cover',
+                    flexShrink: 0,
+                    border: `1.5px solid ${theme.border.default}`,
+                  }}
+                  onError={(e) => {
+                    e.currentTarget.src = getCompendiumFallbackUrl(r.name, r.category, r.snippet);
+                  }}
+                />
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={styles.resultTop}>
+                    <span
+                      style={{
+                        ...styles.categoryBadge,
+                        background: `${CATEGORY_BADGE_COLORS[r.category] ?? '#888'}22`,
+                        color: CATEGORY_BADGE_COLORS[r.category] ?? '#888',
+                        borderColor: `${CATEGORY_BADGE_COLORS[r.category] ?? '#888'}44`,
+                      }}
+                    >
+                      {r.category === 'monsters'
+                        ? 'Monster'
+                        : r.category === 'spells'
+                          ? 'Spell'
+                          : r.category === 'items'
+                            ? 'Item'
+                            : r.category === 'classes'
+                              ? 'Class'
+                              : r.category === 'races'
+                                ? 'Race'
+                                : r.category === 'backgrounds'
+                                  ? 'Background'
+                                  : r.category === 'feats'
+                                    ? 'Feat'
+                                    : r.category === 'conditions'
+                                      ? // Rules, backgrounds, and spell-buffs all ride
+                                        // the 'conditions' badge color. Pick the right
+                                        // label by looking up the slug against each
+                                        // glossary so "Advantage & Disadvantage" reads
+                                        // as "Rule" and "Acolyte" reads as "Background".
+                                        RULES_GLOSSARY.some((x) => x.slug === r.slug)
+                                        ? 'Rule'
+                                        : BACKGROUNDS.some((x) => x.slug === r.slug)
+                                          ? 'Background'
+                                          : 'Condition'
+                                      : 'Item'}
+                    </span>
+                    <span style={styles.resultName}>{r.name}</span>
+                    <span style={styles.resultMeta}>
+                      {r.category === 'monsters' && r.cr != null && `CR ${r.cr}`}
+                      {r.category === 'spells' && r.level != null && spellLevelLabel(r.level)}
+                      {r.category === 'items' && r.rarity && (
+                        <span style={{ color: RARITY_COLORS[r.rarity.toLowerCase()] ?? '#888' }}>
+                          {r.rarity}
+                        </span>
+                      )}
+                    </span>
+                  </div>
+                  {r.snippet && <p style={styles.resultSnippet}>{r.snippet}</p>}
                 </div>
-                {r.snippet && (
-                  <p style={styles.resultSnippet}>{r.snippet}</p>
-                )}
               </div>
-            </div>
-          </button>
+            </button>
           );
         })}
       </div>
 
       {/* Detail popup */}
-      {selected && (
-        <CompendiumDetailPopup
-          result={selected}
-          onClose={() => setSelected(null)}
-        />
-      )}
+      {selected && <CompendiumDetailPopup result={selected} onClose={() => setSelected(null)} />}
     </div>
   );
 }
@@ -742,19 +980,38 @@ const styles: Record<string, React.CSSProperties> = {
 const SPELL_LEVELS: Array<{ v: number | 'any'; label: string }> = [
   { v: 'any', label: 'All' },
   { v: 0, label: 'Cantrip' },
-  { v: 1, label: '1' }, { v: 2, label: '2' }, { v: 3, label: '3' },
-  { v: 4, label: '4' }, { v: 5, label: '5' }, { v: 6, label: '6' },
-  { v: 7, label: '7' }, { v: 8, label: '8' }, { v: 9, label: '9' },
+  { v: 1, label: '1' },
+  { v: 2, label: '2' },
+  { v: 3, label: '3' },
+  { v: 4, label: '4' },
+  { v: 5, label: '5' },
+  { v: 6, label: '6' },
+  { v: 7, label: '7' },
+  { v: 8, label: '8' },
+  { v: 9, label: '9' },
 ];
 
 const SPELL_SCHOOLS = [
-  'Abjuration', 'Conjuration', 'Divination', 'Enchantment',
-  'Evocation', 'Illusion', 'Necromancy', 'Transmutation',
+  'Abjuration',
+  'Conjuration',
+  'Divination',
+  'Enchantment',
+  'Evocation',
+  'Illusion',
+  'Necromancy',
+  'Transmutation',
 ];
 
 const SPELL_CLASSES = [
-  'Artificer', 'Bard', 'Cleric', 'Druid', 'Paladin',
-  'Ranger', 'Sorcerer', 'Warlock', 'Wizard',
+  'Artificer',
+  'Bard',
+  'Cleric',
+  'Druid',
+  'Paladin',
+  'Ranger',
+  'Sorcerer',
+  'Warlock',
+  'Wizard',
 ];
 
 const ITEM_RARITIES: Array<{ v: string; label: string; color: string }> = [
@@ -767,8 +1024,18 @@ const ITEM_RARITIES: Array<{ v: string; label: string; color: string }> = [
 ];
 
 const ITEM_TYPES = [
-  'Weapon', 'Armor', 'Shield', 'Wondrous item', 'Potion', 'Scroll',
-  'Wand', 'Rod', 'Staff', 'Ring', 'Ammunition', 'Tool',
+  'Weapon',
+  'Armor',
+  'Shield',
+  'Wondrous item',
+  'Potion',
+  'Scroll',
+  'Wand',
+  'Rod',
+  'Staff',
+  'Ring',
+  'Ammunition',
+  'Tool',
 ];
 
 const CR_BANDS: Array<{ v: string; label: string }> = [
@@ -780,20 +1047,38 @@ const CR_BANDS: Array<{ v: string; label: string }> = [
 ];
 
 const MONSTER_TYPES = [
-  'Aberration', 'Beast', 'Celestial', 'Construct', 'Dragon',
-  'Elemental', 'Fey', 'Fiend', 'Giant', 'Humanoid', 'Monstrosity',
-  'Ooze', 'Plant', 'Undead',
+  'Aberration',
+  'Beast',
+  'Celestial',
+  'Construct',
+  'Dragon',
+  'Elemental',
+  'Fey',
+  'Fiend',
+  'Giant',
+  'Humanoid',
+  'Monstrosity',
+  'Ooze',
+  'Plant',
+  'Undead',
 ];
 
 interface SubFilterBarProps {
   category: FilterCategory;
-  spellLevel: number | 'any'; setSpellLevel: (v: number | 'any') => void;
-  spellSchool: string; setSpellSchool: (v: string) => void;
-  spellClass: string; setSpellClass: (v: string) => void;
-  itemRarity: string; setItemRarity: (v: string) => void;
-  itemType: string; setItemType: (v: string) => void;
-  monsterCrBand: string; setMonsterCrBand: (v: string) => void;
-  monsterType: string; setMonsterType: (v: string) => void;
+  spellLevel: number | 'any';
+  setSpellLevel: (v: number | 'any') => void;
+  spellSchool: string;
+  setSpellSchool: (v: string) => void;
+  spellClass: string;
+  setSpellClass: (v: string) => void;
+  itemRarity: string;
+  setItemRarity: (v: string) => void;
+  itemType: string;
+  setItemType: (v: string) => void;
+  monsterCrBand: string;
+  setMonsterCrBand: (v: string) => void;
+  monsterType: string;
+  setMonsterType: (v: string) => void;
 }
 
 /**
@@ -836,7 +1121,11 @@ function SubFilterBar(p: SubFilterBarProps) {
             style={subStyles.select}
           >
             <option value="">Any</option>
-            {SPELL_CLASSES.map((c) => (<option key={c} value={c.toLowerCase()}>{c}</option>))}
+            {SPELL_CLASSES.map((c) => (
+              <option key={c} value={c.toLowerCase()}>
+                {c}
+              </option>
+            ))}
           </select>
           <label style={subStyles.label}>School</label>
           <select
@@ -845,7 +1134,11 @@ function SubFilterBar(p: SubFilterBarProps) {
             style={subStyles.select}
           >
             <option value="">Any</option>
-            {SPELL_SCHOOLS.map((s) => (<option key={s} value={s.toLowerCase()}>{s}</option>))}
+            {SPELL_SCHOOLS.map((s) => (
+              <option key={s} value={s.toLowerCase()}>
+                {s}
+              </option>
+            ))}
           </select>
         </div>
       </div>
@@ -863,12 +1156,14 @@ function SubFilterBar(p: SubFilterBarProps) {
                 onClick={() => p.setItemRarity(active ? '' : r.v)}
                 style={{
                   ...subStyles.chip,
-                  ...(active ? {
-                    ...subStyles.chipActive,
-                    background: `${r.color}22`,
-                    borderColor: `${r.color}66`,
-                    color: r.color,
-                  } : {}),
+                  ...(active
+                    ? {
+                        ...subStyles.chipActive,
+                        background: `${r.color}22`,
+                        borderColor: `${r.color}66`,
+                        color: r.color,
+                      }
+                    : {}),
                 }}
               >
                 {r.label}
@@ -884,7 +1179,11 @@ function SubFilterBar(p: SubFilterBarProps) {
             style={subStyles.select}
           >
             <option value="">Any</option>
-            {ITEM_TYPES.map((t) => (<option key={t} value={t.toLowerCase()}>{t}</option>))}
+            {ITEM_TYPES.map((t) => (
+              <option key={t} value={t.toLowerCase()}>
+                {t}
+              </option>
+            ))}
           </select>
         </div>
       </div>
@@ -898,7 +1197,10 @@ function SubFilterBar(p: SubFilterBarProps) {
             <button
               key={b.v}
               onClick={() => p.setMonsterCrBand(p.monsterCrBand === b.v ? '' : b.v)}
-              style={{ ...subStyles.chip, ...(p.monsterCrBand === b.v ? subStyles.chipActive : {}) }}
+              style={{
+                ...subStyles.chip,
+                ...(p.monsterCrBand === b.v ? subStyles.chipActive : {}),
+              }}
             >
               {b.label}
             </button>
@@ -912,7 +1214,11 @@ function SubFilterBar(p: SubFilterBarProps) {
             style={subStyles.select}
           >
             <option value="">Any</option>
-            {MONSTER_TYPES.map((t) => (<option key={t} value={t.toLowerCase()}>{t}</option>))}
+            {MONSTER_TYPES.map((t) => (
+              <option key={t} value={t.toLowerCase()}>
+                {t}
+              </option>
+            ))}
           </select>
         </div>
       </div>
