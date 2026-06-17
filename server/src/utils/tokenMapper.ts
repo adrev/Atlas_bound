@@ -17,6 +17,7 @@ export function rowToToken(r: Record<string, unknown>): Token {
   const faction = ((r.faction as string | null) ?? 'neutral') as TokenFaction;
   return {
     id: r.id as string,
+    version: Number(r.version ?? 1),
     mapId: r.map_id as string,
     characterId: (r.character_id as string | null) ?? null,
     name: r.name as string,
@@ -37,7 +38,9 @@ export function rowToToken(r: Record<string, unknown>): Token {
     createdAt: r.created_at as string,
     aura: safeParseJSON<TokenAura | null>(r.aura, null, 'tokens.aura'),
     visionOverrides: safeParseJSON<Token['visionOverrides']>(
-      r.vision_overrides, undefined, 'tokens.vision_overrides',
+      r.vision_overrides,
+      undefined,
+      'tokens.vision_overrides'
     ),
   };
 }

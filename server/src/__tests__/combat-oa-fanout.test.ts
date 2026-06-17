@@ -36,7 +36,11 @@ import { registerTokenEvents } from '../socket/tokenEvents.js';
 import * as OAService from '../services/OpportunityAttackService.js';
 import { addPlayerToRoom, createRoom, getAllRooms } from '../utils/roomState.js';
 
-interface Emission { channelId: string; event: string; payload: unknown }
+interface Emission {
+  channelId: string;
+  event: string;
+  payload: unknown;
+}
 
 function makeHarness(actorSocketId: string) {
   const handlers: Record<string, (data: unknown) => Promise<void> | void> = {};
@@ -47,8 +51,11 @@ function makeHarness(actorSocketId: string) {
   const io = { to: record } as unknown as Server;
   const socket = {
     id: actorSocketId,
-    on: (event: string, handler: (d: unknown) => Promise<void> | void) => { handlers[event] = handler; },
-    emit: (event: string, payload: unknown) => emissions.push({ channelId: actorSocketId, event, payload }),
+    on: (event: string, handler: (d: unknown) => Promise<void> | void) => {
+      handlers[event] = handler;
+    },
+    emit: (event: string, payload: unknown) =>
+      emissions.push({ channelId: actorSocketId, event, payload }),
     join: () => {},
     to: record,
   } as unknown as Socket;
@@ -57,11 +64,23 @@ function makeHarness(actorSocketId: string) {
 
 function token(id: string, overrides: Partial<Token> = {}): Token {
   return {
-    id, mapId: 'map-1', characterId: null, name: id,
-    x: 0, y: 0, size: 1, imageUrl: null, color: '#000',
-    layer: 'token', visible: true, hasLight: false,
-    lightRadius: 0, lightDimRadius: 0, lightColor: '#fff',
-    conditions: [], ownerUserId: null,
+    id,
+    mapId: 'map-1',
+    characterId: null,
+    name: id,
+    x: 0,
+    y: 0,
+    size: 1,
+    imageUrl: null,
+    color: '#000',
+    layer: 'token',
+    visible: true,
+    hasLight: false,
+    lightRadius: 0,
+    lightDimRadius: 0,
+    lightColor: '#fff',
+    conditions: [],
+    ownerUserId: null,
     createdAt: new Date().toISOString(),
     ...overrides,
   };
@@ -89,20 +108,56 @@ function seedRoom(): void {
     active: true,
     roundNumber: 1,
     currentTurnIndex: 0,
-    combatants: [{
-      tokenId: 'turn-token', characterId: null, name: 'Turn', initiative: 20,
-      initiativeBonus: 0, hp: 30, maxHp: 30, tempHp: 0, armorClass: 15,
-      speed: 30, isNPC: true, conditions: [], deathSaves: { successes: 0, failures: 0 },
-      portraitUrl: null,
-    }],
+    combatants: [
+      {
+        tokenId: 'turn-token',
+        characterId: null,
+        name: 'Turn',
+        initiative: 20,
+        initiativeBonus: 0,
+        hp: 30,
+        maxHp: 30,
+        tempHp: 0,
+        armorClass: 15,
+        speed: 30,
+        isNPC: true,
+        conditions: [],
+        deathSaves: { successes: 0, failures: 0 },
+        portraitUrl: null,
+      },
+    ],
     startedAt: new Date().toISOString(),
   } satisfies CombatState;
-  addPlayerToRoom(SESSION, { userId: 'dm-user', displayName: 'DM', socketId: 'dm-sock', role: 'dm', characterId: null });
+  addPlayerToRoom(SESSION, {
+    userId: 'dm-user',
+    displayName: 'DM',
+    socketId: 'dm-sock',
+    role: 'dm',
+    characterId: null,
+  });
   // Attacker owner, two open tabs (multi-tab fan-out target).
-  addPlayerToRoom(SESSION, { userId: 'attacker-user', displayName: 'Atk', socketId: 'atk-sock-1', role: 'player', characterId: null });
-  addPlayerToRoom(SESSION, { userId: 'attacker-user', displayName: 'Atk', socketId: 'atk-sock-2', role: 'player', characterId: null });
+  addPlayerToRoom(SESSION, {
+    userId: 'attacker-user',
+    displayName: 'Atk',
+    socketId: 'atk-sock-1',
+    role: 'player',
+    characterId: null,
+  });
+  addPlayerToRoom(SESSION, {
+    userId: 'attacker-user',
+    displayName: 'Atk',
+    socketId: 'atk-sock-2',
+    role: 'player',
+    characterId: null,
+  });
   // Uninvolved bystander — must never receive the prompt.
-  addPlayerToRoom(SESSION, { userId: 'bystander-user', displayName: 'Bys', socketId: 'bystander-sock', role: 'player', characterId: null });
+  addPlayerToRoom(SESSION, {
+    userId: 'bystander-user',
+    displayName: 'Bys',
+    socketId: 'bystander-sock',
+    role: 'player',
+    characterId: null,
+  });
 }
 
 function oppFrom(attackerOwnerUserId: string | null): OAOpportunity {
@@ -124,7 +179,10 @@ function oaChannels(emissions: Emission[]): string[] {
 
 beforeEach(() => {
   mockQuery.mockReset();
-  mockQuery.mockResolvedValue({ rows: [] });
+  mockQuery.mockImplementation(async (sql: string) => {
+    if (sql.trim().startsWith('UPDATE tokens SET')) return { rows: [{ version: 2 }] };
+    return { rows: [] };
+  });
   vi.mocked(OAService.detectOpportunityAttacks).mockReset();
   vi.mocked(OAService.detectOpportunityAttacks).mockReturnValue([]);
   for (const id of Array.from(getAllRooms().keys())) getAllRooms().delete(id);

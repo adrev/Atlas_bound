@@ -37,6 +37,7 @@ import { useCharacterStore } from '../stores/useCharacterStore';
 function fixtureCharacter(): Character {
   return {
     id: 'c1',
+    version: 7,
     userId: 'u1',
     name: 'Liraya',
     race: 'Tiefling',
@@ -94,6 +95,7 @@ describe('emitCharacterUpdate offline', () => {
     expect(mockSocket.emit).toHaveBeenCalledWith('character:update', {
       characterId: 'c1',
       changes: { hitPoints: 15 },
+      expectedVersion: 7,
     });
     expect(globalThis.fetch).not.toHaveBeenCalled();
   });

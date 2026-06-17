@@ -1,12 +1,17 @@
 export function safeJsonParse(value: unknown, fallback: unknown = null): unknown {
   if (value == null) return fallback;
   if (typeof value !== 'string') return value ?? fallback;
-  try { return JSON.parse(value); } catch { return fallback; }
+  try {
+    return JSON.parse(value);
+  } catch {
+    return fallback;
+  }
 }
 
 export function dbRowToCharacter(row: Record<string, unknown>) {
   return {
     id: row.id,
+    version: Number(row.version ?? 1),
     userId: row.user_id,
     name: row.name,
     race: row.race,
@@ -18,7 +23,14 @@ export function dbRowToCharacter(row: Record<string, unknown>) {
     armorClass: row.armor_class,
     speed: row.speed,
     proficiencyBonus: row.proficiency_bonus,
-    abilityScores: safeJsonParse(row.ability_scores, { str: 10, dex: 10, con: 10, int: 10, wis: 10, cha: 10 }),
+    abilityScores: safeJsonParse(row.ability_scores, {
+      str: 10,
+      dex: 10,
+      con: 10,
+      int: 10,
+      wis: 10,
+      cha: 10,
+    }),
     savingThrows: safeJsonParse(row.saving_throws, []),
     skills: safeJsonParse(row.skills, {}),
     spellSlots: safeJsonParse(row.spell_slots, {}),
@@ -30,11 +42,38 @@ export function dbRowToCharacter(row: Record<string, unknown>) {
     concentratingOn: row.concentrating_on ?? null,
     exhaustionLevel: Number(row.exhaustion_level ?? 0) || 0,
     background: safeJsonParse(row.background, { name: '', description: '', feature: '' }),
-    characteristics: safeJsonParse(row.characteristics, { alignment: '', gender: '', eyes: '', hair: '', skin: '', height: '', weight: '', age: '', faith: '', size: 'Medium' }),
+    characteristics: safeJsonParse(row.characteristics, {
+      alignment: '',
+      gender: '',
+      eyes: '',
+      hair: '',
+      skin: '',
+      height: '',
+      weight: '',
+      age: '',
+      faith: '',
+      size: 'Medium',
+    }),
     personality: safeJsonParse(row.personality, { traits: '', ideals: '', bonds: '', flaws: '' }),
-    notes: safeJsonParse(row.notes_data, { organizations: '', allies: '', enemies: '', backstory: '', other: '' }),
-    proficiencies: safeJsonParse(row.proficiencies_data, { armor: [], weapons: [], tools: [], languages: [] }),
-    senses: safeJsonParse(row.senses, { passivePerception: 10, passiveInvestigation: 10, passiveInsight: 10, darkvision: 0 }),
+    notes: safeJsonParse(row.notes_data, {
+      organizations: '',
+      allies: '',
+      enemies: '',
+      backstory: '',
+      other: '',
+    }),
+    proficiencies: safeJsonParse(row.proficiencies_data, {
+      armor: [],
+      weapons: [],
+      tools: [],
+      languages: [],
+    }),
+    senses: safeJsonParse(row.senses, {
+      passivePerception: 10,
+      passiveInvestigation: 10,
+      passiveInsight: 10,
+      darkvision: 0,
+    }),
     defenses: safeJsonParse(row.defenses, { resistances: [], immunities: [], vulnerabilities: [] }),
     conditions: safeJsonParse(row.conditions, []),
     currency: safeJsonParse(row.currency, { cp: 0, sp: 0, ep: 0, gp: 0, pp: 0 }),

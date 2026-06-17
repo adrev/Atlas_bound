@@ -202,10 +202,10 @@ export interface InventoryItem {
   damageType?: string;
   damage?: string;
   rarity?: string;
-  slug?: string;           // Link to compendium item
-  imageUrl?: string;       // Item image path
-  range?: string;          // Weapon range (e.g. '20/60')
-  acBonus?: number;        // Armor/shield AC bonus
+  slug?: string; // Link to compendium item
+  imageUrl?: string; // Item image path
+  range?: string; // Weapon range (e.g. '20/60')
+  acBonus?: number; // Armor/shield AC bonus
 }
 
 export interface DeathSaves {
@@ -219,13 +219,18 @@ export interface DeathSaves {
  * For most single-class characters this will have a single entry.
  */
 export interface HitDicePool {
-  dieSize: number;       // 6, 8, 10, 12
-  total: number;         // total dice from levels in this die-size class
-  used: number;          // dice spent since last long rest
+  dieSize: number; // 6, 8, 10, 12
+  total: number; // total dice from levels in this die-size class
+  used: number; // dice spent since last long rest
 }
 
 export interface Character {
   id: string;
+  /**
+   * Monotonic server-side row version used for optimistic concurrency on
+   * character-sheet and HP edits. Optional for legacy fixtures/clients.
+   */
+  version?: number;
   userId: string;
   name: string;
   race: string;

@@ -121,6 +121,7 @@ export const tokenMoveSchema = z.object({
   tokenId: z.string().min(1),
   x: coord,
   y: coord,
+  expectedVersion: z.number().int().min(1).optional(),
 });
 
 export const tokenAddSchema = z.object({
@@ -149,6 +150,7 @@ export const tokenRemoveSchema = z.object({
 
 export const tokenUpdateSchema = z.object({
   tokenId: z.string().min(1),
+  expectedVersion: z.number().int().min(1).optional(),
   changes: z.object({
     name: z.string().min(1).max(100).optional(),
     x: coord.optional(),

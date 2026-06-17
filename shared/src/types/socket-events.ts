@@ -1,11 +1,35 @@
 import type {
-  Player, SessionSettings, GameMode, SessionBan, SessionVisibility,
+  Player,
+  SessionSettings,
+  GameMode,
+  SessionBan,
+  SessionVisibility,
 } from './session.js';
 import type {
-  Token, WallSegment, FogPolygon, Condition, MapPing, MapSummary, MapZone,
+  Token,
+  WallSegment,
+  FogPolygon,
+  Condition,
+  MapPing,
+  MapSummary,
+  MapZone,
 } from './map.js';
-import type { Combatant, ActionType, InitiativeRollResult, SpellCastEvent, ActionEconomy } from './combat.js';
-import type { ChatMessage, DiceRollData, AttackBreakdown, SpellCastBreakdown, SaveBreakdown, ActionBreakdown } from './chat.js';
+import type { Character } from './character.js';
+import type {
+  Combatant,
+  ActionType,
+  InitiativeRollResult,
+  SpellCastEvent,
+  ActionEconomy,
+} from './combat.js';
+import type {
+  ChatMessage,
+  DiceRollData,
+  AttackBreakdown,
+  SpellCastBreakdown,
+  SaveBreakdown,
+  ActionBreakdown,
+} from './chat.js';
 import type { Drawing, DrawingStreamPayload } from './drawing.js';
 
 /** Payload for socket events that carry no data. Typed as an empty
@@ -42,7 +66,12 @@ export interface ServerSessionEvents {
   'session:kicked': { userId: string };
   'session:settings-updated': SessionSettings;
   'session:error': { message: string };
-  'session:handout-received': { title: string; content: string; imageUrl?: string; fromDM: boolean };
+  'session:handout-received': {
+    title: string;
+    content: string;
+    imageUrl?: string;
+    fromDM: boolean;
+  };
 
   // Privacy + bans (Phase 5 \u2014 public/private sessions)
   'session:settings-changed': {
@@ -62,10 +91,10 @@ export interface ServerSessionEvents {
 // --- Map Events ---
 export interface ClientMapEvents {
   'map:load': { mapId: string };
-  'map:token-move': { tokenId: string; x: number; y: number };
+  'map:token-move': { tokenId: string; x: number; y: number; expectedVersion?: number };
   'map:token-add': Omit<Token, 'id' | 'createdAt'>;
   'map:token-remove': { tokenId: string };
-  'map:token-update': { tokenId: string; changes: Partial<Token> };
+  'map:token-update': { tokenId: string; changes: Partial<Token>; expectedVersion?: number };
   'map:fog-reveal': { points: number[] };
   'map:fog-hide': { points: number[] };
   'map:wall-add': WallSegment;
@@ -135,10 +164,11 @@ export interface ServerMapEvents {
      *  `playerMapId` cursor. */
     isPreview?: boolean;
   };
-  'map:token-moved': { tokenId: string; x: number; y: number; mapId?: string };
+  'map:token-moved': { tokenId: string; x: number; y: number; mapId?: string; version?: number };
   'map:token-added': Token;
   'map:token-removed': { tokenId: string; mapId?: string };
   'map:token-updated': { tokenId: string; changes: Partial<Token>; mapId?: string };
+  'map:token-conflict': { token: Token };
   'map:fog-updated': { fogState: FogPolygon[]; mapId?: string };
   'map:walls-updated': { walls: WallSegment[]; mapId?: string };
   /** DM-only broadcast to DMs viewing the map; players should never receive it. */
@@ -194,9 +224,19 @@ export interface ServerCombatEvents {
     roundNumber: number;
     actionEconomy: ActionEconomy;
   };
-  'combat:hp-changed': { tokenId: string; hp: number; tempHp: number; change: number; type: 'damage' | 'heal' };
+  'combat:hp-changed': {
+    tokenId: string;
+    hp: number;
+    tempHp: number;
+    change: number;
+    type: 'damage' | 'heal';
+  };
   'combat:condition-changed': { tokenId: string; conditions: Condition[] };
-  'combat:death-save-updated': { tokenId: string; deathSaves: { successes: number; failures: number }; roll: number };
+  'combat:death-save-updated': {
+    tokenId: string;
+    deathSaves: { successes: number; failures: number };
+    roll: number;
+  };
   'combat:action-used': { tokenId: string; actionType: ActionType; economy: ActionEconomy };
   'combat:movement-used': { tokenId: string; remaining: number };
   'combat:spell-cast': SpellCastEvent & { rollData?: DiceRollData };
@@ -239,7 +279,11 @@ export interface ServerDrawingEvents {
 // (interfaces augmented below — scroll to the combat events block)
 // --- Character Events ---
 export interface ClientCharacterEvents {
-  'character:update': { characterId: string; changes: Record<string, unknown> };
+  'character:update': {
+    characterId: string;
+    changes: Record<string, unknown>;
+    expectedVersion?: number;
+  };
   'character:rest': { characterId: string; kind: 'short' | 'long' };
   'character:spend-hit-die': { characterId: string; dieSize: number };
   'character:spell-slot-adjust': { characterId: string; level: number; delta: 1 | -1 };
@@ -248,6 +292,7 @@ export interface ClientCharacterEvents {
 
 export interface ServerCharacterEvents {
   'character:updated': { characterId: string; changes: Record<string, unknown> };
+  'character:update-conflict': { character: Character };
   'character:rested': {
     characterId: string;
     kind: 'short' | 'long';
@@ -320,16 +365,14 @@ export interface ServerChatEvents {
 }
 
 // --- Combined types for Socket.io typing ---
-export type ClientToServerEvents =
-  ClientSessionEvents &
+export type ClientToServerEvents = ClientSessionEvents &
   ClientMapEvents &
   ClientCombatEvents &
   ClientCharacterEvents &
   ClientChatEvents &
   ClientDrawingEvents;
 
-export type ServerToClientEvents =
-  ServerSessionEvents &
+export type ServerToClientEvents = ServerSessionEvents &
   ServerMapEvents &
   ServerCombatEvents &
   ServerCharacterEvents &
