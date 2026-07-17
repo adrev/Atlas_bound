@@ -16,12 +16,7 @@ import {
   assertSessionDM,
   assertCharacterOwnerOrDM,
 } from '../utils/authorization.js';
-import {
-  canHealToken,
-  createRoom,
-  getAllRooms,
-  type PlayerContext,
-} from '../utils/roomState.js';
+import { canHealToken, createRoom, getAllRooms, type PlayerContext } from '../utils/roomState.js';
 
 beforeEach(() => {
   mockQuery.mockReset();
@@ -70,7 +65,7 @@ describe('assertSessionMember', () => {
     await expect(assertSessionMember('sess-1', 'user-1')).resolves.toBeUndefined();
     expect(mockQuery).toHaveBeenCalledWith(
       'SELECT 1 FROM session_players WHERE session_id = $1 AND user_id = $2',
-      ['sess-1', 'user-1'],
+      ['sess-1', 'user-1']
     );
   });
 
@@ -117,7 +112,6 @@ describe('assertCharacterOwnerOrDM', () => {
     is_dm_in_session: false,
     is_linked_session_dm: false,
     is_token_session_dm: false,
-    is_any_dm_for_npc: false,
     ...overrides,
   });
 
@@ -130,9 +124,7 @@ describe('assertCharacterOwnerOrDM', () => {
   it('resolves when user is DM of the given session', async () => {
     mockQuery.mockResolvedValueOnce({ rows: [authRow({ is_dm_in_session: true })] });
 
-    await expect(
-      assertCharacterOwnerOrDM('char-1', 'dm-user', 'sess-1'),
-    ).resolves.toBeUndefined();
+    await expect(assertCharacterOwnerOrDM('char-1', 'dm-user', 'sess-1')).resolves.toBeUndefined();
     expect(mockQuery).toHaveBeenCalledTimes(1);
   });
 
@@ -143,14 +135,28 @@ describe('assertCharacterOwnerOrDM', () => {
   });
 
   it('resolves when user is DM of a session with an NPC token for the character', async () => {
-    mockQuery.mockResolvedValueOnce({ rows: [authRow({ user_id: 'npc', is_token_session_dm: true })] });
+    mockQuery.mockResolvedValueOnce({
+      rows: [authRow({ user_id: 'npc', is_token_session_dm: true })],
+    });
     await expect(assertCharacterOwnerOrDM('npc-char', 'dm-user')).resolves.toBeUndefined();
     expect(mockQuery).toHaveBeenCalledTimes(1);
   });
 
-  it('resolves when any DM edits a new NPC character with no token yet', async () => {
-    mockQuery.mockResolvedValueOnce({ rows: [authRow({ user_id: 'npc', is_any_dm_for_npc: true })] });
-    await expect(assertCharacterOwnerOrDM('loot-bag-char', 'dm-user')).resolves.toBeUndefined();
+  // Security regression (audit #4): a global NPC (user_id = 'npc') must NOT
+  // be editable just because the caller is a DM of some unrelated session.
+  // Previously an `is_any_dm_for_npc` clause allowed exactly that, letting
+  // anyone spin up their own session and rewrite a shared NPC in someone
+  // else's game. The clause is gone; only a token/link in the caller's own
+  // session authorizes the edit.
+  it('DENIES an unrelated DM editing a global NPC not present in their sessions', async () => {
+    mockQuery.mockResolvedValueOnce({ rows: [authRow({ user_id: 'npc' })] });
+    try {
+      await assertCharacterOwnerOrDM('shared-boss-npc', 'dm-of-other-game');
+      expect.fail('should have thrown 403');
+    } catch (err: any) {
+      expect(err.status).toBe(403);
+      expect(err.message).toBe('Not authorized');
+    }
     expect(mockQuery).toHaveBeenCalledTimes(1);
   });
 
@@ -188,10 +194,9 @@ describe('loot-take source authorization (regression)', () => {
   async function assertSourceAccess(sourceCharId: string, userId: string) {
     // Matches the logic added in loot.ts after the target-character check.
     // 1. Look up source owner.
-    const { rows: sourceRows } = await (await import('../db/connection.js')).default.query(
-      'SELECT user_id FROM characters WHERE id = $1',
-      [sourceCharId],
-    );
+    const { rows: sourceRows } = await (
+      await import('../db/connection.js')
+    ).default.query('SELECT user_id FROM characters WHERE id = $1', [sourceCharId]);
     if (sourceRows.length === 0) {
       const err = new Error('Source not found') as Error & { status: number };
       err.status = 404;
@@ -200,17 +205,15 @@ describe('loot-take source authorization (regression)', () => {
     if (sourceRows[0].user_id === userId) return;
 
     // 2. Shared-session check.
-    const { rows: shared } = await (await import('../db/connection.js')).default.query(
-      'shared-session-sql',
-      [userId, sourceCharId],
-    );
+    const { rows: shared } = await (
+      await import('../db/connection.js')
+    ).default.query('shared-session-sql', [userId, sourceCharId]);
     if (shared.length > 0) return;
 
     // 3. NPC-token-on-map check.
-    const { rows: npcInSession } = await (await import('../db/connection.js')).default.query(
-      'npc-in-session-sql',
-      [sourceCharId, userId],
-    );
+    const { rows: npcInSession } = await (
+      await import('../db/connection.js')
+    ).default.query('npc-in-session-sql', [sourceCharId, userId]);
     if (npcInSession.length > 0) return;
 
     const err = new Error('Not authorized to take from this source') as Error & { status: number };
@@ -284,10 +287,9 @@ describe('NPC character read authorization (P1.5)', () => {
   // Access is allowed iff a token on some map in a session the caller is
   // a member of is linked to this character.
   async function assertNpcReadAccess(characterId: string, userId: string) {
-    const { rows: npcLink } = await (await import('../db/connection.js')).default.query(
-      'npc-link-sql',
-      [characterId, userId],
-    );
+    const { rows: npcLink } = await (
+      await import('../db/connection.js')
+    ).default.query('npc-link-sql', [characterId, userId]);
     if (npcLink.length === 0) {
       const err = new Error('Not authorized') as Error & { status: number };
       err.status = 403;
@@ -322,16 +324,26 @@ describe('NPC character read authorization (P1.5)', () => {
 // ---------------------------------------------------------------------------
 describe('combat:damage authorization (P1.3)', () => {
   type Role = 'dm' | 'player';
-  interface Token { id: string; ownerUserId: string | null }
-  interface CombatState { active: boolean; currentTurnIndex: number; combatants: { tokenId: string }[] }
-  interface Room { tokens: Map<string, Token>; combatState: CombatState | null }
+  interface Token {
+    id: string;
+    ownerUserId: string | null;
+  }
+  interface CombatState {
+    active: boolean;
+    currentTurnIndex: number;
+    combatants: { tokenId: string }[];
+  }
+  interface Room {
+    tokens: Map<string, Token>;
+    combatState: CombatState | null;
+  }
 
   function canApplyDamage(
     room: Room,
     role: Role,
     userId: string,
     targetTokenId: string,
-    amount: number,
+    amount: number
   ): boolean {
     // Mirrors the layered checks in combatEvents.ts after Zod parse.
     if (!Number.isFinite(amount) || amount < 0 || amount > 9999) return false;
@@ -361,9 +373,17 @@ describe('combat:damage authorization (P1.3)', () => {
   const npc: Token = { id: 'tok-npc', ownerUserId: null };
 
   function makeRoom(combatants: string[] | null, currentIdx = 0): Room {
-    const tokens = new Map<string, Token>([[pcA.id, pcA], [pcB.id, pcB], [npc.id, npc]]);
+    const tokens = new Map<string, Token>([
+      [pcA.id, pcA],
+      [pcB.id, pcB],
+      [npc.id, npc],
+    ]);
     const combatState = combatants
-      ? { active: true, currentTurnIndex: currentIdx, combatants: combatants.map(id => ({ tokenId: id })) }
+      ? {
+          active: true,
+          currentTurnIndex: currentIdx,
+          combatants: combatants.map((id) => ({ tokenId: id })),
+        }
       : null;
     return { tokens, combatState };
   }
@@ -453,25 +473,27 @@ describe('/api/loot/drop authorization (P1.4)', () => {
       mapSessionId?: string | null;
       isMember?: boolean;
       inventory?: unknown[];
-    },
+    }
   ): Promise<{ status: number; error?: string }> {
     // 1. Map existence + session lookup.
     mockQuery.mockResolvedValueOnce({
       rows: opts.mapSessionId ? [{ session_id: opts.mapSessionId }] : [],
     });
-    const { rows: mapRows } = await (await import('../db/connection.js')).default.query(
-      'SELECT session_id FROM maps WHERE id = $1',
-      [mapId],
-    );
+    const { rows: mapRows } = await (
+      await import('../db/connection.js')
+    ).default.query('SELECT session_id FROM maps WHERE id = $1', [mapId]);
     if (mapRows.length === 0) return { status: 404, error: 'Map not found' };
 
     // 2. Session membership.
     mockQuery.mockResolvedValueOnce({ rows: opts.isMember ? [{ '?column?': 1 }] : [] });
-    const { rows: memberRows } = await (await import('../db/connection.js')).default.query(
-      'SELECT 1 FROM session_players WHERE session_id = $1 AND user_id = $2',
-      [mapRows[0].session_id, userId],
-    );
-    if (memberRows.length === 0) return { status: 403, error: 'Not a member of the target session' };
+    const { rows: memberRows } = await (
+      await import('../db/connection.js')
+    ).default.query('SELECT 1 FROM session_players WHERE session_id = $1 AND user_id = $2', [
+      mapRows[0].session_id,
+      userId,
+    ]);
+    if (memberRows.length === 0)
+      return { status: 403, error: 'Not a member of the target session' };
 
     // 3. Inventory index bounds.
     const inventory = opts.inventory ?? [];
@@ -530,7 +552,7 @@ describe('map:token-add authorization (P1.4)', () => {
     role: Role,
     userId: string,
     payloadOwnerUserId: string | null | undefined,
-    claimedCharacterOwner?: string | null,
+    claimedCharacterOwner?: string | null
   ): boolean {
     if (role === 'dm') return true;
     const isOwnToken = !!payloadOwnerUserId && payloadOwnerUserId === userId;

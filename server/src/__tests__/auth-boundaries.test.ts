@@ -25,10 +25,21 @@ function makeRes() {
     statusCode: 200,
     headers: {} as Record<string, string>,
     body: undefined as any,
-    status(n: number) { this.statusCode = n; return this; },
-    setHeader(name: string, value: string) { this.headers[name] = value; return this; },
-    json(b: unknown) { this.body = b; return this; },
-    end() { return this; },
+    status(n: number) {
+      this.statusCode = n;
+      return this;
+    },
+    setHeader(name: string, value: string) {
+      this.headers[name] = value;
+      return this;
+    },
+    json(b: unknown) {
+      this.body = b;
+      return this;
+    },
+    end() {
+      return this;
+    },
   };
 }
 
@@ -39,7 +50,6 @@ function characterAuthRow(overrides: Record<string, unknown> = {}) {
     is_dm_in_session: false,
     is_linked_session_dm: false,
     is_token_session_dm: false,
-    is_any_dm_for_npc: false,
     ...overrides,
   };
 }
@@ -51,9 +61,7 @@ describe('GET /api/sessions/:id — prep map leak (P1 #1)', () => {
   async function getSessionHandler() {
     const mod = await import('../routes/sessions.js');
     const router = mod.default as any;
-    const layer = router.stack.find(
-      (l: any) => l.route?.path === '/:id' && l.route?.methods?.get,
-    );
+    const layer = router.stack.find((l: any) => l.route?.path === '/:id' && l.route?.methods?.get);
     expect(layer).toBeTruthy();
     return layer.route.stack[0].handle as (req: Request, res: any) => Promise<void>;
   }
@@ -62,22 +70,39 @@ describe('GET /api/sessions/:id — prep map leak (P1 #1)', () => {
     // 1. assertSessionMember passes
     mockQuery.mockResolvedValueOnce({ rows: [{ '?column?': 1 }] });
     // 2. session row
-    mockQuery.mockResolvedValueOnce({ rows: [{
-      id: 's1', name: 'My Game', room_code: 'AAAA', dm_user_id: 'dm1',
-      current_map_id: 'm-prep', player_map_id: 'm-ribbon',
-      combat_active: 0, game_mode: 'free-roam', settings: '{}',
-      visibility: 'public', password_hash: null, invite_code: 'X',
-      created_at: 'now', updated_at: 'now',
-    }] });
+    mockQuery.mockResolvedValueOnce({
+      rows: [
+        {
+          id: 's1',
+          name: 'My Game',
+          room_code: 'AAAA',
+          dm_user_id: 'dm1',
+          current_map_id: 'm-prep',
+          player_map_id: 'm-ribbon',
+          combat_active: 0,
+          game_mode: 'free-roam',
+          settings: '{}',
+          visibility: 'public',
+          password_hash: null,
+          invite_code: 'X',
+          created_at: 'now',
+          updated_at: 'now',
+        },
+      ],
+    });
     // 3. players
-    mockQuery.mockResolvedValueOnce({ rows: [
-      { user_id: 'dm1', display_name: 'DM', avatar_url: null, role: 'dm', character_id: null },
-    ] });
+    mockQuery.mockResolvedValueOnce({
+      rows: [
+        { user_id: 'dm1', display_name: 'DM', avatar_url: null, role: 'dm', character_id: null },
+      ],
+    });
     // 4. maps (DM full list)
-    mockQuery.mockResolvedValueOnce({ rows: [
-      { id: 'm-prep', name: 'Prep', image_url: '/uploads/maps/prep.png' },
-      { id: 'm-ribbon', name: 'Ribbon', image_url: '/uploads/maps/r.png' },
-    ] });
+    mockQuery.mockResolvedValueOnce({
+      rows: [
+        { id: 'm-prep', name: 'Prep', image_url: '/uploads/maps/prep.png' },
+        { id: 'm-ribbon', name: 'Ribbon', image_url: '/uploads/maps/r.png' },
+      ],
+    });
 
     const handler = await getSessionHandler();
     const req = { user: { id: 'dm1' }, params: { id: 's1' } } as unknown as Request;
@@ -92,21 +117,36 @@ describe('GET /api/sessions/:id — prep map leak (P1 #1)', () => {
 
   it('player sees ONLY the ribbon map, never the DM prep map', async () => {
     mockQuery.mockResolvedValueOnce({ rows: [{ '?column?': 1 }] });
-    mockQuery.mockResolvedValueOnce({ rows: [{
-      id: 's1', name: 'My Game', room_code: 'AAAA', dm_user_id: 'dm1',
-      current_map_id: 'm-prep', player_map_id: 'm-ribbon',
-      combat_active: 0, game_mode: 'free-roam', settings: '{}',
-      visibility: 'public', password_hash: null, invite_code: 'X',
-      created_at: 'now', updated_at: 'now',
-    }] });
-    mockQuery.mockResolvedValueOnce({ rows: [
-      { user_id: 'dm1', role: 'dm', character_id: null, display_name: 'DM', avatar_url: null },
-      { user_id: 'p1', role: 'player', character_id: null, display_name: 'P', avatar_url: null },
-    ] });
+    mockQuery.mockResolvedValueOnce({
+      rows: [
+        {
+          id: 's1',
+          name: 'My Game',
+          room_code: 'AAAA',
+          dm_user_id: 'dm1',
+          current_map_id: 'm-prep',
+          player_map_id: 'm-ribbon',
+          combat_active: 0,
+          game_mode: 'free-roam',
+          settings: '{}',
+          visibility: 'public',
+          password_hash: null,
+          invite_code: 'X',
+          created_at: 'now',
+          updated_at: 'now',
+        },
+      ],
+    });
+    mockQuery.mockResolvedValueOnce({
+      rows: [
+        { user_id: 'dm1', role: 'dm', character_id: null, display_name: 'DM', avatar_url: null },
+        { user_id: 'p1', role: 'player', character_id: null, display_name: 'P', avatar_url: null },
+      ],
+    });
     // Player branch does a single-map lookup scoped to player_map_id
-    mockQuery.mockResolvedValueOnce({ rows: [
-      { id: 'm-ribbon', name: 'Ribbon', image_url: '/uploads/maps/r.png' },
-    ] });
+    mockQuery.mockResolvedValueOnce({
+      rows: [{ id: 'm-ribbon', name: 'Ribbon', image_url: '/uploads/maps/r.png' }],
+    });
 
     const handler = await getSessionHandler();
     const req = { user: { id: 'p1' }, params: { id: 's1' } } as unknown as Request;
@@ -121,16 +161,31 @@ describe('GET /api/sessions/:id — prep map leak (P1 #1)', () => {
 
   it('player with no ribbon set gets an empty map list, never falls back to prep', async () => {
     mockQuery.mockResolvedValueOnce({ rows: [{ '?column?': 1 }] });
-    mockQuery.mockResolvedValueOnce({ rows: [{
-      id: 's1', name: 'My Game', room_code: 'AAAA', dm_user_id: 'dm1',
-      current_map_id: 'm-prep', player_map_id: null,
-      combat_active: 0, game_mode: 'free-roam', settings: '{}',
-      visibility: 'public', password_hash: null, invite_code: null,
-      created_at: 'now', updated_at: 'now',
-    }] });
-    mockQuery.mockResolvedValueOnce({ rows: [
-      { user_id: 'p1', role: 'player', character_id: null, display_name: 'P', avatar_url: null },
-    ] });
+    mockQuery.mockResolvedValueOnce({
+      rows: [
+        {
+          id: 's1',
+          name: 'My Game',
+          room_code: 'AAAA',
+          dm_user_id: 'dm1',
+          current_map_id: 'm-prep',
+          player_map_id: null,
+          combat_active: 0,
+          game_mode: 'free-roam',
+          settings: '{}',
+          visibility: 'public',
+          password_hash: null,
+          invite_code: null,
+          created_at: 'now',
+          updated_at: 'now',
+        },
+      ],
+    });
+    mockQuery.mockResolvedValueOnce({
+      rows: [
+        { user_id: 'p1', role: 'player', character_id: null, display_name: 'P', avatar_url: null },
+      ],
+    });
     // No fourth query — player branch bails when player_map_id is null.
 
     const handler = await getSessionHandler();
@@ -152,37 +207,49 @@ describe('GET /api/sessions/:id/state — character shape', () => {
     const mod = await import('../routes/sessions.js');
     const router = mod.default as any;
     const layer = router.stack.find(
-      (l: any) => l.route?.path === '/:id/state' && l.route?.methods?.get,
+      (l: any) => l.route?.path === '/:id/state' && l.route?.methods?.get
     );
     expect(layer).toBeTruthy();
     return layer.route.stack[0].handle as (req: Request, res: any) => Promise<void>;
   }
 
   it('maps character rows to camelCase before clients reconcile state', async () => {
-    const { createRoom, addPlayerToRoom, removePlayerFromRoom } = await import('../utils/roomState.js');
+    const { createRoom, addPlayerToRoom, removePlayerFromRoom } =
+      await import('../utils/roomState.js');
     const sessionId = 'state-shape-s1';
     const room = createRoom(sessionId, 'STATE1', 'dm1');
     room.playerMapId = 'map1';
     addPlayerToRoom(sessionId, {
-      userId: 'p1', displayName: 'Player', socketId: 'sock-p1',
-      role: 'player', characterId: 'char-1',
+      userId: 'p1',
+      displayName: 'Player',
+      socketId: 'sock-p1',
+      role: 'player',
+      characterId: 'char-1',
     });
 
     mockQuery.mockResolvedValueOnce({ rows: [{ '?column?': 1 }] }); // assertSessionMember
     mockQuery.mockResolvedValueOnce({ rows: [{ settings: '{}' }] });
     mockQuery.mockResolvedValueOnce({ rows: [{ id: 'char-1' }] }); // caller's own character ids
-    mockQuery.mockResolvedValueOnce({ rows: [{
-      id: 'char-1',
-      user_id: 'p1',
-      name: 'Liraya Voss',
-      hit_points: 11,
-      max_hit_points: 15,
-      armor_class: 13,
-      ability_scores: '{"str":8,"dex":14,"con":12,"int":12,"wis":12,"cha":17}',
-    }] });
+    mockQuery.mockResolvedValueOnce({
+      rows: [
+        {
+          id: 'char-1',
+          user_id: 'p1',
+          name: 'Liraya Voss',
+          hit_points: 11,
+          max_hit_points: 15,
+          armor_class: 13,
+          ability_scores: '{"str":8,"dex":14,"con":12,"int":12,"wis":12,"cha":17}',
+        },
+      ],
+    });
 
     const handler = await getStateHandler();
-    const req = { user: { id: 'p1' }, params: { id: sessionId }, headers: {} } as unknown as Request;
+    const req = {
+      user: { id: 'p1' },
+      params: { id: sessionId },
+      headers: {},
+    } as unknown as Request;
     const res = makeRes();
     await handler(req, res);
 
@@ -205,7 +272,7 @@ describe('POST /api/sessions/:id/link-character — DM cannot launder (P1 #2)', 
     const mod = await import('../routes/sessions.js');
     const router = mod.default as any;
     const layer = router.stack.find(
-      (l: any) => l.route?.path === '/:id/link-character' && l.route?.methods?.post,
+      (l: any) => l.route?.path === '/:id/link-character' && l.route?.methods?.post
     );
     expect(layer).toBeTruthy();
     return layer.route.stack[0].handle as (req: Request, res: any) => Promise<void>;
@@ -214,9 +281,9 @@ describe('POST /api/sessions/:id/link-character — DM cannot launder (P1 #2)', 
   it('rejects DM linking a character not owned by the target player (403)', async () => {
     // Flow: assertSessionMember → (authUserId !== userId → assertSessionDM)
     // → member check → character lookup → ownership check.
-    mockQuery.mockResolvedValueOnce({ rows: [{ '?column?': 1 }] });      // assertSessionMember(DM)
-    mockQuery.mockResolvedValueOnce({ rows: [{ role: 'dm' }] });         // assertSessionDM
-    mockQuery.mockResolvedValueOnce({ rows: [{ '?column?': 1 }] });      // target is a member
+    mockQuery.mockResolvedValueOnce({ rows: [{ '?column?': 1 }] }); // assertSessionMember(DM)
+    mockQuery.mockResolvedValueOnce({ rows: [{ role: 'dm' }] }); // assertSessionDM
+    mockQuery.mockResolvedValueOnce({ rows: [{ '?column?': 1 }] }); // target is a member
     mockQuery.mockResolvedValueOnce({ rows: [{ user_id: 'other-user' }] }); // char.user_id
 
     const handler = await getLinkHandler();
@@ -254,7 +321,7 @@ describe('POST /api/sessions/:id/link-character — DM cannot launder (P1 #2)', 
     mockQuery.mockResolvedValueOnce({ rows: [{ '?column?': 1 }] }); // member
     mockQuery.mockResolvedValueOnce({ rows: [{ '?column?': 1 }] }); // target-member
     mockQuery.mockResolvedValueOnce({ rows: [{ user_id: 'p1' }] }); // char owned by p1
-    mockQuery.mockResolvedValueOnce({ rows: [] });                  // UPDATE
+    mockQuery.mockResolvedValueOnce({ rows: [] }); // UPDATE
 
     const handler = await getLinkHandler();
     const req = {
@@ -278,7 +345,7 @@ describe('POST /api/characters/:id/loot/take — cross-player PC theft (P1 #5)',
     const mod = await import('../routes/loot.js');
     const router = mod.default as any;
     const layer = router.stack.find(
-      (l: any) => l.route?.path === '/characters/:id/loot/take' && l.route?.methods?.post,
+      (l: any) => l.route?.path === '/characters/:id/loot/take' && l.route?.methods?.post
     );
     expect(layer).toBeTruthy();
     return layer.route.stack[0].handle as (req: Request, res: any) => Promise<void>;
@@ -306,10 +373,10 @@ describe('POST /api/characters/:id/loot/take — cross-player PC theft (P1 #5)',
   });
 
   it('allows take when source is an NPC and both share a session', async () => {
-    mockQuery.mockResolvedValueOnce({ rows: [characterAuthRow()] });    // target char owner
-    mockQuery.mockResolvedValueOnce({ rows: [{ user_id: 'npc' }] });    // source is NPC
-    mockQuery.mockResolvedValueOnce({ rows: [] });                      // not DM
-    mockQuery.mockResolvedValueOnce({ rows: [{ '?column?': 1 }] });     // NPC in shared session
+    mockQuery.mockResolvedValueOnce({ rows: [characterAuthRow()] }); // target char owner
+    mockQuery.mockResolvedValueOnce({ rows: [{ user_id: 'npc' }] }); // source is NPC
+    mockQuery.mockResolvedValueOnce({ rows: [] }); // not DM
+    mockQuery.mockResolvedValueOnce({ rows: [{ '?column?': 1 }] }); // NPC in shared session
 
     // After auth, the handler hits the BEGIN/COMMIT transaction via
     // pool.connect(). Stub a client whose queries all return empty so
