@@ -23,7 +23,7 @@ export function getAuthUserId(req: Request): string {
 export async function assertCharacterOwnerOrDM(
   characterId: string,
   userId: string,
-  sessionId?: string,
+  sessionId?: string
 ): Promise<void> {
   const { rows } = await pool.query(
     `SELECT
@@ -56,21 +56,11 @@ export async function assertCharacterOwnerOrDM(
           WHERE t.character_id = c.id
             AND sp.user_id = $2
             AND sp.role = 'dm'
-       ) AS is_token_session_dm,
-       (
-         c.user_id = 'npc'
-         AND EXISTS (
-           SELECT 1
-             FROM session_players sp
-            WHERE sp.user_id = $2
-              AND sp.role = 'dm'
-            LIMIT 1
-         )
-       ) AS is_any_dm_for_npc
+       ) AS is_token_session_dm
      FROM characters c
      WHERE c.id = $1
      LIMIT 1`,
-    [characterId, userId, sessionId ?? null],
+    [characterId, userId, sessionId ?? null]
   );
   if (rows.length === 0) {
     const err = new Error('Character not found') as Error & { status: number };
@@ -79,12 +69,19 @@ export async function assertCharacterOwnerOrDM(
   }
 
   const auth = rows[0];
+  // NOTE: there is deliberately no "is a DM of ANY session" escape hatch for
+  // global NPC rows (user_id = 'npc'). That let any user spin up their own
+  // session, become a DM, and rewrite a shared NPC used in someone else's
+  // game. A DM may only edit an NPC that is actually present in a session
+  // they run — proven by is_token_session_dm (the NPC has a token on one of
+  // their maps) or is_linked_session_dm (it is linked via session_players).
+  // NPCs are created + placed together (EncounterBuilder POSTs the character
+  // then spawns its token), so the token clause covers the normal edit path.
   if (
     auth.is_owner ||
     auth.is_dm_in_session ||
     auth.is_linked_session_dm ||
-    auth.is_token_session_dm ||
-    auth.is_any_dm_for_npc
+    auth.is_token_session_dm
   ) {
     return;
   }
@@ -97,13 +94,10 @@ export async function assertCharacterOwnerOrDM(
 /**
  * Assert the user is a member (player or DM) of the session.
  */
-export async function assertSessionMember(
-  sessionId: string,
-  userId: string,
-): Promise<void> {
+export async function assertSessionMember(sessionId: string, userId: string): Promise<void> {
   const { rows } = await pool.query(
     'SELECT 1 FROM session_players WHERE session_id = $1 AND user_id = $2',
-    [sessionId, userId],
+    [sessionId, userId]
   );
   if (rows.length === 0) {
     const err = new Error('Not a member of this session') as Error & { status: number };
@@ -117,13 +111,10 @@ export async function assertSessionMember(
  * owner and any co-DM \u2014 use it to gate kick/ban/settings operations
  * where co-DMs have full authority.
  */
-export async function assertSessionDM(
-  sessionId: string,
-  userId: string,
-): Promise<void> {
+export async function assertSessionDM(sessionId: string, userId: string): Promise<void> {
   const { rows } = await pool.query(
     "SELECT 1 FROM session_players WHERE session_id = $1 AND user_id = $2 AND role = 'dm'",
-    [sessionId, userId],
+    [sessionId, userId]
   );
   if (rows.length === 0) {
     const err = new Error('Only the DM can perform this action') as Error & { status: number };
@@ -138,16 +129,15 @@ export async function assertSessionDM(
  * transfer, delete session) go through this gate so co-DMs can't
  * reshuffle the hierarchy or hand the session away.
  */
-export async function assertSessionOwner(
-  sessionId: string,
-  userId: string,
-): Promise<void> {
-  const { rows } = await pool.query(
-    'SELECT 1 FROM sessions WHERE id = $1 AND dm_user_id = $2',
-    [sessionId, userId],
-  );
+export async function assertSessionOwner(sessionId: string, userId: string): Promise<void> {
+  const { rows } = await pool.query('SELECT 1 FROM sessions WHERE id = $1 AND dm_user_id = $2', [
+    sessionId,
+    userId,
+  ]);
   if (rows.length === 0) {
-    const err = new Error('Only the session owner can perform this action') as Error & { status: number };
+    const err = new Error('Only the session owner can perform this action') as Error & {
+      status: number;
+    };
     err.status = 403;
     throw err;
   }
@@ -158,13 +148,10 @@ export async function assertSessionOwner(
  * paths that need a boolean rather than a throwing assertion (e.g.
  * deciding whether to show the Promote button in a payload).
  */
-export async function isSessionOwner(
-  sessionId: string,
-  userId: string,
-): Promise<boolean> {
-  const { rows } = await pool.query(
-    'SELECT 1 FROM sessions WHERE id = $1 AND dm_user_id = $2',
-    [sessionId, userId],
-  );
+export async function isSessionOwner(sessionId: string, userId: string): Promise<boolean> {
+  const { rows } = await pool.query('SELECT 1 FROM sessions WHERE id = $1 AND dm_user_id = $2', [
+    sessionId,
+    userId,
+  ]);
   return rows.length > 0;
 }
