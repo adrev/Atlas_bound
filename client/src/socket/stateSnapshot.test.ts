@@ -476,3 +476,59 @@ describe('pullStateSnapshot — tokenId-based turn pointer', () => {
     expect(useCombatStore.getState().currentTurnIndex).toBe(-1); // no wrong highlight
   });
 });
+
+/**
+ * Regression set 4 — the token diff must self-heal aura / faction /
+ * visionOverrides drift (audit #24). The 15s /state diff compared only
+ * position/size/image/lights/name/etc., so a missed map:token-updated on
+ * one of those nested/nullable fields declared "unchanged" forever — a
+ * player stayed blind under fog or missed a boss aura for a whole static
+ * scene with no other token movement to trigger reconciliation.
+ */
+describe('pullStateSnapshot — token diff self-heals aura/faction/visionOverrides', () => {
+  beforeEach(() => {
+    resetEventCursor();
+    useSessionStore.setState({ sessionId: 's1' } as never);
+    useCombatStore.setState({ active: false } as never);
+  });
+  afterEach(() => vi.unstubAllGlobals());
+
+  async function pullWithSameToken(patch: Partial<Token>) {
+    // Local token and snapshot token are identical except for `patch`,
+    // and crucially the position is unchanged — the old diff would skip.
+    const local = tok('t1');
+    useMapStore.setState({ tokens: { t1: local }, currentMap: { id: 'map-1' } } as never);
+    recordEventId(7);
+    mockState(
+      {
+        mapId: 'map-1',
+        tokens: [{ ...tok('t1'), ...patch }],
+        combat: null,
+        characters: {},
+        nextEventId: 7,
+        roundNumber: 0,
+      },
+      'W/"aura"'
+    );
+    const res = await pullStateSnapshot();
+    expect(res.applied).toBe(true);
+    return useMapStore.getState().tokens['t1'];
+  }
+
+  it('applies a newly-set aura even though position is unchanged', async () => {
+    const aura = { radiusFeet: 10, color: '#ff0000', opacity: 0.3, shape: 'circle' as const };
+    const t = await pullWithSameToken({ aura } as Partial<Token>);
+    expect(t.aura).toEqual(aura);
+  });
+
+  it('applies a faction change even though position is unchanged', async () => {
+    const t = await pullWithSameToken({ faction: 'hostile' } as Partial<Token>);
+    expect(t.faction).toBe('hostile');
+  });
+
+  it('applies a visionOverrides change even though position is unchanged', async () => {
+    const vo = { darkvision: 60 };
+    const t = await pullWithSameToken({ visionOverrides: vo } as Partial<Token>);
+    expect(t.visionOverrides).toEqual(vo);
+  });
+});

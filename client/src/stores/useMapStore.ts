@@ -245,14 +245,21 @@ export const useMapStore = create<MapState & MapActions>((set) => ({
     }),
 
   moveToken: (tokenId, x, y) =>
-    set((state) => ({
-      tokens: {
-        ...state.tokens,
-        [tokenId]: state.tokens[tokenId]
-          ? { ...state.tokens[tokenId], x, y }
-          : state.tokens[tokenId],
-      },
-    })),
+    set((state) => {
+      const existing = state.tokens[tokenId];
+      // A move for a token we don't have yet (e.g. another client's
+      // map:token-moved arriving between session:state-sync and the
+      // map:loaded that populates the store). The old ternary wrote
+      // `[tokenId]: undefined`, inserting an undefined entry that later
+      // crashed every token-consuming component (t.characterId on
+      // undefined) and took the session UI to the error boundary. Ignore
+      // it — the imminent map:loaded / next /state snapshot carries the
+      // real token with its authoritative position.
+      if (!existing) return {};
+      return {
+        tokens: { ...state.tokens, [tokenId]: { ...existing, x, y } },
+      };
+    }),
 
   addToken: (token) =>
     set((state) => ({
