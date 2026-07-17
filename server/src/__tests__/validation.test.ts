@@ -14,6 +14,7 @@ import {
   sessionUpdateSettingsSchema,
   createSessionSchema,
   createMapSchema,
+  fogRevealHideSchema,
 } from '../utils/validation.js';
 
 // ---------------------------------------------------------------------------
@@ -273,9 +274,7 @@ describe('chatMessageSchema', () => {
         dice: '1d8+3',
         diceRolls: [5],
         mainRoll: 8,
-        bonuses: [
-          { label: 'Rage', amount: 2, damageType: 'slashing' },
-        ],
+        bonuses: [{ label: 'Rage', amount: 2, damageType: 'slashing' }],
         finalDamage: 10,
         targetHpBefore: 12,
         targetHpAfter: 2,
@@ -320,7 +319,9 @@ describe('chatMessageSchema', () => {
         },
       };
       const result = chatMessageSchema.safeParse({
-        type: 'system', content: 'crit!', attackResult: crit,
+        type: 'system',
+        content: 'crit!',
+        attackResult: crit,
       });
       expect(result.success).toBe(true);
     });
@@ -331,7 +332,9 @@ describe('chatMessageSchema', () => {
         attackRoll: { ...validBreakdown.attackRoll, d20: 99 },
       };
       const result = chatMessageSchema.safeParse({
-        type: 'system', content: 'x', attackResult: bad,
+        type: 'system',
+        content: 'x',
+        attackResult: bad,
       });
       expect(result.success).toBe(false);
     });
@@ -340,7 +343,9 @@ describe('chatMessageSchema', () => {
       const { attacker: _a, ...rest } = validBreakdown;
       const bad = { ...rest, attacker: { tokenId: 't1' } };
       const result = chatMessageSchema.safeParse({
-        type: 'system', content: 'x', attackResult: bad,
+        type: 'system',
+        content: 'x',
+        attackResult: bad,
       });
       expect(result.success).toBe(false);
     });
@@ -348,7 +353,9 @@ describe('chatMessageSchema', () => {
     it('rejects a breakdown with an unknown hitResult', () => {
       const bad = { ...validBreakdown, hitResult: 'glancing' };
       const result = chatMessageSchema.safeParse({
-        type: 'system', content: 'x', attackResult: bad,
+        type: 'system',
+        content: 'x',
+        attackResult: bad,
       });
       expect(result.success).toBe(false);
     });
@@ -359,12 +366,15 @@ describe('chatMessageSchema', () => {
         attackRoll: {
           ...validBreakdown.attackRoll,
           modifiers: Array.from({ length: 17 }, (_, i) => ({
-            label: `mod-${i}`, value: 1,
+            label: `mod-${i}`,
+            value: 1,
           })),
         },
       };
       const result = chatMessageSchema.safeParse({
-        type: 'system', content: 'x', attackResult: bad,
+        type: 'system',
+        content: 'x',
+        attackResult: bad,
       });
       expect(result.success).toBe(false);
     });
@@ -375,7 +385,9 @@ describe('chatMessageSchema', () => {
         shieldSpell: 'miss' as const,
       };
       const result = chatMessageSchema.safeParse({
-        type: 'system', content: 'x', attackResult: withShield,
+        type: 'system',
+        content: 'x',
+        attackResult: withShield,
       });
       expect(result.success).toBe(true);
     });
@@ -385,24 +397,29 @@ describe('chatMessageSchema', () => {
         ...validBreakdown,
         damage: {
           ...validBreakdown.damage,
-          bonuses: [{
-            label: 'Hex (1d6)',
-            amount: 5,
-            damageType: 'necrotic',
-            resisted: 2,
-            resistanceNote: 'resist necrotic',
-          }],
+          bonuses: [
+            {
+              label: 'Hex (1d6)',
+              amount: 5,
+              damageType: 'necrotic',
+              resisted: 2,
+              resistanceNote: 'resist necrotic',
+            },
+          ],
         },
       };
       const result = chatMessageSchema.safeParse({
-        type: 'system', content: 'x', attackResult: resistedHex,
+        type: 'system',
+        content: 'x',
+        attackResult: resistedHex,
       });
       expect(result.success).toBe(true);
     });
 
     it('plain message with no attackResult still parses', () => {
       const result = chatMessageSchema.safeParse({
-        type: 'system', content: 'plain system message',
+        type: 'system',
+        content: 'plain system message',
       });
       expect(result.success).toBe(true);
     });
@@ -424,7 +441,9 @@ describe('chatMessageSchema', () => {
         },
       };
       const r = chatMessageSchema.safeParse({
-        type: 'system', content: 'x', attackResult: resistedWeaponType,
+        type: 'system',
+        content: 'x',
+        attackResult: resistedWeaponType,
       });
       expect(r.success).toBe(true);
     });
@@ -440,7 +459,9 @@ describe('chatMessageSchema', () => {
         },
       };
       const r = chatMessageSchema.safeParse({
-        type: 'system', content: 'x', attackResult: bad,
+        type: 'system',
+        content: 'x',
+        attackResult: bad,
       });
       expect(r.success).toBe(false);
     });
@@ -469,9 +490,7 @@ describe('chatMessageSchema', () => {
           attack: {
             d20: 18,
             advantage: 'normal' as const,
-            modifiers: [
-              { label: 'Spell attack bonus', value: 5, source: 'other' as const },
-            ],
+            modifiers: [{ label: 'Spell attack bonus', value: 5, source: 'other' as const }],
             total: 23,
             targetAc: 13,
             hitResult: 'hit' as const,
@@ -491,7 +510,9 @@ describe('chatMessageSchema', () => {
 
     it('accepts a single-target spell attack (Fire Bolt)', () => {
       const r = chatMessageSchema.safeParse({
-        type: 'system', content: 'Vex → Goblin: 7 fire', spellResult: validSingleAttack,
+        type: 'system',
+        content: 'Vex → Goblin: 7 fire',
+        spellResult: validSingleAttack,
       });
       expect(r.success).toBe(true);
     });
@@ -511,38 +532,59 @@ describe('chatMessageSchema', () => {
         notes: ['20-ft sphere · 4 in area'],
         targets: [
           {
-            name: 'Orc', tokenId: 't-orc', kind: 'save' as const,
+            name: 'Orc',
+            tokenId: 't-orc',
+            kind: 'save' as const,
             save: {
-              d20: 5, advantage: 'normal' as const, ability: 'dex' as const,
+              d20: 5,
+              advantage: 'normal' as const,
+              ability: 'dex' as const,
               modifiers: [{ label: 'DEX save mod', value: 1, source: 'ability' as const }],
-              total: 6, dc: 15, saved: false,
+              total: 6,
+              dc: 15,
+              saved: false,
             },
             damage: {
-              dice: '8d6', diceRolls: [6, 5, 4, 3, 5, 2, 6, 1],
-              mainRoll: 32, bonuses: [],
-              finalDamage: 32, targetHpBefore: 40, targetHpAfter: 8,
+              dice: '8d6',
+              diceRolls: [6, 5, 4, 3, 5, 2, 6, 1],
+              mainRoll: 32,
+              bonuses: [],
+              finalDamage: 32,
+              targetHpBefore: 40,
+              targetHpAfter: 8,
             },
           },
           {
-            name: 'Halfling', tokenId: 't-half', kind: 'save' as const,
+            name: 'Halfling',
+            tokenId: 't-half',
+            kind: 'save' as const,
             save: {
-              d20: 18, advantage: 'advantage' as const, d20Rolls: [7, 18],
+              d20: 18,
+              advantage: 'advantage' as const,
+              d20Rolls: [7, 18],
               ability: 'dex' as const,
-              modifiers: [
-                { label: 'DEX save mod', value: 3, source: 'ability' as const },
-              ],
-              total: 21, dc: 15, saved: true,
+              modifiers: [{ label: 'DEX save mod', value: 3, source: 'ability' as const }],
+              total: 21,
+              dc: 15,
+              saved: true,
             },
             damage: {
-              dice: '8d6', diceRolls: [6, 5, 4, 3, 5, 2, 6, 1],
-              mainRoll: 16, bonuses: [], halfDamage: true,
-              finalDamage: 16, targetHpBefore: 28, targetHpAfter: 12,
+              dice: '8d6',
+              diceRolls: [6, 5, 4, 3, 5, 2, 6, 1],
+              mainRoll: 16,
+              bonuses: [],
+              halfDamage: true,
+              finalDamage: 16,
+              targetHpBefore: 28,
+              targetHpAfter: 12,
             },
           },
         ],
       };
       const r = chatMessageSchema.safeParse({
-        type: 'system', content: 'Fireball!', spellResult: fireball,
+        type: 'system',
+        content: 'Fireball!',
+        spellResult: fireball,
       });
       expect(r.success).toBe(true);
     });
@@ -554,16 +596,22 @@ describe('chatMessageSchema', () => {
         notes: [],
         targets: [
           {
-            name: 'Ally', kind: 'heal' as const,
+            name: 'Ally',
+            kind: 'heal' as const,
             healing: {
-              dice: '1d8+3', diceRolls: [5],
-              mainRoll: 8, targetHpBefore: 4, targetHpAfter: 12,
+              dice: '1d8+3',
+              diceRolls: [5],
+              mainRoll: 8,
+              targetHpBefore: 4,
+              targetHpAfter: 12,
             },
           },
         ],
       };
       const r = chatMessageSchema.safeParse({
-        type: 'system', content: 'cured', spellResult: cure,
+        type: 'system',
+        content: 'cured',
+        spellResult: cure,
       });
       expect(r.success).toBe(true);
     });
@@ -575,13 +623,16 @@ describe('chatMessageSchema', () => {
         notes: [],
         targets: [
           {
-            name: 'Fighter', kind: 'buff' as const,
+            name: 'Fighter',
+            kind: 'buff' as const,
             conditionsApplied: ['blessed'],
           },
         ],
       };
       const r = chatMessageSchema.safeParse({
-        type: 'system', content: 'Bless', spellResult: bless,
+        type: 'system',
+        content: 'Bless',
+        spellResult: bless,
       });
       expect(r.success).toBe(true);
     });
@@ -590,15 +641,23 @@ describe('chatMessageSchema', () => {
       const big = {
         ...validSingleAttack,
         targets: Array.from({ length: 20 }, (_, i) => ({
-          name: `t${i}`, kind: 'damage-flat' as const,
+          name: `t${i}`,
+          kind: 'damage-flat' as const,
           damage: {
-            dice: '1d6', diceRolls: [3], mainRoll: 3, bonuses: [],
-            finalDamage: 3, targetHpBefore: 10, targetHpAfter: 7,
+            dice: '1d6',
+            diceRolls: [3],
+            mainRoll: 3,
+            bonuses: [],
+            finalDamage: 3,
+            targetHpBefore: 10,
+            targetHpAfter: 7,
           },
         })),
       };
       const r = chatMessageSchema.safeParse({
-        type: 'system', content: 'big', spellResult: big,
+        type: 'system',
+        content: 'big',
+        spellResult: big,
       });
       expect(r.success).toBe(true);
     });
@@ -607,11 +666,14 @@ describe('chatMessageSchema', () => {
       const tooBig = {
         ...validSingleAttack,
         targets: Array.from({ length: 21 }, () => ({
-          name: 'x', kind: 'damage-flat' as const,
+          name: 'x',
+          kind: 'damage-flat' as const,
         })),
       };
       const r = chatMessageSchema.safeParse({
-        type: 'system', content: 'x', spellResult: tooBig,
+        type: 'system',
+        content: 'x',
+        spellResult: tooBig,
       });
       expect(r.success).toBe(false);
     });
@@ -622,7 +684,9 @@ describe('chatMessageSchema', () => {
         spell: { ...validSingleAttack.spell, kind: 'blast' },
       };
       const r = chatMessageSchema.safeParse({
-        type: 'system', content: 'x', spellResult: bad,
+        type: 'system',
+        content: 'x',
+        spellResult: bad,
       });
       expect(r.success).toBe(false);
     });
@@ -633,7 +697,9 @@ describe('chatMessageSchema', () => {
         spell: { ...validSingleAttack.spell, level: 10 },
       };
       const r = chatMessageSchema.safeParse({
-        type: 'system', content: 'x', spellResult: bad,
+        type: 'system',
+        content: 'x',
+        spellResult: bad,
       });
       expect(r.success).toBe(false);
     });
@@ -641,20 +707,33 @@ describe('chatMessageSchema', () => {
     it('accepts auto-failed save payload', () => {
       const paralyzed = {
         ...validSingleAttack,
-        spell: { ...validSingleAttack.spell, kind: 'save' as const, saveAbility: 'str' as const, saveDc: 14 },
+        spell: {
+          ...validSingleAttack.spell,
+          kind: 'save' as const,
+          saveAbility: 'str' as const,
+          saveDc: 14,
+        },
         targets: [
           {
-            name: 'Paralyzed mark', kind: 'save' as const,
+            name: 'Paralyzed mark',
+            kind: 'save' as const,
             save: {
-              d20: 1, advantage: 'normal' as const, ability: 'str' as const,
+              d20: 1,
+              advantage: 'normal' as const,
+              ability: 'str' as const,
               modifiers: [],
-              total: -999, dc: 14, saved: false, autoFailed: true,
+              total: -999,
+              dc: 14,
+              saved: false,
+              autoFailed: true,
             },
           },
         ],
       };
       const r = chatMessageSchema.safeParse({
-        type: 'system', content: 'x', spellResult: paralyzed,
+        type: 'system',
+        content: 'x',
+        spellResult: paralyzed,
       });
       expect(r.success).toBe(true);
     });
@@ -688,7 +767,9 @@ describe('chatMessageSchema', () => {
         },
       };
       const r = chatMessageSchema.safeParse({
-        type: 'system', content: 'x', saveResult: conc,
+        type: 'system',
+        content: 'x',
+        saveResult: conc,
       });
       expect(r.success).toBe(true);
     });
@@ -712,7 +793,9 @@ describe('chatMessageSchema', () => {
         },
       };
       const r = chatMessageSchema.safeParse({
-        type: 'system', content: 'x', saveResult: ds,
+        type: 'system',
+        content: 'x',
+        saveResult: ds,
       });
       expect(r.success).toBe(true);
     });
@@ -725,11 +808,14 @@ describe('chatMessageSchema', () => {
         d20: 10,
         advantage: 'normal' as const,
         modifiers: [],
-        total: 10, passed: true,
+        total: 10,
+        passed: true,
         deathSave: { successes: 4, failures: 0 },
       };
       const r = chatMessageSchema.safeParse({
-        type: 'system', content: 'x', saveResult: bad,
+        type: 'system',
+        content: 'x',
+        saveResult: bad,
       });
       expect(r.success).toBe(false);
     });
@@ -741,10 +827,14 @@ describe('chatMessageSchema', () => {
         ability: 'luck',
         d20: 10,
         advantage: 'normal' as const,
-        modifiers: [], total: 10, passed: true,
+        modifiers: [],
+        total: 10,
+        passed: true,
       };
       const r = chatMessageSchema.safeParse({
-        type: 'system', content: 'x', saveResult: bad,
+        type: 'system',
+        content: 'x',
+        saveResult: bad,
       });
       expect(r.success).toBe(false);
     });
@@ -757,10 +847,13 @@ describe('chatMessageSchema', () => {
         d20: 15,
         advantage: 'normal' as const,
         modifiers: [{ label: 'WIS mod', value: 2 }],
-        total: 17, passed: true,
+        total: 17,
+        passed: true,
       };
       const r = chatMessageSchema.safeParse({
-        type: 'system', content: 'x', saveResult: s,
+        type: 'system',
+        content: 'x',
+        saveResult: s,
       });
       expect(r.success).toBe(true);
     });
@@ -773,12 +866,19 @@ describe('chatMessageSchema', () => {
     it('accepts a legendary action', () => {
       const a = {
         actor: { name: 'Ancient Red Dragon', tokenId: 't-drag' },
-        action: { name: 'Tail Swipe', category: 'legendary' as const, icon: '\uD83D\uDC09', cost: '1 action' },
+        action: {
+          name: 'Tail Swipe',
+          category: 'legendary' as const,
+          icon: '\uD83D\uDC09',
+          cost: '1 action',
+        },
         effect: 'Makes a tail attack against a creature within 15 ft.',
         notes: [],
       };
       const r = chatMessageSchema.safeParse({
-        type: 'system', content: 'x', actionResult: a,
+        type: 'system',
+        content: 'x',
+        actionResult: a,
       });
       expect(r.success).toBe(true);
     });
@@ -794,7 +894,9 @@ describe('chatMessageSchema', () => {
         ],
       };
       const r = chatMessageSchema.safeParse({
-        type: 'system', content: 'x', actionResult: a,
+        type: 'system',
+        content: 'x',
+        actionResult: a,
       });
       expect(r.success).toBe(true);
     });
@@ -807,7 +909,9 @@ describe('chatMessageSchema', () => {
         targets: [{ name: 'Liraya', conditionsApplied: ['cloak-of-protection'] }],
       };
       const r = chatMessageSchema.safeParse({
-        type: 'system', content: 'x', actionResult: a,
+        type: 'system',
+        content: 'x',
+        actionResult: a,
       });
       expect(r.success).toBe(true);
     });
@@ -819,7 +923,9 @@ describe('chatMessageSchema', () => {
         effect: 'z',
       };
       const r = chatMessageSchema.safeParse({
-        type: 'system', content: 'x', actionResult: bad,
+        type: 'system',
+        content: 'x',
+        actionResult: bad,
       });
       expect(r.success).toBe(false);
     });
@@ -832,7 +938,9 @@ describe('chatMessageSchema', () => {
         targets: Array.from({ length: 20 }, (_, i) => ({ name: `t${i}` })),
       };
       const r = chatMessageSchema.safeParse({
-        type: 'system', content: 'x', actionResult: big,
+        type: 'system',
+        content: 'x',
+        actionResult: big,
       });
       expect(r.success).toBe(true);
     });
@@ -845,7 +953,9 @@ describe('chatMessageSchema', () => {
         targets: Array.from({ length: 21 }, (_, i) => ({ name: `t${i}` })),
       };
       const r = chatMessageSchema.safeParse({
-        type: 'system', content: 'x', actionResult: bad,
+        type: 'system',
+        content: 'x',
+        actionResult: bad,
       });
       expect(r.success).toBe(false);
     });
@@ -879,7 +989,10 @@ describe('chatRollSchema', () => {
     const result = chatRollSchema.safeParse({
       notation: '2d6+4',
       reported: {
-        dice: [{ type: 6, value: 3 }, { type: 6, value: 5 }],
+        dice: [
+          { type: 6, value: 3 },
+          { type: 6, value: 5 },
+        ],
         total: 12,
       },
     });
@@ -984,15 +1097,21 @@ describe('sessionUpdateSettingsSchema discordWebhookUrl', () => {
   });
 
   it('rejects non-Discord URLs (SSRF hardening)', () => {
-    expect(sessionUpdateSettingsSchema.safeParse({
-      discordWebhookUrl: 'https://evil.example.com/webhook',
-    }).success).toBe(false);
-    expect(sessionUpdateSettingsSchema.safeParse({
-      discordWebhookUrl: 'http://discord.com/api/webhooks/1/2',
-    }).success).toBe(false);
-    expect(sessionUpdateSettingsSchema.safeParse({
-      discordWebhookUrl: 'https://discord.com.evil.com/api/webhooks/1/2',
-    }).success).toBe(false);
+    expect(
+      sessionUpdateSettingsSchema.safeParse({
+        discordWebhookUrl: 'https://evil.example.com/webhook',
+      }).success
+    ).toBe(false);
+    expect(
+      sessionUpdateSettingsSchema.safeParse({
+        discordWebhookUrl: 'http://discord.com/api/webhooks/1/2',
+      }).success
+    ).toBe(false);
+    expect(
+      sessionUpdateSettingsSchema.safeParse({
+        discordWebhookUrl: 'https://discord.com.evil.com/api/webhooks/1/2',
+      }).success
+    ).toBe(false);
   });
 
   it('rejects URLs longer than 500 chars', () => {
@@ -1040,7 +1159,9 @@ describe('sessionUpdateSettingsSchema', () => {
 
   it('accepts rules assist mode updates', () => {
     expect(sessionUpdateSettingsSchema.safeParse({ rulesAssistMode: 'manual' }).success).toBe(true);
-    expect(sessionUpdateSettingsSchema.safeParse({ rulesAssistMode: 'assisted' }).success).toBe(true);
+    expect(sessionUpdateSettingsSchema.safeParse({ rulesAssistMode: 'assisted' }).success).toBe(
+      true
+    );
     expect(sessionUpdateSettingsSchema.safeParse({ rulesAssistMode: 'strict' }).success).toBe(true);
   });
 
@@ -1101,5 +1222,31 @@ describe('createMapSchema', () => {
   it('rejects width below 100', () => {
     const result = createMapSchema.safeParse({ name: 'Map', width: 50 });
     expect(result.success).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// fogRevealHideSchema (audit #1: degenerate fog polygons)
+// ---------------------------------------------------------------------------
+describe('fogRevealHideSchema', () => {
+  it('accepts a real polygon (>= 3 vertices)', () => {
+    const result = fogRevealHideSchema.safeParse({ points: [0, 0, 10, 0, 10, 10] });
+    expect(result.success).toBe(true);
+  });
+
+  it('rejects a single-point no-drag click (would blank the whole map)', () => {
+    expect(fogRevealHideSchema.safeParse({ points: [5, 5] }).success).toBe(false);
+  });
+
+  it('rejects a 2-vertex line (still no enclosed area)', () => {
+    expect(fogRevealHideSchema.safeParse({ points: [5, 5, 6, 6] }).success).toBe(false);
+  });
+
+  it('rejects non-finite coordinates and enforces the DoS ceiling', () => {
+    expect(fogRevealHideSchema.safeParse({ points: [0, 0, 10, Infinity, 10, 10] }).success).toBe(
+      false
+    );
+    const tooMany = Array.from({ length: 2002 }, () => 1);
+    expect(fogRevealHideSchema.safeParse({ points: tooMany }).success).toBe(false);
   });
 });

@@ -5,7 +5,7 @@ import { useSessionStore } from '../../../stores/useSessionStore';
 import { useCharacterStore } from '../../../stores/useCharacterStore';
 import type { AmbientLight, Token } from '@dnd-vtt/shared';
 import type Konva from 'konva';
-import { splitManualFogRegions } from '../../../utils/fogRegions';
+import { orderedRenderableFogRegions } from '../../../utils/fogRegions';
 
 interface FogLayerProps {
   mapWidth: number;
@@ -131,10 +131,15 @@ export function FogLayer({ mapWidth, mapHeight }: FogLayerProps) {
   const fogPreviewCharacterId = useMapStore((s) => s.fogPreviewCharacterId);
   const manualFogRegions = useMapStore((s) => s.fogRegions);
   const ambient = resolveAmbient(ambientLight, ambientOpacity);
-  const { revealRegions, hideRegions } = useMemo(
-    () => splitManualFogRegions(manualFogRegions),
+  // Ordered + degenerate-filtered so a reveal painted after a hide over
+  // the same area wins, and a stray 1–2 vertex "polygon" (e.g. a no-drag
+  // brush click) can't force the whole map to base fog.
+  const orderedRegions = useMemo(
+    () => orderedRenderableFogRegions(manualFogRegions),
     [manualFogRegions]
   );
+  const hasRevealRegion = orderedRegions.some((r) => r.mode !== 'hide');
+  const hasHidePatches = orderedRegions.some((r) => r.mode === 'hide');
 
   // Find all tokens owned by this player (heroes). When the DM has
   // opted into "see player fog" mode, we treat every PC token (any
@@ -206,8 +211,7 @@ export function FogLayer({ mapWidth, mapHeight }: FogLayerProps) {
   //     obscurement — fog represents "you can't see" rather than "you
   //     haven't explored"). This lets a DM drop the party into a dark
   //     cavern without needing to also toggle the fog setting.
-  const shouldRenderBaseFog = enableFog || ambient.tier !== 'bright' || revealRegions.length > 0;
-  const hasHidePatches = hideRegions.length > 0;
+  const shouldRenderBaseFog = enableFog || ambient.tier !== 'bright' || hasRevealRegion;
   if (!shouldRenderBaseFog && !hasHidePatches) return null;
 
   // Preset alpha from the mechanical ambient tier. DM viewing player
@@ -227,9 +231,17 @@ export function FogLayer({ mapWidth, mapHeight }: FogLayerProps) {
         <Rect x={0} y={0} width={mapWidth} height={mapHeight} fill={`rgba(0, 0, 0, ${fogAlpha})`} />
       )}
 
-      {revealRegions.map((region, idx) => (
-        <ManualFogCutout key={`manual-reveal-${idx}`} points={region.points} />
-      ))}
+      {/* Manual DM strokes, applied in the order they were painted so a
+          reveal over an earlier hide (or vice versa) wins. Rendering all
+          reveals then all hides used to discard stroke order, making a
+          hidden area impossible to re-reveal. */}
+      {orderedRegions.map((region, idx) =>
+        region.mode === 'hide' ? (
+          <ManualFogPatch key={`manual-${idx}`} points={region.points} alpha={fogAlpha} />
+        ) : (
+          <ManualFogCutout key={`manual-${idx}`} points={region.points} />
+        )
+      )}
 
       {/* Cut out vision circles around each hero token. Radius math:
           - In BRIGHT / DIM ambient: regular sight works; darkvision
@@ -278,10 +290,6 @@ export function FogLayer({ mapWidth, mapHeight }: FogLayerProps) {
           y={token.y + (gridSize * token.size) / 2}
           radius={Math.max(token.lightDimRadius, token.lightRadius, gridSize * 2)}
         />
-      ))}
-
-      {hideRegions.map((region, idx) => (
-        <ManualFogPatch key={`manual-hide-${idx}`} points={region.points} alpha={fogAlpha} />
       ))}
 
       {/* If player has no tokens placed yet, show a message-like dim overlay */}

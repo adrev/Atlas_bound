@@ -4,6 +4,7 @@ import type Konva from 'konva';
 import { useMapStore } from '../../stores/useMapStore';
 import { useSessionStore } from '../../stores/useSessionStore';
 import { emitFogReveal, emitFogHide } from '../../socket/emitters';
+import { MIN_FOG_POLYGON_NUMBERS } from '../../utils/fogRegions';
 import { theme } from '../../styles/theme';
 
 type BrushMode = 'reveal' | 'hide';
@@ -191,13 +192,17 @@ export function useFogBrush(brushSize: number) {
     isDrawing.current = false;
 
     const points = brushPointsRef.current;
-    if (points.length < 2) {
+    const polygon = computeBrushPolygon(points, brushSize);
+
+    // A polygon needs at least 3 vertices (6 flat numbers) to enclose an
+    // area. A no-drag click yields 1–2 points, which produced a
+    // degenerate "polygon" that draws no cutout yet still flipped every
+    // player's map to solid fog with no way to clear it. Discard it.
+    if (polygon.length < MIN_FOG_POLYGON_NUMBERS) {
       brushPointsRef.current = [];
       setBrushPoints([]);
       return;
     }
-
-    const polygon = computeBrushPolygon(points, brushSize);
 
     if (activeTool === 'fog-reveal') {
       emitFogReveal(polygon);
