@@ -179,8 +179,14 @@ export const tokenUpdateSchema = z.object({
   }),
 });
 
+// Fog polygons must enclose an area: at least 3 vertices (6 flat
+// numbers). Unlike walls/drawings (which allow 2-point lines), a fog
+// region with fewer vertices draws no cutout yet still forces the whole
+// map to base fog — so reject it at the edge.
+const fogPointsFlat = z.array(z.number().finite()).min(6).max(2000);
+
 export const fogRevealHideSchema = z.object({
-  points: pointsFlat,
+  points: fogPointsFlat,
 });
 
 export const wallAddSchema = z.object({
