@@ -231,7 +231,15 @@ export async function pullStateSnapshot(): Promise<{ ok: boolean; applied: boole
             existing.lightDimRadius !== t.lightDimRadius ||
             existing.lightColor !== t.lightColor ||
             existing.color !== t.color ||
-            JSON.stringify(existing.conditions) !== JSON.stringify(t.conditions)
+            existing.faction !== t.faction ||
+            JSON.stringify(existing.conditions) !== JSON.stringify(t.conditions) ||
+            // aura and visionOverrides are nested/nullable objects — a
+            // missed map:token-updated on either used to never self-heal
+            // (a player stayed blind under fog, or missed a boss aura, for
+            // the rest of a static scene). Compared structurally.
+            JSON.stringify(existing.aura ?? null) !== JSON.stringify(t.aura ?? null) ||
+            JSON.stringify(existing.visionOverrides ?? null) !==
+              JSON.stringify(t.visionOverrides ?? null)
           );
         });
       if (changed) {
