@@ -213,6 +213,34 @@ describe('GET /api/sessions/:id/state — character shape', () => {
     return layer.route.stack[0].handle as (req: Request, res: any) => Promise<void>;
   }
 
+  function tokenRow(overrides: Record<string, unknown> = {}) {
+    return {
+      id: 'preview-token',
+      version: 1,
+      map_id: 'preview-map',
+      character_id: null,
+      name: 'Token',
+      x: 70,
+      y: 70,
+      size: 1,
+      image_url: null,
+      color: '#e74c3c',
+      layer: 'token',
+      visible: 1,
+      has_light: 0,
+      light_radius: 0,
+      light_dim_radius: 0,
+      light_color: '#ffcc44',
+      conditions: '[]',
+      owner_user_id: null,
+      faction: 'hostile',
+      created_at: '2026-01-01T00:00:00.000Z',
+      aura: null,
+      vision_overrides: null,
+      ...overrides,
+    };
+  }
+
   it('maps character rows to camelCase before clients reconcile state', async () => {
     const { createRoom, addPlayerToRoom, removePlayerFromRoom } =
       await import('../utils/roomState.js');
@@ -228,6 +256,7 @@ describe('GET /api/sessions/:id/state — character shape', () => {
     });
 
     mockQuery.mockResolvedValueOnce({ rows: [{ '?column?': 1 }] }); // assertSessionMember
+    mockQuery.mockResolvedValueOnce({ rows: [] }); // tokens on viewed map
     mockQuery.mockResolvedValueOnce({ rows: [{ settings: '{}' }] });
     mockQuery.mockResolvedValueOnce({ rows: [{ id: 'char-1' }] }); // caller's own character ids
     mockQuery.mockResolvedValueOnce({
@@ -261,6 +290,50 @@ describe('GET /api/sessions/:id/state — character shape', () => {
     expect(res.body.characters['char-1'].hit_points).toBeUndefined();
 
     removePlayerFromRoom(sessionId, 'p1');
+  });
+
+  it('loads DM-preview map tokens from the database, not the player-map room cache', async () => {
+    const { createRoom, addPlayerToRoom, removePlayerFromRoom } =
+      await import('../utils/roomState.js');
+    const sessionId = 'state-preview-tokens-s1';
+    const room = createRoom(sessionId, 'STATE2', 'dm1');
+    room.playerMapId = 'player-map';
+    room.currentMapId = 'player-map';
+    room.dmViewingMap.set('dm1', 'preview-map');
+    room.tokens.clear();
+    addPlayerToRoom(sessionId, {
+      userId: 'dm1',
+      displayName: 'DM',
+      socketId: 'sock-dm1',
+      role: 'dm',
+      characterId: null,
+    });
+
+    mockQuery.mockResolvedValueOnce({ rows: [{ '?column?': 1 }] }); // assertSessionMember
+    mockQuery.mockResolvedValueOnce({ rows: [tokenRow()] }); // persisted preview-map tokens
+    mockQuery.mockResolvedValueOnce({ rows: [{ settings: '{}' }] });
+    mockQuery.mockResolvedValueOnce({ rows: [] }); // caller's own character ids
+
+    const handler = await getStateHandler();
+    const req = {
+      user: { id: 'dm1' },
+      params: { id: sessionId },
+      headers: {},
+    } as unknown as Request;
+    const res = makeRes();
+    await handler(req, res);
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body.mapId).toBe('preview-map');
+    expect(res.body.tokens).toHaveLength(1);
+    expect(res.body.tokens[0]).toMatchObject({
+      id: 'preview-token',
+      mapId: 'preview-map',
+      characterId: null,
+      name: 'Token',
+    });
+
+    removePlayerFromRoom(sessionId, 'dm1');
   });
 });
 

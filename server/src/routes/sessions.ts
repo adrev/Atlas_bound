@@ -11,7 +11,7 @@ import {
   sessionPromoteSchema,
   sessionDemoteSchema,
 } from '../utils/validation.js';
-import { DEFAULT_SESSION_SETTINGS } from '@dnd-vtt/shared';
+import { DEFAULT_SESSION_SETTINGS, type Token } from '@dnd-vtt/shared';
 import {
   getAuthUserId,
   assertSessionMember,
@@ -30,6 +30,8 @@ import { stateSnapshotEtag } from '../utils/stateEtag.js';
 import { tokenVisibleToPlayer } from '../utils/tokenVisibility.js';
 import { dbRowToCharacter } from '../utils/characterMapper.js';
 import { privateNoStoreCache } from '../utils/cacheHeaders.js';
+import { rowToToken } from '../utils/tokenMapper.js';
+import { withConditionSources } from '../utils/conditionSources.js';
 
 const router = Router();
 
@@ -1135,7 +1137,15 @@ router.get('/:id/state', async (req: Request, res: Response) => {
     return;
   }
 
-  const allTokens = Array.from(room.tokens.values()).filter((t) => t.mapId === viewingMapId);
+  let allTokens: Token[] = [];
+  if (viewingMapId) {
+    const { rows: tokenRows } = await pool.query('SELECT * FROM tokens WHERE map_id = $1', [
+      viewingMapId,
+    ]);
+    allTokens = tokenRows
+      .map((row) => rowToToken(row as Record<string, unknown>))
+      .map((token) => withConditionSources(room, token));
+  }
   const visibleTokens = isDM ? allTokens : allTokens.filter((t) => tokenVisibleToPlayer(t, userId));
 
   // Combat — filter combatants with the same hidden-token rule so the

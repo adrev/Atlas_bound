@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router';
 import { AlertTriangle } from 'lucide-react';
 import { getInviteInfo, joinSession } from '../../services/api';
 import { useSessionStore } from '../../stores/useSessionStore';
@@ -32,7 +32,10 @@ export function InviteLanding() {
   const [status, setStatus] = useState<Status>({ kind: 'loading' });
 
   useEffect(() => {
-    if (!token) { setStatus({ kind: 'error', message: 'Missing invite token.' }); return; }
+    if (!token) {
+      setStatus({ kind: 'error', message: 'Missing invite token.' });
+      return;
+    }
     if (!authUser) {
       // Bounce to login with a next= so we come back here post-auth.
       const next = `/join/${encodeURIComponent(token)}`;
@@ -76,16 +79,16 @@ export function InviteLanding() {
       }
     })();
 
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [token, authUser, navigate, setDisplayName]);
 
   if (status.kind === 'loading') {
     return (
       <div style={styles.overlay}>
         <div style={styles.card}>
-          <p style={{ ...theme.type.h2, color: theme.gold.primary, margin: 0 }}>
-            Joining session…
-          </p>
+          <p style={{ ...theme.type.h2, color: theme.gold.primary, margin: 0 }}>Joining session…</p>
         </div>
       </div>
     );
