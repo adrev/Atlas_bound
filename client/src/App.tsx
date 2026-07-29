@@ -1,23 +1,23 @@
 import { useEffect, lazy, Suspense } from 'react';
-import { Routes, Route, useSearchParams } from 'react-router-dom';
+import { Routes, Route, useSearchParams } from 'react-router';
 import { LoginPage } from './components/auth/LoginPage';
 import { useAuthStore } from './stores/useAuthStore';
 import { theme } from './styles/theme';
 
 const SessionLobby = lazy(() =>
-  import('./components/session/SessionLobby').then((m) => ({ default: m.SessionLobby })),
+  import('./components/session/SessionLobby').then((m) => ({ default: m.SessionLobby }))
 );
 const AppShell = lazy(() =>
-  import('./components/layout/AppShell').then((m) => ({ default: m.AppShell })),
+  import('./components/layout/AppShell').then((m) => ({ default: m.AppShell }))
 );
 const InviteLanding = lazy(() =>
-  import('./components/session/InviteLanding').then((m) => ({ default: m.InviteLanding })),
+  import('./components/session/InviteLanding').then((m) => ({ default: m.InviteLanding }))
 );
 const AdminFeedbackPage = lazy(() =>
-  import('./components/admin/AdminFeedbackPage').then((m) => ({ default: m.AdminFeedbackPage })),
+  import('./components/admin/AdminFeedbackPage').then((m) => ({ default: m.AdminFeedbackPage }))
 );
 const AdminTidingsPage = lazy(() =>
-  import('./components/admin/AdminTidingsPage').then((m) => ({ default: m.AdminTidingsPage })),
+  import('./components/admin/AdminTidingsPage').then((m) => ({ default: m.AdminTidingsPage }))
 );
 
 function RouteLoadingFallback() {

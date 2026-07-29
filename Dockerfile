@@ -1,5 +1,5 @@
 # ── Build stage ─────────────────────────────────────────────
-FROM node:20-alpine AS builder
+FROM node:24-alpine AS builder
 
 # Native deps for bcrypt compilation
 RUN apk add --no-cache python3 make g++
@@ -25,7 +25,7 @@ RUN npm run build --workspace=client
 RUN npm run build --workspace=server
 
 # ── Production deps stage (clean install, no build tools) ──
-FROM node:20-alpine AS deps
+FROM node:24-alpine AS deps
 
 RUN apk add --no-cache python3 make g++
 
@@ -38,7 +38,7 @@ COPY client/package*.json ./client/
 RUN npm install --omit=dev --workspace=server --workspace=shared
 
 # ── Production stage ───────────────────────────────────────
-FROM node:20-alpine
+FROM node:24-alpine
 
 WORKDIR /app
 

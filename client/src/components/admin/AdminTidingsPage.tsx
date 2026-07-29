@@ -1,14 +1,38 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import {
-  ArrowLeft, RefreshCw, Filter, MessageSquare, Bug, Sparkles, Wand2,
-  ExternalLink, Plus, Pencil, Trash2, Check, Pin, Search, BellRing, Hash,
-  Megaphone, Calendar, AlertTriangle,
+  ArrowLeft,
+  RefreshCw,
+  Filter,
+  MessageSquare,
+  Bug,
+  Sparkles,
+  Wand2,
+  ExternalLink,
+  Plus,
+  Pencil,
+  Trash2,
+  Check,
+  Pin,
+  Search,
+  BellRing,
+  Hash,
+  Megaphone,
+  Calendar,
+  AlertTriangle,
 } from 'lucide-react';
 import { theme } from '../../styles/theme';
 import { useAuthStore } from '../../stores/useAuthStore';
 import {
-  Button, Select, Textarea, Badge, Card, Section, FieldGroup, TextInput, Modal,
+  Button,
+  Select,
+  Textarea,
+  Badge,
+  Card,
+  Section,
+  FieldGroup,
+  TextInput,
+  Modal,
 } from '../ui';
 import { showToast } from '../ui/Toast';
 import { askConfirm } from '../ui/Dialog';
@@ -102,7 +126,10 @@ const FEEDBACK_CATEGORY_EMOJI: Record<FeedbackCategory, string> = {
   other: '💬',
 };
 
-const FEEDBACK_STATUS_VARIANT: Record<FeedbackStatus, 'gold' | 'success' | 'info' | 'warning' | 'danger'> = {
+const FEEDBACK_STATUS_VARIANT: Record<
+  FeedbackStatus,
+  'gold' | 'success' | 'info' | 'warning' | 'danger'
+> = {
   open: 'gold',
   triaged: 'info',
   planned: 'warning',
@@ -126,15 +153,15 @@ const MAX_EXPANDED = 10000;
 const MAX_VERSION = 32;
 
 interface DraftState {
-  id: string | null;          // null = creating, string = editing
+  id: string | null; // null = creating, string = editing
   kind: TidingKind;
   title: string;
   body: string;
   expandedBody: string;
   audience: TidingAudience;
   versionTag: string;
-  publishedAt: string;        // datetime-local format (YYYY-MM-DDTHH:mm)
-  expiresAt: string;          // datetime-local format or empty
+  publishedAt: string; // datetime-local format (YYYY-MM-DDTHH:mm)
+  expiresAt: string; // datetime-local format or empty
   pinned: boolean;
   linkedFeedbackIds: string[];
   skipDiscord: boolean;
@@ -371,9 +398,7 @@ export function AdminTidingsPage() {
       // surface that as a distinct toast so the admin knows it went
       // out without re-checking the row.
       const wasAnnouncedNow =
-        saved?.kind === 'patch' &&
-        !draft.discordAnnouncedAt &&
-        !!saved.discordAnnouncedAt;
+        saved?.kind === 'patch' && !draft.discordAnnouncedAt && !!saved.discordAnnouncedAt;
 
       showToast({
         message: wasAnnouncedNow ? 'Released to Discord' : 'Tiding saved',
@@ -428,7 +453,9 @@ export function AdminTidingsPage() {
       <div style={styles.notAuthorized}>
         <h2 style={{ ...theme.type.h1, color: theme.gold.primary }}>Admin only</h2>
         <p style={{ color: theme.text.secondary }}>This page is for site administrators.</p>
-        <Button variant="primary" onClick={() => navigate('/')}>Back to lobby</Button>
+        <Button variant="primary" onClick={() => navigate('/')}>
+          Back to lobby
+        </Button>
       </div>
     );
   }
@@ -463,9 +490,7 @@ export function AdminTidingsPage() {
           </button>
         </div>
         <div style={{ flex: 1, display: 'flex', alignItems: 'baseline', gap: 12, minWidth: 0 }}>
-          <h1 style={{ ...theme.type.display, color: theme.gold.primary, margin: 0 }}>
-            Tidings
-          </h1>
+          <h1 style={{ ...theme.type.display, color: theme.gold.primary, margin: 0 }}>Tidings</h1>
           <span style={{ color: theme.text.muted, fontSize: 12 }}>
             {items.length} entr{items.length === 1 ? 'y' : 'ies'}
           </span>
@@ -479,12 +504,7 @@ export function AdminTidingsPage() {
         >
           Refresh
         </Button>
-        <Button
-          variant="primary"
-          size="sm"
-          leadingIcon={<Plus size={12} />}
-          onClick={openCreate}
-        >
+        <Button variant="primary" size="sm" leadingIcon={<Plus size={12} />} onClick={openCreate}>
           New Tiding
         </Button>
       </div>
@@ -527,9 +547,16 @@ export function AdminTidingsPage() {
             <h2 style={{ ...theme.type.h1, color: theme.gold.primary, margin: '0 0 8px' }}>
               No tidings yet
             </h2>
-            <p style={{ color: theme.text.secondary, fontSize: 13, margin: '0 0 20px', maxWidth: 360 }}>
-              Patch notes, content drops, and announcements show up here. The lobby
-              "What's New" rail surfaces them to players.
+            <p
+              style={{
+                color: theme.text.secondary,
+                fontSize: 13,
+                margin: '0 0 20px',
+                maxWidth: 360,
+              }}
+            >
+              Patch notes, content drops, and announcements show up here. The lobby "What's New"
+              rail surfaces them to players.
             </p>
             <Button
               variant="primary"
@@ -598,7 +625,9 @@ function TidingRow({
               </span>
             </Badge>
             {t.versionTag && (
-              <Badge variant="muted" size="sm">v{t.versionTag}</Badge>
+              <Badge variant="muted" size="sm">
+                v{t.versionTag}
+              </Badge>
             )}
             <Badge variant="muted" size="sm">
               {AUDIENCE_LABEL[t.audience]}
@@ -623,12 +652,10 @@ function TidingRow({
           <div style={styles.rowMeta}>
             <span>{formatRelative(t.publishedAt)}</span>
             {t.authorDisplayName && <span>· by {t.authorDisplayName}</span>}
-            {t.linkedFeedbackIds.length > 0 && (
-              <span>· {t.linkedFeedbackIds.length} linked</span>
-            )}
+            {t.linkedFeedbackIds.length > 0 && <span>· {t.linkedFeedbackIds.length} linked</span>}
             <span style={{ marginLeft: 'auto' }}>
-              {t.kind === 'patch' && (
-                t.discordAnnouncedAt && t.discordThreadUrl ? (
+              {t.kind === 'patch' &&
+                (t.discordAnnouncedAt && t.discordThreadUrl ? (
                   <a
                     href={t.discordThreadUrl}
                     target="_blank"
@@ -648,19 +675,13 @@ function TidingRow({
                   </span>
                 ) : (
                   <span style={styles.discordLinkMuted}>not announced</span>
-                )
-              )}
+                ))}
             </span>
           </div>
         </div>
 
         <div style={styles.rowActions}>
-          <Button
-            variant="ghost"
-            size="sm"
-            leadingIcon={<Pencil size={12} />}
-            onClick={onEdit}
-          >
+          <Button variant="ghost" size="sm" leadingIcon={<Pencil size={12} />} onClick={onEdit}>
             Edit
           </Button>
           <Button
@@ -694,8 +715,15 @@ interface DialogProps {
 }
 
 function TidingDialog({
-  draft, setDraft, saving, onClose, onSave,
-  feedbackOptions, feedbackLoading, feedbackSearch, setFeedbackSearch,
+  draft,
+  setDraft,
+  saving,
+  onClose,
+  onSave,
+  feedbackOptions,
+  feedbackLoading,
+  feedbackSearch,
+  setFeedbackSearch,
 }: DialogProps) {
   const isEdit = !!draft.id;
   const isPatch = draft.kind === 'patch';
@@ -719,9 +747,10 @@ function TidingDialog({
   const filteredFeedback = useMemo(() => {
     const needle = feedbackSearch.trim().toLowerCase();
     if (!needle) return feedbackOptions;
-    return feedbackOptions.filter((f) =>
-      f.content.toLowerCase().includes(needle) ||
-      (f.userDisplayName ?? '').toLowerCase().includes(needle),
+    return feedbackOptions.filter(
+      (f) =>
+        f.content.toLowerCase().includes(needle) ||
+        (f.userDisplayName ?? '').toLowerCase().includes(needle)
     );
   }, [feedbackOptions, feedbackSearch]);
 
@@ -743,9 +772,7 @@ function TidingDialog({
       onClose={onClose}
       title={isEdit ? 'Edit Tiding' : 'New Tiding'}
       subtitle={
-        isPatch
-          ? 'Patches auto-fire the Discord Releases webhook on first publish.'
-          : undefined
+        isPatch ? 'Patches auto-fire the Discord Releases webhook on first publish.' : undefined
       }
       emoji={isPatch ? '📣' : draft.kind === 'content' ? '✨' : '📰'}
       size="lg"
@@ -994,12 +1021,8 @@ function TidingDialog({
                               {f.content.length > 120 ? `${f.content.slice(0, 120)}…` : f.content}
                             </div>
                             <div style={styles.feedbackMeta}>
-                              {f.anonymous
-                                ? '(anonymous)'
-                                : (f.userDisplayName ?? 'unknown')}
-                              <span style={{ marginLeft: 8 }}>
-                                · {formatRelative(f.createdAt)}
-                              </span>
+                              {f.anonymous ? '(anonymous)' : (f.userDisplayName ?? 'unknown')}
+                              <span style={{ marginLeft: 8 }}>· {formatRelative(f.createdAt)}</span>
                             </div>
                           </div>
                         </label>
@@ -1030,8 +1053,8 @@ function TidingDialog({
                     </span>
                   </div>
                   <div style={{ fontSize: 11, color: theme.text.muted, marginTop: 2 }}>
-                    Save this patch without firing the Releases webhook. Use for hotfixes
-                    or stealth-published changes that don't merit a public post.
+                    Save this patch without firing the Releases webhook. Use for hotfixes or
+                    stealth-published changes that don't merit a public post.
                   </div>
                 </div>
               </label>
