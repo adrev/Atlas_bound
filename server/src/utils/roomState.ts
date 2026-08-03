@@ -147,6 +147,15 @@ export interface RoomState {
   currentMapId: string | null;
   tokens: Map<string, Token>;
   combatState: CombatState | null;
+  /**
+   * Set synchronously while startCombatAsync is building combat state and
+   * loading character data. combatState itself isn't assigned until the end
+   * of that async work, so two concurrent combat:start calls (double-click,
+   * or a manual start racing the ready-check auto-start) would both pass the
+   * `combatState?.active` guard and each roll a separate initiative order.
+   * This flag closes that window.
+   */
+  combatStarting: boolean;
   actionEconomies: Map<string, ActionEconomy>;
   /**
    * tokenId → conditionName → metadata. Used by the duration tracker
@@ -297,6 +306,7 @@ export function createRoom(sessionId: string, roomCode: string, dmUserId: string
     mapGridSizes: new Map(),
     gameMode: 'free-roam',
     readyCheck: null,
+    combatStarting: false,
     playerMapId: null,
     dmViewingMap: new Map(),
     currentMapId: null,
