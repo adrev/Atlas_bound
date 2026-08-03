@@ -214,8 +214,25 @@ export async function startCombatAsync(
 ): Promise<CombatState> {
   const room = getRoom(sessionId);
   if (!room) throw new Error('Room not found');
-  if (room.combatState?.active) throw new Error('Combat already active');
+  // Guard against BOTH an already-running fight and a concurrent start in
+  // flight. combatState is only assigned after the awaited character loads
+  // below, so without combatStarting two racing calls would each build and
+  // broadcast their own initiative order. Set it synchronously here.
+  if (room.combatState?.active || room.combatStarting) throw new Error('Combat already active');
+  room.combatStarting = true;
 
+  try {
+    return await buildCombatState(room, sessionId, tokenIds);
+  } finally {
+    room.combatStarting = false;
+  }
+}
+
+async function buildCombatState(
+  room: RoomState,
+  sessionId: string,
+  tokenIds: string[]
+): Promise<CombatState> {
   const combatants: Combatant[] = [];
   for (const tokenId of tokenIds) {
     const token = room.tokens.get(tokenId);
@@ -1144,6 +1161,15 @@ export function nextTurn(sessionId: string): {
   if (!room?.combatState) throw new Error('No active combat');
 
   const state = room.combatState;
+  // No combatants left in initiative (the DM deleted the last token in the
+  // fight, or started combat with only decorative light/item tokens). The
+  // loop below would advance the round, then dereference an undefined
+  // combatant and throw 'reading tokenId' — turns could never advance again
+  // and each failed click silently drifted the in-memory round (audit #18).
+  // Bail cleanly BEFORE mutating anything so the handler can surface it.
+  if (state.combatants.length === 0) {
+    throw new Error('No combatants remain in initiative — end combat to continue');
+  }
   const skippedTokenIds: string[] = [];
   // Cap iterations at combatants.length to guarantee termination even
   // if every participant is dead (avoids infinite loops).
@@ -1697,21 +1723,27 @@ export function useDash(sessionId: string): ActionEconomy | null {
   if (!room?.combatState) return null;
   const current = room.combatState.combatants[room.combatState.currentTurnIndex];
   if (!current) return null;
+  // Dash grants extra movement equal to the creature's CURRENT speed —
+  // which conditions can cap. A grappled or restrained creature has speed 0
+  // (and exhaustion halves/zeroes it), so Dashing must add 0, not the raw
+  // base speed. Using computeMovementCap here stops a restrained token from
+  // Dashing out of a grapple with a full move (audit #16).
+  const cap = computeMovementCap(current, room);
   let economy = room.actionEconomies.get(current.tokenId);
   if (!economy) {
     economy = {
       action: false,
       bonusAction: false,
-      movementRemaining: current.speed,
-      movementMax: current.speed,
+      movementRemaining: cap,
+      movementMax: cap,
       reaction: false,
     };
     room.actionEconomies.set(current.tokenId, economy);
   }
   if (economy.action) return economy;
   economy.action = true;
-  economy.movementRemaining = economy.movementRemaining + current.speed;
-  economy.movementMax = current.speed * 2;
+  economy.movementRemaining = economy.movementRemaining + cap;
+  economy.movementMax = economy.movementMax + cap;
   return economy;
 }
 
