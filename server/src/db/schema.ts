@@ -248,11 +248,34 @@ export async function initDatabase(): Promise<void> {
       FOR EACH ROW
       EXECUTE FUNCTION increment_row_version();
 
+    -- Token version is the optimistic lock for POSITION only: map:token-move
+    -- sends the version it last saw, and the guarded UPDATE rejects the move
+    -- if it no longer matches (a genuine concurrent drag). It must therefore
+    -- bump ONLY when the token actually moves. The old shared trigger bumped
+    -- on every UPDATE, so a server-internal write — a spell applying a
+    -- condition, an end-of-turn save clearing one, auto-'unconscious' at 0 HP —
+    -- silently advanced the version without telling clients, and the next drag
+    -- sent a now-stale version, matched 0 rows, and rubber-banded back to the
+    -- old square (audit #3). x/y-preserving writes now leave the version alone;
+    -- the move/update broadcasts still carry the authoritative version so
+    -- clients stay in sync.
+    CREATE OR REPLACE FUNCTION increment_token_position_version()
+    RETURNS TRIGGER AS $$
+    BEGIN
+      IF NEW.x IS DISTINCT FROM OLD.x OR NEW.y IS DISTINCT FROM OLD.y THEN
+        NEW.version = COALESCE(OLD.version, 0) + 1;
+      ELSE
+        NEW.version = OLD.version;
+      END IF;
+      RETURN NEW;
+    END;
+    $$ LANGUAGE plpgsql;
+
     DROP TRIGGER IF EXISTS tokens_version_trigger ON tokens;
     CREATE TRIGGER tokens_version_trigger
       BEFORE UPDATE ON tokens
       FOR EACH ROW
-      EXECUTE FUNCTION increment_row_version();
+      EXECUTE FUNCTION increment_token_position_version();
 
     CREATE TABLE IF NOT EXISTS combat_state (
       session_id TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,
