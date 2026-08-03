@@ -3,11 +3,29 @@ import { useMapStore } from '../../stores/useMapStore';
 import { useCharacterStore } from '../../stores/useCharacterStore';
 import { useSessionStore } from '../../stores/useSessionStore';
 import { useCombatStore } from '../../stores/useCombatStore';
-import { emitRoll, emitCharacterUpdate, emitTokenUpdate, emitSystemMessage, emitTokenAdd, emitUseAction, emitDash, emitSpellCastAttempt, emitAttackHitAttempt, emitMobileAttacked, emitDamage, emitHeal, emitSpellSlotAdjust } from '../../socket/emitters';
+import {
+  emitRoll,
+  emitCharacterUpdate,
+  emitTokenUpdate,
+  emitSystemMessage,
+  emitTokenAdd,
+  emitUseAction,
+  emitDash,
+  emitAttackHitAttempt,
+  emitMobileAttacked,
+  emitDamage,
+  emitHeal,
+  emitSpellSlotAdjust,
+} from '../../socket/emitters';
+import { broadcastCastAndAwaitCounterspell } from '../../socket/counterspellWindow';
 import { theme } from '../../styles/theme';
 import type {
-  ActionType, AttackBreakdown, AttackBreakdownModifier, AttackBreakdownDamageSource,
-  SpellCastBreakdown, SpellTargetOutcome,
+  ActionType,
+  AttackBreakdown,
+  AttackBreakdownModifier,
+  AttackBreakdownDamageSource,
+  SpellCastBreakdown,
+  SpellTargetOutcome,
 } from '@dnd-vtt/shared';
 
 /**
@@ -41,9 +59,11 @@ function canSpendActionSlot(casterTokenId: string, slot: ActionType, label: stri
   const current = combat.combatants[combat.currentTurnIndex];
   if (!current || current.tokenId !== casterTokenId) return true;
   const spent =
-    slot === 'action' ? combat.actionEconomy.action :
-    slot === 'bonusAction' ? combat.actionEconomy.bonusAction :
-    combat.actionEconomy.reaction;
+    slot === 'action'
+      ? combat.actionEconomy.action
+      : slot === 'bonusAction'
+        ? combat.actionEconomy.bonusAction
+        : combat.actionEconomy.reaction;
   if (!spent) return true;
   showActionDeniedToast(slot, label);
   return false;
@@ -55,10 +75,12 @@ function canSpendActionSlot(casterTokenId: string, slot: ActionType, label: stri
  * style so both look native to the canvas.
  */
 function showActionDeniedToast(slot: ActionType, label: string) {
-  const slotName = slot === 'action' ? 'Action' : slot === 'bonusAction' ? 'Bonus Action' : 'Reaction';
-  const hint = slot === 'reaction'
-    ? 'Reactions reset at the start of your next turn.'
-    : 'End your turn to reset the action economy.';
+  const slotName =
+    slot === 'action' ? 'Action' : slot === 'bonusAction' ? 'Bonus Action' : 'Reaction';
+  const hint =
+    slot === 'reaction'
+      ? 'Reactions reset at the start of your next turn.'
+      : 'End your turn to reset the action economy.';
   const existing = document.getElementById('action-denied-toast');
   if (existing) existing.remove();
   const toast = document.createElement('div');
@@ -72,11 +94,18 @@ function showActionDeniedToast(slot: ActionType, label: string) {
   toast.appendChild(titleDiv);
   toast.appendChild(detailDiv);
   Object.assign(toast.style, {
-    position: 'fixed', top: '18%', left: '50%',
+    position: 'fixed',
+    top: '18%',
+    left: '50%',
     transform: 'translateX(-50%)',
-    padding: '12px 18px', background: theme.bg.deep, color: theme.text.primary,
-    borderRadius: `${theme.radius.md}px`, border: `2px solid ${theme.state.danger}`,
-    zIndex: '99999', minWidth: '260px', maxWidth: '360px',
+    padding: '12px 18px',
+    background: theme.bg.deep,
+    color: theme.text.primary,
+    borderRadius: `${theme.radius.md}px`,
+    border: `2px solid ${theme.state.danger}`,
+    zIndex: '99999',
+    minWidth: '260px',
+    maxWidth: '360px',
     boxShadow: '0 6px 20px rgba(0,0,0,0.6)',
     fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
   });
@@ -92,7 +121,7 @@ function showHpUndoToast(
   oldHp: number,
   newHp: number,
   isDamage: boolean,
-  onUndo: () => void,
+  onUndo: () => void
 ) {
   const existing = document.getElementById('hp-undo-toast');
   if (existing) existing.remove();
@@ -152,7 +181,9 @@ function showHpUndoToast(
   toast.appendChild(undoBtn);
 
   document.body.appendChild(toast);
-  setTimeout(() => { if (toast.parentNode) toast.remove(); }, 5000);
+  setTimeout(() => {
+    if (toast.parentNode) toast.remove();
+  }, 5000);
 }
 
 import { enrichSpellFromDescription } from '../../utils/spell-enrich';
@@ -175,7 +206,13 @@ import {
 import { getSpellDurationMeta } from '../../utils/spell-durations';
 import { emitApplyConditionWithMeta, emitDamageSideEffects } from '../../socket/emitters';
 import { triggerSnapshot } from '../../socket/stateSnapshot';
-import { abilityModifier, calculateEquipmentBonuses, SPELL_CONDITIONS, SPELL_BUFFS, getSpellAnimation } from '@dnd-vtt/shared';
+import {
+  abilityModifier,
+  calculateEquipmentBonuses,
+  SPELL_CONDITIONS,
+  SPELL_BUFFS,
+  getSpellAnimation,
+} from '@dnd-vtt/shared';
 import type { Token, AmbientLight } from '@dnd-vtt/shared';
 import { useEffectStore } from '../../stores/useEffectStore';
 import { LootBagPanel } from '../loot/LootBagPanel';
@@ -186,12 +223,22 @@ import { TokenCreatureSpells } from './tokenPanel/TokenCreatureSpells';
 
 // --- Inline Loot Section for DMs ---
 const RARITY_COLORS: Record<string, string> = {
-  common: '#9d9d9d', uncommon: '#1eff00', rare: '#0070dd',
-  'very rare': '#a335ee', legendary: '#ff8000', artifact: '#e6cc80',
+  common: '#9d9d9d',
+  uncommon: '#1eff00',
+  rare: '#0070dd',
+  'very rare': '#a335ee',
+  legendary: '#ff8000',
+  artifact: '#e6cc80',
 };
 
 interface LootEntry {
-  id: string; item_name: string; item_rarity: string; item_slug: string | null; custom_item_id: string | null; quantity: number; equipped?: boolean;
+  id: string;
+  item_name: string;
+  item_rarity: string;
+  item_slug: string | null;
+  custom_item_id: string | null;
+  quantity: number;
+  equipped?: boolean;
 }
 
 function LootButton({ characterId, tokenName }: { characterId: string; tokenName: string }) {
@@ -200,44 +247,71 @@ function LootButton({ characterId, tokenName }: { characterId: string; tokenName
   useEffect(() => {
     let cancelled = false;
     fetch(`/api/characters/${characterId}/loot`)
-      .then(r => r.ok ? r.json() : [])
-      .then((data: LootEntry[]) => { if (!cancelled) setCount(data.reduce((s, e) => s + e.quantity, 0)); })
+      .then((r) => (r.ok ? r.json() : []))
+      .then((data: LootEntry[]) => {
+        if (!cancelled) setCount(data.reduce((s, e) => s + e.quantity, 0));
+      })
       .catch(() => {});
 
     const handler = () => {
       fetch(`/api/characters/${characterId}/loot`)
-        .then(r => r.ok ? r.json() : [])
-        .then((data: LootEntry[]) => { if (!cancelled) setCount(data.reduce((s, e) => s + e.quantity, 0)); })
+        .then((r) => (r.ok ? r.json() : []))
+        .then((data: LootEntry[]) => {
+          if (!cancelled) setCount(data.reduce((s, e) => s + e.quantity, 0));
+        })
         .catch(() => {});
     };
     window.addEventListener('loot-updated', handler);
-    return () => { cancelled = true; window.removeEventListener('loot-updated', handler); };
+    return () => {
+      cancelled = true;
+      window.removeEventListener('loot-updated', handler);
+    };
   }, [characterId]);
 
   return (
     <button
       onClick={() => {
-        window.dispatchEvent(new CustomEvent('open-loot-editor', {
-          detail: { characterId, tokenName },
-        }));
+        window.dispatchEvent(
+          new CustomEvent('open-loot-editor', {
+            detail: { characterId, tokenName },
+          })
+        );
       }}
       style={{
-        display: 'flex', alignItems: 'center', gap: 6, width: '100%',
-        padding: '6px 10px', marginTop: 4, borderRadius: 6,
-        background: `${C.gold}11`, border: `1px solid ${C.gold}33`,
-        color: C.gold, fontSize: 11, fontWeight: 600, cursor: 'pointer',
-        fontFamily: 'inherit', transition: 'background 0.15s',
+        display: 'flex',
+        alignItems: 'center',
+        gap: 6,
+        width: '100%',
+        padding: '6px 10px',
+        marginTop: 4,
+        borderRadius: 6,
+        background: `${C.gold}11`,
+        border: `1px solid ${C.gold}33`,
+        color: C.gold,
+        fontSize: 11,
+        fontWeight: 600,
+        cursor: 'pointer',
+        fontFamily: 'inherit',
+        transition: 'background 0.15s',
       }}
-      onMouseEnter={e => (e.currentTarget.style.background = `${C.gold}22`)}
-      onMouseLeave={e => (e.currentTarget.style.background = `${C.gold}11`)}
+      onMouseEnter={(e) => (e.currentTarget.style.background = `${C.gold}22`)}
+      onMouseLeave={(e) => (e.currentTarget.style.background = `${C.gold}11`)}
     >
       <span>💰</span>
       <span style={{ flex: 1, textAlign: 'left' }}>Inventory</span>
       {count > 0 && (
-        <span style={{
-          fontSize: 9, fontWeight: 700, background: `${C.gold}22`,
-          padding: '1px 6px', borderRadius: 8, border: `1px solid ${C.gold}44`,
-        }}>{count}</span>
+        <span
+          style={{
+            fontSize: 9,
+            fontWeight: 700,
+            background: `${C.gold}22`,
+            padding: '1px 6px',
+            borderRadius: 8,
+            border: `1px solid ${C.gold}44`,
+          }}
+        >
+          {count}
+        </span>
       )}
     </button>
   );
@@ -266,11 +340,18 @@ const C = {
 };
 
 function parse<T>(val: unknown, fallback: T): T {
-  if (typeof val === 'string') try { return JSON.parse(val); } catch { return fallback; }
+  if (typeof val === 'string')
+    try {
+      return JSON.parse(val);
+    } catch {
+      return fallback;
+    }
   return (val as T) ?? fallback;
 }
 
-function fmtMod(n: number): string { return n >= 0 ? `+${n}` : String(n); }
+function fmtMod(n: number): string {
+  return n >= 0 ? `+${n}` : String(n);
+}
 
 /**
  * Eagerly create a character record for a token that doesn't have one.
@@ -281,18 +362,25 @@ function fmtMod(n: number): string { return n >= 0 ? `+${n}` : String(n); }
 async function createCharForTokenEager(
   t: { id: string; name: string; imageUrl: string | null },
   comp: any,
-  currentHp: number, maxHp: number, armorClass: number, speed: number,
+  currentHp: number,
+  maxHp: number,
+  armorClass: number,
+  speed: number
 ): Promise<string | null> {
   try {
     const resp = await fetch('/api/characters', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        userId: 'npc', name: t.name,
+        userId: 'npc',
+        name: t.name,
         race: comp?.type || 'monster',
         class: `CR ${comp?.challengeRating || '0'}`,
-        level: 1, hitPoints: currentHp, maxHitPoints: maxHp,
-        armorClass, speed,
+        level: 1,
+        hitPoints: currentHp,
+        maxHitPoints: maxHp,
+        armorClass,
+        speed,
         abilityScores: comp?.abilityScores || {},
         portraitUrl: t.imageUrl,
         compendiumSlug: comp?.slug || null,
@@ -302,11 +390,14 @@ async function createCharForTokenEager(
       const data = await resp.json();
       emitTokenUpdate(t.id, { characterId: data.id } as any);
       useCharacterStore.getState().setAllCharacters({
-        ...useCharacterStore.getState().allCharacters, [data.id]: { ...data, hitPoints: currentHp },
+        ...useCharacterStore.getState().allCharacters,
+        [data.id]: { ...data, hitPoints: currentHp },
       });
       return data.id;
     }
-  } catch { /* ignore */ }
+  } catch {
+    /* ignore */
+  }
   return null;
 }
 
@@ -321,15 +412,21 @@ function applyResistedDamage(
   baseAmount: number,
   damageType: string,
   targetChar: unknown,
-  targetConditions: string[],
+  targetConditions: string[]
 ): { final: number; note: string } {
   let defenses: { resistances: string[]; immunities: string[]; vulnerabilities: string[] } = {
-    resistances: [], immunities: [], vulnerabilities: [],
+    resistances: [],
+    immunities: [],
+    vulnerabilities: [],
   };
   const tc = targetChar as { defenses?: unknown } | null | undefined;
   if (tc?.defenses) {
     if (typeof tc.defenses === 'string') {
-      try { defenses = JSON.parse(tc.defenses); } catch { /* ignore */ }
+      try {
+        defenses = JSON.parse(tc.defenses);
+      } catch {
+        /* ignore */
+      }
     } else {
       defenses = tc.defenses as typeof defenses;
     }
@@ -345,7 +442,12 @@ function applyResistedDamage(
  * below returns just the number for call sites that don't care.
  * Used to apply real rolled damage to HP instead of averages.
  */
-function rollDamageDiceDetailed(notation: string): { total: number; breakdown: string; rolls: number[]; mod: number } {
+function rollDamageDiceDetailed(notation: string): {
+  total: number;
+  breakdown: string;
+  rolls: number[];
+  mod: number;
+} {
   if (!notation) return { total: 0, breakdown: '', rolls: [], mod: 0 };
   const match = notation.match(/(\d+)d(\d+)(?:\s*([+-])\s*(\d+))?/);
   if (!match) return { total: 0, breakdown: '', rolls: [], mod: 0 };
@@ -363,9 +465,10 @@ function rollDamageDiceDetailed(notation: string): { total: number; breakdown: s
   const total = Math.max(0, subTotal + mod);
   // `3d8 (4+7+2)` — or `3d8 (4+7+2)+3` when a modifier is present.
   const rollsStr = rolls.join('+');
-  const breakdown = mod !== 0
-    ? `${numDice}d${dieSize} (${rollsStr})${mod > 0 ? '+' : ''}${mod} = ${total}`
-    : `${numDice}d${dieSize} (${rollsStr}) = ${total}`;
+  const breakdown =
+    mod !== 0
+      ? `${numDice}d${dieSize} (${rollsStr})${mod > 0 ? '+' : ''}${mod} = ${total}`
+      : `${numDice}d${dieSize} (${rollsStr}) = ${total}`;
   return { total, breakdown, rolls, mod };
 }
 
@@ -402,7 +505,10 @@ interface TokenActionPanelProps {
   embeddedTokenId?: string;
 }
 
-export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenActionPanelProps = {}) {
+export function TokenActionPanel({
+  embedded = false,
+  embeddedTokenId,
+}: TokenActionPanelProps = {}) {
   const isEmbedded = embedded;
   const mapSelectedTokenId = useMapStore((s) => s.selectedTokenId);
   // Effective id: when embedded, the prop wins (even if undefined);
@@ -426,7 +532,9 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
   const [compendiumData, setCompendiumData] = useState<any>(null);
   const [localHp, setLocalHp] = useState<number | null>(null);
   const [localCharId, setLocalCharId] = useState<string | null>(null);
-  const [lootWeapons, setLootWeapons] = useState<{ name: string; damage: string; damageType: string; properties: string[]; range?: string }[]>([]);
+  const [lootWeapons, setLootWeapons] = useState<
+    { name: string; damage: string; damageType: string; properties: string[]; range?: string }[]
+  >([]);
 
   useEffect(() => {
     // DON'T hide or reset if we're in targeting mode - the user is clicking a target
@@ -441,15 +549,22 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
       const token = tokens[selectedTokenId];
 
       // Fetch character data
-      if (token?.characterId && !allCharacters[token.characterId] && !fetchedIds.has(token.characterId)) {
+      if (
+        token?.characterId &&
+        !allCharacters[token.characterId] &&
+        !fetchedIds.has(token.characterId)
+      ) {
         fetchedIds.add(token.characterId);
         fetch(`/api/characters/${token.characterId}`)
-          .then(r => r.ok ? r.json() : null)
-          .then(data => {
-            if (data) useCharacterStore.getState().setAllCharacters({
-              ...useCharacterStore.getState().allCharacters, [token.characterId!]: data,
-            });
-          }).catch(() => {});
+          .then((r) => (r.ok ? r.json() : null))
+          .then((data) => {
+            if (data)
+              useCharacterStore.getState().setAllCharacters({
+                ...useCharacterStore.getState().allCharacters,
+                [token.characterId!]: data,
+              });
+          })
+          .catch(() => {});
       }
 
       // Fetch compendium data for this creature. Prefer the stored
@@ -462,7 +577,10 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
       if (token) {
         const char = token.characterId ? allCharacters[token.characterId] : null;
         const storedSlug = (char as { compendiumSlug?: string } | null)?.compendiumSlug;
-        const derivedSlug = token.name.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
+        const derivedSlug = token.name
+          .toLowerCase()
+          .replace(/\s+/g, '-')
+          .replace(/[^a-z0-9-]/g, '');
         const slug = storedSlug || (!char ? derivedSlug : '');
         // Skip entirely for PC tokens — no slug, no fetch, no 404.
         if (!slug) {
@@ -472,7 +590,7 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
           ? `/api/custom/monsters/${slug}`
           : `/api/compendium/monsters/${slug}`;
         fetch(route)
-          .then(r => r.ok ? r.json() : null)
+          .then((r) => (r.ok ? r.json() : null))
           .then(async (data) => {
             if (!data) return;
             setCompendiumData(data);
@@ -531,7 +649,9 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
           useMapStore.getState().cancelTargetingMode();
           return;
         }
-      } catch { /* guard is best-effort */ }
+      } catch {
+        /* guard is best-effort */
+      }
 
       if (casterTok) {
         const gridSize = useMapStore.getState().currentMap?.gridSize ?? 70;
@@ -546,7 +666,8 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
           const rangeMatch = rangeStr.match(/(\d+)\s*(feet|ft)/i);
           if (rangeMatch) maxRange = parseInt(rangeMatch[1]);
           else if (rangeStr.toLowerCase().includes('touch')) maxRange = 5;
-          else if (rangeStr.toLowerCase().includes('self')) maxRange = 999; // Self spells — AoE from caster, no range limit on target selection
+          else if (rangeStr.toLowerCase().includes('self'))
+            maxRange = 999; // Self spells — AoE from caster, no range limit on target selection
           else maxRange = 30; // Default spell range if not specified
         } else if (currentTargeting.weapon) {
           const props: string[] = currentTargeting.weapon.properties || [];
@@ -589,9 +710,17 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
           toast.appendChild(titleDiv);
           toast.appendChild(detailDiv);
           Object.assign(toast.style, {
-            position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%, -50%)',
-            padding: '16px 24px', background: theme.bg.deep, color: theme.text.primary, borderRadius: `${theme.radius.lg}px`,
-            border: `2px solid ${theme.state.danger}`, zIndex: '99999', textAlign: 'center',
+            position: 'fixed',
+            top: '50%',
+            left: '50%',
+            transform: 'translate(-50%, -50%)',
+            padding: '16px 24px',
+            background: theme.bg.deep,
+            color: theme.text.primary,
+            borderRadius: `${theme.radius.lg}px`,
+            border: `2px solid ${theme.state.danger}`,
+            zIndex: '99999',
+            textAlign: 'center',
             boxShadow: '0 8px 32px rgba(0,0,0,0.7), 0 0 15px rgba(197,49,49,0.3)',
           });
           document.body.appendChild(toast);
@@ -601,13 +730,18 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
         }
       }
 
-      let targetChar = targetToken.characterId ? useCharacterStore.getState().allCharacters[targetToken.characterId] : null;
+      let targetChar = targetToken.characterId
+        ? useCharacterStore.getState().allCharacters[targetToken.characterId]
+        : null;
 
       // Ensure target has a character record
       let charId = targetToken.characterId;
       if (!charId || !targetChar) {
         console.log('[TARGETING] Creating character for', targetToken.name);
-        const slug = targetToken.name.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
+        const slug = targetToken.name
+          .toLowerCase()
+          .replace(/\s+/g, '-')
+          .replace(/[^a-z0-9-]/g, '');
         try {
           // Try compendium lookup
           const compResp = await fetch(`/api/compendium/monsters/${slug}`);
@@ -626,7 +760,14 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
               maxHitPoints: comp?.hitPoints || 10,
               armorClass: comp?.armorClass || 10,
               speed: comp?.speed?.walk || 30,
-              abilityScores: comp?.abilityScores || { str: 10, dex: 10, con: 10, int: 10, wis: 10, cha: 10 },
+              abilityScores: comp?.abilityScores || {
+                str: 10,
+                dex: 10,
+                con: 10,
+                int: 10,
+                wis: 10,
+                cha: 10,
+              },
               portraitUrl: targetToken.imageUrl,
             }),
           });
@@ -671,16 +812,18 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
         emitCharacterUpdate(cid, { hitPoints: newHp });
         if (targetCharData) {
           useCharacterStore.getState().setAllCharacters({
-            ...chars, [cid]: { ...chars[cid], hitPoints: newHp },
+            ...chars,
+            [cid]: { ...chars[cid], hitPoints: newHp },
           });
         }
 
         // Concentration save when taking damage
         if (damageTaken > 0 && targetCharData?.concentratingOn) {
           const dc = Math.max(10, Math.floor(damageTaken / 2));
-          const conScore = typeof targetCharData.abilityScores === 'string'
-            ? JSON.parse(targetCharData.abilityScores).con || 10
-            : (targetCharData.abilityScores as any)?.con || 10;
+          const conScore =
+            typeof targetCharData.abilityScores === 'string'
+              ? JSON.parse(targetCharData.abilityScores).con || 10
+              : (targetCharData.abilityScores as any)?.con || 10;
           const conMod = Math.floor((conScore - 10) / 2);
           const saveRoll = Math.floor(Math.random() * 20) + 1;
           const total = saveRoll + conMod;
@@ -691,7 +834,7 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
               `1d20+${conMod}`,
               `${targetCharData.name} Concentration Save (DC ${dc}): ${total} — ${saved ? 'MAINTAINED!' : 'LOST!'}`,
               undefined,
-              { kind: 'save', ability: 'CON', dc, target: targetCharData.name },
+              { kind: 'save', ability: 'CON', dc, target: targetCharData.name }
             );
             if (!saved) {
               emitCharacterUpdate(cid, { concentratingOn: null });
@@ -706,7 +849,7 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
         cid: string,
         newHp: number,
         damageAmount: number,
-        criticalHit = false,
+        criticalHit = false
       ): boolean => {
         if (damageAmount > 0 && useCombatStore.getState().active) {
           emitDamage(tokenId, damageAmount, { criticalHit });
@@ -716,7 +859,12 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
         return false;
       };
 
-      const applyTargetHealing = (tokenId: string, cid: string, newHp: number, healingAmount: number): boolean => {
+      const applyTargetHealing = (
+        tokenId: string,
+        cid: string,
+        newHp: number,
+        healingAmount: number
+      ): boolean => {
         if (healingAmount > 0 && useCombatStore.getState().active) {
           emitHeal(tokenId, healingAmount);
           return true;
@@ -726,7 +874,9 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
       };
 
       const casterToken = useMapStore.getState().tokens[currentTargeting.casterTokenId];
-      const casterChar = casterToken?.characterId ? useCharacterStore.getState().allCharacters[casterToken.characterId] : null;
+      const casterChar = casterToken?.characterId
+        ? useCharacterStore.getState().allCharacters[casterToken.characterId]
+        : null;
       // Use the effective DC helpers — they recompute from class+ability if
       // the stored field looks like a stale placeholder default.
       const casterSpellDC = effectiveSpellSaveDC(casterChar);
@@ -750,7 +900,9 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
         // --- Phase 9: Trigger spell animation ---
         const spellAnim = getSpellAnimation(spell.name);
         if (spellAnim) {
-          const casterPos = casterToken ? { x: (casterToken as any).x, y: (casterToken as any).y } : { x: 0, y: 0 };
+          const casterPos = casterToken
+            ? { x: (casterToken as any).x, y: (casterToken as any).y }
+            : { x: 0, y: 0 };
           const targetPos = { x: (targetToken as any).x, y: (targetToken as any).y };
           useEffectStore.getState().addAnimation({
             id: `spell-${Date.now()}`,
@@ -772,11 +924,10 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
         // don't lose their slot on a refused cast.
         {
           const precheckSlot = actionSlotForCastingTime(spell.castingTime);
-          if (precheckSlot && !canSpendActionSlot(
-            currentTargeting.casterTokenId,
-            precheckSlot,
-            spell.name,
-          )) {
+          if (
+            precheckSlot &&
+            !canSpendActionSlot(currentTargeting.casterTokenId, precheckSlot, spell.name)
+          ) {
             useMapStore.getState().cancelTargetingMode();
             return;
           }
@@ -803,17 +954,26 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
           } else if (isRitualCast) {
             // Ritual cast — no slot consumed, announce in chat
             dmOverride = true;
-            emitSystemMessage(`✦ ${casterName} casts ${spell.name} as a Ritual (no slot, +10 min casting time).`);
+            emitSystemMessage(
+              `✦ ${casterName} casts ${spell.name} as a Ritual (no slot, +10 min casting time).`
+            );
           } else {
-            const slots = typeof casterChar.spellSlots === 'string'
-              ? JSON.parse(casterChar.spellSlots) : (casterChar.spellSlots || {});
+            const slots =
+              typeof casterChar.spellSlots === 'string'
+                ? JSON.parse(casterChar.spellSlots)
+                : casterChar.spellSlots || {};
             let chosenLevel: number | null = null;
             for (let lvl = spell.level; lvl <= 9; lvl++) {
               const s = slots[lvl] || slots[String(lvl)];
-              if (s && (s.max - s.used) > 0) { chosenLevel = lvl; break; }
+              if (s && s.max - s.used > 0) {
+                chosenLevel = lvl;
+                break;
+              }
             }
             if (chosenLevel === null) {
-              emitSystemMessage(`✦ ${casterName} tried to cast ${spell.name} (level ${spell.level}) but has no available slots of level ${spell.level} or higher!`);
+              emitSystemMessage(
+                `✦ ${casterName} tried to cast ${spell.name} (level ${spell.level}) but has no available slots of level ${spell.level} or higher!`
+              );
               useMapStore.getState().cancelTargetingMode();
               return;
             }
@@ -831,7 +991,8 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
         {
           const slot = actionSlotForCastingTime(spell.castingTime);
           const inCombat = useCombatStore.getState().active;
-          const current = useCombatStore.getState().combatants[useCombatStore.getState().currentTurnIndex];
+          const current =
+            useCombatStore.getState().combatants[useCombatStore.getState().currentTurnIndex];
           const isCurrentCaster = current?.tokenId === currentTargeting.casterTokenId;
           if (slot && inCombat && isCurrentCaster) {
             emitUseAction(slot);
@@ -887,9 +1048,18 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
           else if (cleanDesc.match(/melee spell attack/i)) resolvedAttackType = 'melee';
         }
         if (!resolvedSavingThrow) {
-          const saveMatch = cleanDesc.match(/(?:must\s+(?:succeed|make)\s+.*?|succeed\s+on\s+.*?)(strength|dexterity|constitution|wisdom|intelligence|charisma)\s+saving\s+throw/i);
+          const saveMatch = cleanDesc.match(
+            /(?:must\s+(?:succeed|make)\s+.*?|succeed\s+on\s+.*?)(strength|dexterity|constitution|wisdom|intelligence|charisma)\s+saving\s+throw/i
+          );
           if (saveMatch) {
-            const abilityMap: Record<string, string> = { strength: 'str', dexterity: 'dex', constitution: 'con', wisdom: 'wis', intelligence: 'int', charisma: 'cha' };
+            const abilityMap: Record<string, string> = {
+              strength: 'str',
+              dexterity: 'dex',
+              constitution: 'con',
+              wisdom: 'wis',
+              intelligence: 'int',
+              charisma: 'cha',
+            };
             resolvedSavingThrow = abilityMap[saveMatch[1].toLowerCase()] || '';
           }
         }
@@ -897,7 +1067,10 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
         // Fallback: lookup compendium for damage
         if (!damageDice) {
           try {
-            const slug = spell.name.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
+            const slug = spell.name
+              .toLowerCase()
+              .replace(/\s+/g, '-')
+              .replace(/[^a-z0-9-]/g, '');
             const compResp = await fetch(`/api/compendium/spells/${slug}`);
             if (compResp.ok) {
               const compSpell = await compResp.json();
@@ -905,9 +1078,18 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
               const descMatch = compDesc.match(/(\d+d\d+(?:\s*\+\s*\d+)?)\s+\w*\s*damage/i);
               if (descMatch) damageDice = descMatch[1].replace(/\s/g, '');
               if (!resolvedSavingThrow) {
-                const saveM = compDesc.match(/(strength|dexterity|constitution|wisdom|intelligence|charisma)\s+saving\s+throw/i);
+                const saveM = compDesc.match(
+                  /(strength|dexterity|constitution|wisdom|intelligence|charisma)\s+saving\s+throw/i
+                );
                 if (saveM) {
-                  const am: Record<string, string> = { strength: 'str', dexterity: 'dex', constitution: 'con', wisdom: 'wis', intelligence: 'int', charisma: 'cha' };
+                  const am: Record<string, string> = {
+                    strength: 'str',
+                    dexterity: 'dex',
+                    constitution: 'con',
+                    wisdom: 'wis',
+                    intelligence: 'int',
+                    charisma: 'cha',
+                  };
                   resolvedSavingThrow = am[saveM[1].toLowerCase()] || '';
                 }
               }
@@ -924,7 +1106,10 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
           const casterLevel = casterChar?.level ?? 1;
           const tier = casterLevel >= 17 ? 4 : casterLevel >= 11 ? 3 : casterLevel >= 5 ? 2 : 1;
           if (tier > 1) {
-            damageDice = damageDice.replace(/(\d+)d(\d+)/, (_: string, n: string, d: string) => `${parseInt(n) * tier}d${d}`);
+            damageDice = damageDice.replace(
+              /(\d+)d(\d+)/,
+              (_: string, n: string, d: string) => `${parseInt(n) * tier}d${d}`
+            );
           }
         }
 
@@ -938,7 +1123,7 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
             damageDice,
             spell.description || '',
             spell.level,
-            castAtLevel,
+            castAtLevel
           );
           if (upcast.bonusDice) {
             damageDice = upcast.dice;
@@ -948,8 +1133,15 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
 
         // Check if spell allows half damage on save
         const desc = (spell.description || '').toLowerCase();
-        const halfOnSave = desc.includes('half as much damage') || desc.includes('half damage') || desc.includes('save for half');
-        const isHealing = spell.name.toLowerCase().includes('heal') || spell.name.toLowerCase().includes('cure') || desc.includes('regains') || desc.includes('hit points equal to');
+        const halfOnSave =
+          desc.includes('half as much damage') ||
+          desc.includes('half damage') ||
+          desc.includes('save for half');
+        const isHealing =
+          spell.name.toLowerCase().includes('heal') ||
+          spell.name.toLowerCase().includes('cure') ||
+          desc.includes('regains') ||
+          desc.includes('hit points equal to');
         // Self-range spells are now handled by castSelfSpell() directly from the cast button.
         // If we somehow got here with a Self spell, just cancel and resolve via the helper.
         const isSelfRange = (spell.range || '').toLowerCase().includes('self');
@@ -965,7 +1157,9 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
           if ((spell as any).__dmOverride) {
             headerLines.push(`   🔓 DM override (no slot consumed)`);
           } else if (castAtLevel > spell.level) {
-            headerLines.push(`   Spent level ${castAtLevel} slot (upcast from level ${spell.level})`);
+            headerLines.push(
+              `   Spent level ${castAtLevel} slot (upcast from level ${spell.level})`
+            );
           } else {
             headerLines.push(`   Spent level ${spell.level} slot`);
           }
@@ -991,7 +1185,9 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
         if ((spell as any).__dmOverride) {
           spellCasterNotes.push('DM override — no slot consumed');
         } else if (castAtLevel > spell.level) {
-          spellCasterNotes.push(`Upcast: spent L${castAtLevel} slot (+${castAtLevel - spell.level} over base)`);
+          spellCasterNotes.push(
+            `Upcast: spent L${castAtLevel} slot (+${castAtLevel - spell.level} over base)`
+          );
         }
         if (upcastNote) spellCasterNotes.push(upcastNote.replace(/^\s*Upcast:\s*/, '').trim());
 
@@ -1024,13 +1220,22 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
                 allTokens: Object.values(mapState.tokens),
                 gridSize: mapState.currentMap?.gridSize ?? 70,
                 characters: allChars as Record<string, unknown>,
-              },
+              }
             );
-            if (visionMod.advantage === 'advantage' && combined.attackAdvantage !== 'disadvantage') {
+            if (
+              visionMod.advantage === 'advantage' &&
+              combined.attackAdvantage !== 'disadvantage'
+            ) {
               combined.attackAdvantage = 'advantage';
-            } else if (visionMod.advantage === 'disadvantage' && combined.attackAdvantage !== 'advantage') {
+            } else if (
+              visionMod.advantage === 'disadvantage' &&
+              combined.attackAdvantage !== 'advantage'
+            ) {
               combined.attackAdvantage = 'disadvantage';
-            } else if (visionMod.advantage !== 'normal' && combined.attackAdvantage !== visionMod.advantage) {
+            } else if (
+              visionMod.advantage !== 'normal' &&
+              combined.attackAdvantage !== visionMod.advantage
+            ) {
               // Existing combined had the OPPOSITE direction → cancel.
               combined.attackAdvantage = 'normal';
             }
@@ -1041,14 +1246,18 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
           // Effective AC accounts for Hasted +2, Shielded +2, Mage Armor floor, etc.
           const baseAC = targetChar?.armorClass ?? 10;
           const targetScores2 = targetChar?.abilityScores
-            ? (typeof targetChar.abilityScores === 'string' ? JSON.parse(targetChar.abilityScores) : targetChar.abilityScores)
+            ? typeof targetChar.abilityScores === 'string'
+              ? JSON.parse(targetChar.abilityScores)
+              : targetChar.abilityScores
             : {};
           const targetDexMod = abilityModifier((targetScores2 as any).dex || 10);
           const acResult = effectiveAC(baseAC, targetConditions, targetDexMod);
           let targetAC = acResult.value;
           // Crit on nat 20 OR forced crit (Paralyzed/Unconscious melee within 5ft)
           let isHit = atkResult.isCritical || (!atkResult.isFumble && atkResult.total >= targetAC);
-          let isCrit = atkResult.isCritical || (isHit && atkResult.forceCritOnHit && resolvedAttackType === 'melee');
+          let isCrit =
+            atkResult.isCritical ||
+            (isHit && atkResult.forceCritOnHit && resolvedAttackType === 'melee');
 
           // Shield reaction window — if the attack would hit, give
           // the target a chance to cast Shield. If they do, recompute
@@ -1078,9 +1287,14 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
 
           const hitIcon = isCrit ? '💥' : isHit ? '✓' : '✗';
           // Show breakdown so the user can see condition effects in the math
-          const acNote = acResult.notes.length > 0 ? ` (base ${acResult.base}${acResult.notes.map(n => ' ' + n).join('')})` : '';
+          const acNote =
+            acResult.notes.length > 0
+              ? ` (base ${acResult.base}${acResult.notes.map((n) => ' ' + n).join('')})`
+              : '';
           const modNote = combined.notes.length > 0 ? ` [${combined.notes.join(', ')}]` : '';
-          resultParts.push(`${hitIcon} Attack ${atkResult.breakdown} vs AC ${targetAC}${acNote} → ${isCrit ? 'CRIT' : isHit ? 'HIT' : 'MISS'}${modNote}${shieldNote}`);
+          resultParts.push(
+            `${hitIcon} Attack ${atkResult.breakdown} vs AC ${targetAC}${acNote} → ${isCrit ? 'CRIT' : isHit ? 'HIT' : 'MISS'}${modNote}${shieldNote}`
+          );
 
           // Seed the structured outcome with the attack sub-result.
           // Damage is filled in further down when isHit is true.
@@ -1112,9 +1326,7 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
               targetAc: targetAC,
               baseAc: acResult.base,
               acNotes: acResult.notes.length > 0 ? acResult.notes : undefined,
-              hitResult: isCrit ? 'crit' :
-                isHit ? 'hit' :
-                atkResult.isFumble ? 'fumble' : 'miss',
+              hitResult: isCrit ? 'crit' : isHit ? 'hit' : atkResult.isFumble ? 'fumble' : 'miss',
             },
             notes: combined.notes.length > 0 ? combined.notes.slice(0, 8) : undefined,
           };
@@ -1131,15 +1343,22 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
             const rolledDmg = dmgDetailed.total;
             const dmgBreakdown = dmgDetailed.breakdown;
             const freshChar = useCharacterStore.getState().allCharacters[effectiveCharId];
-            const freshHp = freshChar ? (typeof freshChar.hitPoints === 'number' ? freshChar.hitPoints : parseInt(String(freshChar.hitPoints)) || 0) : targetHp;
+            const freshHp = freshChar
+              ? typeof freshChar.hitPoints === 'number'
+                ? freshChar.hitPoints
+                : parseInt(String(freshChar.hitPoints)) || 0
+              : targetHp;
             const resisted = applyResistedDamage(rolledDmg, dmgType, freshChar, targetConditions);
             const newHp = Math.max(0, freshHp - resisted.final);
             const resistTag = resisted.note ? ` [${resisted.note}]` : '';
-            const dmgChange = resisted.final !== rolledDmg ? `${rolledDmg}→${resisted.final}` : `${resisted.final}`;
+            const dmgChange =
+              resisted.final !== rolledDmg ? `${rolledDmg}→${resisted.final}` : `${resisted.final}`;
             // Surface the per-die breakdown so players + DM can see
             // "2d8 (5+3)+2 = 10 slashing dmg" instead of just the final
             // number. Matches the "show your work" user request.
-            resultParts.push(`${dmgChange} ${dmgWord}dmg${resistTag} [${dmgBreakdown}] (HP ${freshHp}→${newHp})${isCrit ? ' [CRIT]' : ''}`);
+            resultParts.push(
+              `${dmgChange} ${dmgWord}dmg${resistTag} [${dmgBreakdown}] (HP ${freshHp}→${newHp})${isCrit ? ' [CRIT]' : ''}`
+            );
             if (newHp === 0) resultParts.push('💀 DOWN');
 
             // Attach structured damage breakdown to the outcome.
@@ -1155,13 +1374,22 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
                 targetHpAfter: newHp,
               };
               if (resisted.note) {
-                (spellTargetOutcome.notes = spellTargetOutcome.notes ?? []).push(`Damage: ${resisted.note}`);
+                (spellTargetOutcome.notes = spellTargetOutcome.notes ?? []).push(
+                  `Damage: ${resisted.note}`
+                );
               }
             }
             setTimeout(() => {
-              const serverHandled = applyTargetDamage(targetToken.id, effectiveCharId, newHp, resisted.final, isCrit);
+              const serverHandled = applyTargetDamage(
+                targetToken.id,
+                effectiveCharId,
+                newHp,
+                resisted.final,
+                isCrit
+              );
               // Trigger CON save for concentration + clear endsOnDamage conditions
-              if (!serverHandled && resisted.final > 0) emitDamageSideEffects(targetToken.id, resisted.final);
+              if (!serverHandled && resisted.final > 0)
+                emitDamageSideEffects(targetToken.id, resisted.final);
             }, 400);
           }
         }
@@ -1170,7 +1398,9 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
         else if (resolvedSavingThrow) {
           const saveAbility = resolvedSavingThrow;
           const targetScores = targetChar?.abilityScores
-            ? (typeof targetChar.abilityScores === 'string' ? JSON.parse(targetChar.abilityScores) : targetChar.abilityScores)
+            ? typeof targetChar.abilityScores === 'string'
+              ? JSON.parse(targetChar.abilityScores)
+              : targetChar.abilityScores
             : {};
           const targetSaveMod = abilityModifier(targetScores[saveAbility] || 10);
 
@@ -1187,7 +1417,9 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
           const saved = saveResult.autoFailed ? false : saveResult.total >= casterSpellDC;
           const saveIcon = saved ? '✓' : '✗';
           const modNote = targetMods.notes.length > 0 ? ` [${targetMods.notes.join(', ')}]` : '';
-          resultParts.push(`${saveIcon} ${saveAbility.toUpperCase()} ${saveResult.breakdown} vs DC ${casterSpellDC} → ${saved ? 'SAVED' : 'FAILED'}${modNote}`);
+          resultParts.push(
+            `${saveIcon} ${saveAbility.toUpperCase()} ${saveResult.breakdown} vs DC ${casterSpellDC} → ${saved ? 'SAVED' : 'FAILED'}${modNote}`
+          );
 
           // Structured save outcome for the breakdown card.
           const saveModifiers: AttackBreakdownModifier[] = [];
@@ -1235,12 +1467,19 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
             const dmg = saved && halfOnSave ? Math.floor(total / 2) : saved ? 0 : total;
             if (dmg > 0) {
               const freshChar = useCharacterStore.getState().allCharacters[effectiveCharId];
-              const freshHp = freshChar ? (typeof freshChar.hitPoints === 'number' ? freshChar.hitPoints : parseInt(String(freshChar.hitPoints)) || 0) : targetHp;
+              const freshHp = freshChar
+                ? typeof freshChar.hitPoints === 'number'
+                  ? freshChar.hitPoints
+                  : parseInt(String(freshChar.hitPoints)) || 0
+                : targetHp;
               const resisted = applyResistedDamage(dmg, dmgType, freshChar, targetConditions);
               const newHp = Math.max(0, freshHp - resisted.final);
               const resistTag = resisted.note ? ` [${resisted.note}]` : '';
-              const dmgChange = resisted.final !== dmg ? `${dmg}→${resisted.final}` : `${resisted.final}`;
-              resultParts.push(`${dmgChange} ${dmgWord}dmg${saved ? ' (half)' : ''}${resistTag} (HP ${freshHp}→${newHp})`);
+              const dmgChange =
+                resisted.final !== dmg ? `${dmg}→${resisted.final}` : `${resisted.final}`;
+              resultParts.push(
+                `${dmgChange} ${dmgWord}dmg${saved ? ' (half)' : ''}${resistTag} (HP ${freshHp}→${newHp})`
+              );
               if (newHp === 0) resultParts.push('💀 DOWN');
 
               // Attach structured damage to the save outcome. Re-roll
@@ -1263,12 +1502,20 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
                   targetHpAfter: newHp,
                 };
                 if (resisted.note) {
-                  (spellTargetOutcome.notes = spellTargetOutcome.notes ?? []).push(`Damage: ${resisted.note}`);
+                  (spellTargetOutcome.notes = spellTargetOutcome.notes ?? []).push(
+                    `Damage: ${resisted.note}`
+                  );
                 }
               }
               setTimeout(() => {
-                const serverHandled = applyTargetDamage(targetToken.id, effectiveCharId, newHp, resisted.final);
-                if (!serverHandled && resisted.final > 0) emitDamageSideEffects(targetToken.id, resisted.final);
+                const serverHandled = applyTargetDamage(
+                  targetToken.id,
+                  effectiveCharId,
+                  newHp,
+                  resisted.final
+                );
+                if (!serverHandled && resisted.final > 0)
+                  emitDamageSideEffects(targetToken.id, resisted.final);
               }, 400);
             } else if (saved && !halfOnSave) {
               resultParts.push('no damage');
@@ -1287,13 +1534,14 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
               }
               const durMeta = getSpellDurationMeta(spell.name);
               const currentRound = useCombatStore.getState().roundNumber || 0;
-              const expiresAfterRound = currentRound > 0
-                ? currentRound + durMeta.durationRounds - 1
+              const expiresAfterRound =
+                currentRound > 0 ? currentRound + durMeta.durationRounds - 1 : undefined;
+              const saveRetry = durMeta.saveAbility
+                ? {
+                    ability: durMeta.saveAbility,
+                    dc: casterSpellDC,
+                  }
                 : undefined;
-              const saveRetry = durMeta.saveAbility ? {
-                ability: durMeta.saveAbility,
-                dc: casterSpellDC,
-              } : undefined;
               setTimeout(() => {
                 const targetTokenData = useMapStore.getState().tokens[targetToken.id];
                 if (targetTokenData) {
@@ -1310,7 +1558,9 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
                       targetTokenId: targetToken.id,
                       conditionName: condName,
                       source: spell.name,
-                      casterTokenId: spell.isConcentration ? currentTargeting.casterTokenId : undefined,
+                      casterTokenId: spell.isConcentration
+                        ? currentTargeting.casterTokenId
+                        : undefined,
                       expiresAfterRound,
                       saveAtEndOfTurn: saveRetry,
                       endsOnDamage: durMeta.endsOnDamage,
@@ -1330,7 +1580,11 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
           const heal = healDetailed.total + abilityHealBonus;
           if (effectiveCharId) {
             const freshChar = useCharacterStore.getState().allCharacters[effectiveCharId];
-            const freshHp = freshChar ? (typeof freshChar.hitPoints === 'number' ? freshChar.hitPoints : parseInt(String(freshChar.hitPoints)) || 0) : targetHp;
+            const freshHp = freshChar
+              ? typeof freshChar.hitPoints === 'number'
+                ? freshChar.hitPoints
+                : parseInt(String(freshChar.hitPoints)) || 0
+              : targetHp;
             const newHp = Math.min(targetMaxHp, freshHp + heal);
             resultParts.push(`+${heal} HP (${freshHp}→${newHp})`);
             applyTargetHealing(targetToken.id, effectiveCharId, newHp, heal);
@@ -1370,15 +1624,26 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
           const dmg = dmgDetailed.total;
           if (effectiveCharId) {
             const freshChar = useCharacterStore.getState().allCharacters[effectiveCharId];
-            const freshHp = freshChar ? (typeof freshChar.hitPoints === 'number' ? freshChar.hitPoints : parseInt(String(freshChar.hitPoints)) || 0) : targetHp;
+            const freshHp = freshChar
+              ? typeof freshChar.hitPoints === 'number'
+                ? freshChar.hitPoints
+                : parseInt(String(freshChar.hitPoints)) || 0
+              : targetHp;
             const resisted = applyResistedDamage(dmg, dmgType, freshChar, targetConditions);
             const newHp = Math.max(0, freshHp - resisted.final);
             const resistTag = resisted.note ? ` [${resisted.note}]` : '';
-            const dmgChange = resisted.final !== dmg ? `${dmg}→${resisted.final}` : `${resisted.final}`;
+            const dmgChange =
+              resisted.final !== dmg ? `${dmg}→${resisted.final}` : `${resisted.final}`;
             resultParts.push(`${dmgChange} ${dmgWord}dmg${resistTag} (HP ${freshHp}→${newHp})`);
             if (newHp === 0) resultParts.push('💀 DOWN');
-            const serverHandled = applyTargetDamage(targetToken.id, effectiveCharId, newHp, resisted.final);
-            if (!serverHandled && resisted.final > 0) emitDamageSideEffects(targetToken.id, resisted.final);
+            const serverHandled = applyTargetDamage(
+              targetToken.id,
+              effectiveCharId,
+              newHp,
+              resisted.final
+            );
+            if (!serverHandled && resisted.final > 0)
+              emitDamageSideEffects(targetToken.id, resisted.final);
 
             spellTargetOutcome = {
               name: targetName,
@@ -1440,9 +1705,8 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
               useMapStore.getState().updateToken(targetToken.id, { conditions: newConds });
               const durMeta = getSpellDurationMeta(spell.name);
               const currentRound = useCombatStore.getState().roundNumber || 0;
-              const expiresAfterRound = currentRound > 0
-                ? currentRound + durMeta.durationRounds - 1
-                : undefined;
+              const expiresAfterRound =
+                currentRound > 0 ? currentRound + durMeta.durationRounds - 1 : undefined;
               for (const buffName of buffs) {
                 emitApplyConditionWithMeta({
                   targetTokenId: targetToken.id,
@@ -1477,12 +1741,18 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
           spell: {
             name: spell.name,
             level: castAtLevel,
-            kind: resolvedAttackType ? 'attack' :
-              resolvedSavingThrow ? 'save' :
-              isHealing ? 'heal' :
-              damageDice ? 'auto-damage' : 'utility',
+            kind: resolvedAttackType
+              ? 'attack'
+              : resolvedSavingThrow
+                ? 'save'
+                : isHealing
+                  ? 'heal'
+                  : damageDice
+                    ? 'auto-damage'
+                    : 'utility',
             damageType: dmgType || undefined,
-            saveAbility: (resolvedSavingThrow || undefined) as SpellCastBreakdown['spell']['saveAbility'],
+            saveAbility: (resolvedSavingThrow ||
+              undefined) as SpellCastBreakdown['spell']['saveAbility'],
             saveDc: resolvedSavingThrow ? casterSpellDC : undefined,
             halfOnSave: halfOnSave || undefined,
             spellAttackBonus: resolvedAttackType ? casterSpellAttack : undefined,
@@ -1493,7 +1763,7 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
 
         emitSystemMessage(
           [...headerLines, `   • ${targetName}: ${resultParts.join(' • ')}`].join('\n'),
-          { spellResult: spellBreakdown },
+          { spellResult: spellBreakdown }
         );
       }
 
@@ -1515,7 +1785,8 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
         }
         {
           const inCombatA = useCombatStore.getState().active;
-          const currentA = useCombatStore.getState().combatants[useCombatStore.getState().currentTurnIndex];
+          const currentA =
+            useCombatStore.getState().combatants[useCombatStore.getState().currentTurnIndex];
           const isCurrentAttacker = currentA?.tokenId === currentTargeting.casterTokenId;
           if (inCombatA && isCurrentAttacker) {
             emitUseAction(atkSlot);
@@ -1523,16 +1794,29 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
         }
         // Detect Thrown property — we'll drop the weapon from inventory + spawn
         // an item token at the target's location after the attack resolves.
-        const wIsThrown = ((atk.properties as string[] | undefined) || []).some(p => p.toLowerCase() === 'thrown');
+        const wIsThrown = ((atk.properties as string[] | undefined) || []).some(
+          (p) => p.toLowerCase() === 'thrown'
+        );
         const wThrownInventoryIdx = (atk as any).inventoryIndex as number | undefined;
         // Detect damage type from atk fields or damage_dice (e.g. "1d6 piercing")
         let weaponDmgType = (atk.damageType || atk.damage_type || '').toLowerCase();
         if (!weaponDmgType) {
-          const m = String(dmgDice).match(/\b(slashing|piercing|bludgeoning|fire|cold|lightning|thunder|acid|poison|necrotic|radiant|force|psychic)\b/i);
+          const m = String(dmgDice).match(
+            /\b(slashing|piercing|bludgeoning|fire|cold|lightning|thunder|acid|poison|necrotic|radiant|force|psychic)\b/i
+          );
           if (m) weaponDmgType = m[1].toLowerCase();
         }
         const weaponDmgWord = weaponDmgType ? `${weaponDmgType} ` : '';
-        console.log('[TARGETING] Weapon/Action:', atk.name, 'atkBonus:', atkBonus, 'dmgDice:', dmgDice, 'charId:', effectiveCharId);
+        console.log(
+          '[TARGETING] Weapon/Action:',
+          atk.name,
+          'atkBonus:',
+          atkBonus,
+          'dmgDice:',
+          dmgDice,
+          'charId:',
+          effectiveCharId
+        );
 
         // Run the attack through the roll engine so Bless / advantage /
         // disadvantage / target conditions actually apply.
@@ -1543,7 +1827,7 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
         const wAttackerOwn = getOwnRollModifiers(wCasterConds);
         const wTargetIncoming = getTargetRollModifiers(
           wTargetConds,
-          wIsMeleeForRange ? 'melee' : 'ranged',
+          wIsMeleeForRange ? 'melee' : 'ranged'
         );
         const wCombined = combineAttackModifiers(wAttackerOwn, wTargetIncoming);
 
@@ -1562,13 +1846,22 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
               allTokens: Object.values(wMapState.tokens),
               gridSize: wMapState.currentMap?.gridSize ?? 70,
               characters: wAllChars as Record<string, unknown>,
-            },
+            }
           );
-          if (wVisionMod.advantage === 'advantage' && wCombined.attackAdvantage !== 'disadvantage') {
+          if (
+            wVisionMod.advantage === 'advantage' &&
+            wCombined.attackAdvantage !== 'disadvantage'
+          ) {
             wCombined.attackAdvantage = 'advantage';
-          } else if (wVisionMod.advantage === 'disadvantage' && wCombined.attackAdvantage !== 'advantage') {
+          } else if (
+            wVisionMod.advantage === 'disadvantage' &&
+            wCombined.attackAdvantage !== 'advantage'
+          ) {
             wCombined.attackAdvantage = 'disadvantage';
-          } else if (wVisionMod.advantage !== 'normal' && wCombined.attackAdvantage !== wVisionMod.advantage) {
+          } else if (
+            wVisionMod.advantage !== 'normal' &&
+            wCombined.attackAdvantage !== wVisionMod.advantage
+          ) {
             wCombined.attackAdvantage = 'normal';
           }
           if (wVisionMod.note) wCombined.notes.push(wVisionMod.note);
@@ -1581,10 +1874,13 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
           const vowedCaster = useCharacterStore.getState().allCharacters[wCasterToken.characterId];
           try {
             const rawFeats = (vowedCaster as any)?.features;
-            const feats = typeof rawFeats === 'string' ? JSON.parse(rawFeats) : (rawFeats || []);
-            const hasIt = Array.isArray(feats) && feats.some(
-              (f: { name?: string }) => typeof f?.name === 'string' && /vow\s+of\s+enmity/i.test(f.name),
-            );
+            const feats = typeof rawFeats === 'string' ? JSON.parse(rawFeats) : rawFeats || [];
+            const hasIt =
+              Array.isArray(feats) &&
+              feats.some(
+                (f: { name?: string }) =>
+                  typeof f?.name === 'string' && /vow\s+of\s+enmity/i.test(f.name)
+              );
             if (hasIt) {
               if (wCombined.attackAdvantage === 'disadvantage') {
                 wCombined.attackAdvantage = 'normal';
@@ -1593,19 +1889,23 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
               }
               wCombined.notes.push('Vow of Enmity (advantage)');
             }
-          } catch { /* ignore */ }
+          } catch {
+            /* ignore */
+          }
         }
 
         // Heavy weapon + Small creature: RAW disadvantage. Halflings
         // and gnomes with a greataxe just don't get the full swing.
         // The flag is buried in character.characteristics.size and can
         // be string-encoded JSON or an already-parsed object.
-        const wIsHeavy = ((atk.properties as string[] | undefined) || []).some(p => /heavy/i.test(p));
+        const wIsHeavy = ((atk.properties as string[] | undefined) || []).some((p) =>
+          /heavy/i.test(p)
+        );
         if (wIsHeavy && wCasterToken?.characterId) {
           const hcChar = useCharacterStore.getState().allCharacters[wCasterToken.characterId];
           try {
             const rawChars = (hcChar as any)?.characteristics;
-            const parsed = typeof rawChars === 'string' ? JSON.parse(rawChars) : (rawChars || {});
+            const parsed = typeof rawChars === 'string' ? JSON.parse(rawChars) : rawChars || {};
             const sizeStr = String((parsed as { size?: string })?.size || '').toLowerCase();
             if (sizeStr === 'small' || sizeStr === 'tiny') {
               if (wCombined.attackAdvantage === 'advantage') {
@@ -1615,7 +1915,9 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
               }
               wCombined.notes.push(`Heavy weapon + ${sizeStr} creature (disadv)`);
             }
-          } catch { /* size unparseable — skip the penalty */ }
+          } catch {
+            /* size unparseable — skip the penalty */
+          }
         }
 
         // Fighting styles — scan character.features for the tagged
@@ -1631,9 +1933,10 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
         {
           const atkProps = (atk.properties as string[] | undefined) || [];
           const isMeleeAtk = atkProps.includes('Melee');
-          const isFinesseAtk = atkProps.some(p => /finesse/i.test(p));
-          const isRangedAtk = atkProps.some(p => /(range|ammunition|thrown)/i.test(p)) && !isMeleeAtk;
-          const isTwoHanded = atkProps.some(p => /two-handed|versatile/i.test(p));
+          const isFinesseAtk = atkProps.some((p) => /finesse/i.test(p));
+          const isRangedAtk =
+            atkProps.some((p) => /(range|ammunition|thrown)/i.test(p)) && !isMeleeAtk;
+          const isTwoHanded = atkProps.some((p) => /two-handed|versatile/i.test(p));
           const isOffHand = /off-?hand/i.test(String(atk.name || ''));
 
           if (wCasterToken?.characterId) {
@@ -1644,17 +1947,17 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
                 const fsRaw = (fsChar as any)?.features;
                 const feats = typeof fsRaw === 'string' ? JSON.parse(fsRaw) : (fsRaw ?? []);
                 const fsList: Array<{ name?: string }> = Array.isArray(feats) ? feats : [];
-                const hasStyle = (rx: RegExp) => fsList.some(
-                  (f) => typeof f?.name === 'string' && rx.test(f.name),
-                );
+                const hasStyle = (rx: RegExp) =>
+                  fsList.some((f) => typeof f?.name === 'string' && rx.test(f.name));
 
                 if (hasStyle(/archery/i) && isRangedAtk) wArcheryBonus = 2;
-                if (hasStyle(/dueling/i) && isMeleeAtk && !isTwoHanded && !isOffHand) wDuelingBonus = 2;
+                if (hasStyle(/dueling/i) && isMeleeAtk && !isTwoHanded && !isOffHand)
+                  wDuelingBonus = 2;
                 if (hasStyle(/two-?weapon fighting/i) && isOffHand) {
                   const scores = (fsChar as any)?.abilityScores
-                    ? (typeof (fsChar as any).abilityScores === 'string'
+                    ? typeof (fsChar as any).abilityScores === 'string'
                       ? JSON.parse((fsChar as any).abilityScores)
-                      : (fsChar as any).abilityScores)
+                      : (fsChar as any).abilityScores
                     : {};
                   const strMod = abilityModifier((scores as any).str || 10);
                   const dexMod = abilityModifier((scores as any).dex || 10);
@@ -1663,7 +1966,9 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
                 if (hasStyle(/great weapon fighting/i) && isMeleeAtk && isTwoHanded) {
                   wGwfReroll = true;
                 }
-              } catch { /* features unparseable */ }
+              } catch {
+                /* features unparseable */
+              }
             }
           }
         }
@@ -1672,17 +1977,20 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
         // Per RAW: "You have disadvantage on a ranged attack roll if
         // you are within 5 feet of a hostile creature who can see you
         // and who isn't incapacitated."
-        const wIsRangedWeapon = ((atk.properties as string[] | undefined) || [])
-          .some((p) => /(range|ammunition|thrown)/i.test(p));
-        const wIsActuallyRangedShot = wIsRangedWeapon && !((atk.properties as string[] | undefined) || []).includes('Melee');
+        const wIsRangedWeapon = ((atk.properties as string[] | undefined) || []).some((p) =>
+          /(range|ammunition|thrown)/i.test(p)
+        );
+        const wIsActuallyRangedShot =
+          wIsRangedWeapon && !((atk.properties as string[] | undefined) || []).includes('Melee');
 
         // Ammunition tracking: if the weapon consumes ammo (has the
         // Ammunition property, and isn't a thrown-weapon inventory
         // drop), decrement the matching ammo stack from inventory.
         // Ammo type picked from weapon name: bow → arrow, crossbow →
         // bolt, sling → sling bullet, blowgun → needle.
-        const wUsesAmmo = ((atk.properties as string[] | undefined) || [])
-          .some((p) => /ammunition/i.test(p));
+        const wUsesAmmo = ((atk.properties as string[] | undefined) || []).some((p) =>
+          /ammunition/i.test(p)
+        );
         if (wUsesAmmo && !wIsThrown && effectiveCharId) {
           const ammoChar = useCharacterStore.getState().allCharacters[effectiveCharId];
           const atkNameLower = String(atk.name || '').toLowerCase();
@@ -1694,7 +2002,8 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
           if (ammoNeedle) {
             try {
               const rawInv = (ammoChar as any)?.inventory;
-              const inv: Array<Record<string, unknown>> = typeof rawInv === 'string' ? JSON.parse(rawInv) : (rawInv || []);
+              const inv: Array<Record<string, unknown>> =
+                typeof rawInv === 'string' ? JSON.parse(rawInv) : rawInv || [];
               const idx = inv.findIndex((i) => {
                 const n = String(i?.name || '').toLowerCase();
                 const q = Number(i?.quantity ?? i?.count ?? 0);
@@ -1714,10 +2023,12 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
                 // No ammo — still let the shot fire (DM can rule on
                 // failed or free-ammo assumption), but log a warning.
                 emitSystemMessage(
-                  `⚠ ${currentTargeting.casterName} fires ${atk.name} but has no ${ammoNeedle}s left in inventory. DM adjudicates.`,
+                  `⚠ ${currentTargeting.casterName} fires ${atk.name} but has no ${ammoNeedle}s left in inventory. DM adjudicates.`
                 );
               }
-            } catch { /* inventory unparseable — skip ammo */ }
+            } catch {
+              /* inventory unparseable — skip ammo */
+            }
           }
         }
         if (wIsActuallyRangedShot && wCasterToken) {
@@ -1742,8 +2053,14 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
             const ecy = (enemy as any).y + (gridSize * eSize) / 2;
             const ccx = (wCasterToken as any).x + (gridSize * cSize) / 2;
             const ccy = (wCasterToken as any).y + (gridSize * cSize) / 2;
-            const dx = Math.max(0, Math.abs(ecx - ccx) - (eSize * gridSize) / 2 - (cSize * gridSize) / 2);
-            const dy = Math.max(0, Math.abs(ecy - ccy) - (eSize * gridSize) / 2 - (cSize * gridSize) / 2);
+            const dx = Math.max(
+              0,
+              Math.abs(ecx - ccx) - (eSize * gridSize) / 2 - (cSize * gridSize) / 2
+            );
+            const dy = Math.max(
+              0,
+              Math.abs(ecy - ccy) - (eSize * gridSize) / 2 - (cSize * gridSize) / 2
+            );
             const edgeDist = Math.max(dx, dy);
             if (edgeDist <= gridSize + 1) {
               hasAdjacentEnemy = true;
@@ -1773,10 +2090,11 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
           const pCasterChar = wCasterToken?.characterId
             ? useCharacterStore.getState().allCharacters[wCasterToken.characterId]
             : null;
-          let hasGWM = false, hasSharp = false;
+          let hasGWM = false,
+            hasSharp = false;
           try {
             const raw = (pCasterChar as any)?.features;
-            const feats = typeof raw === 'string' ? JSON.parse(raw) : (raw || []);
+            const feats = typeof raw === 'string' ? JSON.parse(raw) : raw || [];
             if (Array.isArray(feats)) {
               for (const f of feats) {
                 const n = String(f?.name || '').toLowerCase();
@@ -1784,12 +2102,16 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
                 if (/^sharpshooter$/.test(n)) hasSharp = true;
               }
             }
-          } catch { /* ignore */ }
-          const wIsRangedAttack = ((atk.properties as string[] | undefined) || [])
-            .some(p => /(range|ammunition|thrown)/i.test(p))
-            && !((atk.properties as string[] | undefined) || []).includes('Melee');
-          const wIsHeavyMelee = ((atk.properties as string[] | undefined) || []).includes('Melee')
-            && ((atk.properties as string[] | undefined) || []).some(p => /heavy/i.test(p));
+          } catch {
+            /* ignore */
+          }
+          const wIsRangedAttack =
+            ((atk.properties as string[] | undefined) || []).some((p) =>
+              /(range|ammunition|thrown)/i.test(p)
+            ) && !((atk.properties as string[] | undefined) || []).includes('Melee');
+          const wIsHeavyMelee =
+            ((atk.properties as string[] | undefined) || []).includes('Melee') &&
+            ((atk.properties as string[] | undefined) || []).some((p) => /heavy/i.test(p));
 
           if (wCasterConds.includes('power-attack')) {
             if ((hasGWM && wIsHeavyMelee) || (hasSharp && wIsRangedAttack)) {
@@ -1815,7 +2137,9 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
 
         // Effective AC accounts for Hasted / Shield / Mage Armor / etc.
         const wTargetScores = targetChar?.abilityScores
-          ? (typeof targetChar.abilityScores === 'string' ? JSON.parse(targetChar.abilityScores) : targetChar.abilityScores)
+          ? typeof targetChar.abilityScores === 'string'
+            ? JSON.parse(targetChar.abilityScores)
+            : targetChar.abilityScores
           : {};
         const wTargetDex = abilityModifier((wTargetScores as any).dex || 10);
         const wAcResult = effectiveAC(targetChar?.armorClass ?? 10, wTargetConds, wTargetDex);
@@ -1824,7 +2148,8 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
           wTargetAC -= wIgnoreCoverAc;
           wCombined.notes.push(`Sharpshooter: ignore ${wIgnoreCoverAc} cover AC`);
         }
-        let wIsHit = wAtkResult.isCritical || (!wAtkResult.isFumble && wAtkResult.total >= wTargetAC);
+        let wIsHit =
+          wAtkResult.isCritical || (!wAtkResult.isFumble && wAtkResult.total >= wTargetAC);
         const wIsMelee = (atk.properties as string[] | undefined)?.includes('Melee');
         let wIsCrit = wAtkResult.isCritical || (wIsHit && wAtkResult.forceCritOnHit && wIsMelee);
 
@@ -1855,10 +2180,15 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
         // Build the consolidated chat message (same shape as spell results)
         const wHeader = `⚔ ${currentTargeting.casterName} → ${targetToken.name}: ${atk.name}`;
         const wHitIcon = wIsCrit ? '💥' : wIsHit ? '✓' : '✗';
-        const wAcNote = wAcResult.notes.length > 0 ? ` (base ${wAcResult.base}${wAcResult.notes.map(n => ' ' + n).join('')})` : '';
+        const wAcNote =
+          wAcResult.notes.length > 0
+            ? ` (base ${wAcResult.base}${wAcResult.notes.map((n) => ' ' + n).join('')})`
+            : '';
         const wModNote = wCombined.notes.length > 0 ? ` [${wCombined.notes.join(', ')}]` : '';
         const wParts: string[] = [];
-        wParts.push(`${wHitIcon} Attack ${wAtkResult.breakdown} vs AC ${wTargetAC}${wAcNote} → ${wIsCrit ? 'CRIT' : wIsHit ? 'HIT' : 'MISS'}${wModNote}${wShieldNote}`);
+        wParts.push(
+          `${wHitIcon} Attack ${wAtkResult.breakdown} vs AC ${wTargetAC}${wAcNote} → ${wIsCrit ? 'CRIT' : wIsHit ? 'HIT' : 'MISS'}${wModNote}${wShieldNote}`
+        );
 
         // Hoisted damage breakdown — populated inside the if(wIsHit)
         // block below, referenced by the AttackBreakdown builder just
@@ -1867,7 +2197,9 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
         let wDamageBreakdown: AttackBreakdown['damage'] | undefined;
 
         if (wIsHit && effectiveCharId) {
-          const wFinalDice = wIsCrit ? dmgDice.replace(/(\d+)d/g, (_: string, n: string) => `${parseInt(n) * 2}d`) : dmgDice;
+          const wFinalDice = wIsCrit
+            ? dmgDice.replace(/(\d+)d/g, (_: string, n: string) => `${parseInt(n) * 2}d`)
+            : dmgDice;
           // Great Weapon Fighting: re-roll 1s and 2s on the weapon's
           // damage dice, once each (the new result is kept even if it's
           // worse). Implemented via a custom roller that reshapes the
@@ -1923,9 +2255,10 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
             : null;
           const casterClassLower = String((wCasterChar as any)?.class || '').toLowerCase();
           const wPropList = (atk.properties as string[] | undefined) || [];
-          const wIsFinesse = wPropList.some(p => /finesse/i.test(p));
-          const wIsRangedProp = wPropList.some(p => /(range|ammunition|thrown)/i.test(p))
-            && !wPropList.includes('Melee');
+          const wIsFinesse = wPropList.some((p) => /finesse/i.test(p));
+          const wIsRangedProp =
+            wPropList.some((p) => /(range|ammunition|thrown)/i.test(p)) &&
+            !wPropList.includes('Melee');
 
           // Rage (Barbarian): +2/+3/+4 bonus damage on melee attacks that
           // use Strength. RAW requires STR; for finesse weapons we only
@@ -1933,13 +2266,17 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
           // pick STR). Non-finesse melee weapons always use STR so they
           // qualify outright.
           let wRageBonus = 0;
-          if (wIsMelee && wCasterConds.includes('raging') && casterClassLower.includes('barbarian')) {
+          if (
+            wIsMelee &&
+            wCasterConds.includes('raging') &&
+            casterClassLower.includes('barbarian')
+          ) {
             let usesStr = true;
             if (wIsFinesse) {
               const scores = (wCasterChar as any)?.abilityScores
-                ? (typeof (wCasterChar as any).abilityScores === 'string'
+                ? typeof (wCasterChar as any).abilityScores === 'string'
                   ? JSON.parse((wCasterChar as any).abilityScores)
-                  : (wCasterChar as any).abilityScores)
+                  : (wCasterChar as any).abilityScores
                 : {};
               const strMod = abilityModifier((scores as any).str || 10);
               const dexMod = abilityModifier((scores as any).dex || 10);
@@ -1984,15 +2321,30 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
                   if (allyIsPC !== attackerIsPC) continue;
                   if (allyIsPC === targetIsPC) continue;
                   const ac = ((ally as any).conditions || []) as string[];
-                  if (ac.includes('incapacitated') || ac.includes('unconscious')
-                    || ac.includes('stunned') || ac.includes('paralyzed')
-                    || ac.includes('petrified') || ac.includes('dead')) continue;
+                  if (
+                    ac.includes('incapacitated') ||
+                    ac.includes('unconscious') ||
+                    ac.includes('stunned') ||
+                    ac.includes('paralyzed') ||
+                    ac.includes('petrified') ||
+                    ac.includes('dead')
+                  )
+                    continue;
                   const aSize = (ally as any).size || 1;
                   const acx = (ally as any).x + (gridSize * aSize) / 2;
                   const acy = (ally as any).y + (gridSize * aSize) / 2;
-                  const dx = Math.max(0, Math.abs(acx - tcx) - (aSize * gridSize) / 2 - (tgtSize * gridSize) / 2);
-                  const dy = Math.max(0, Math.abs(acy - tcy) - (aSize * gridSize) / 2 - (tgtSize * gridSize) / 2);
-                  if (Math.max(dx, dy) <= gridSize + 1) { allyFlank = true; break; }
+                  const dx = Math.max(
+                    0,
+                    Math.abs(acx - tcx) - (aSize * gridSize) / 2 - (tgtSize * gridSize) / 2
+                  );
+                  const dy = Math.max(
+                    0,
+                    Math.abs(acy - tcy) - (aSize * gridSize) / 2 - (tgtSize * gridSize) / 2
+                  );
+                  if (Math.max(dx, dy) <= gridSize + 1) {
+                    allyFlank = true;
+                    break;
+                  }
                 }
               }
               if (hasAdv || allyFlank) {
@@ -2034,24 +2386,38 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
           if (wTargetConds.includes('hexed')) {
             try {
               const spellsRaw = (wCasterChar as any)?.spells;
-              const spells = typeof spellsRaw === 'string' ? JSON.parse(spellsRaw) : (spellsRaw || []);
-              if (Array.isArray(spells) && spells.some(
-                (s: { name?: string }) => typeof s?.name === 'string' && /^\s*hex\s*$/i.test(s.name),
-              )) {
+              const spells =
+                typeof spellsRaw === 'string' ? JSON.parse(spellsRaw) : spellsRaw || [];
+              if (
+                Array.isArray(spells) &&
+                spells.some(
+                  (s: { name?: string }) =>
+                    typeof s?.name === 'string' && /^\s*hex\s*$/i.test(s.name)
+                )
+              ) {
                 wHexBonus = rollDamageDice('1d6');
               }
-            } catch { /* ignore */ }
+            } catch {
+              /* ignore */
+            }
           }
           if (wTargetConds.includes('marked')) {
             try {
               const spellsRaw = (wCasterChar as any)?.spells;
-              const spells = typeof spellsRaw === 'string' ? JSON.parse(spellsRaw) : (spellsRaw || []);
-              if (Array.isArray(spells) && spells.some(
-                (s: { name?: string }) => typeof s?.name === 'string' && /hunter'?s\s+mark/i.test(s.name),
-              )) {
+              const spells =
+                typeof spellsRaw === 'string' ? JSON.parse(spellsRaw) : spellsRaw || [];
+              if (
+                Array.isArray(spells) &&
+                spells.some(
+                  (s: { name?: string }) =>
+                    typeof s?.name === 'string' && /hunter'?s\s+mark/i.test(s.name)
+                )
+              ) {
                 wMarkBonus = rollDamageDice('1d6');
               }
-            } catch { /* ignore */ }
+            } catch {
+              /* ignore */
+            }
           }
           // Hexblade's Curse: +proficiency bonus damage when the
           // caster (Hexblade Warlock) hits the cursed target. Rides
@@ -2060,19 +2426,28 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
           if (wTargetConds.includes('hexblade-cursed')) {
             try {
               const rawFeats = (wCasterChar as any)?.features;
-              const feats = typeof rawFeats === 'string' ? JSON.parse(rawFeats) : (rawFeats || []);
-              const hasIt = Array.isArray(feats) && feats.some(
-                (f: { name?: string }) => typeof f?.name === 'string' && /hexblade'?s\s+curse/i.test(f.name),
-              );
+              const feats = typeof rawFeats === 'string' ? JSON.parse(rawFeats) : rawFeats || [];
+              const hasIt =
+                Array.isArray(feats) &&
+                feats.some(
+                  (f: { name?: string }) =>
+                    typeof f?.name === 'string' && /hexblade'?s\s+curse/i.test(f.name)
+                );
               if (hasIt) {
                 const profBonus = Number((wCasterChar as any)?.proficiencyBonus) || 2;
                 wHexbladeBonus = profBonus;
               }
-            } catch { /* ignore */ }
+            } catch {
+              /* ignore */
+            }
           }
 
           const wFreshChar = useCharacterStore.getState().allCharacters[effectiveCharId];
-          const wFreshHp = wFreshChar ? (typeof wFreshChar.hitPoints === 'number' ? wFreshChar.hitPoints : parseInt(String(wFreshChar.hitPoints)) || 0) : targetHp;
+          const wFreshHp = wFreshChar
+            ? typeof wFreshChar.hitPoints === 'number'
+              ? wFreshChar.hitPoints
+              : parseInt(String(wFreshChar.hitPoints)) || 0
+            : targetHp;
           // Weapon attacks default to NONMAGICAL (so Stoneskin applies),
           // but magic weapons (+1 longsword, etc.) count as magical for
           // the purpose of overcoming damage resistance. Detect via the
@@ -2092,62 +2467,117 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
           // Silvered Longsword but false-positive-avoids "silverwrought".
           let wMaterial: 'silvered' | 'adamantine' | 'cold-iron' | null = null;
           const atkMat = String((atk as Record<string, unknown>)?.material ?? '').toLowerCase();
-          const atkProps = ((atk as Record<string, unknown>)?.properties as string[] | undefined) || [];
+          const atkProps =
+            ((atk as Record<string, unknown>)?.properties as string[] | undefined) || [];
           const propText = atkProps.map((p) => String(p).toLowerCase()).join(' ');
           const atkNameLower = String(atk.name || '').toLowerCase();
-          if (atkMat === 'silvered' || /\bsilvered\b/.test(propText) || /\bsilvered\b/.test(atkNameLower)) {
+          if (
+            atkMat === 'silvered' ||
+            /\bsilvered\b/.test(propText) ||
+            /\bsilvered\b/.test(atkNameLower)
+          ) {
             wMaterial = 'silvered';
-          } else if (atkMat === 'adamantine' || /\badamantine\b/.test(propText) || /\badamantine\b/.test(atkNameLower)) {
+          } else if (
+            atkMat === 'adamantine' ||
+            /\badamantine\b/.test(propText) ||
+            /\badamantine\b/.test(atkNameLower)
+          ) {
             wMaterial = 'adamantine';
-          } else if (atkMat === 'cold-iron' || atkMat === 'cold iron' || /cold[\s-]?iron/.test(propText) || /cold[\s-]?iron/.test(atkNameLower)) {
+          } else if (
+            atkMat === 'cold-iron' ||
+            atkMat === 'cold iron' ||
+            /cold[\s-]?iron/.test(propText) ||
+            /cold[\s-]?iron/.test(atkNameLower)
+          ) {
             wMaterial = 'cold-iron';
           }
-          const wDefenses = (wFreshChar as any)?.defenses ? (typeof (wFreshChar as any).defenses === 'string' ? JSON.parse((wFreshChar as any).defenses) : (wFreshChar as any).defenses) : { resistances: [], immunities: [], vulnerabilities: [] };
+          const wDefenses = (wFreshChar as any)?.defenses
+            ? typeof (wFreshChar as any).defenses === 'string'
+              ? JSON.parse((wFreshChar as any).defenses)
+              : (wFreshChar as any).defenses
+            : { resistances: [], immunities: [], vulnerabilities: [] };
           // Resolve the main weapon damage (weapon type, magic flag,
           // material) and the rider instances (hex = necrotic magical,
           // mark = same weapon type & magic flag) independently.
-          const wResisted = applyDamageWithResist(wRolledDmg, weaponDmgType, wDefenses, wTargetConds, wIsMagicalWeapon, wMaterial);
+          const wResisted = applyDamageWithResist(
+            wRolledDmg,
+            weaponDmgType,
+            wDefenses,
+            wTargetConds,
+            wIsMagicalWeapon,
+            wMaterial
+          );
           let wResistedHex = { amount: 0, source: '' };
           let wResistedMark = { amount: 0, source: '' };
           let wResistedHexblade = { amount: 0, source: '' };
           if (wHexBonus > 0) {
-            wResistedHex = applyDamageWithResist(wHexBonus, 'necrotic', wDefenses, wTargetConds, true) as { amount: number; source: string };
+            wResistedHex = applyDamageWithResist(
+              wHexBonus,
+              'necrotic',
+              wDefenses,
+              wTargetConds,
+              true
+            ) as { amount: number; source: string };
           }
           if (wMarkBonus > 0) {
             // Hunter's Mark rides on the weapon damage type; it's
             // magical because it's a spell-sourced rider.
-            wResistedMark = applyDamageWithResist(wMarkBonus, weaponDmgType, wDefenses, wTargetConds, true) as { amount: number; source: string };
+            wResistedMark = applyDamageWithResist(
+              wMarkBonus,
+              weaponDmgType,
+              wDefenses,
+              wTargetConds,
+              true
+            ) as { amount: number; source: string };
           }
           if (wHexbladeBonus > 0) {
             // Hexblade's Curse rides on the weapon type (same instance),
             // so it inherits magical + material flags from the strike.
-            wResistedHexblade = applyDamageWithResist(wHexbladeBonus, weaponDmgType, wDefenses, wTargetConds, wIsMagicalWeapon, wMaterial) as { amount: number; source: string };
+            wResistedHexblade = applyDamageWithResist(
+              wHexbladeBonus,
+              weaponDmgType,
+              wDefenses,
+              wTargetConds,
+              wIsMagicalWeapon,
+              wMaterial
+            ) as { amount: number; source: string };
           }
           // Combine resisted totals into a single "incoming damage"
           // figure for HP reduction + the side-effect pipeline.
-          const wTotalResisted = wResisted.amount + wResistedHex.amount + wResistedMark.amount + wResistedHexblade.amount;
+          const wTotalResisted =
+            wResisted.amount +
+            wResistedHex.amount +
+            wResistedMark.amount +
+            wResistedHexblade.amount;
           const wNewHp = Math.max(0, wFreshHp - wTotalResisted);
           const wResistTag = wResisted.source ? ` [${wResisted.source}]` : '';
           const wRageTag = wRageBonus > 0 ? ` [Rage +${wRageBonus}]` : '';
           const wSneakTag = wSneakDice > 0 ? ` [Sneak +${wSneakDice}d6 → ${wSneakRolled}]` : '';
           const wPowerTag = wPowerAttackActive ? ' [Power Attack +10]' : '';
           const wDuelingTag = wDuelingBonus > 0 ? ` [Dueling +${wDuelingBonus}]` : '';
-          const wTwfTag = wTwfOffHandMod !== 0 ? ` [TWF ${wTwfOffHandMod >= 0 ? '+' : ''}${wTwfOffHandMod}]` : '';
+          const wTwfTag =
+            wTwfOffHandMod !== 0 ? ` [TWF ${wTwfOffHandMod >= 0 ? '+' : ''}${wTwfOffHandMod}]` : '';
           const wGwfTag = wGwfReroll ? ' [GWF reroll 1s/2s]' : '';
           // Hex / Mark now show their resisted amount (e.g. "+6→3" if
           // the target had necrotic resistance) rather than just the raw roll.
-          const wHexTag = wHexBonus > 0
-            ? ` [Hex ${wResistedHex.amount !== wHexBonus ? `${wHexBonus}→${wResistedHex.amount}` : `+${wHexBonus}`} necrotic${wResistedHex.source ? ` ${wResistedHex.source}` : ''}]`
-            : '';
-          const wMarkTag = wMarkBonus > 0
-            ? ` [Mark ${wResistedMark.amount !== wMarkBonus ? `${wMarkBonus}→${wResistedMark.amount}` : `+${wMarkBonus}`}]`
-            : '';
-          const wHexbladeTag = wHexbladeBonus > 0
-            ? ` [Hexblade Curse +${wResistedHexblade.amount}]`
-            : '';
+          const wHexTag =
+            wHexBonus > 0
+              ? ` [Hex ${wResistedHex.amount !== wHexBonus ? `${wHexBonus}→${wResistedHex.amount}` : `+${wHexBonus}`} necrotic${wResistedHex.source ? ` ${wResistedHex.source}` : ''}]`
+              : '';
+          const wMarkTag =
+            wMarkBonus > 0
+              ? ` [Mark ${wResistedMark.amount !== wMarkBonus ? `${wMarkBonus}→${wResistedMark.amount}` : `+${wMarkBonus}`}]`
+              : '';
+          const wHexbladeTag =
+            wHexbladeBonus > 0 ? ` [Hexblade Curse +${wResistedHexblade.amount}]` : '';
           const wMagicWeaponTag = wIsMagicalWeapon ? ' [magic]' : '';
-          const wDmgChange = wResisted.amount !== wRolledDmg ? `${wRolledDmg}→${wResisted.amount}` : `${wResisted.amount}`;
-          wParts.push(`${wDmgChange} ${weaponDmgWord}dmg${wMagicWeaponTag}${wRageTag}${wSneakTag}${wPowerTag}${wDuelingTag}${wTwfTag}${wGwfTag}${wHexTag}${wMarkTag}${wHexbladeTag}${wResistTag} (HP ${wFreshHp}→${wNewHp})${wIsCrit ? ' [CRIT]' : ''}`);
+          const wDmgChange =
+            wResisted.amount !== wRolledDmg
+              ? `${wRolledDmg}→${wResisted.amount}`
+              : `${wResisted.amount}`;
+          wParts.push(
+            `${wDmgChange} ${weaponDmgWord}dmg${wMagicWeaponTag}${wRageTag}${wSneakTag}${wPowerTag}${wDuelingTag}${wTwfTag}${wGwfTag}${wHexTag}${wMarkTag}${wHexbladeTag}${wResistTag} (HP ${wFreshHp}→${wNewHp})${wIsCrit ? ' [CRIT]' : ''}`
+          );
           if (wNewHp === 0) wParts.push('💀 DOWN');
 
           // Structured damage breakdown for the chat card. Each rider
@@ -2161,7 +2591,8 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
           const wBonuses: AttackBreakdownDamageSource[] = [];
           if (wRageBonus > 0) {
             wBonuses.push({
-              label: `Rage`, amount: wRageBonus,
+              label: `Rage`,
+              amount: wRageBonus,
               damageType: weaponDmgType || 'damage',
             });
           }
@@ -2216,7 +2647,8 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
               label: "Hexblade's Curse (prof)",
               amount: wHexbladeBonus,
               damageType: weaponDmgType || 'damage',
-              resisted: wResistedHexblade.amount !== wHexbladeBonus ? wResistedHexblade.amount : undefined,
+              resisted:
+                wResistedHexblade.amount !== wHexbladeBonus ? wResistedHexblade.amount : undefined,
               resistanceNote: wResistedHexblade.source || undefined,
             });
           }
@@ -2250,8 +2682,15 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
           };
 
           setTimeout(() => {
-            const serverHandled = applyTargetDamage(targetToken.id, effectiveCharId, wNewHp, wTotalResisted, wIsCrit);
-            if (!serverHandled && wTotalResisted > 0) emitDamageSideEffects(targetToken.id, wTotalResisted);
+            const serverHandled = applyTargetDamage(
+              targetToken.id,
+              effectiveCharId,
+              wNewHp,
+              wTotalResisted,
+              wIsCrit
+            );
+            if (!serverHandled && wTotalResisted > 0)
+              emitDamageSideEffects(targetToken.id, wTotalResisted);
           }, 300);
         }
 
@@ -2289,9 +2728,11 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
           });
         }
 
-        const wShieldSpell: AttackBreakdown['shieldSpell'] =
-          wShieldNote.includes('MISS') ? 'miss' :
-          wShieldNote.includes('still') ? 'still-hit' : undefined;
+        const wShieldSpell: AttackBreakdown['shieldSpell'] = wShieldNote.includes('MISS')
+          ? 'miss'
+          : wShieldNote.includes('still')
+            ? 'still-hit'
+            : undefined;
 
         const wBreakdown: AttackBreakdown = {
           attacker: {
@@ -2318,9 +2759,7 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
             isCrit: !!wIsCrit,
             isFumble: wAtkResult.isFumble,
           },
-          hitResult: wIsCrit ? 'crit' :
-            wIsHit ? 'hit' :
-            wAtkResult.isFumble ? 'fumble' : 'miss',
+          hitResult: wIsCrit ? 'crit' : wIsHit ? 'hit' : wAtkResult.isFumble ? 'fumble' : 'miss',
           damage: wDamageBreakdown,
           notes: wCombined.notes.slice(0, 16),
           shieldSpell: wShieldSpell,
@@ -2338,14 +2777,19 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
             : null;
           try {
             const raw = (mobileCaster as any)?.features;
-            const feats = typeof raw === 'string' ? JSON.parse(raw) : (raw || []);
-            const hasMobile = Array.isArray(feats) && feats.some(
-              (f: { name?: string }) => typeof f?.name === 'string' && /^\s*mobile\s*$/i.test(f.name),
-            );
+            const feats = typeof raw === 'string' ? JSON.parse(raw) : raw || [];
+            const hasMobile =
+              Array.isArray(feats) &&
+              feats.some(
+                (f: { name?: string }) =>
+                  typeof f?.name === 'string' && /^\s*mobile\s*$/i.test(f.name)
+              );
             if (hasMobile) {
               emitMobileAttacked(wCasterToken.id, targetToken.id);
             }
-          } catch { /* ignore */ }
+          } catch {
+            /* ignore */
+          }
         }
 
         // Thrown weapons drop from inventory and spawn an item token at
@@ -2376,17 +2820,25 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ itemIndex: wThrownInventoryIdx, mapId, x: dropX, y: dropY }),
             })
-              .then(r => r.ok ? r.json() : null)
-              .then(data => {
+              .then((r) => (r.ok ? r.json() : null))
+              .then((data) => {
                 if (!data?.success) return;
                 // Update the caster's inventory locally. Server now
                 // creates the loot token atomically and broadcasts it
                 // via `map:token-added`, so no client emit is needed.
-                useCharacterStore.getState().applyRemoteUpdate(casterCharIdForDrop, { inventory: data.inventory });
-                emitCharacterUpdate(casterCharIdForDrop, { inventory: data.inventory }, { skipLocal: true });
-                emitSystemMessage(`🗡 ${currentTargeting.casterName} dropped ${atk.name.replace(' (Thrown)', '')} at ${targetToken.name}'s feet`);
+                useCharacterStore
+                  .getState()
+                  .applyRemoteUpdate(casterCharIdForDrop, { inventory: data.inventory });
+                emitCharacterUpdate(
+                  casterCharIdForDrop,
+                  { inventory: data.inventory },
+                  { skipLocal: true }
+                );
+                emitSystemMessage(
+                  `🗡 ${currentTargeting.casterName} dropped ${atk.name.replace(' (Thrown)', '')} at ${targetToken.name}'s feet`
+                );
               })
-              .catch(err => console.error('[THROW] failed to drop weapon:', err));
+              .catch((err) => console.error('[THROW] failed to drop weapon:', err));
           }
         }
       }
@@ -2395,7 +2847,9 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
     };
 
     const handleEscape = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') { useMapStore.getState().cancelTargetingMode(); }
+      if (e.key === 'Escape') {
+        useMapStore.getState().cancelTargetingMode();
+      }
     };
 
     window.addEventListener('target-token-selected', handleTargetSelect);
@@ -2409,12 +2863,21 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
   // Fetch loot weapons when token changes or loot is updated
   // Must be before early returns to satisfy React hooks rules
   useEffect(() => {
-    if (!selectedTokenId) { setLootWeapons([]); return; }
+    if (!selectedTokenId) {
+      setLootWeapons([]);
+      return;
+    }
     const t = useMapStore.getState().tokens[selectedTokenId];
-    if (!t?.characterId) { setLootWeapons([]); return; }
+    if (!t?.characterId) {
+      setLootWeapons([]);
+      return;
+    }
     const charData = useCharacterStore.getState().allCharacters[t.characterId];
     const isCreature = !t.ownerUserId || charData?.userId === 'npc';
-    if (!isCreature) { setLootWeapons([]); return; }
+    if (!isCreature) {
+      setLootWeapons([]);
+      return;
+    }
 
     let cancelled = false;
     const fetchWeapons = async () => {
@@ -2422,10 +2885,19 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
         const resp = await fetch(`/api/characters/${t.characterId}/loot`);
         if (!resp.ok || cancelled) return;
         const lootItems: LootEntry[] = await resp.json();
-        const equipped = lootItems.filter(l => l.equipped && (l.item_slug || l.custom_item_id));
-        if (equipped.length === 0) { if (!cancelled) setLootWeapons([]); return; }
+        const equipped = lootItems.filter((l) => l.equipped && (l.item_slug || l.custom_item_id));
+        if (equipped.length === 0) {
+          if (!cancelled) setLootWeapons([]);
+          return;
+        }
 
-        const weapons: { name: string; damage: string; damageType: string; properties: string[]; range?: string }[] = [];
+        const weapons: {
+          name: string;
+          damage: string;
+          damageType: string;
+          properties: string[];
+          range?: string;
+        }[] = [];
         for (const item of equipped) {
           try {
             let data: any = null;
@@ -2452,7 +2924,11 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
 
             // Try parsing properties from JSON string (custom items store as JSON)
             if (typeof data.properties === 'string') {
-              try { properties = JSON.parse(data.properties); } catch { /* ignore */ }
+              try {
+                properties = JSON.parse(data.properties);
+              } catch {
+                /* ignore */
+              }
             } else if (Array.isArray(data.properties)) {
               properties = data.properties;
             }
@@ -2460,46 +2936,92 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
             // Fallback: parse from description
             if (!damage && (data.description || data.desc)) {
               const desc = (data.description || data.desc) as string;
-              const dmgMatch = desc.match(/(\d+d\d+(?:\s*\+\s*\d+)?)\s+(slashing|piercing|bludgeoning|fire|cold|lightning|thunder|acid|poison|necrotic|radiant|force|psychic)/i);
+              const dmgMatch = desc.match(
+                /(\d+d\d+(?:\s*\+\s*\d+)?)\s+(slashing|piercing|bludgeoning|fire|cold|lightning|thunder|acid|poison|necrotic|radiant|force|psychic)/i
+              );
               if (dmgMatch) {
                 damage = dmgMatch[1].replace(/\s/g, '');
                 damageType = dmgMatch[2].toLowerCase();
               }
-              if (desc.toLowerCase().includes('finesse') && !properties.includes('Finesse')) properties.push('Finesse');
-              if (desc.toLowerCase().includes('two-handed') && !properties.includes('Two-Handed')) properties.push('Two-Handed');
-              if (desc.toLowerCase().includes('heavy') && !properties.includes('Heavy')) properties.push('Heavy');
-              if (desc.toLowerCase().includes('thrown') && !properties.includes('Thrown')) properties.push('Thrown');
-              if (desc.toLowerCase().includes('versatile') && !properties.includes('Versatile')) properties.push('Versatile');
+              if (desc.toLowerCase().includes('finesse') && !properties.includes('Finesse'))
+                properties.push('Finesse');
+              if (desc.toLowerCase().includes('two-handed') && !properties.includes('Two-Handed'))
+                properties.push('Two-Handed');
+              if (desc.toLowerCase().includes('heavy') && !properties.includes('Heavy'))
+                properties.push('Heavy');
+              if (desc.toLowerCase().includes('thrown') && !properties.includes('Thrown'))
+                properties.push('Thrown');
+              if (desc.toLowerCase().includes('versatile') && !properties.includes('Versatile'))
+                properties.push('Versatile');
             }
 
             // Last resort: infer default damage from weapon type hint
             if (!damage) {
               const t = typeLower;
               const n = item.item_name.toLowerCase();
-              if (t.includes('greataxe') || n.includes('greataxe')) { damage = '1d12'; damageType = 'slashing'; }
-              else if (t.includes('greatsword') || n.includes('greatsword')) { damage = '2d6'; damageType = 'slashing'; }
-              else if (t.includes('longsword') || n.includes('longsword')) { damage = '1d8'; damageType = 'slashing'; }
-              else if (t.includes('battleaxe') || t.includes('any axe') || n.includes('axe')) { damage = '1d8'; damageType = 'slashing'; }
-              else if (t.includes('shortsword') || n.includes('shortsword')) { damage = '1d6'; damageType = 'piercing'; }
-              else if (t.includes('rapier') || n.includes('rapier')) { damage = '1d8'; damageType = 'piercing'; }
-              else if (t.includes('dagger') || n.includes('dagger')) { damage = '1d4'; damageType = 'piercing'; }
-              else if (t.includes('mace') || n.includes('mace')) { damage = '1d6'; damageType = 'bludgeoning'; }
-              else if (t.includes('warhammer') || n.includes('hammer')) { damage = '1d8'; damageType = 'bludgeoning'; }
-              else if (t.includes('longbow') || n.includes('longbow')) { damage = '1d8'; damageType = 'piercing'; }
-              else if (t.includes('shortbow') || n.includes('shortbow')) { damage = '1d6'; damageType = 'piercing'; }
-              else if (t.includes('crossbow') || n.includes('crossbow')) { damage = '1d8'; damageType = 'piercing'; }
-              else if (t.includes('spear') || n.includes('spear')) { damage = '1d6'; damageType = 'piercing'; }
-              else if (t.includes('staff') || n.includes('staff')) { damage = '1d6'; damageType = 'bludgeoning'; }
-              else if (t.includes('sword') || n.includes('sword')) { damage = '1d8'; damageType = 'slashing'; }
-              else if (t.includes('bow') || n.includes('bow')) { damage = '1d6'; damageType = 'piercing'; }
-              else if (t.includes('any')) { damage = '1d8'; damageType = 'slashing'; }
-              else { damage = '1d6'; damageType = 'slashing'; } // generic weapon fallback
+              if (t.includes('greataxe') || n.includes('greataxe')) {
+                damage = '1d12';
+                damageType = 'slashing';
+              } else if (t.includes('greatsword') || n.includes('greatsword')) {
+                damage = '2d6';
+                damageType = 'slashing';
+              } else if (t.includes('longsword') || n.includes('longsword')) {
+                damage = '1d8';
+                damageType = 'slashing';
+              } else if (t.includes('battleaxe') || t.includes('any axe') || n.includes('axe')) {
+                damage = '1d8';
+                damageType = 'slashing';
+              } else if (t.includes('shortsword') || n.includes('shortsword')) {
+                damage = '1d6';
+                damageType = 'piercing';
+              } else if (t.includes('rapier') || n.includes('rapier')) {
+                damage = '1d8';
+                damageType = 'piercing';
+              } else if (t.includes('dagger') || n.includes('dagger')) {
+                damage = '1d4';
+                damageType = 'piercing';
+              } else if (t.includes('mace') || n.includes('mace')) {
+                damage = '1d6';
+                damageType = 'bludgeoning';
+              } else if (t.includes('warhammer') || n.includes('hammer')) {
+                damage = '1d8';
+                damageType = 'bludgeoning';
+              } else if (t.includes('longbow') || n.includes('longbow')) {
+                damage = '1d8';
+                damageType = 'piercing';
+              } else if (t.includes('shortbow') || n.includes('shortbow')) {
+                damage = '1d6';
+                damageType = 'piercing';
+              } else if (t.includes('crossbow') || n.includes('crossbow')) {
+                damage = '1d8';
+                damageType = 'piercing';
+              } else if (t.includes('spear') || n.includes('spear')) {
+                damage = '1d6';
+                damageType = 'piercing';
+              } else if (t.includes('staff') || n.includes('staff')) {
+                damage = '1d6';
+                damageType = 'bludgeoning';
+              } else if (t.includes('sword') || n.includes('sword')) {
+                damage = '1d8';
+                damageType = 'slashing';
+              } else if (t.includes('bow') || n.includes('bow')) {
+                damage = '1d6';
+                damageType = 'piercing';
+              } else if (t.includes('any')) {
+                damage = '1d8';
+                damageType = 'slashing';
+              } else {
+                damage = '1d6';
+                damageType = 'slashing';
+              } // generic weapon fallback
             }
 
             // Get magic weapon bonus — from DB field or parsed from description
             let magicBonus = (data.magic_bonus as number) || 0;
             if (!magicBonus) {
-              const bonusMatch = ((data.description || data.desc || '') as string).match(/\+(\d)\s*bonus to attack and damage/i);
+              const bonusMatch = ((data.description || data.desc || '') as string).match(
+                /\+(\d)\s*bonus to attack and damage/i
+              );
               if (bonusMatch) magicBonus = parseInt(bonusMatch[1], 10);
             }
 
@@ -2514,30 +3036,49 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
                 magicBonus,
               } as any);
             }
-          } catch { /* skip */ }
+          } catch {
+            /* skip */
+          }
         }
         if (!cancelled) setLootWeapons(weapons);
-      } catch { /* ignore */ }
+      } catch {
+        /* ignore */
+      }
     };
 
     fetchWeapons();
     const handler = () => fetchWeapons();
     window.addEventListener('loot-updated', handler);
-    return () => { cancelled = true; window.removeEventListener('loot-updated', handler); };
+    return () => {
+      cancelled = true;
+      window.removeEventListener('loot-updated', handler);
+    };
   }, [selectedTokenId]);
 
   // --- Phase 6: Creature spell state (must be before early return for hooks rules) ---
-  const [creatureSpells, setCreatureSpells] = useState<{ name: string; level: number; slug: string }[]>([]);
+  const [creatureSpells, setCreatureSpells] = useState<
+    { name: string; level: number; slug: string }[]
+  >([]);
   const [creatureSpellDC, setCreatureSpellDC] = useState(0);
   const [creatureSpellAtk, setCreatureSpellAtk] = useState(0);
 
   // Parse creature spellcasting trait (before early return)
   useEffect(() => {
-    if (!compendiumData?.specialAbilities) { setCreatureSpells([]); setCreatureSpellDC(0); setCreatureSpellAtk(0); return; }
-    const spellTrait = compendiumData.specialAbilities.find((a: any) =>
-      a.name?.toLowerCase().includes('spellcasting') || a.name?.toLowerCase().includes('innate spellcasting')
+    if (!compendiumData?.specialAbilities) {
+      setCreatureSpells([]);
+      setCreatureSpellDC(0);
+      setCreatureSpellAtk(0);
+      return;
+    }
+    const spellTrait = compendiumData.specialAbilities.find(
+      (a: any) =>
+        a.name?.toLowerCase().includes('spellcasting') ||
+        a.name?.toLowerCase().includes('innate spellcasting')
     );
-    if (!spellTrait?.desc) { setCreatureSpells([]); return; }
+    if (!spellTrait?.desc) {
+      setCreatureSpells([]);
+      return;
+    }
 
     const desc = spellTrait.desc as string;
     const dcMatch = desc.match(/spell save DC (\d+)/i);
@@ -2554,30 +3095,50 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
       const colonIdx = line.indexOf(':');
       if (colonIdx < 0) continue;
       const spellPart = line.slice(colonIdx + 1);
-      const names = spellPart.split(/,|;/).map(s => s.replace(/\*|_/g, '').trim()).filter(Boolean);
+      const names = spellPart
+        .split(/,|;/)
+        .map((s) => s.replace(/\*|_/g, '').trim())
+        .filter(Boolean);
       for (const name of names) {
         if (name.length > 2 && name.length < 40) spellNames.push({ name, level });
       }
     }
-    setCreatureSpells(spellNames.map(s => ({
-      ...s, slug: s.name.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '').replace(/'/g, ''),
-    })));
+    setCreatureSpells(
+      spellNames.map((s) => ({
+        ...s,
+        slug: s.name
+          .toLowerCase()
+          .replace(/\s+/g, '-')
+          .replace(/[^a-z0-9-]/g, '')
+          .replace(/'/g, ''),
+      }))
+    );
   }, [compendiumData]);
 
   // Empty-state: embedded mode shows a hint, floating popup returns
   // null so it stays hidden until a token is selected.
   const emptyHint = (msg: string) => (
-    <div style={{
-      padding: '24px 16px', textAlign: 'center',
-      color: C.textMuted, fontSize: 12, lineHeight: 1.5,
-      background: C.bg, width: '100%', height: '100%',
-    }}>
+    <div
+      style={{
+        padding: '24px 16px',
+        textAlign: 'center',
+        color: C.textMuted,
+        fontSize: 12,
+        lineHeight: 1.5,
+        background: C.bg,
+        width: '100%',
+        height: '100%',
+      }}
+    >
       {msg}
     </div>
   );
 
   if (isEmbedded) {
-    if (!selectedTokenId) return emptyHint('No token on the map for your character yet.\nPlace your hero on the battle map to use this panel.');
+    if (!selectedTokenId)
+      return emptyHint(
+        'No token on the map for your character yet.\nPlace your hero on the battle map to use this panel.'
+      );
   } else {
     if (!visible || !selectedTokenId) return null;
   }
@@ -2591,7 +3152,7 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
   const character = token.characterId ? allCharacters[token.characterId] : null;
   const isOwner = token.ownerUserId === userId;
   const canAct = isDM || isOwner;
-  const isNPC = !token.ownerUserId || (character?.userId === 'npc');
+  const isNPC = !token.ownerUserId || character?.userId === 'npc';
 
   // Privacy gate — does the current user get to see mechanical detail
   // (AC, attacks, inventory, saves, etc.) on this token? DMs always do;
@@ -2599,15 +3160,10 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
   // the DM's explicit opt-in via Session Privacy toggles. Defaults are
   // false / false so new sessions don't leak creature AC or cross-player
   // stats out of the box.
-  const showCreatureStats =
-    useSessionStore.getState().settings.showCreatureStatsToPlayers === true;
-  const showPlayerStats =
-    useSessionStore.getState().settings.showPlayersToPlayers === true;
+  const showCreatureStats = useSessionStore.getState().settings.showCreatureStatsToPlayers === true;
+  const showPlayerStats = useSessionStore.getState().settings.showPlayersToPlayers === true;
   const canSeeStats =
-    isDM ||
-    isOwner ||
-    (isNPC && showCreatureStats) ||
-    (!isNPC && showPlayerStats);
+    isDM || isOwner || (isNPC && showCreatureStats) || (!isNPC && showPlayerStats);
 
   // The Combat Actions section only shows when the viewed token is
   // actually the active combatant — so non-current players can't use
@@ -2621,7 +3177,7 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
   const hp = localHp !== null ? localHp : baseHp;
   const maxHp = character?.maxHitPoints ?? compendiumData?.hitPoints ?? 0;
   const storedAC = character?.armorClass ?? compendiumData?.armorClass ?? 10;
-  const speed = character?.speed ?? (compendiumData?.speed?.walk) ?? 30;
+  const speed = character?.speed ?? compendiumData?.speed?.walk ?? 30;
   const profBonus = character?.proficiencyBonus ?? 2;
   // Parse the character's spells AND enrich them from descriptions so the
   // damage / save / attack badges show on every spell button — including
@@ -2629,7 +3185,9 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
   const spells = character
     ? parse<any[]>(character.spells, []).map(enrichSpellFromDescription)
     : [];
-  const spellSlots = character ? parse<Record<string, { max: number; used: number }>>(character.spellSlots, {}) : {};
+  const spellSlots = character
+    ? parse<Record<string, { max: number; used: number }>>(character.spellSlots, {})
+    : {};
   const inventory = character ? parse<any[]>(character.inventory, []) : [];
   // Prefer explicitly-equipped weapons — but if nothing's marked
   // equipped (common failure mode for some DDB imports + legacy data
@@ -2661,13 +3219,16 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
   const equipBonuses = calculateEquipmentBonuses(inventory, mergedScores, storedAC);
   // Use the higher of stored AC (from DDB import) or calculated AC (from equipped items)
   // This handles both DDB characters (pre-calculated) and manually equipped creatures
-  const hasEquippedArmor = inventory.some((i: any) => i.equipped && (i.type === 'armor' || i.type === 'shield'));
+  const hasEquippedArmor = inventory.some(
+    (i: any) => i.equipped && (i.type === 'armor' || i.type === 'shield')
+  );
   const ac = hasEquippedArmor ? equipBonuses.effectiveAC : storedAC;
   const acTooltip = hasEquippedArmor ? equipBonuses.acBreakdown : `Base AC: ${storedAC}`;
   const hpPct = maxHp > 0 ? hp / maxHp : 1;
 
   // Merge ability scores from character or compendium
-  const abilityScores = Object.keys(scores).length > 0 ? scores : (compendiumData?.abilityScores || {});
+  const abilityScores =
+    Object.keys(scores).length > 0 ? scores : compendiumData?.abilityScores || {};
 
   // Actions from compendium. Many third-party creatures (Tome of Beasts etc.)
   // ship with only `name` + `desc` — no structured attack_bonus / damage_dice.
@@ -2687,21 +3248,35 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
 
   // (creature spell parsing moved before early return)
 
-
-  const close = () => { useMapStore.getState().selectToken(null); useMapStore.getState().cancelTargetingMode(); setVisible(false); };
+  const close = () => {
+    useMapStore.getState().selectToken(null);
+    useMapStore.getState().cancelTargetingMode();
+    setVisible(false);
+  };
 
   // Helper: create a character record for a token that doesn't have one
-  const createCharForToken = async (t: any, comp: any, currentHp: number, mHp: number, armorClass: number, spd: number): Promise<string | null> => {
+  const createCharForToken = async (
+    t: any,
+    comp: any,
+    currentHp: number,
+    mHp: number,
+    armorClass: number,
+    spd: number
+  ): Promise<string | null> => {
     try {
       const resp = await fetch('/api/characters', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          userId: 'npc', name: t.name,
+          userId: 'npc',
+          name: t.name,
           race: comp?.type || 'monster',
           class: `CR ${comp?.challengeRating || '0'}`,
-          level: 1, hitPoints: currentHp, maxHitPoints: mHp,
-          armorClass, speed: spd,
+          level: 1,
+          hitPoints: currentHp,
+          maxHitPoints: mHp,
+          armorClass,
+          speed: spd,
           abilityScores: comp?.abilityScores || {},
           portraitUrl: t.imageUrl,
           compendiumSlug: comp?.slug || null,
@@ -2711,7 +3286,8 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
         const data = await resp.json();
         emitTokenUpdate(t.id, { characterId: data.id } as any);
         useCharacterStore.getState().setAllCharacters({
-          ...useCharacterStore.getState().allCharacters, [data.id]: { ...data, hitPoints: currentHp },
+          ...useCharacterStore.getState().allCharacters,
+          [data.id]: { ...data, hitPoints: currentHp },
         });
         return data.id;
       }
@@ -2724,45 +3300,96 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
         // Inline — fills its parent (the Hero sidebar tab). The whole
         // panel (header + body) scrolls together so on small viewports
         // the player can still reach every attack/spell section.
-        width: '100%', height: '100%',
-        background: C.bg, color: C.text,
+        width: '100%',
+        height: '100%',
+        background: C.bg,
+        color: C.text,
         fontFamily: '-apple-system, sans-serif',
-        display: 'flex', flexDirection: 'column',
+        display: 'flex',
+        flexDirection: 'column',
         overflowY: 'auto',
       }
     : {
         // Floating popup — fixed to the bottom-left of the map.
-        position: 'fixed', bottom: 90, left: 12, zIndex: 500,
-        width: 320, maxHeight: 'calc(100vh - 160px)',
-        background: C.bg, border: `1px solid ${C.border}`, borderRadius: 12,
+        position: 'fixed',
+        bottom: 90,
+        left: 12,
+        zIndex: 500,
+        width: 320,
+        maxHeight: 'calc(100vh - 160px)',
+        background: C.bg,
+        border: `1px solid ${C.border}`,
+        borderRadius: 12,
         boxShadow: '0 8px 40px rgba(0,0,0,0.7)',
-        fontFamily: '-apple-system, sans-serif', color: C.text,
-        overflow: 'hidden', display: 'flex', flexDirection: 'column',
+        fontFamily: '-apple-system, sans-serif',
+        color: C.text,
+        overflow: 'hidden',
+        display: 'flex',
+        flexDirection: 'column',
       };
 
   return (
     <div style={wrapperStyle}>
       {!isEmbedded && (
-        <button onClick={close} style={{
-          position: 'absolute', top: 6, right: 8, zIndex: 10,
-          background: 'none', border: 'none', color: C.textMuted, fontSize: 18, cursor: 'pointer',
-        }}>&times;</button>
+        <button
+          onClick={close}
+          style={{
+            position: 'absolute',
+            top: 6,
+            right: 8,
+            zIndex: 10,
+            background: 'none',
+            border: 'none',
+            color: C.textMuted,
+            fontSize: 18,
+            cursor: 'pointer',
+          }}
+        >
+          &times;
+        </button>
       )}
 
       {/* Header */}
-      <div style={{ padding: '10px 12px', borderBottom: `1px solid ${C.border}`, background: C.bgCard }}>
+      <div
+        style={{
+          padding: '10px 12px',
+          borderBottom: `1px solid ${C.border}`,
+          background: C.bgCard,
+        }}
+      >
         <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
           {portraitUrl ? (
-            <img src={portraitUrl} alt="" style={{
-              width: 48, height: 48, borderRadius: '50%', objectFit: 'cover',
-              border: `2px solid ${isOwner ? C.green : C.red}`,
-            }} onError={(e) => { e.currentTarget.style.display = 'none'; }} />
+            <img
+              src={portraitUrl}
+              alt=""
+              style={{
+                width: 48,
+                height: 48,
+                borderRadius: '50%',
+                objectFit: 'cover',
+                border: `2px solid ${isOwner ? C.green : C.red}`,
+              }}
+              onError={(e) => {
+                e.currentTarget.style.display = 'none';
+              }}
+            />
           ) : (
-            <div style={{
-              width: 48, height: 48, borderRadius: '50%', background: token.color || '#555',
-              border: `2px solid ${C.red}`, display: 'flex', alignItems: 'center', justifyContent: 'center',
-              fontSize: 20, fontWeight: 700,
-            }}>{token.name[0]}</div>
+            <div
+              style={{
+                width: 48,
+                height: 48,
+                borderRadius: '50%',
+                background: token.color || '#555',
+                border: `2px solid ${C.red}`,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                fontSize: 20,
+                fontWeight: 700,
+              }}
+            >
+              {token.name[0]}
+            </div>
           )}
           <div style={{ flex: 1 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
@@ -2774,9 +3401,13 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
                   <span
                     title={`Faction: ${fac}`}
                     style={{
-                      width: 10, height: 10, borderRadius: '50%',
-                      background: color, display: 'inline-block',
-                      border: '1px solid rgba(0,0,0,0.35)', flexShrink: 0,
+                      width: 10,
+                      height: 10,
+                      borderRadius: '50%',
+                      background: color,
+                      display: 'inline-block',
+                      border: '1px solid rgba(0,0,0,0.35)',
+                      flexShrink: 0,
                     }}
                   />
                 );
@@ -2794,66 +3425,89 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
               </div>
             )}
             {/* DM-only faction toggle — switch sides for OA / combat */}
-            {isDM && (() => {
-              const fac = (token as any).faction ?? 'neutral';
-              const opts: { key: 'friendly' | 'neutral' | 'hostile'; label: string; color: string }[] = [
-                { key: 'friendly', label: '🟢 Friendly', color: C.green },
-                { key: 'neutral', label: '🟡 Neutral', color: C.gold },
-                { key: 'hostile', label: '🔴 Hostile', color: C.red },
-              ];
-              return (
-                <div style={{ display: 'flex', gap: 3, marginTop: 4 }}>
-                  {opts.map((o) => {
-                    const active = fac === o.key;
-                    return (
-                      <button
-                        key={o.key}
-                        onClick={() => emitTokenUpdate(token.id, { faction: o.key } as any)}
-                        style={{
-                          flex: 1, padding: '2px 4px', fontSize: 9,
-                          borderRadius: 3, cursor: 'pointer',
-                          background: active ? `${o.color}33` : 'transparent',
-                          border: `1px solid ${active ? o.color : C.border}`,
-                          color: active ? o.color : C.textMuted,
-                          fontWeight: active ? 700 : 500,
-                        }}
-                        title={`Set faction: ${o.key}`}
-                      >
-                        {o.label}
-                      </button>
-                    );
-                  })}
-                </div>
-              );
-            })()}
+            {isDM &&
+              (() => {
+                const fac = (token as any).faction ?? 'neutral';
+                const opts: {
+                  key: 'friendly' | 'neutral' | 'hostile';
+                  label: string;
+                  color: string;
+                }[] = [
+                  { key: 'friendly', label: '🟢 Friendly', color: C.green },
+                  { key: 'neutral', label: '🟡 Neutral', color: C.gold },
+                  { key: 'hostile', label: '🔴 Hostile', color: C.red },
+                ];
+                return (
+                  <div style={{ display: 'flex', gap: 3, marginTop: 4 }}>
+                    {opts.map((o) => {
+                      const active = fac === o.key;
+                      return (
+                        <button
+                          key={o.key}
+                          onClick={() => emitTokenUpdate(token.id, { faction: o.key } as any)}
+                          style={{
+                            flex: 1,
+                            padding: '2px 4px',
+                            fontSize: 9,
+                            borderRadius: 3,
+                            cursor: 'pointer',
+                            background: active ? `${o.color}33` : 'transparent',
+                            border: `1px solid ${active ? o.color : C.border}`,
+                            color: active ? o.color : C.textMuted,
+                            fontWeight: active ? 700 : 500,
+                          }}
+                          title={`Set faction: ${o.key}`}
+                        >
+                          {o.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                );
+              })()}
           </div>
         </div>
 
         {/* Stats row — shows EFFECTIVE values after condition modifiers.
             Hidden from players unless they own the token or the DM has
             explicitly enabled cross-visibility for this session. */}
-        {canSeeStats && (() => {
-          const dexModForAC = abilityModifier(mergedScores.dex || 10);
-          const acEff = effectiveAC(ac, conditions, dexModForAC);
-          const spdEff = effectiveSpeed(speed, conditions);
-          const acTip = acEff.notes.length > 0
-            ? `${acTooltip}\n\nEffective AC ${acEff.value} (base ${acEff.base})\n${acEff.notes.join('\n')}`
-            : acTooltip;
-          const spdTip = spdEff.notes.length > 0
-            ? `Effective Speed ${spdEff.value}ft (base ${spdEff.base})\n${spdEff.notes.join('\n')}`
-            : `Speed ${spdEff.value}ft`;
-          // Highlight modified stats in gold so they're easy to spot
-          const acColor = acEff.notes.length > 0 ? C.gold : undefined;
-          const spdColor = spdEff.notes.length > 0 ? C.gold : undefined;
-          return (
-            <div style={{ display: 'flex', gap: 12, marginTop: 6, fontSize: 11 }}>
-              <span title={acTip} style={{ color: acColor }}>AC <strong>{acEff.value}</strong>{acEff.notes.length > 0 && <span style={{ fontSize: 8, marginLeft: 2 }}>*</span>}</span>
-              <span title={spdTip} style={{ color: spdColor }}>SPD <strong>{spdEff.value}ft</strong>{spdEff.notes.length > 0 && <span style={{ fontSize: 8, marginLeft: 2 }}>*</span>}</span>
-              <span>INIT <strong>{fmtMod(initiative)}</strong></span>
-              {compendiumData?.challengeRating && <span>CR <strong>{compendiumData.challengeRating}</strong></span>}
-            </div>
-          );
-        })()}
+        {canSeeStats &&
+          (() => {
+            const dexModForAC = abilityModifier(mergedScores.dex || 10);
+            const acEff = effectiveAC(ac, conditions, dexModForAC);
+            const spdEff = effectiveSpeed(speed, conditions);
+            const acTip =
+              acEff.notes.length > 0
+                ? `${acTooltip}\n\nEffective AC ${acEff.value} (base ${acEff.base})\n${acEff.notes.join('\n')}`
+                : acTooltip;
+            const spdTip =
+              spdEff.notes.length > 0
+                ? `Effective Speed ${spdEff.value}ft (base ${spdEff.base})\n${spdEff.notes.join('\n')}`
+                : `Speed ${spdEff.value}ft`;
+            // Highlight modified stats in gold so they're easy to spot
+            const acColor = acEff.notes.length > 0 ? C.gold : undefined;
+            const spdColor = spdEff.notes.length > 0 ? C.gold : undefined;
+            return (
+              <div style={{ display: 'flex', gap: 12, marginTop: 6, fontSize: 11 }}>
+                <span title={acTip} style={{ color: acColor }}>
+                  AC <strong>{acEff.value}</strong>
+                  {acEff.notes.length > 0 && <span style={{ fontSize: 8, marginLeft: 2 }}>*</span>}
+                </span>
+                <span title={spdTip} style={{ color: spdColor }}>
+                  SPD <strong>{spdEff.value}ft</strong>
+                  {spdEff.notes.length > 0 && <span style={{ fontSize: 8, marginLeft: 2 }}>*</span>}
+                </span>
+                <span>
+                  INIT <strong>{fmtMod(initiative)}</strong>
+                </span>
+                {compendiumData?.challengeRating && (
+                  <span>
+                    CR <strong>{compendiumData.challengeRating}</strong>
+                  </span>
+                )}
+              </div>
+            );
+          })()}
 
         {/* HP bar + controls — hidden when the viewer can't see stats
             (non-DM viewing a creature while showCreatureStats is off,
@@ -2861,7 +3515,9 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
             AC row gate so HP reveals the same information as AC. */}
         {canSeeStats && maxHp > 0 && (
           <HPControls
-            hp={hp} maxHp={maxHp} hpPct={hpPct}
+            hp={hp}
+            maxHp={maxHp}
+            hpPct={hpPct}
             canEdit={canAct}
             onDamage={(amount) => {
               const oldHp = hp;
@@ -2886,7 +3542,7 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
                 });
               } else {
                 // Create character record in background
-                createCharForToken(token, compendiumData, newHp, maxHp, ac, speed).then(id => {
+                createCharForToken(token, compendiumData, newHp, maxHp, ac, speed).then((id) => {
                   if (id) setLocalCharId(id);
                 });
               }
@@ -2907,7 +3563,7 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
                   triggerSnapshot('heal-undo');
                 });
               } else {
-                createCharForToken(token, compendiumData, newHp, maxHp, ac, speed).then(id => {
+                createCharForToken(token, compendiumData, newHp, maxHp, ac, speed).then((id) => {
                   if (id) setLocalCharId(id);
                 });
               }
@@ -2927,7 +3583,7 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
             onToggle={(cond) => {
               const current = [...conditions] as string[];
               const updated = current.includes(cond)
-                ? current.filter(c => c !== cond)
+                ? current.filter((c) => c !== cond)
                 : [...current, cond];
               emitTokenUpdate(token.id, { conditions: updated as any });
             }}
@@ -2937,19 +3593,32 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
         {/* Ability scores — same privacy gate as HP/AC. */}
         {canSeeStats && Object.keys(abilityScores).length > 0 && (
           <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 6, gap: 2 }}>
-            {(['str', 'dex', 'con', 'int', 'wis', 'cha'] as const).map(ab => {
+            {(['str', 'dex', 'con', 'int', 'wis', 'cha'] as const).map((ab) => {
               const score = abilityScores[ab] || 10;
               const mod = abilityModifier(score);
               return (
-                <div key={ab} style={{ textAlign: 'center', flex: 1, cursor: canAct ? 'pointer' : 'default' }}
-                  onClick={() => canAct && emitRoll(
-                    `1d20${fmtMod(mod)}`,
-                    `${token.name} ${ab.toUpperCase()}`,
-                    undefined,
-                    { kind: 'check', ability: ab.toUpperCase() },
-                  )}
-                  title={canAct ? `Roll ${ab.toUpperCase()} check` : undefined}>
-                  <div style={{ fontSize: 7, fontWeight: 700, color: C.textMuted, textTransform: 'uppercase' }}>{ab}</div>
+                <div
+                  key={ab}
+                  style={{ textAlign: 'center', flex: 1, cursor: canAct ? 'pointer' : 'default' }}
+                  onClick={() =>
+                    canAct &&
+                    emitRoll(`1d20${fmtMod(mod)}`, `${token.name} ${ab.toUpperCase()}`, undefined, {
+                      kind: 'check',
+                      ability: ab.toUpperCase(),
+                    })
+                  }
+                  title={canAct ? `Roll ${ab.toUpperCase()} check` : undefined}
+                >
+                  <div
+                    style={{
+                      fontSize: 7,
+                      fontWeight: 700,
+                      color: C.textMuted,
+                      textTransform: 'uppercase',
+                    }}
+                  >
+                    {ab}
+                  </div>
                   <div style={{ fontSize: 14, fontWeight: 700 }}>{fmtMod(mod)}</div>
                   <div style={{ fontSize: 8, color: C.textMuted }}>{score}</div>
                 </div>
@@ -2974,18 +3643,32 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
           <div style={{ display: 'flex', gap: 4, marginTop: 8 }}>
             {character && !isNPC && (
               <>
-                <Button variant="ghost" size="sm" fullWidth
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  fullWidth
                   onClick={() => {
-                    window.dispatchEvent(new CustomEvent('open-character-sheet', { detail: { characterId: character.id, tab: 'actions' } }));
+                    window.dispatchEvent(
+                      new CustomEvent('open-character-sheet', {
+                        detail: { characterId: character.id, tab: 'actions' },
+                      })
+                    );
                     if (!isEmbedded) close();
                   }}
                   style={{ color: C.red, borderColor: `${C.red}44` }}
                 >
                   View Stats
                 </Button>
-                <Button variant="ghost" size="sm" fullWidth
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  fullWidth
                   onClick={() => {
-                    window.dispatchEvent(new CustomEvent('open-character-sheet', { detail: { characterId: character.id, tab: 'inventory' } }));
+                    window.dispatchEvent(
+                      new CustomEvent('open-character-sheet', {
+                        detail: { characterId: character.id, tab: 'inventory' },
+                      })
+                    );
                     if (!isEmbedded) close();
                   }}
                   style={{ color: C.gold, borderColor: `${C.gold}44` }}
@@ -2997,11 +3680,21 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
             {isNPC && (
               <>
                 {compendiumData && (
-                  <Button variant="ghost" size="sm" fullWidth
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    fullWidth
                     onClick={() => {
-                      window.dispatchEvent(new CustomEvent('open-compendium-detail', {
-                        detail: { slug: compendiumData.slug || token.name.toLowerCase().replace(/\s+/g, '-'), category: 'monsters', name: token.name },
-                      }));
+                      window.dispatchEvent(
+                        new CustomEvent('open-compendium-detail', {
+                          detail: {
+                            slug:
+                              compendiumData.slug || token.name.toLowerCase().replace(/\s+/g, '-'),
+                            category: 'monsters',
+                            name: token.name,
+                          },
+                        })
+                      );
                       if (!isEmbedded) close();
                     }}
                     style={{ color: C.red, borderColor: `${C.red}44` }}
@@ -3010,11 +3703,16 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
                   </Button>
                 )}
                 {isDM && token.characterId && (
-                  <Button variant="ghost" size="sm" fullWidth
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    fullWidth
                     onClick={() => {
-                      window.dispatchEvent(new CustomEvent('open-loot-editor', {
-                        detail: { characterId: token.characterId, tokenName: token.name },
-                      }));
+                      window.dispatchEvent(
+                        new CustomEvent('open-loot-editor', {
+                          detail: { characterId: token.characterId, tokenName: token.name },
+                        })
+                      );
                       if (!isEmbedded) close();
                     }}
                     style={{ color: C.gold, borderColor: `${C.gold}44` }}
@@ -3032,10 +3730,11 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
           only scroll container; in embedded mode (Hero tab) the
           outer wrapper scrolls instead so the header scrolls along
           with the body — no nested scrolling. */}
-      <div style={isEmbedded
-        ? { padding: '6px 10px' }
-        : { flex: 1, overflowY: 'auto', padding: '6px 10px' }
-      }>
+      <div
+        style={
+          isEmbedded ? { padding: '6px 10px' } : { flex: 1, overflowY: 'auto', padding: '6px 10px' }
+        }
+      >
         {/* === DEAD STATE === */}
         <TokenDeadState
           hp={hp}
@@ -3046,233 +3745,351 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
         />
 
         {/* === ALIVE STATE — actions, weapons, spells, traits, loot === */}
-        {(hp > 0 || maxHp === 0) && <>
-        {isTargeting && targetingData && (
-          <div style={{
-            padding: '8px 10px', marginBottom: 6, borderRadius: 6,
-            background: 'rgba(197,49,49,0.15)', border: '1px solid rgba(197,49,49,0.3)',
-            display: 'flex', alignItems: 'center', gap: 8,
-          }}>
-            <span style={{ fontSize: 11, color: theme.text.primary, flex: 1 }}>
-              🎯 Select target for <strong style={{ color: theme.state.danger }}>
-                {targetingData.spell?.name || targetingData.weapon?.name || targetingData.action?.name}
-              </strong>
-            </span>
-            <button onClick={() => useMapStore.getState().cancelTargetingMode()} style={{
-              padding: '2px 8px', fontSize: 10, background: theme.bg.elevated, border: `1px solid ${theme.border.default}`,
-              borderRadius: theme.radius.sm, color: theme.text.secondary, cursor: 'pointer', fontFamily: theme.font.body,
-            }}>Cancel</button>
-          </div>
-        )}
-        {/* (conditions moved to header) */}
+        {(hp > 0 || maxHp === 0) && (
+          <>
+            {isTargeting && targetingData && (
+              <div
+                style={{
+                  padding: '8px 10px',
+                  marginBottom: 6,
+                  borderRadius: 6,
+                  background: 'rgba(197,49,49,0.15)',
+                  border: '1px solid rgba(197,49,49,0.3)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 8,
+                }}
+              >
+                <span style={{ fontSize: 11, color: theme.text.primary, flex: 1 }}>
+                  🎯 Select target for{' '}
+                  <strong style={{ color: theme.state.danger }}>
+                    {targetingData.spell?.name ||
+                      targetingData.weapon?.name ||
+                      targetingData.action?.name}
+                  </strong>
+                </span>
+                <button
+                  onClick={() => useMapStore.getState().cancelTargetingMode()}
+                  style={{
+                    padding: '2px 8px',
+                    fontSize: 10,
+                    background: theme.bg.elevated,
+                    border: `1px solid ${theme.border.default}`,
+                    borderRadius: theme.radius.sm,
+                    color: theme.text.secondary,
+                    cursor: 'pointer',
+                    fontFamily: theme.font.body,
+                  }}
+                >
+                  Cancel
+                </button>
+              </div>
+            )}
+            {/* (conditions moved to header) */}
 
-        {/* Combat Actions — the seven core 5e "pick an Action" choices
+            {/* Combat Actions — the seven core 5e "pick an Action" choices
             that every combatant gets, whether they're a spellcaster or
             not. Rendered only during combat for the current combatant
             so they don't clutter the panel outside of turns. Each
             button is gated by canSpendActionSlot — pressing Dash twice
             pops the denial toast. */}
-        {canAct && combatActive && isCurrentCombatant && (
-          <Section title="Combat Actions">
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-              <CombatActionBtn
-                action="Dash"
-                color="#5ba3d5"
-                onClick={() => {
-                  if (!canSpendActionSlot(selectedTokenId!, 'action', 'Dash')) return;
-                  emitDash();
-                }}
-              />
-              <CombatActionBtn
-                action="Dodge"
-                color="#a07bc2"
-                onClick={() => {
-                  if (!canSpendActionSlot(selectedTokenId!, 'action', 'Dodge')) return;
-                  const current = [...(token.conditions || [])] as string[];
-                  if (!current.includes('dodging')) current.push('dodging');
-                  useMapStore.getState().updateToken(token.id, { conditions: current as any });
-                  emitUseAction('action');
-                  emitSystemMessage(`🛡 ${token.name} takes the Dodge action — attacks against have disadvantage until next turn.`);
-                }}
-              />
-              <CombatActionBtn
-                action="Disengage"
-                color="#4fc7ae"
-                onClick={() => {
-                  if (!canSpendActionSlot(selectedTokenId!, 'action', 'Disengage')) return;
-                  const current = [...(token.conditions || [])] as string[];
-                  if (!current.includes('disengaged')) current.push('disengaged');
-                  useMapStore.getState().updateToken(token.id, { conditions: current as any });
-                  emitUseAction('action');
-                  emitSystemMessage(`💨 ${token.name} takes the Disengage action — no Opportunity Attacks from movement this turn.`);
-                }}
-              />
-              <CombatActionBtn
-                action="Hide"
-                color="#808080"
-                onClick={() => {
-                  if (!canSpendActionSlot(selectedTokenId!, 'action', 'Hide')) return;
-                  const dex = mergedScores.dex || 10;
-                  const stealthMod = Math.floor((dex - 10) / 2) + (profBonus || 0);
-                  emitRoll(
-                    `1d20+${stealthMod}`,
-                    `${token.name} Hide (Stealth)`,
-                    undefined,
-                    { kind: 'check', ability: 'DEX', skill: 'Stealth' },
-                  );
-                  emitUseAction('action');
-                }}
-              />
-              <CombatActionBtn
-                action="Search"
-                color="#d4a843"
-                onClick={() => {
-                  if (!canSpendActionSlot(selectedTokenId!, 'action', 'Search')) return;
-                  const wis = mergedScores.wis || 10;
-                  const perMod = Math.floor((wis - 10) / 2) + (profBonus || 0);
-                  emitRoll(
-                    `1d20+${perMod}`,
-                    `${token.name} Search (Perception)`,
-                    undefined,
-                    { kind: 'check', ability: 'WIS', skill: 'Perception' },
-                  );
-                  emitUseAction('action');
-                }}
-              />
-              <CombatActionBtn
-                action="Help"
-                color="#5cb77a"
-                onClick={() => {
-                  if (!canSpendActionSlot(selectedTokenId!, 'action', 'Help')) return;
-                  emitUseAction('action');
-                  emitSystemMessage(`🤝 ${token.name} takes the Help action — an ally gets advantage on their next attack or check. Apply the badge via \`!assist <ally>\`.`);
-                }}
-              />
-              <CombatActionBtn
-                action="Ready"
-                color="#d18b4e"
-                onClick={() => {
-                  if (!canSpendActionSlot(selectedTokenId!, 'action', 'Ready')) return;
-                  if (!canSpendActionSlot(selectedTokenId!, 'reaction', 'Ready (reserves Reaction)')) return;
-                  emitUseAction('action');
-                  emitUseAction('reaction');
-                  emitSystemMessage(`⏳ ${token.name} takes the Ready action — reserving a trigger for this round.`);
-                }}
-              />
-            </div>
-          </Section>
-        )}
-
-        {/* Compendium Actions (for creatures) */}
-        {canSeeStats && compActions.length > 0 && (
-          <Section title="Actions">
-            {compActions.map((action: any, i: number) => (
-              <div key={i} style={{ marginBottom: 4, padding: '3px 0', borderBottom: i < compActions.length - 1 ? `1px solid ${C.borderDim}` : 'none' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                  <span style={{ fontSize: 11, fontWeight: 700, flex: 1 }}>{action.name}</span>
-                  {canAct && action.attack_bonus != null && (
-                    <ActionBtn label={`+${action.attack_bonus}`} color={C.red}
-                      onClick={() => {
-                        if (!canAct) return;
-                        useMapStore.getState().startTargetingMode({ action, casterTokenId: selectedTokenId!, casterName: token.name });
-                      }} />
-                  )}
-                  {canAct && action.damage_dice && (
-                    <ActionBtn label={action.damage_dice} color={C.gold}
-                      onClick={() => emitRoll(
-                        action.damage_dice,
-                        `${token.name} ${action.name} Damage`,
-                        undefined,
-                        { kind: 'damage', damageType: action.damage_type || 'damage' },
-                      )} />
-                  )}
+            {canAct && combatActive && isCurrentCombatant && (
+              <Section title="Combat Actions">
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                  <CombatActionBtn
+                    action="Dash"
+                    color="#5ba3d5"
+                    onClick={() => {
+                      if (!canSpendActionSlot(selectedTokenId!, 'action', 'Dash')) return;
+                      emitDash();
+                    }}
+                  />
+                  <CombatActionBtn
+                    action="Dodge"
+                    color="#a07bc2"
+                    onClick={() => {
+                      if (!canSpendActionSlot(selectedTokenId!, 'action', 'Dodge')) return;
+                      const current = [...(token.conditions || [])] as string[];
+                      if (!current.includes('dodging')) current.push('dodging');
+                      useMapStore.getState().updateToken(token.id, { conditions: current as any });
+                      emitUseAction('action');
+                      emitSystemMessage(
+                        `🛡 ${token.name} takes the Dodge action — attacks against have disadvantage until next turn.`
+                      );
+                    }}
+                  />
+                  <CombatActionBtn
+                    action="Disengage"
+                    color="#4fc7ae"
+                    onClick={() => {
+                      if (!canSpendActionSlot(selectedTokenId!, 'action', 'Disengage')) return;
+                      const current = [...(token.conditions || [])] as string[];
+                      if (!current.includes('disengaged')) current.push('disengaged');
+                      useMapStore.getState().updateToken(token.id, { conditions: current as any });
+                      emitUseAction('action');
+                      emitSystemMessage(
+                        `💨 ${token.name} takes the Disengage action — no Opportunity Attacks from movement this turn.`
+                      );
+                    }}
+                  />
+                  <CombatActionBtn
+                    action="Hide"
+                    color="#808080"
+                    onClick={() => {
+                      if (!canSpendActionSlot(selectedTokenId!, 'action', 'Hide')) return;
+                      const dex = mergedScores.dex || 10;
+                      const stealthMod = Math.floor((dex - 10) / 2) + (profBonus || 0);
+                      emitRoll(`1d20+${stealthMod}`, `${token.name} Hide (Stealth)`, undefined, {
+                        kind: 'check',
+                        ability: 'DEX',
+                        skill: 'Stealth',
+                      });
+                      emitUseAction('action');
+                    }}
+                  />
+                  <CombatActionBtn
+                    action="Search"
+                    color="#d4a843"
+                    onClick={() => {
+                      if (!canSpendActionSlot(selectedTokenId!, 'action', 'Search')) return;
+                      const wis = mergedScores.wis || 10;
+                      const perMod = Math.floor((wis - 10) / 2) + (profBonus || 0);
+                      emitRoll(`1d20+${perMod}`, `${token.name} Search (Perception)`, undefined, {
+                        kind: 'check',
+                        ability: 'WIS',
+                        skill: 'Perception',
+                      });
+                      emitUseAction('action');
+                    }}
+                  />
+                  <CombatActionBtn
+                    action="Help"
+                    color="#5cb77a"
+                    onClick={() => {
+                      if (!canSpendActionSlot(selectedTokenId!, 'action', 'Help')) return;
+                      emitUseAction('action');
+                      emitSystemMessage(
+                        `🤝 ${token.name} takes the Help action — an ally gets advantage on their next attack or check. Apply the badge via \`!assist <ally>\`.`
+                      );
+                    }}
+                  />
+                  <CombatActionBtn
+                    action="Ready"
+                    color="#d18b4e"
+                    onClick={() => {
+                      if (!canSpendActionSlot(selectedTokenId!, 'action', 'Ready')) return;
+                      if (
+                        !canSpendActionSlot(
+                          selectedTokenId!,
+                          'reaction',
+                          'Ready (reserves Reaction)'
+                        )
+                      )
+                        return;
+                      emitUseAction('action');
+                      emitUseAction('reaction');
+                      emitSystemMessage(
+                        `⏳ ${token.name} takes the Ready action — reserving a trigger for this round.`
+                      );
+                    }}
+                  />
                 </div>
-                <div style={{ fontSize: 9, color: C.textMuted, marginTop: 1, lineHeight: 1.3 }}>
-                  {action.desc?.substring(0, 80)}{action.desc?.length > 80 ? '...' : ''}
-                </div>
-              </div>
-            ))}
-          </Section>
-        )}
+              </Section>
+            )}
 
-        {/* Loot Weapons — matches Actions layout */}
-        {canSeeStats && lootWeapons.length > 0 && (
-          <Section title="Equipped Loot">
-            {lootWeapons.map((w, i) => {
-              const props = w.properties || [];
-              const isFinesse = props.some(p => p.toLowerCase().includes('finesse'));
-              const isRanged = props.some(p => p.toLowerCase().includes('range') || p.toLowerCase().includes('ammunition'));
-              const isThrown = props.some(p => p.toLowerCase().includes('thrown'));
-              const isLight = props.some(p => p.toLowerCase() === 'light');
-              const mb = (w as any).magicBonus || 0;
-              const atkMod = (isFinesse ? Math.max(strMod, dexMod) : isRanged ? dexMod : strMod) + profBonus + mb;
-              const dmgMod = isFinesse ? Math.max(strMod, dexMod) : isRanged ? dexMod : strMod;
-
-              return (
-                <div key={i} style={{ marginBottom: 4, padding: '3px 0', borderBottom: i < lootWeapons.length - 1 ? `1px solid ${C.borderDim}` : 'none' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                    <span style={{ fontSize: 11, fontWeight: 700, flex: 1 }}>{w.name}</span>
-                    {canAct && !isRanged && (
-                      <ActionBtn label={`+${atkMod}`} color={C.red} onClick={() => {
-                        useMapStore.getState().startTargetingMode({
-                          weapon: { name: `${w.name} (Melee)`, attack_bonus: atkMod, damage_dice: `${w.damage}+${dmgMod}`, properties: ['Melee'] },
-                          casterTokenId: selectedTokenId!, casterName: token.name,
-                        });
-                      }} />
-                    )}
-                    {canAct && !isRanged && isLight && (
-                      <ActionBtn label={`Off+${atkMod}`} color={C.gold} onClick={() => {
-                        useMapStore.getState().startTargetingMode({
-                          weapon: {
-                            name: `${w.name} (Off-hand)`,
-                            attack_bonus: atkMod,
-                            damage_dice: String(w.damage), // no ability mod on off-hand
-                            properties: ['Melee', 'Light'],
-                            __actionSlot: 'bonusAction',
-                          },
-                          casterTokenId: selectedTokenId!, casterName: token.name,
-                        });
-                      }} />
-                    )}
-                    {canAct && isRanged && (
-                      <ActionBtn label={`+${atkMod}`} color={C.red} onClick={() => {
-                        useMapStore.getState().startTargetingMode({
-                          weapon: { name: `${w.name} (Ranged)`, attack_bonus: atkMod, damage_dice: `${w.damage}+${dmgMod}`, properties: ['Range'], range: w.range },
-                          casterTokenId: selectedTokenId!, casterName: token.name,
-                        });
-                      }} />
-                    )}
-                    {canAct && isThrown && (
-                      <ActionBtn label={`Throw +${atkMod}`} color={C.gold} onClick={() => {
-                        useMapStore.getState().startTargetingMode({
-                          weapon: { name: `${w.name} (Thrown)`, attack_bonus: atkMod, damage_dice: `${w.damage}+${dmgMod}`, properties: ['Thrown'], range: w.range },
-                          casterTokenId: selectedTokenId!, casterName: token.name,
-                        });
-                      }} />
-                    )}
-                    <ActionBtn label={w.damage} color={C.gold} onClick={() => emitRoll(
-                      `${w.damage}+${dmgMod}`,
-                      `${token.name} ${w.name} DMG`,
-                      undefined,
-                      { kind: 'damage', damageType: w.damageType || 'damage' },
-                    )} />
-                  </div>
-                  <div style={{ fontSize: 9, color: C.textMuted, marginTop: 1, lineHeight: 1.3 }}>
-                    {isRanged ? 'Ranged' : 'Melee'} Weapon Attack: +{atkMod} to hit{isRanged && w.range ? `, range ${w.range} ft.` : ', reach 5 ft.'}
-                    {w.damage && ` Hit: ${w.damage}+${dmgMod} ${w.damageType}`}
-                  </div>
-                  {props.length > 0 && (
-                    <div style={{ marginTop: 2 }}>
-                      <WeaponProperties properties={props} />
+            {/* Compendium Actions (for creatures) */}
+            {canSeeStats && compActions.length > 0 && (
+              <Section title="Actions">
+                {compActions.map((action: any, i: number) => (
+                  <div
+                    key={i}
+                    style={{
+                      marginBottom: 4,
+                      padding: '3px 0',
+                      borderBottom:
+                        i < compActions.length - 1 ? `1px solid ${C.borderDim}` : 'none',
+                    }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                      <span style={{ fontSize: 11, fontWeight: 700, flex: 1 }}>{action.name}</span>
+                      {canAct && action.attack_bonus != null && (
+                        <ActionBtn
+                          label={`+${action.attack_bonus}`}
+                          color={C.red}
+                          onClick={() => {
+                            if (!canAct) return;
+                            useMapStore
+                              .getState()
+                              .startTargetingMode({
+                                action,
+                                casterTokenId: selectedTokenId!,
+                                casterName: token.name,
+                              });
+                          }}
+                        />
+                      )}
+                      {canAct && action.damage_dice && (
+                        <ActionBtn
+                          label={action.damage_dice}
+                          color={C.gold}
+                          onClick={() =>
+                            emitRoll(
+                              action.damage_dice,
+                              `${token.name} ${action.name} Damage`,
+                              undefined,
+                              { kind: 'damage', damageType: action.damage_type || 'damage' }
+                            )
+                          }
+                        />
+                      )}
                     </div>
-                  )}
-                </div>
-              );
-            })}
-          </Section>
-        )}
+                    <div style={{ fontSize: 9, color: C.textMuted, marginTop: 1, lineHeight: 1.3 }}>
+                      {action.desc?.substring(0, 80)}
+                      {action.desc?.length > 80 ? '...' : ''}
+                    </div>
+                  </div>
+                ))}
+              </Section>
+            )}
 
-        {/* Weapons — shown whenever the character has equipped gear.
+            {/* Loot Weapons — matches Actions layout */}
+            {canSeeStats && lootWeapons.length > 0 && (
+              <Section title="Equipped Loot">
+                {lootWeapons.map((w, i) => {
+                  const props = w.properties || [];
+                  const isFinesse = props.some((p) => p.toLowerCase().includes('finesse'));
+                  const isRanged = props.some(
+                    (p) =>
+                      p.toLowerCase().includes('range') || p.toLowerCase().includes('ammunition')
+                  );
+                  const isThrown = props.some((p) => p.toLowerCase().includes('thrown'));
+                  const isLight = props.some((p) => p.toLowerCase() === 'light');
+                  const mb = (w as any).magicBonus || 0;
+                  const atkMod =
+                    (isFinesse ? Math.max(strMod, dexMod) : isRanged ? dexMod : strMod) +
+                    profBonus +
+                    mb;
+                  const dmgMod = isFinesse ? Math.max(strMod, dexMod) : isRanged ? dexMod : strMod;
+
+                  return (
+                    <div
+                      key={i}
+                      style={{
+                        marginBottom: 4,
+                        padding: '3px 0',
+                        borderBottom:
+                          i < lootWeapons.length - 1 ? `1px solid ${C.borderDim}` : 'none',
+                      }}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                        <span style={{ fontSize: 11, fontWeight: 700, flex: 1 }}>{w.name}</span>
+                        {canAct && !isRanged && (
+                          <ActionBtn
+                            label={`+${atkMod}`}
+                            color={C.red}
+                            onClick={() => {
+                              useMapStore.getState().startTargetingMode({
+                                weapon: {
+                                  name: `${w.name} (Melee)`,
+                                  attack_bonus: atkMod,
+                                  damage_dice: `${w.damage}+${dmgMod}`,
+                                  properties: ['Melee'],
+                                },
+                                casterTokenId: selectedTokenId!,
+                                casterName: token.name,
+                              });
+                            }}
+                          />
+                        )}
+                        {canAct && !isRanged && isLight && (
+                          <ActionBtn
+                            label={`Off+${atkMod}`}
+                            color={C.gold}
+                            onClick={() => {
+                              useMapStore.getState().startTargetingMode({
+                                weapon: {
+                                  name: `${w.name} (Off-hand)`,
+                                  attack_bonus: atkMod,
+                                  damage_dice: String(w.damage), // no ability mod on off-hand
+                                  properties: ['Melee', 'Light'],
+                                  __actionSlot: 'bonusAction',
+                                },
+                                casterTokenId: selectedTokenId!,
+                                casterName: token.name,
+                              });
+                            }}
+                          />
+                        )}
+                        {canAct && isRanged && (
+                          <ActionBtn
+                            label={`+${atkMod}`}
+                            color={C.red}
+                            onClick={() => {
+                              useMapStore.getState().startTargetingMode({
+                                weapon: {
+                                  name: `${w.name} (Ranged)`,
+                                  attack_bonus: atkMod,
+                                  damage_dice: `${w.damage}+${dmgMod}`,
+                                  properties: ['Range'],
+                                  range: w.range,
+                                },
+                                casterTokenId: selectedTokenId!,
+                                casterName: token.name,
+                              });
+                            }}
+                          />
+                        )}
+                        {canAct && isThrown && (
+                          <ActionBtn
+                            label={`Throw +${atkMod}`}
+                            color={C.gold}
+                            onClick={() => {
+                              useMapStore.getState().startTargetingMode({
+                                weapon: {
+                                  name: `${w.name} (Thrown)`,
+                                  attack_bonus: atkMod,
+                                  damage_dice: `${w.damage}+${dmgMod}`,
+                                  properties: ['Thrown'],
+                                  range: w.range,
+                                },
+                                casterTokenId: selectedTokenId!,
+                                casterName: token.name,
+                              });
+                            }}
+                          />
+                        )}
+                        <ActionBtn
+                          label={w.damage}
+                          color={C.gold}
+                          onClick={() =>
+                            emitRoll(
+                              `${w.damage}+${dmgMod}`,
+                              `${token.name} ${w.name} DMG`,
+                              undefined,
+                              { kind: 'damage', damageType: w.damageType || 'damage' }
+                            )
+                          }
+                        />
+                      </div>
+                      <div
+                        style={{ fontSize: 9, color: C.textMuted, marginTop: 1, lineHeight: 1.3 }}
+                      >
+                        {isRanged ? 'Ranged' : 'Melee'} Weapon Attack: +{atkMod} to hit
+                        {isRanged && w.range ? `, range ${w.range} ft.` : ', reach 5 ft.'}
+                        {w.damage && ` Hit: ${w.damage}+${dmgMod} ${w.damageType}`}
+                      </div>
+                      {props.length > 0 && (
+                        <div style={{ marginTop: 2 }}>
+                          <WeaponProperties properties={props} />
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </Section>
+            )}
+
+            {/* Weapons — shown whenever the character has equipped gear.
             Historically gated by `compActions.length === 0` on the
             assumption that compendium actions were authoritative, but
             that dropped every PC's dagger / longbow / Extra Attack
@@ -3281,210 +4098,316 @@ export function TokenActionPanel({ embedded = false, embeddedTokenId }: TokenAct
             compendiumSlug). Inventory weapons always represent a real
             attack the character can roll, so we surface them
             regardless of what compendium data is also present. */}
-        {canSeeStats && weapons.length > 0 && (
-          <Section title="Attacks">
-            {weapons.map((w: any, i: number) => {
-              const props: string[] = w.properties || [];
-              const isFinesse = props.some((p: string) => p.toLowerCase().includes('finesse'));
-              const isRanged = props.some((p: string) => p.toLowerCase().includes('range'));
-              const isThrown = props.some((p: string) => p.toLowerCase().includes('thrown'));
-              // Two-Weapon Fighting requires the "Light" property on
-              // both weapons. Off-hand attacks are a BONUS ACTION and
-              // skip the ability modifier on damage (unless you have
-              // a feature that changes this).
-              const isLight = props.some((p: string) => p.toLowerCase() === 'light');
-              const meleeAtkMod = (isFinesse ? Math.max(strMod, dexMod) : strMod) + profBonus;
-              const rangedAtkMod = (isFinesse ? Math.max(strMod, dexMod) : dexMod) + profBonus;
-              const meleeDmgMod = isFinesse ? Math.max(strMod, dexMod) : strMod;
-              const rangedDmgMod = isFinesse ? Math.max(strMod, dexMod) : dexMod;
-              const dmgDice = w.damage || '1d4';
+            {canSeeStats && weapons.length > 0 && (
+              <Section title="Attacks">
+                {weapons.map((w: any, i: number) => {
+                  const props: string[] = w.properties || [];
+                  const isFinesse = props.some((p: string) => p.toLowerCase().includes('finesse'));
+                  const isRanged = props.some((p: string) => p.toLowerCase().includes('range'));
+                  const isThrown = props.some((p: string) => p.toLowerCase().includes('thrown'));
+                  // Two-Weapon Fighting requires the "Light" property on
+                  // both weapons. Off-hand attacks are a BONUS ACTION and
+                  // skip the ability modifier on damage (unless you have
+                  // a feature that changes this).
+                  const isLight = props.some((p: string) => p.toLowerCase() === 'light');
+                  const meleeAtkMod = (isFinesse ? Math.max(strMod, dexMod) : strMod) + profBonus;
+                  const rangedAtkMod = (isFinesse ? Math.max(strMod, dexMod) : dexMod) + profBonus;
+                  const meleeDmgMod = isFinesse ? Math.max(strMod, dexMod) : strMod;
+                  const rangedDmgMod = isFinesse ? Math.max(strMod, dexMod) : dexMod;
+                  const dmgDice = w.damage || '1d4';
 
-              return (
-                <div key={i} style={{ padding: '3px 0', borderBottom: `1px solid ${C.borderDim}` }}>
-                  <div style={{ fontSize: 11, fontWeight: 600, marginBottom: 2 }}>{w.name}</div>
-                  <div style={{ display: 'flex', gap: 3, flexWrap: 'wrap' }}>
-                    {/* Melee attack */}
-                    {!isRanged && canAct && (
-                      <ActionBtn label={`Melee +${meleeAtkMod} (5ft)`} color={C.red} onClick={() => {
-                        useMapStore.getState().startTargetingMode({
-                          weapon: { ...w, name: `${w.name} (Melee)`, attack_bonus: meleeAtkMod, damage_dice: `${dmgDice}+${meleeDmgMod}`, properties: ['Melee'] },
-                          casterTokenId: selectedTokenId!, casterName: token.name,
-                        });
-                      }} />
-                    )}
+                  return (
+                    <div
+                      key={i}
+                      style={{ padding: '3px 0', borderBottom: `1px solid ${C.borderDim}` }}
+                    >
+                      <div style={{ fontSize: 11, fontWeight: 600, marginBottom: 2 }}>{w.name}</div>
+                      <div style={{ display: 'flex', gap: 3, flexWrap: 'wrap' }}>
+                        {/* Melee attack */}
+                        {!isRanged && canAct && (
+                          <ActionBtn
+                            label={`Melee +${meleeAtkMod} (5ft)`}
+                            color={C.red}
+                            onClick={() => {
+                              useMapStore.getState().startTargetingMode({
+                                weapon: {
+                                  ...w,
+                                  name: `${w.name} (Melee)`,
+                                  attack_bonus: meleeAtkMod,
+                                  damage_dice: `${dmgDice}+${meleeDmgMod}`,
+                                  properties: ['Melee'],
+                                },
+                                casterTokenId: selectedTokenId!,
+                                casterName: token.name,
+                              });
+                            }}
+                          />
+                        )}
 
-                    {/* Off-hand attack (Two-Weapon Fighting) — uses
+                        {/* Off-hand attack (Two-Weapon Fighting) — uses
                         bonus action, no damage modifier. Shown only on
                         Light melee weapons. */}
-                    {!isRanged && isLight && canAct && (
-                      <ActionBtn label={`Off-hand (BA)`} color={C.gold} onClick={() => {
-                        useMapStore.getState().startTargetingMode({
-                          weapon: {
-                            ...w,
-                            name: `${w.name} (Off-hand)`,
-                            attack_bonus: meleeAtkMod,
-                            // No ability modifier on damage for off-hand
-                            damage_dice: dmgDice,
-                            properties: ['Melee', 'Light'],
-                            __actionSlot: 'bonusAction',
-                          },
-                          casterTokenId: selectedTokenId!, casterName: token.name,
-                        });
-                      }} />
-                    )}
+                        {!isRanged && isLight && canAct && (
+                          <ActionBtn
+                            label={`Off-hand (BA)`}
+                            color={C.gold}
+                            onClick={() => {
+                              useMapStore.getState().startTargetingMode({
+                                weapon: {
+                                  ...w,
+                                  name: `${w.name} (Off-hand)`,
+                                  attack_bonus: meleeAtkMod,
+                                  // No ability modifier on damage for off-hand
+                                  damage_dice: dmgDice,
+                                  properties: ['Melee', 'Light'],
+                                  __actionSlot: 'bonusAction',
+                                },
+                                casterTokenId: selectedTokenId!,
+                                casterName: token.name,
+                              });
+                            }}
+                          />
+                        )}
 
-                    {/* Thrown attack (for weapons with Thrown property) */}
-                    {isThrown && canAct && (
-                      <ActionBtn label={`Throw +${rangedAtkMod} (20ft)`} color={C.gold} onClick={() => {
-                        useMapStore.getState().startTargetingMode({
-                          weapon: {
-                            ...w,
-                            // Track the original weapon name + inventory index so the
-                            // resolver can drop it from inventory and spawn an item
-                            // token at the target's location after the throw lands.
-                            originalName: w.name,
-                            inventoryIndex: inventory.findIndex((it: any) => it.name === w.name),
-                            name: `${w.name} (Thrown)`,
-                            attack_bonus: rangedAtkMod,
-                            damage_dice: `${dmgDice}+${rangedDmgMod}`,
-                            properties: ['Thrown'],
-                          },
-                          casterTokenId: selectedTokenId!, casterName: token.name,
-                        });
-                      }} />
-                    )}
+                        {/* Thrown attack (for weapons with Thrown property) */}
+                        {isThrown && canAct && (
+                          <ActionBtn
+                            label={`Throw +${rangedAtkMod} (20ft)`}
+                            color={C.gold}
+                            onClick={() => {
+                              useMapStore.getState().startTargetingMode({
+                                weapon: {
+                                  ...w,
+                                  // Track the original weapon name + inventory index so the
+                                  // resolver can drop it from inventory and spawn an item
+                                  // token at the target's location after the throw lands.
+                                  originalName: w.name,
+                                  inventoryIndex: inventory.findIndex(
+                                    (it: any) => it.name === w.name
+                                  ),
+                                  name: `${w.name} (Thrown)`,
+                                  attack_bonus: rangedAtkMod,
+                                  damage_dice: `${dmgDice}+${rangedDmgMod}`,
+                                  properties: ['Thrown'],
+                                },
+                                casterTokenId: selectedTokenId!,
+                                casterName: token.name,
+                              });
+                            }}
+                          />
+                        )}
 
-                    {/* Ranged attack (for ranged weapons like bows) */}
-                    {isRanged && canAct && (
-                      <ActionBtn label={`Ranged +${rangedAtkMod} (80ft)`} color={C.blue} onClick={() => {
-                        useMapStore.getState().startTargetingMode({
-                          weapon: { ...w, name: `${w.name} (Ranged)`, attack_bonus: rangedAtkMod, damage_dice: `${dmgDice}+${rangedDmgMod}`, properties: ['Range'] },
-                          casterTokenId: selectedTokenId!, casterName: token.name,
-                        });
-                      }} />
-                    )}
+                        {/* Ranged attack (for ranged weapons like bows) */}
+                        {isRanged && canAct && (
+                          <ActionBtn
+                            label={`Ranged +${rangedAtkMod} (80ft)`}
+                            color={C.blue}
+                            onClick={() => {
+                              useMapStore.getState().startTargetingMode({
+                                weapon: {
+                                  ...w,
+                                  name: `${w.name} (Ranged)`,
+                                  attack_bonus: rangedAtkMod,
+                                  damage_dice: `${dmgDice}+${rangedDmgMod}`,
+                                  properties: ['Range'],
+                                },
+                                casterTokenId: selectedTokenId!,
+                                casterName: token.name,
+                              });
+                            }}
+                          />
+                        )}
 
-                    {/* Direct damage roll (no targeting) */}
-                    <ActionBtn label={`${dmgDice}`} color={C.textMuted} onClick={() => emitRoll(
-                      `${dmgDice}+${meleeDmgMod}`,
-                      `${token.name} ${w.name} DMG`,
-                      undefined,
-                      { kind: 'damage', damageType: w.damageType || 'damage' },
-                    )} />
-                  </div>
-                  {/* Weapon properties with hover tooltips */}
-                  {props.length > 0 && (
-                    <div style={{ marginTop: 2 }}>
-                      <WeaponProperties properties={props} />
+                        {/* Direct damage roll (no targeting) */}
+                        <ActionBtn
+                          label={`${dmgDice}`}
+                          color={C.textMuted}
+                          onClick={() =>
+                            emitRoll(
+                              `${dmgDice}+${meleeDmgMod}`,
+                              `${token.name} ${w.name} DMG`,
+                              undefined,
+                              { kind: 'damage', damageType: w.damageType || 'damage' }
+                            )
+                          }
+                        />
+                      </div>
+                      {/* Weapon properties with hover tooltips */}
+                      {props.length > 0 && (
+                        <div style={{ marginTop: 2 }}>
+                          <WeaponProperties properties={props} />
+                        </div>
+                      )}
                     </div>
-                  )}
+                  );
+                })}
+              </Section>
+            )}
+
+            {/* Traits (from compendium) — privacy-gated. */}
+            {canSeeStats && <TokenTraits traits={compTraits} />}
+
+            {/* Creature Spells (from compendium trait) — privacy-gated. */}
+            {canSeeStats && (
+              <TokenCreatureSpells
+                spells={creatureSpells}
+                spellDC={creatureSpellDC}
+                spellAtk={creatureSpellAtk}
+                canAct={canAct}
+                casterTokenId={selectedTokenId}
+                casterName={token.name}
+              />
+            )}
+
+            {/* Cantrips */}
+            {canSeeStats && spells.filter((s: any) => s.level === 0).length > 0 && (
+              <Section title={`Cantrips (${spells.filter((s: any) => s.level === 0).length})`}>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 3 }}>
+                  {spells
+                    .filter((s: any) => s.level === 0)
+                    .map((spell: any, i: number) => {
+                      const tooltip = `${spell.name} — Cantrip (at will, never expended)\n\n${spell.description || ''}`;
+                      return (
+                        <button
+                          key={i}
+                          onClick={() => {
+                            if (!canAct) return;
+                            castSpellFromButton(spell, selectedTokenId!, token.name);
+                          }}
+                          onContextMenu={(e) => {
+                            e.preventDefault();
+                            const slug = spell.name
+                              .toLowerCase()
+                              .replace(/\s+/g, '-')
+                              .replace(/[^a-z0-9-]/g, '');
+                            window.dispatchEvent(
+                              new CustomEvent('open-compendium-detail', {
+                                detail: { slug, category: 'spells', name: spell.name },
+                              })
+                            );
+                          }}
+                          title={tooltip}
+                          style={{
+                            padding: '2px 6px',
+                            fontSize: 9,
+                            borderRadius: 3,
+                            background: C.bgHover,
+                            border: `1px solid ${C.borderDim}`,
+                            color: C.textSec,
+                            cursor: canAct ? 'pointer' : 'default',
+                            fontFamily: 'inherit',
+                          }}
+                        >
+                          {spell.name}
+                          {spell.damage && (
+                            <span style={{ color: C.red, marginLeft: 2, fontSize: 7 }}>
+                              {spell.damage}
+                            </span>
+                          )}
+                        </button>
+                      );
+                    })}
                 </div>
-              );
-            })}
-          </Section>
+              </Section>
+            )}
+
+            {/* Leveled Spells */}
+            {canSeeStats && spells.filter((s: any) => s.level > 0).length > 0 && (
+              <Section title={`Spells (${spells.filter((s: any) => s.level > 0).length})`}>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 3 }}>
+                  {spells
+                    .filter((s: any) => s.level > 0)
+                    .map((spell: any, i: number) => {
+                      const slot =
+                        spellSlots[String(spell.level)] || spellSlots[spell.level as any];
+                      const slotsLeft = slot ? slot.max - slot.used : 0;
+                      const slotsMax = slot ? slot.max : 0;
+                      // Either the global DM "ignore slots" toggle or the per-spell
+                      // dmOverride flag makes this spell castable regardless of slots.
+                      const dmIgnoreSlots = useSessionStore.getState().dmIgnoreSpellSlots;
+                      const overridden = dmIgnoreSlots || spell.dmOverride;
+                      const isSpent = !overridden && (slot ? slotsLeft <= 0 : false);
+                      const canRitual = !!spell.ritual && spell.level > 0;
+                      // If out of slots but spell is a ritual, still allow casting
+                      const effectivelySpent = isSpent && !canRitual;
+                      const tooltip = overridden
+                        ? `${spell.name} — ${spell.dmOverride ? 'DM override on this spell' : 'DM override active (all slots ignored)'}\n\n${spell.description || ''}`
+                        : isSpent && canRitual
+                          ? `${spell.name} — Out of slots but can be cast as a Ritual (no slot, +10 min casting time)\n\n${spell.description || ''}`
+                          : isSpent
+                            ? `${spell.name} — Out of level ${spell.level} slots (0/${slotsMax}). Long Rest to recharge.\n\n${spell.description || ''}`
+                            : `${spell.name} — Level ${spell.level} (${slotsLeft}/${slotsMax} slots left${canRitual ? ', or cast as Ritual' : ''}, Long Rest to recharge)\n\n${spell.description || ''}`;
+                      return (
+                        <button
+                          key={i}
+                          disabled={effectivelySpent || !canAct}
+                          onClick={() => {
+                            if (!canAct || effectivelySpent) return;
+                            // If out of slots, force ritual mode (skip slot consumption)
+                            const spellCopy = { ...spell };
+                            if (isSpent && canRitual) spellCopy.__isRitual = true;
+                            castSpellFromButton(spellCopy, selectedTokenId!, token.name);
+                          }}
+                          onContextMenu={(e) => {
+                            e.preventDefault();
+                            const slug = spell.name
+                              .toLowerCase()
+                              .replace(/\s+/g, '-')
+                              .replace(/[^a-z0-9-]/g, '');
+                            window.dispatchEvent(
+                              new CustomEvent('open-compendium-detail', {
+                                detail: { slug, category: 'spells', name: spell.name },
+                              })
+                            );
+                          }}
+                          title={tooltip}
+                          style={{
+                            padding: '2px 6px',
+                            fontSize: 9,
+                            borderRadius: 3,
+                            background: isSpent ? 'transparent' : C.bgHover,
+                            border: `1px solid ${isSpent ? C.borderDim : C.borderDim}`,
+                            color: isSpent ? C.textMuted : C.text,
+                            cursor: canAct && !isSpent ? 'pointer' : 'not-allowed',
+                            fontFamily: 'inherit',
+                            opacity: isSpent ? 0.45 : 1,
+                            textDecoration: isSpent ? 'line-through' : 'none',
+                          }}
+                        >
+                          <span style={{ fontSize: 7, color: C.textMuted, marginRight: 2 }}>
+                            L{spell.level}
+                          </span>
+                          {spell.name}
+                          {slot && (
+                            <span
+                              style={{
+                                fontSize: 7,
+                                color: isSpent ? C.red : C.gold,
+                                marginLeft: 3,
+                              }}
+                            >
+                              {slotsLeft}/{slotsMax}
+                            </span>
+                          )}
+                          {spell.damage && (
+                            <span style={{ color: C.red, marginLeft: 2, fontSize: 7 }}>
+                              {spell.damage}
+                            </span>
+                          )}
+                        </button>
+                      );
+                    })}
+                </div>
+              </Section>
+            )}
+
+            {/* Senses & Languages from compendium */}
+            <TokenSensesLanguages
+              senses={compendiumData?.senses}
+              languages={compendiumData?.languages}
+            />
+          </>
         )}
-
-        {/* Traits (from compendium) — privacy-gated. */}
-        {canSeeStats && <TokenTraits traits={compTraits} />}
-
-        {/* Creature Spells (from compendium trait) — privacy-gated. */}
-        {canSeeStats && (
-          <TokenCreatureSpells
-            spells={creatureSpells}
-            spellDC={creatureSpellDC}
-            spellAtk={creatureSpellAtk}
-            canAct={canAct}
-            casterTokenId={selectedTokenId}
-            casterName={token.name}
-          />
-        )}
-
-        {/* Cantrips */}
-        {canSeeStats && spells.filter((s: any) => s.level === 0).length > 0 && (
-          <Section title={`Cantrips (${spells.filter((s: any) => s.level === 0).length})`}>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 3 }}>
-              {spells.filter((s: any) => s.level === 0).map((spell: any, i: number) => {
-                const tooltip = `${spell.name} — Cantrip (at will, never expended)\n\n${spell.description || ''}`;
-                return (
-                  <button key={i} onClick={() => {
-                    if (!canAct) return;
-                    castSpellFromButton(spell, selectedTokenId!, token.name);
-                  }} onContextMenu={(e) => {
-                    e.preventDefault();
-                    const slug = spell.name.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
-                    window.dispatchEvent(new CustomEvent('open-compendium-detail', { detail: { slug, category: 'spells', name: spell.name } }));
-                  }} title={tooltip} style={{
-                    padding: '2px 6px', fontSize: 9, borderRadius: 3,
-                    background: C.bgHover, border: `1px solid ${C.borderDim}`,
-                    color: C.textSec, cursor: canAct ? 'pointer' : 'default', fontFamily: 'inherit',
-                  }}>
-                    {spell.name}
-                    {spell.damage && <span style={{ color: C.red, marginLeft: 2, fontSize: 7 }}>{spell.damage}</span>}
-                  </button>
-                );
-              })}
-            </div>
-          </Section>
-        )}
-
-        {/* Leveled Spells */}
-        {canSeeStats && spells.filter((s: any) => s.level > 0).length > 0 && (
-          <Section title={`Spells (${spells.filter((s: any) => s.level > 0).length})`}>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 3 }}>
-              {spells.filter((s: any) => s.level > 0).map((spell: any, i: number) => {
-                const slot = spellSlots[String(spell.level)] || spellSlots[spell.level as any];
-                const slotsLeft = slot ? slot.max - slot.used : 0;
-                const slotsMax = slot ? slot.max : 0;
-                // Either the global DM "ignore slots" toggle or the per-spell
-                // dmOverride flag makes this spell castable regardless of slots.
-                const dmIgnoreSlots = useSessionStore.getState().dmIgnoreSpellSlots;
-                const overridden = dmIgnoreSlots || spell.dmOverride;
-                const isSpent = !overridden && (slot ? slotsLeft <= 0 : false);
-                const canRitual = !!spell.ritual && spell.level > 0;
-                // If out of slots but spell is a ritual, still allow casting
-                const effectivelySpent = isSpent && !canRitual;
-                const tooltip = overridden
-                  ? `${spell.name} — ${spell.dmOverride ? 'DM override on this spell' : 'DM override active (all slots ignored)'}\n\n${spell.description || ''}`
-                  : isSpent && canRitual
-                    ? `${spell.name} — Out of slots but can be cast as a Ritual (no slot, +10 min casting time)\n\n${spell.description || ''}`
-                  : isSpent
-                    ? `${spell.name} — Out of level ${spell.level} slots (0/${slotsMax}). Long Rest to recharge.\n\n${spell.description || ''}`
-                    : `${spell.name} — Level ${spell.level} (${slotsLeft}/${slotsMax} slots left${canRitual ? ', or cast as Ritual' : ''}, Long Rest to recharge)\n\n${spell.description || ''}`;
-                return (
-                  <button key={i} disabled={effectivelySpent || !canAct} onClick={() => {
-                    if (!canAct || effectivelySpent) return;
-                    // If out of slots, force ritual mode (skip slot consumption)
-                    const spellCopy = { ...spell };
-                    if (isSpent && canRitual) spellCopy.__isRitual = true;
-                    castSpellFromButton(spellCopy, selectedTokenId!, token.name);
-                  }} onContextMenu={(e) => {
-                    e.preventDefault();
-                    const slug = spell.name.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
-                    window.dispatchEvent(new CustomEvent('open-compendium-detail', { detail: { slug, category: 'spells', name: spell.name } }));
-                  }} title={tooltip} style={{
-                    padding: '2px 6px', fontSize: 9, borderRadius: 3,
-                    background: isSpent ? 'transparent' : C.bgHover,
-                    border: `1px solid ${isSpent ? C.borderDim : C.borderDim}`,
-                    color: isSpent ? C.textMuted : C.text,
-                    cursor: (canAct && !isSpent) ? 'pointer' : 'not-allowed',
-                    fontFamily: 'inherit',
-                    opacity: isSpent ? 0.45 : 1,
-                    textDecoration: isSpent ? 'line-through' : 'none',
-                  }}>
-                    <span style={{ fontSize: 7, color: C.textMuted, marginRight: 2 }}>L{spell.level}</span>
-                    {spell.name}
-                    {slot && <span style={{ fontSize: 7, color: isSpent ? C.red : C.gold, marginLeft: 3 }}>{slotsLeft}/{slotsMax}</span>}
-                    {spell.damage && <span style={{ color: C.red, marginLeft: 2, fontSize: 7 }}>{spell.damage}</span>}
-                  </button>
-                );
-              })}
-            </div>
-          </Section>
-        )}
-
-        {/* Senses & Languages from compendium */}
-        <TokenSensesLanguages senses={compendiumData?.senses} languages={compendiumData?.languages} />
-        </>}
       </div>
     </div>
   );
@@ -3497,8 +4420,8 @@ interface SpellAoeMeta {
   savingThrow: string;
   attackType: string;
   aoeShape: 'sphere' | 'cube' | 'cone' | 'line';
-  aoeRadius: number;          // in feet
-  pushDistance: number;       // in feet, 0 if none
+  aoeRadius: number; // in feet
+  pushDistance: number; // in feet, 0 if none
   halfOnSave: boolean;
   hasAoe: boolean;
 }
@@ -3519,9 +4442,18 @@ async function parseSpellMeta(spell: any, casterLevel: number): Promise<SpellAoe
     if (dmgMatch) damageDice = dmgMatch[1].replace(/\s/g, '');
   }
   if (!savingThrow) {
-    const saveMatch = cleanDesc.match(/(strength|dexterity|constitution|wisdom|intelligence|charisma)\s+saving\s+throw/i);
+    const saveMatch = cleanDesc.match(
+      /(strength|dexterity|constitution|wisdom|intelligence|charisma)\s+saving\s+throw/i
+    );
     if (saveMatch) {
-      const m: Record<string, string> = { strength: 'str', dexterity: 'dex', constitution: 'con', wisdom: 'wis', intelligence: 'int', charisma: 'cha' };
+      const m: Record<string, string> = {
+        strength: 'str',
+        dexterity: 'dex',
+        constitution: 'con',
+        wisdom: 'wis',
+        intelligence: 'int',
+        charisma: 'cha',
+      };
       savingThrow = m[saveMatch[1].toLowerCase()] || '';
     }
   }
@@ -3533,7 +4465,10 @@ async function parseSpellMeta(spell: any, casterLevel: number): Promise<SpellAoe
   // Compendium fallback
   if (!damageDice || !savingThrow) {
     try {
-      const slug = spell.name.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
+      const slug = spell.name
+        .toLowerCase()
+        .replace(/\s+/g, '-')
+        .replace(/[^a-z0-9-]/g, '');
       const resp = await fetch(`/api/compendium/spells/${slug}`);
       if (resp.ok) {
         const compSpell = await resp.json();
@@ -3543,9 +4478,18 @@ async function parseSpellMeta(spell: any, casterLevel: number): Promise<SpellAoe
           if (m) damageDice = m[1].replace(/\s/g, '');
         }
         if (!savingThrow) {
-          const sm = compDesc.match(/(strength|dexterity|constitution|wisdom|intelligence|charisma)\s+saving\s+throw/i);
+          const sm = compDesc.match(
+            /(strength|dexterity|constitution|wisdom|intelligence|charisma)\s+saving\s+throw/i
+          );
           if (sm) {
-            const map: Record<string, string> = { strength: 'str', dexterity: 'dex', constitution: 'con', wisdom: 'wis', intelligence: 'int', charisma: 'cha' };
+            const map: Record<string, string> = {
+              strength: 'str',
+              dexterity: 'dex',
+              constitution: 'con',
+              wisdom: 'wis',
+              intelligence: 'int',
+              charisma: 'cha',
+            };
             savingThrow = map[sm[1].toLowerCase()] || '';
           }
         }
@@ -3561,7 +4505,10 @@ async function parseSpellMeta(spell: any, casterLevel: number): Promise<SpellAoe
   if (spell.level === 0 && damageDice) {
     const tier = casterLevel >= 17 ? 4 : casterLevel >= 11 ? 3 : casterLevel >= 5 ? 2 : 1;
     if (tier > 1) {
-      damageDice = damageDice.replace(/(\d+)d(\d+)/, (_: string, n: string, d: string) => `${parseInt(n) * tier}d${d}`);
+      damageDice = damageDice.replace(
+        /(\d+)d(\d+)/,
+        (_: string, n: string, d: string) => `${parseInt(n) * tier}d${d}`
+      );
     }
   }
 
@@ -3571,18 +4518,36 @@ async function parseSpellMeta(spell: any, casterLevel: number): Promise<SpellAoe
   let aoeRadius = spell.aoeSize || 0;
   let aoeShape: 'sphere' | 'cube' | 'cone' | 'line' = 'sphere';
   let hasAoe = false;
-  if (spell.aoeType === 'cube') { aoeShape = 'cube'; hasAoe = true; }
-  else if (spell.aoeType === 'cone') { aoeShape = 'cone'; hasAoe = true; }
-  else if (spell.aoeType === 'line') { aoeShape = 'line'; hasAoe = true; }
-  else if (spell.aoeType === 'sphere' || spell.aoeType === 'cylinder') { aoeShape = 'sphere'; hasAoe = true; }
+  if (spell.aoeType === 'cube') {
+    aoeShape = 'cube';
+    hasAoe = true;
+  } else if (spell.aoeType === 'cone') {
+    aoeShape = 'cone';
+    hasAoe = true;
+  } else if (spell.aoeType === 'line') {
+    aoeShape = 'line';
+    hasAoe = true;
+  } else if (spell.aoeType === 'sphere' || spell.aoeType === 'cylinder') {
+    aoeShape = 'sphere';
+    hasAoe = true;
+  }
   if (!aoeRadius) {
     let parsedShape: string | null = null;
     let parsedSize: number | null = null;
-    const m1 = cleanDesc.match(/(\d+)[- ]?(?:foot|feet)[- ]?(?:long\s+|wide\s+)?(radius|sphere|cube|cone|line|cylinder|emanation)/i);
-    if (m1) { parsedSize = parseInt(m1[1]); parsedShape = m1[2].toLowerCase(); }
-    else {
-      const m2 = cleanDesc.match(/(line|sphere|cube|cone|cylinder|radius|emanation)\s+(\d+)\s*(?:feet|foot)/i);
-      if (m2) { parsedShape = m2[1].toLowerCase(); parsedSize = parseInt(m2[2]); }
+    const m1 = cleanDesc.match(
+      /(\d+)[- ]?(?:foot|feet)[- ]?(?:long\s+|wide\s+)?(radius|sphere|cube|cone|line|cylinder|emanation)/i
+    );
+    if (m1) {
+      parsedSize = parseInt(m1[1]);
+      parsedShape = m1[2].toLowerCase();
+    } else {
+      const m2 = cleanDesc.match(
+        /(line|sphere|cube|cone|cylinder|radius|emanation)\s+(\d+)\s*(?:feet|foot)/i
+      );
+      if (m2) {
+        parsedShape = m2[1].toLowerCase();
+        parsedSize = parseInt(m2[2]);
+      }
     }
     if (parsedShape && parsedSize !== null) {
       aoeRadius = parsedSize;
@@ -3600,9 +4565,10 @@ async function parseSpellMeta(spell: any, casterLevel: number): Promise<SpellAoe
   const pushMatch = cleanDesc.match(/pushed\s+(\d+)\s*(?:feet|ft)/i);
   if (pushMatch) pushDistance = parseInt(pushMatch[1]);
 
-  const halfOnSave = cleanDesc.toLowerCase().includes('half as much damage')
-    || cleanDesc.toLowerCase().includes('half damage')
-    || cleanDesc.toLowerCase().includes('save for half');
+  const halfOnSave =
+    cleanDesc.toLowerCase().includes('half as much damage') ||
+    cleanDesc.toLowerCase().includes('half damage') ||
+    cleanDesc.toLowerCase().includes('save for half');
 
   return {
     damageDice,
@@ -3627,7 +4593,7 @@ function findTokensInAoeShape(
   sizeFt: number,
   rotationDeg: number,
   gridSize: number,
-  excludeId: string,
+  excludeId: string
 ): any[] {
   const sizePixels = (sizeFt / 5) * gridSize;
   const halfCell = gridSize / 2;
@@ -3650,7 +4616,7 @@ function findTokensInAoeShape(
         const dist = Math.sqrt(dx * dx + dy * dy);
         if (dist > sizePixels) return false;
         if (dist === 0) return true; // origin caster: include adjacent
-        const angle = Math.atan2(dy, dx) * 180 / Math.PI;
+        const angle = (Math.atan2(dy, dx) * 180) / Math.PI;
         let diff = angle - rotationDeg;
         while (diff > 180) diff -= 360;
         while (diff < -180) diff += 360;
@@ -3678,7 +4644,7 @@ async function resolveAreaSpell(
   casterTokenId: string,
   casterName: string,
   origin: { x: number; y: number } | null,
-  rotationDeg: number,
+  rotationDeg: number
 ) {
   const mapState = useMapStore.getState();
   const charStore = useCharacterStore.getState();
@@ -3687,7 +4653,9 @@ async function resolveAreaSpell(
     console.error('[RESOLVE AOE] Caster token not found');
     return;
   }
-  const casterChar = casterToken.characterId ? charStore.allCharacters[casterToken.characterId] : null;
+  const casterChar = casterToken.characterId
+    ? charStore.allCharacters[casterToken.characterId]
+    : null;
   const casterId = casterChar?.id || casterTokenId;
   // Recompute DC defensively if the stored value looks like a stale default
   const casterSpellDC = effectiveSpellSaveDC(casterChar);
@@ -3723,20 +4691,26 @@ async function resolveAreaSpell(
     } else if (isRitualCast) {
       // Ritual cast — no slot consumed
       (spell as any).__dmOverride = true;
-      emitSystemMessage(`✦ ${casterName} casts ${spell.name} as a Ritual (no slot, +10 min casting time).`);
+      emitSystemMessage(
+        `✦ ${casterName} casts ${spell.name} as a Ritual (no slot, +10 min casting time).`
+      );
     } else {
-      const slots = typeof casterChar.spellSlots === 'string'
-        ? JSON.parse(casterChar.spellSlots) : (casterChar.spellSlots || {});
+      const slots =
+        typeof casterChar.spellSlots === 'string'
+          ? JSON.parse(casterChar.spellSlots)
+          : casterChar.spellSlots || {};
       let chosenLevel: number | null = null;
       for (let lvl = spell.level; lvl <= 9; lvl++) {
         const s = slots[lvl] || slots[String(lvl)];
-        if (s && (s.max - s.used) > 0) {
+        if (s && s.max - s.used > 0) {
           chosenLevel = lvl;
           break;
         }
       }
       if (chosenLevel === null) {
-        emitSystemMessage(`✦ ${casterName} tried to cast ${spell.name} (level ${spell.level}) but has no available slots of level ${spell.level} or higher!`);
+        emitSystemMessage(
+          `✦ ${casterName} tried to cast ${spell.name} (level ${spell.level}) but has no available slots of level ${spell.level} or higher!`
+        );
         return;
       }
       emitSpellSlotAdjust(casterId, chosenLevel, 1);
@@ -3781,7 +4755,7 @@ async function resolveAreaSpell(
   const aoeOrigin = origin ?? { x: casterX, y: casterY };
   const allTokens = mapState.tokens;
   // Caster is excluded only when AoE originates AT the caster (Self-range)
-  const excludeId = (aoeOrigin.x === casterX && aoeOrigin.y === casterY) ? casterTokenId : '';
+  const excludeId = aoeOrigin.x === casterX && aoeOrigin.y === casterY ? casterTokenId : '';
   const affectedTokens = findTokensInAoeShape(
     allTokens,
     aoeOrigin,
@@ -3789,7 +4763,7 @@ async function resolveAreaSpell(
     meta.aoeRadius || 15,
     rotationDeg,
     gridSize,
-    excludeId,
+    excludeId
   );
 
   // Stash for unified per-token loop below
@@ -3807,12 +4781,7 @@ async function resolveAreaSpell(
   // the dice count accordingly.
   let upcastNote: string | null = null;
   if (spell.level > 0 && damageDice && castAtLevel > spell.level) {
-    const upcast = applyUpcastDamage(
-      damageDice,
-      spell.description || '',
-      spell.level,
-      castAtLevel,
-    );
+    const upcast = applyUpcastDamage(damageDice, spell.description || '', spell.level, castAtLevel);
     if (upcast.bonusDice) {
       damageDice = upcast.dice;
       upcastNote = `   Upcast: ${upcast.bonusDice} (${upcast.extraLevels} level${upcast.extraLevels !== 1 ? 's' : ''} above ${spell.level})`;
@@ -3820,7 +4789,14 @@ async function resolveAreaSpell(
   }
 
   // Build the cast announcement header for the consolidated message.
-  const shapeLabel = aoeShape === 'cube' ? 'Cube' : aoeShape === 'cone' ? 'Cone' : aoeShape === 'line' ? 'Line' : 'Radius';
+  const shapeLabel =
+    aoeShape === 'cube'
+      ? 'Cube'
+      : aoeShape === 'cone'
+        ? 'Cone'
+        : aoeShape === 'line'
+          ? 'Line'
+          : 'Radius';
   const headerLines: string[] = [
     `✦ ${casterName} casts ${spell.name}`,
     `   ${aoeRadius}-ft ${shapeLabel} • ${affectedTokens.length} creature${affectedTokens.length !== 1 ? 's' : ''} in area`,
@@ -3872,10 +4848,9 @@ async function resolveAreaSpell(
 
   if (affectedTokens.length === 0) {
     const where = excludeId ? `of ${casterName}` : 'of the spell origin';
-    emitSystemMessage([
-      ...headerLines,
-      `   ⚠ No creatures within ${aoeRadius} ft ${where}.`,
-    ].join('\n'));
+    emitSystemMessage(
+      [...headerLines, `   ⚠ No creatures within ${aoeRadius} ft ${where}.`].join('\n')
+    );
     return;
   }
 
@@ -3888,18 +4863,22 @@ async function resolveAreaSpell(
     if (cid && !charStore.allCharacters[cid]) missingCharIds.push(cid);
   }
   if (missingCharIds.length > 0) {
-    await Promise.all(missingCharIds.map(async (cid) => {
-      try {
-        const r = await fetch(`/api/characters/${cid}`);
-        if (r.ok) {
-          const data = await r.json();
-          useCharacterStore.getState().setAllCharacters({
-            ...useCharacterStore.getState().allCharacters,
-            [cid]: data,
-          });
+    await Promise.all(
+      missingCharIds.map(async (cid) => {
+        try {
+          const r = await fetch(`/api/characters/${cid}`);
+          if (r.ok) {
+            const data = await r.json();
+            useCharacterStore.getState().setAllCharacters({
+              ...useCharacterStore.getState().allCharacters,
+              [cid]: data,
+            });
+          }
+        } catch {
+          /* ignore */
         }
-      } catch { /* ignore */ }
-    }));
+      })
+    );
   }
 
   // Re-read store after fetches
@@ -3924,12 +4903,19 @@ async function resolveAreaSpell(
     }
     const aChar = refreshedStore.allCharacters[aCharId];
     if (!aChar) {
-      console.warn('[CAST SELF] Character not in store after fetch, skipping:', aToken.name, aCharId);
+      console.warn(
+        '[CAST SELF] Character not in store after fetch, skipping:',
+        aToken.name,
+        aCharId
+      );
       targetLines.push(`   • ${aToken.name}: skipped (character not loaded)`);
       continue;
     }
 
-    const aHp = typeof aChar.hitPoints === 'number' ? aChar.hitPoints : parseInt(String(aChar.hitPoints)) || 0;
+    const aHp =
+      typeof aChar.hitPoints === 'number'
+        ? aChar.hitPoints
+        : parseInt(String(aChar.hitPoints)) || 0;
     if (aHp <= 0) {
       targetLines.push(`   • ${aToken.name}: already down`);
       continue;
@@ -3963,7 +4949,9 @@ async function resolveAreaSpell(
     let aModNotes: string[] = [];
     if (resolvedSavingThrow) {
       const aScores = aChar.abilityScores
-        ? (typeof aChar.abilityScores === 'string' ? JSON.parse(aChar.abilityScores) : aChar.abilityScores)
+        ? typeof aChar.abilityScores === 'string'
+          ? JSON.parse(aChar.abilityScores)
+          : aChar.abilityScores
         : {};
       aTargetSaveMod = abilityModifier((aScores as any)[resolvedSavingThrow] || 10);
       const aTokenConditions = (aToken.conditions || []) as string[];
@@ -3986,7 +4974,9 @@ async function resolveAreaSpell(
       const saveLabel = resolvedSavingThrow.toUpperCase();
       const saveIcon = aSaved ? '✓' : '✗';
       const modNote = aMods.notes.length > 0 ? ` [${aMods.notes.join(', ')}]` : '';
-      lineParts.push(`${saveIcon} ${saveLabel} ${saveResult.breakdown} vs DC ${casterSpellDC} → ${aSaved ? 'SAVED' : 'FAILED'}${modNote}`);
+      lineParts.push(
+        `${saveIcon} ${saveLabel} ${saveResult.breakdown} vs DC ${casterSpellDC} → ${aSaved ? 'SAVED' : 'FAILED'}${modNote}`
+      );
 
       // Populate structured save outcome.
       const aSaveModifiers: AttackBreakdownModifier[] = [];
@@ -4034,7 +5024,11 @@ async function resolveAreaSpell(
       if (beforeResist > 0) {
         // Read fresh HP from store right before applying
         const freshChar = useCharacterStore.getState().allCharacters[aCharId];
-        const freshHp = freshChar ? (typeof freshChar.hitPoints === 'number' ? freshChar.hitPoints : parseInt(String(freshChar.hitPoints)) || 0) : aHp;
+        const freshHp = freshChar
+          ? typeof freshChar.hitPoints === 'number'
+            ? freshChar.hitPoints
+            : parseInt(String(freshChar.hitPoints)) || 0
+          : aHp;
         const dmgType = (spell.damageType || '').toLowerCase();
         const dmgWord = dmgType ? `${dmgType} ` : '';
         const aTokenConditions2 = (aToken.conditions || []) as string[];
@@ -4043,7 +5037,9 @@ async function resolveAreaSpell(
         const newHp = Math.max(0, freshHp - finalDmg);
         const resistTag = resisted.note ? ` [${resisted.note}]` : '';
         const dmgChange = finalDmg !== beforeResist ? `${beforeResist}→${finalDmg}` : `${finalDmg}`;
-        lineParts.push(`${dmgChange} ${dmgWord}dmg${aSaved ? ' (half)' : ''}${resistTag} (HP ${freshHp}→${newHp})`);
+        lineParts.push(
+          `${dmgChange} ${dmgWord}dmg${aSaved ? ' (half)' : ''}${resistTag} (HP ${freshHp}→${newHp})`
+        );
         if (newHp === 0) lineParts.push('💀 DOWN');
         // Schedule the actual HP update + damage side effects (CON save,
         // Sleep ends-on-damage, Hideous Laughter save retry)
@@ -4084,7 +5080,10 @@ async function resolveAreaSpell(
       let dx = aToken.x - aoeOrigin.x;
       let dy = aToken.y - aoeOrigin.y;
       const rawDist = Math.sqrt(dx * dx + dy * dy);
-      if (rawDist === 0) { dx = gridSize; dy = 0; }
+      if (rawDist === 0) {
+        dx = gridSize;
+        dy = 0;
+      }
       const dist = rawDist || gridSize;
       const pushPixels = (pushDistance / 5) * gridSize;
       const newX = Math.round(aToken.x + (dx / dist) * pushPixels);
@@ -4109,13 +5108,14 @@ async function resolveAreaSpell(
         aoeOutcome.conditionsApplied = conditions;
         const durMeta = getSpellDurationMeta(spell.name);
         const currentRound = useCombatStore.getState().roundNumber || 0;
-        const expiresAfterRound = currentRound > 0
-          ? currentRound + durMeta.durationRounds - 1
+        const expiresAfterRound =
+          currentRound > 0 ? currentRound + durMeta.durationRounds - 1 : undefined;
+        const saveRetry = durMeta.saveAbility
+          ? {
+              ability: durMeta.saveAbility,
+              dc: casterSpellDC,
+            }
           : undefined;
-        const saveRetry = durMeta.saveAbility ? {
-          ability: durMeta.saveAbility,
-          dc: casterSpellDC,
-        } : undefined;
         setTimeout(() => {
           const targetTokenData = useMapStore.getState().tokens[aToken.id];
           if (targetTokenData) {
@@ -4155,7 +5155,9 @@ async function resolveAreaSpell(
   if ((spell as any).__dmOverride) {
     aoeCasterNotes.push('DM override — no slot consumed');
   } else if (castAtLevel > spell.level) {
-    aoeCasterNotes.push(`Upcast: spent L${castAtLevel} slot (+${castAtLevel - spell.level} over base)`);
+    aoeCasterNotes.push(
+      `Upcast: spent L${castAtLevel} slot (+${castAtLevel - spell.level} over base)`
+    );
   }
   if (upcastNote) aoeCasterNotes.push(upcastNote.replace(/^\s*Upcast:\s*/, '').trim());
   aoeCasterNotes.push(`${aoeRadius}-ft ${aoeShape} · ${affectedTokens.length} in area`);
@@ -4175,10 +5177,7 @@ async function resolveAreaSpell(
     targets: aoeOutcomes,
   };
 
-  emitSystemMessage(
-    [...headerLines, ...targetLines].join('\n'),
-    { spellResult: aoeBreakdown },
-  );
+  emitSystemMessage([...headerLines, ...targetLines].join('\n'), { spellResult: aoeBreakdown });
 }
 
 /**
@@ -4201,7 +5200,7 @@ async function castLightSpell(
   spell: any,
   casterTokenId: string,
   casterName: string,
-  actionSlot: ActionType,
+  actionSlot: ActionType
 ) {
   const mapState = useMapStore.getState();
   const currentMap = mapState.currentMap;
@@ -4216,7 +5215,7 @@ async function castLightSpell(
   // because it's serialized to the DB unlike a client-side tag.
   const markerPrefix = `${spell.name} (${casterName})`;
   const existing = Object.values(mapState.tokens).filter(
-    (t: any) => t.name === markerPrefix,
+    (t: any) => t.name === markerPrefix
   ) as any[];
   if (existing.length > 0) {
     const { emitTokenRemove } = await import('../../socket/emitters');
@@ -4240,10 +5239,19 @@ async function castLightSpell(
   const hintEl = document.createElement('div');
   hintEl.textContent = `Cast ${spell.name} — click on the map to place a light. Esc to cancel.`;
   Object.assign(hintEl.style, {
-    position: 'fixed', top: '12%', left: '50%', transform: 'translateX(-50%)',
-    padding: '10px 18px', background: 'rgba(0,0,0,0.85)', color: '#fff',
-    borderRadius: '8px', border: '2px solid #8cb4ff',
-    zIndex: '99999', fontSize: '13px', fontWeight: '600', fontFamily: 'sans-serif',
+    position: 'fixed',
+    top: '12%',
+    left: '50%',
+    transform: 'translateX(-50%)',
+    padding: '10px 18px',
+    background: 'rgba(0,0,0,0.85)',
+    color: '#fff',
+    borderRadius: '8px',
+    border: '2px solid #8cb4ff',
+    zIndex: '99999',
+    fontSize: '13px',
+    fontWeight: '600',
+    fontFamily: 'sans-serif',
     boxShadow: '0 4px 16px rgba(0,0,0,0.6)',
   });
   document.body.appendChild(hintEl);
@@ -4284,23 +5292,23 @@ async function castLightSpell(
       // Named with the caster so the dismiss path can find it after
       // refresh without a custom tag column.
       name: markerPrefix,
-      x: detail.mapX - (gridSize * 0.125),
-      y: detail.mapY - (gridSize * 0.125),
+      x: detail.mapX - gridSize * 0.125,
+      y: detail.mapY - gridSize * 0.125,
       size: 0.25,
       imageUrl: null,
       color: '#8cb4ff',
       layer: 'token',
       visible: true,
       hasLight: true,
-      lightRadius: gridSize * 4,     // 20 ft bright (absolute)
-      lightDimRadius: gridSize * 8,  // 40 ft total (absolute) = 20 bright + 20 dim
+      lightRadius: gridSize * 4, // 20 ft bright (absolute)
+      lightDimRadius: gridSize * 8, // 40 ft total (absolute) = 20 bright + 20 dim
       lightColor: '#8cb4ff',
       conditions: [],
       ownerUserId: (casterToken as any).ownerUserId ?? null,
     });
 
     emitSystemMessage(
-      `✦ ${casterName} casts ${spell.name} — a mote of magical light blooms at the chosen spot (20 ft bright + 20 ft dim, PHB p.255).`,
+      `✦ ${casterName} casts ${spell.name} — a mote of magical light blooms at the chosen spot (20 ft bright + 20 ft dim, PHB p.255).`
     );
 
     // Burn the Action slot if we're in combat
@@ -4343,7 +5351,9 @@ function colorForSpell(spell: any): string {
  */
 async function aimAndCastSpell(spell: any, casterTokenId: string, casterName: string) {
   const casterChar = useMapStore.getState().tokens[casterTokenId]?.characterId
-    ? useCharacterStore.getState().allCharacters[useMapStore.getState().tokens[casterTokenId]!.characterId!]
+    ? useCharacterStore.getState().allCharacters[
+        useMapStore.getState().tokens[casterTokenId]!.characterId!
+      ]
     : null;
   const meta = await parseSpellMeta(spell, casterChar?.level ?? 1);
 
@@ -4372,15 +5382,25 @@ async function aimAndCastSpell(spell: any, casterTokenId: string, casterName: st
 
   // Show a hint toast
   const hintEl = document.createElement('div');
-  const hintText = (meta.aoeShape === 'cone' || meta.aoeShape === 'line')
-    ? `Aim ${spell.name} — click a direction. Esc to cancel.`
-    : `Place ${spell.name} — click on the map. Esc to cancel.`;
+  const hintText =
+    meta.aoeShape === 'cone' || meta.aoeShape === 'line'
+      ? `Aim ${spell.name} — click a direction. Esc to cancel.`
+      : `Place ${spell.name} — click on the map. Esc to cancel.`;
   hintEl.textContent = hintText;
   Object.assign(hintEl.style, {
-    position: 'fixed', top: '12%', left: '50%', transform: 'translateX(-50%)',
-    padding: '10px 18px', background: 'rgba(0,0,0,0.85)', color: '#fff',
-    borderRadius: '8px', border: `2px solid ${colorForSpell(spell)}`,
-    zIndex: '99999', fontSize: '13px', fontWeight: '600', fontFamily: 'sans-serif',
+    position: 'fixed',
+    top: '12%',
+    left: '50%',
+    transform: 'translateX(-50%)',
+    padding: '10px 18px',
+    background: 'rgba(0,0,0,0.85)',
+    color: '#fff',
+    borderRadius: '8px',
+    border: `2px solid ${colorForSpell(spell)}`,
+    zIndex: '99999',
+    fontSize: '13px',
+    fontWeight: '600',
+    fontFamily: 'sans-serif',
     boxShadow: '0 4px 16px rgba(0,0,0,0.6)',
   });
   document.body.appendChild(hintEl);
@@ -4410,11 +5430,17 @@ async function aimAndCastSpell(spell: any, casterTokenId: string, casterName: st
     if (isSelfRange && isDirectional) {
       const caster = useMapStore.getState().tokens[casterTokenId] as any;
       if (!caster) return;
-      const angle = Math.atan2(detail.mapY - caster.y, detail.mapX - caster.x) * 180 / Math.PI;
+      const angle = (Math.atan2(detail.mapY - caster.y, detail.mapX - caster.x) * 180) / Math.PI;
       await resolveAreaSpell(spell, casterTokenId, casterName, { x: caster.x, y: caster.y }, angle);
     } else {
       // Non-Self placement OR Self sphere/cube redirected here (rare)
-      await resolveAreaSpell(spell, casterTokenId, casterName, { x: detail.mapX, y: detail.mapY }, detail.rotation);
+      await resolveAreaSpell(
+        spell,
+        casterTokenId,
+        casterName,
+        { x: detail.mapX, y: detail.mapY },
+        detail.rotation
+      );
     }
   }
 
@@ -4429,7 +5455,9 @@ async function aimAndCastSpell(spell: any, casterTokenId: string, casterName: st
  */
 async function castSpellFromButton(spell: any, casterTokenId: string, casterName: string) {
   const casterChar = useMapStore.getState().tokens[casterTokenId]?.characterId
-    ? useCharacterStore.getState().allCharacters[useMapStore.getState().tokens[casterTokenId]!.characterId!]
+    ? useCharacterStore.getState().allCharacters[
+        useMapStore.getState().tokens[casterTokenId]!.characterId!
+      ]
     : null;
 
   // ── Special-case: Light / Dancing Lights ───────────────────────
@@ -4470,28 +5498,65 @@ async function castSpellFromButton(spell: any, casterTokenId: string, casterName
 
 function quickBtnStyle(color: string): React.CSSProperties {
   return {
-    flex: 1, padding: '6px 0', borderRadius: 6, fontSize: 10, fontWeight: 600,
-    background: `${color}15`, border: `1px solid ${color}33`, color,
-    cursor: 'pointer', fontFamily: 'inherit',
+    flex: 1,
+    padding: '6px 0',
+    borderRadius: 6,
+    fontSize: 10,
+    fontWeight: 600,
+    background: `${color}15`,
+    border: `1px solid ${color}33`,
+    color,
+    cursor: 'pointer',
+    fontFamily: 'inherit',
   };
 }
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <div style={{ marginBottom: 6 }}>
-      <div style={{ fontSize: 8, fontWeight: 700, color: C.red, textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 3 }}>{title}</div>
+      <div
+        style={{
+          fontSize: 8,
+          fontWeight: 700,
+          color: C.red,
+          textTransform: 'uppercase',
+          letterSpacing: '0.5px',
+          marginBottom: 3,
+        }}
+      >
+        {title}
+      </div>
       {children}
     </div>
   );
 }
 
-function ActionBtn({ label, color, onClick }: { label: string; color: string; onClick: () => void }) {
+function ActionBtn({
+  label,
+  color,
+  onClick,
+}: {
+  label: string;
+  color: string;
+  onClick: () => void;
+}) {
   return (
-    <button onClick={onClick} style={{
-      padding: '2px 6px', fontSize: 9, fontWeight: 600, borderRadius: 3,
-      background: `${color}22`, border: `1px solid ${color}44`, color,
-      cursor: 'pointer', fontFamily: 'inherit',
-    }}>{label}</button>
+    <button
+      onClick={onClick}
+      style={{
+        padding: '2px 6px',
+        fontSize: 9,
+        fontWeight: 600,
+        borderRadius: 3,
+        background: `${color}22`,
+        border: `1px solid ${color}44`,
+        color,
+        cursor: 'pointer',
+        fontFamily: 'inherit',
+      }}
+    >
+      {label}
+    </button>
   );
 }
 
@@ -4517,7 +5582,7 @@ function applyUpcastDamage(
   baseDice: string,
   description: string,
   baseLevel: number,
-  castLevel: number,
+  castLevel: number
 ): { dice: string; bonusDice: string | null; extraLevels: number } {
   if (castLevel <= baseLevel || !baseDice || baseLevel <= 0) {
     return { dice: baseDice, bonusDice: null, extraLevels: 0 };
@@ -4528,9 +5593,13 @@ function applyUpcastDamage(
   // — 2024 PHB phrasing is "each spell slot level above N" whereas the
   // original regex only allowed "each slot level above N", which silently
   // broke upcast for every spell imported from DDB's modern text.
-  const m = cleanDesc.match(
-    /(?:damage|healing)\s+(?:increases?|increase)\s+by\s+(\d+d\d+)\s+for\s+each\s+(?:spell\s+)?slot\s+level\s+above\s+(?:the\s+)?(\d+)/i,
-  ) ?? cleanDesc.match(/(\d+d\d+)\s+for\s+each\s+(?:spell\s+)?slot\s+level\s+above\s+(?:the\s+)?(\d+)/i);
+  const m =
+    cleanDesc.match(
+      /(?:damage|healing)\s+(?:increases?|increase)\s+by\s+(\d+d\d+)\s+for\s+each\s+(?:spell\s+)?slot\s+level\s+above\s+(?:the\s+)?(\d+)/i
+    ) ??
+    cleanDesc.match(
+      /(\d+d\d+)\s+for\s+each\s+(?:spell\s+)?slot\s+level\s+above\s+(?:the\s+)?(\d+)/i
+    );
   if (!m) return { dice: baseDice, bonusDice: null, extraLevels: 0 };
 
   const bonus = m[1];
@@ -4598,47 +5667,6 @@ async function broadcastHitAndAwaitShield(args: {
 }
 
 /**
- * Broadcast a leveled spell cast attempt and wait briefly for a
- * counterspell to come back. Returns `true` if the spell was
- * counterspelled (resolver should abort) or `false` if the window
- * elapsed without interruption.
- *
- * The window is short (1.4 s) so casts feel responsive — long
- * enough that another player has time to react, short enough that
- * combat doesn't grind to a halt waiting for a counterspell that
- * never comes.
- */
-async function broadcastCastAndAwaitCounterspell(args: {
-  casterTokenId: string;
-  casterName: string;
-  spellName: string;
-  spellLevel: number;
-}): Promise<boolean> {
-  // Cantrips and slot-zero "spells" can't be counterspelled in 5e —
-  // Counterspell only targets a creature casting a spell, but per
-  // the prompt window we still skip them to avoid noise.
-  if (args.spellLevel <= 0) return false;
-
-  const castId = `${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
-  emitSpellCastAttempt({ ...args, castId });
-
-  return new Promise<boolean>((resolve) => {
-    const timeout = setTimeout(() => {
-      window.removeEventListener('spell-counterspelled', onCounter as EventListener);
-      resolve(false);
-    }, 1400);
-    function onCounter(e: Event) {
-      const detail = (e as CustomEvent).detail as { castId?: string };
-      if (detail?.castId && detail.castId !== castId) return;
-      clearTimeout(timeout);
-      window.removeEventListener('spell-counterspelled', onCounter as EventListener);
-      resolve(true);
-    }
-    window.addEventListener('spell-counterspelled', onCounter as EventListener);
-  });
-}
-
-/**
  * Inline list of weapon property pills. Each property gets a rules
  * tooltip so hovering "Finesse" or "Thrown" shows the full 5e rules
  * for what the property does. Raw property strings from the imported
@@ -4652,15 +5680,20 @@ function WeaponProperties({ properties }: { properties: string[] }) {
       {properties.map((prop, idx) => {
         const rule = lookupWeaponProperty(prop);
         const pill = (
-          <span style={{
-            padding: '0px 5px', fontSize: 8, fontWeight: 600,
-            background: 'rgba(212,168,67,0.08)',
-            border: '1px solid rgba(212,168,67,0.25)',
-            borderRadius: 3, color: '#d4a843',
-            textTransform: 'capitalize' as const,
-            cursor: rule ? 'help' : 'default',
-            display: 'inline-block',
-          }}>
+          <span
+            style={{
+              padding: '0px 5px',
+              fontSize: 8,
+              fontWeight: 600,
+              background: 'rgba(212,168,67,0.08)',
+              border: '1px solid rgba(212,168,67,0.25)',
+              borderRadius: 3,
+              color: '#d4a843',
+              textTransform: 'capitalize' as const,
+              cursor: rule ? 'help' : 'default',
+              display: 'inline-block',
+            }}
+          >
             {prop}
           </span>
         );
@@ -4689,8 +5722,16 @@ function WeaponProperties({ properties }: { properties: string[] }) {
  * opening a browser. Pass the action name (case-insensitive) —
  * `lookupCombatAction` finds the matching entry.
  */
-function CombatActionBtn({ action, color, onClick, disabled }: {
-  action: string; color: string; onClick: () => void; disabled?: boolean;
+function CombatActionBtn({
+  action,
+  color,
+  onClick,
+  disabled,
+}: {
+  action: string;
+  color: string;
+  onClick: () => void;
+  disabled?: boolean;
 }) {
   const rule = lookupCombatAction(action);
   const btn = (
@@ -4698,15 +5739,20 @@ function CombatActionBtn({ action, color, onClick, disabled }: {
       onClick={disabled ? undefined : onClick}
       disabled={disabled}
       style={{
-        padding: '5px 9px', fontSize: 9, fontWeight: 700, borderRadius: 3,
+        padding: '5px 9px',
+        fontSize: 9,
+        fontWeight: 700,
+        borderRadius: 3,
         // Muted "pill" that matches the rest of the ActionBtn vocabulary:
         // dark card background, faint colored border, colored text.
         background: disabled ? 'rgba(255,255,255,0.02)' : `${color}14`,
         border: `1px solid ${disabled ? 'rgba(255,255,255,0.08)' : `${color}44`}`,
         color: disabled ? '#555' : color,
         cursor: disabled ? 'not-allowed' : 'pointer',
-        fontFamily: 'inherit', textTransform: 'uppercase',
-        letterSpacing: '0.5px', minWidth: 58,
+        fontFamily: 'inherit',
+        textTransform: 'uppercase',
+        letterSpacing: '0.5px',
+        minWidth: 58,
         opacity: disabled ? 0.6 : 1,
         transition: 'all 0.12s ease',
       }}
@@ -4716,7 +5762,12 @@ function CombatActionBtn({ action, color, onClick, disabled }: {
   );
   if (!rule) return btn;
   return (
-    <InfoTooltip title={rule.title} body={rule.body} footer={rule.footer} accent={rule.accent ?? color}>
+    <InfoTooltip
+      title={rule.title}
+      body={rule.body}
+      footer={rule.footer}
+      accent={rule.accent ?? color}
+    >
       {btn}
     </InfoTooltip>
   );
@@ -4724,25 +5775,54 @@ function CombatActionBtn({ action, color, onClick, disabled }: {
 
 const CONDITION_COLORS: Record<string, string> = {
   // Standard 5e conditions
-  blinded: '#4a4a4a', charmed: '#ff69b4', deafened: '#95a5a6',
-  frightened: '#9b59b6', grappled: '#e67e22', incapacitated: '#7f8c8d',
-  invisible: '#3498db', paralyzed: '#f1c40f', petrified: '#bdc3c7',
-  poisoned: '#27ae60', prone: '#e74c3c', restrained: '#c0392b',
-  stunned: '#f39c12', unconscious: '#2c3e50', stable: '#27ae60', exhaustion: '#8e44ad',
+  blinded: '#4a4a4a',
+  charmed: '#ff69b4',
+  deafened: '#95a5a6',
+  frightened: '#9b59b6',
+  grappled: '#e67e22',
+  incapacitated: '#7f8c8d',
+  invisible: '#3498db',
+  paralyzed: '#f1c40f',
+  petrified: '#bdc3c7',
+  poisoned: '#27ae60',
+  prone: '#e74c3c',
+  restrained: '#c0392b',
+  stunned: '#f39c12',
+  unconscious: '#2c3e50',
+  stable: '#27ae60',
+  exhaustion: '#8e44ad',
   // Buff badges (from SPELL_BUFFS) — use gold/blue for positive, dark red for debuff
-  blessed: '#d4a843', heroic: '#d4a843', aided: '#27ae60',
-  shielded: '#3498db', 'mage-armored': '#3498db', protected: '#3498db',
-  sanctuary: '#ffd700', hasted: '#1abc9c', enlarged: '#e67e22',
-  reduced: '#9b59b6', stoneskin: '#7f8c8d', 'death-warded': '#d4a843',
-  flying: '#87ceeb', 'spider-climbing': '#8b4513', jumping: '#1abc9c',
-  stealthy: '#4a4a4a', barkskin: '#6b8e23', 'temp-hp': '#95a5a6',
-  'true-strike': '#d4a843', marked: '#c0392b', hexed: '#9b59b6',
-  outlined: '#ffd700', baned: '#8b0000', slowed: '#7f8c8d',
-  cursed: '#7e3a96', weakened: '#6b6b6b',
+  blessed: '#d4a843',
+  heroic: '#d4a843',
+  aided: '#27ae60',
+  shielded: '#3498db',
+  'mage-armored': '#3498db',
+  protected: '#3498db',
+  sanctuary: '#ffd700',
+  hasted: '#1abc9c',
+  enlarged: '#e67e22',
+  reduced: '#9b59b6',
+  stoneskin: '#7f8c8d',
+  'death-warded': '#d4a843',
+  flying: '#87ceeb',
+  'spider-climbing': '#8b4513',
+  jumping: '#1abc9c',
+  stealthy: '#4a4a4a',
+  barkskin: '#6b8e23',
+  'temp-hp': '#95a5a6',
+  'true-strike': '#d4a843',
+  marked: '#c0392b',
+  hexed: '#9b59b6',
+  outlined: '#ffd700',
+  baned: '#8b0000',
+  slowed: '#7f8c8d',
+  cursed: '#7e3a96',
+  weakened: '#6b6b6b',
   // Combat action flags — set when a player takes Dodge / Disengage
   // (cleared at the start of their next turn by the server's nextTurn
   // handler, see combatEvents.ts).
-  dodging: '#9b59b6', disengaged: '#1abc9c',
+  dodging: '#9b59b6',
+  disengaged: '#1abc9c',
   // Shield spell (1st-level abjuration) — +5 AC until the start of
   // the caster's next turn. Same expiration flow as Dodge/Disengage.
   'shield-spell': '#3498db',
@@ -4750,72 +5830,177 @@ const CONDITION_COLORS: Record<string, string> = {
 
 const ALL_CONDITIONS = Object.keys(CONDITION_COLORS);
 
-function HPControls({ hp, maxHp, hpPct, canEdit, onDamage, onHeal }: {
-  hp: number; maxHp: number; hpPct: number; canEdit: boolean;
-  onDamage: (amount: number) => void; onHeal: (amount: number) => void;
+function HPControls({
+  hp,
+  maxHp,
+  hpPct,
+  canEdit,
+  onDamage,
+  onHeal,
+}: {
+  hp: number;
+  maxHp: number;
+  hpPct: number;
+  canEdit: boolean;
+  onDamage: (amount: number) => void;
+  onHeal: (amount: number) => void;
 }) {
   const [hpInput, setHpInput] = useState('');
   const [showInput, setShowInput] = useState(false);
 
   return (
     <div style={{ marginTop: 6 }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 10, marginBottom: 2 }}>
+      <div
+        style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          fontSize: 10,
+          marginBottom: 2,
+        }}
+      >
         <span style={{ color: C.green, fontWeight: 600 }}>HP</span>
         <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
           {canEdit && (
             <>
-              {[1, 5, 10].map(n => (
-                <button key={`d${n}`} onClick={() => onDamage(n)} style={{
-                  padding: '0 4px', fontSize: 9, background: 'rgba(197,49,49,0.15)',
-                  border: `1px solid ${C.red}33`, borderRadius: 3, color: C.red,
-                  cursor: 'pointer', fontFamily: 'inherit', lineHeight: '16px',
-                }}>-{n}</button>
+              {[1, 5, 10].map((n) => (
+                <button
+                  key={`d${n}`}
+                  onClick={() => onDamage(n)}
+                  style={{
+                    padding: '0 4px',
+                    fontSize: 9,
+                    background: 'rgba(197,49,49,0.15)',
+                    border: `1px solid ${C.red}33`,
+                    borderRadius: 3,
+                    color: C.red,
+                    cursor: 'pointer',
+                    fontFamily: 'inherit',
+                    lineHeight: '16px',
+                  }}
+                >
+                  -{n}
+                </button>
               ))}
             </>
           )}
-          <span style={{ fontWeight: 700, fontSize: 12, color: hpPct > 0.5 ? C.green : hpPct > 0.25 ? C.gold : C.red, minWidth: 40, textAlign: 'center' }}>
+          <span
+            style={{
+              fontWeight: 700,
+              fontSize: 12,
+              color: hpPct > 0.5 ? C.green : hpPct > 0.25 ? C.gold : C.red,
+              minWidth: 40,
+              textAlign: 'center',
+            }}
+          >
             {hp}/{maxHp}
           </span>
           {canEdit && (
             <>
-              {[1, 5, 10].map(n => (
-                <button key={`h${n}`} onClick={() => onHeal(n)} style={{
-                  padding: '0 4px', fontSize: 9, background: 'rgba(69,160,73,0.15)',
-                  border: `1px solid ${C.green}33`, borderRadius: 3, color: C.green,
-                  cursor: 'pointer', fontFamily: 'inherit', lineHeight: '16px',
-                }}>+{n}</button>
+              {[1, 5, 10].map((n) => (
+                <button
+                  key={`h${n}`}
+                  onClick={() => onHeal(n)}
+                  style={{
+                    padding: '0 4px',
+                    fontSize: 9,
+                    background: 'rgba(69,160,73,0.15)',
+                    border: `1px solid ${C.green}33`,
+                    borderRadius: 3,
+                    color: C.green,
+                    cursor: 'pointer',
+                    fontFamily: 'inherit',
+                    lineHeight: '16px',
+                  }}
+                >
+                  +{n}
+                </button>
               ))}
             </>
           )}
         </div>
       </div>
       <div style={{ height: 5, background: '#333', borderRadius: 3, overflow: 'hidden' }}>
-        <div style={{
-          height: '100%', borderRadius: 3, transition: 'width 0.3s',
-          width: `${Math.max(0, Math.min(100, hpPct * 100))}%`,
-          background: hpPct > 0.5 ? C.green : hpPct > 0.25 ? C.gold : C.red,
-        }} />
+        <div
+          style={{
+            height: '100%',
+            borderRadius: 3,
+            transition: 'width 0.3s',
+            width: `${Math.max(0, Math.min(100, hpPct * 100))}%`,
+            background: hpPct > 0.5 ? C.green : hpPct > 0.25 ? C.gold : C.red,
+          }}
+        />
       </div>
       {canEdit && (
         <div style={{ display: 'flex', gap: 3, marginTop: 3 }}>
-          <input type="number" value={hpInput} onChange={e => setHpInput(e.target.value)}
-            placeholder="Custom" onKeyDown={e => {
+          <input
+            type="number"
+            value={hpInput}
+            onChange={(e) => setHpInput(e.target.value)}
+            placeholder="Custom"
+            onKeyDown={(e) => {
               if (e.key === 'Enter') {
                 const v = parseInt(hpInput);
-                if (!isNaN(v) && v > 0) { onDamage(v); setHpInput(''); }
+                if (!isNaN(v) && v > 0) {
+                  onDamage(v);
+                  setHpInput('');
+                }
               }
             }}
             style={{
-              flex: 1, padding: '2px 6px', fontSize: 10, background: '#333',
-              border: `1px solid ${C.borderDim}`, borderRadius: 3, color: C.text,
-              outline: 'none', width: 50,
-            }} />
-          <button onClick={() => { const v = parseInt(hpInput); if (!isNaN(v) && v > 0) { onDamage(v); setHpInput(''); } }}
-            style={{ padding: '2px 8px', fontSize: 9, fontWeight: 600, background: 'rgba(197,49,49,0.2)', border: `1px solid ${C.red}44`, borderRadius: 3, color: C.red, cursor: 'pointer', fontFamily: 'inherit' }}>
+              flex: 1,
+              padding: '2px 6px',
+              fontSize: 10,
+              background: '#333',
+              border: `1px solid ${C.borderDim}`,
+              borderRadius: 3,
+              color: C.text,
+              outline: 'none',
+              width: 50,
+            }}
+          />
+          <button
+            onClick={() => {
+              const v = parseInt(hpInput);
+              if (!isNaN(v) && v > 0) {
+                onDamage(v);
+                setHpInput('');
+              }
+            }}
+            style={{
+              padding: '2px 8px',
+              fontSize: 9,
+              fontWeight: 600,
+              background: 'rgba(197,49,49,0.2)',
+              border: `1px solid ${C.red}44`,
+              borderRadius: 3,
+              color: C.red,
+              cursor: 'pointer',
+              fontFamily: 'inherit',
+            }}
+          >
             Dmg
           </button>
-          <button onClick={() => { const v = parseInt(hpInput); if (!isNaN(v) && v > 0) { onHeal(v); setHpInput(''); } }}
-            style={{ padding: '2px 8px', fontSize: 9, fontWeight: 600, background: 'rgba(69,160,73,0.2)', border: `1px solid ${C.green}44`, borderRadius: 3, color: C.green, cursor: 'pointer', fontFamily: 'inherit' }}>
+          <button
+            onClick={() => {
+              const v = parseInt(hpInput);
+              if (!isNaN(v) && v > 0) {
+                onHeal(v);
+                setHpInput('');
+              }
+            }}
+            style={{
+              padding: '2px 8px',
+              fontSize: 9,
+              fontWeight: 600,
+              background: 'rgba(69,160,73,0.2)',
+              border: `1px solid ${C.green}44`,
+              borderRadius: 3,
+              color: C.green,
+              cursor: 'pointer',
+              fontFamily: 'inherit',
+            }}
+          >
             Heal
           </button>
         </div>
@@ -4824,8 +6009,14 @@ function HPControls({ hp, maxHp, hpPct, canEdit, onDamage, onHeal }: {
   );
 }
 
-function ConditionsBar({ conditions, canEdit, onToggle }: {
-  conditions: string[]; canEdit: boolean; onToggle: (cond: string) => void;
+function ConditionsBar({
+  conditions,
+  canEdit,
+  onToggle,
+}: {
+  conditions: string[];
+  canEdit: boolean;
+  onToggle: (cond: string) => void;
 }) {
   const [showAll, setShowAll] = useState(false);
 
@@ -4839,14 +6030,21 @@ function ConditionsBar({ conditions, canEdit, onToggle }: {
           {conditions.map((cond: string) => {
             const rule = lookupCondition(cond);
             const badge = (
-              <span onClick={() => canEdit && onToggle(cond)} style={{
-                padding: '1px 6px', fontSize: 8, fontWeight: 600,
-                background: `${CONDITION_COLORS[cond] || '#888'}22`,
-                border: `1px solid ${CONDITION_COLORS[cond] || '#888'}`,
-                borderRadius: 8, color: CONDITION_COLORS[cond] || '#888',
-                textTransform: 'capitalize', cursor: canEdit ? 'pointer' : 'help',
-                display: 'inline-block',
-              }}>
+              <span
+                onClick={() => canEdit && onToggle(cond)}
+                style={{
+                  padding: '1px 6px',
+                  fontSize: 8,
+                  fontWeight: 600,
+                  background: `${CONDITION_COLORS[cond] || '#888'}22`,
+                  border: `1px solid ${CONDITION_COLORS[cond] || '#888'}`,
+                  borderRadius: 8,
+                  color: CONDITION_COLORS[cond] || '#888',
+                  textTransform: 'capitalize',
+                  cursor: canEdit ? 'pointer' : 'help',
+                  display: 'inline-block',
+                }}
+              >
                 {cond} {canEdit && '×'}
               </span>
             );
@@ -4868,24 +6066,42 @@ function ConditionsBar({ conditions, canEdit, onToggle }: {
       {/* Add condition button */}
       {canEdit && (
         <>
-          <button onClick={() => setShowAll(!showAll)} style={{
-            padding: '1px 8px', fontSize: 8, background: 'transparent',
-            border: `1px solid ${C.borderDim}`, borderRadius: 3,
-            color: C.textMuted, cursor: 'pointer', fontFamily: 'inherit',
-          }}>
+          <button
+            onClick={() => setShowAll(!showAll)}
+            style={{
+              padding: '1px 8px',
+              fontSize: 8,
+              background: 'transparent',
+              border: `1px solid ${C.borderDim}`,
+              borderRadius: 3,
+              color: C.textMuted,
+              cursor: 'pointer',
+              fontFamily: 'inherit',
+            }}
+          >
             {showAll ? '▲ Hide conditions' : '＋ Add condition'}
           </button>
           {showAll && (
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 2, marginTop: 3 }}>
-              {ALL_CONDITIONS.filter(c => !conditions.includes(c)).map(cond => {
+              {ALL_CONDITIONS.filter((c) => !conditions.includes(c)).map((cond) => {
                 const rule = lookupCondition(cond);
                 const btn = (
-                  <button onClick={() => onToggle(cond)} style={{
-                    padding: '1px 5px', fontSize: 7, borderRadius: 3,
-                    background: C.bgHover, border: `1px solid ${C.borderDim}`,
-                    color: C.textMuted, cursor: 'pointer', fontFamily: 'inherit',
-                    textTransform: 'capitalize',
-                  }}>{cond}</button>
+                  <button
+                    onClick={() => onToggle(cond)}
+                    style={{
+                      padding: '1px 5px',
+                      fontSize: 7,
+                      borderRadius: 3,
+                      background: C.bgHover,
+                      border: `1px solid ${C.borderDim}`,
+                      color: C.textMuted,
+                      cursor: 'pointer',
+                      fontFamily: 'inherit',
+                      textTransform: 'capitalize',
+                    }}
+                  >
+                    {cond}
+                  </button>
                 );
                 if (!rule) return <span key={cond}>{btn}</span>;
                 return (
