@@ -6,6 +6,11 @@ import { useDicePresetStore } from '../../stores/useDicePresetStore';
 import { useSessionStore } from '../../stores/useSessionStore';
 import { useCharacterStore } from '../../stores/useCharacterStore';
 import { theme } from '../../styles/theme';
+import {
+  PERCENTILE_HELP_TEXT,
+  formatDiceExpression,
+  hasPercentileDie,
+} from '../../utils/diceDisplay';
 
 /**
  * Dice Tray — rune-slab redesign.
@@ -404,10 +409,13 @@ function AdvancedDiceModal(props: AdvancedDiceModalProps) {
               <div style={styles.resultPanel}>
                 <span style={styles.resultTotal}>{lastResult.total}</span>
                 <span style={styles.resultBreakdown}>
-                  [{lastResult.dice.map((d) => d.value).join(', ')}]
+                  [{formatDiceExpression(lastResult.dice)}]
                   {lastResult.modifier !== 0 &&
                     ` ${lastResult.modifier > 0 ? '+' : ''}${lastResult.modifier}`}
                 </span>
+                {hasPercentileDie(lastResult.dice) && (
+                  <span style={styles.percentileHint}>{PERCENTILE_HELP_TEXT}</span>
+                )}
               </div>
             </section>
           )}
@@ -509,7 +517,7 @@ function DieTile({
   return (
     <button
       onClick={onClick}
-      title={`Roll ${label}`}
+      title={sides === 100 ? `Roll ${label} (${PERCENTILE_HELP_TEXT})` : `Roll ${label}`}
       style={styles.dieButton}
       onMouseEnter={(e) => {
         const svg = e.currentTarget.querySelector('svg');
@@ -858,13 +866,14 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'flex',
     alignItems: 'center',
     gap: theme.space.sm,
-    padding: `0 ${theme.space.md}px`,
+    flexWrap: 'wrap' as const,
+    padding: `6px ${theme.space.md}px`,
     background: `linear-gradient(180deg, ${theme.parchment} 0%, ${theme.bg.deepest} 100%)`,
     border: `1px solid ${theme.gold.border}`,
     borderRadius: theme.radius.sm,
     boxShadow: `inset 0 1px 0 rgba(232, 196, 85, 0.2), ${theme.goldGlow.soft}`,
     minWidth: 70,
-    height: TILE_HEIGHT,
+    minHeight: TILE_HEIGHT,
     flexShrink: 0,
   },
   resultTotal: {
@@ -876,6 +885,12 @@ const styles: Record<string, React.CSSProperties> = {
     textShadow: `0 0 8px rgba(232, 196, 85, 0.4)`,
   },
   resultBreakdown: {
+    fontSize: 10,
+    color: theme.text.muted,
+    fontFamily: 'monospace',
+  },
+  percentileHint: {
+    flexBasis: '100%',
     fontSize: 10,
     color: theme.text.muted,
     fontFamily: 'monospace',

@@ -1,6 +1,12 @@
 import type { CSSProperties } from 'react';
 import type { DiceRollData, RollTemplate } from '@dnd-vtt/shared';
 import { theme } from '../../styles/theme';
+import {
+  PERCENTILE_HELP_TEXT,
+  formatDiceExpression,
+  formatDieBadge,
+  hasPercentileDie,
+} from '../../utils/diceDisplay';
 
 // ── Skills list for detection ────────────────────────────────────
 const SKILLS = [
@@ -320,6 +326,9 @@ export function DiceRollCard({ rollData, content, displayName, isHidden }: DiceR
   // Build the formula: "14 + 5 = 19" — or for ADV/DIS, "[14, 8] keep 14".
   const diceSum = rollData.dice.reduce((s, d) => s + d.value, 0);
   const mod = rollData.modifier;
+  const diceExpression = formatDiceExpression(rollData.dice);
+  const isPercentileRoll = hasPercentileDie(rollData.dice);
+  const shouldShowFormula = mod !== 0 || rollData.dice.length > 1 || isPercentileRoll;
   let formulaParts: string;
   if (keptD20 !== null) {
     const keepLabel = `[${d20Values.join(', ')}] keep ${keptD20}`;
@@ -328,7 +337,9 @@ export function DiceRollCard({ rollData, content, displayName, isHidden }: DiceR
         ? `${keepLabel} ${mod > 0 ? '+' : '-'} ${Math.abs(mod)} = ${rollData.total}`
         : `${keepLabel} = ${rollData.total}`;
   } else if (mod !== 0) {
-    formulaParts = `${diceSum} ${mod > 0 ? '+' : '-'} ${Math.abs(mod)} = ${rollData.total}`;
+    formulaParts = `${diceExpression || diceSum} ${mod > 0 ? '+' : '-'} ${Math.abs(mod)} = ${rollData.total}`;
+  } else if (shouldShowFormula) {
+    formulaParts = `${diceExpression || diceSum} = ${rollData.total}`;
   } else {
     formulaParts = `${rollData.total}`;
   }
@@ -463,7 +474,7 @@ export function DiceRollCard({ rollData, content, displayName, isHidden }: DiceR
         >
           {rollData.total}
         </span>
-        {mod !== 0 && (
+        {shouldShowFormula && (
           <span
             style={{
               fontSize: 14,
@@ -541,12 +552,26 @@ export function DiceRollCard({ rollData, content, displayName, isHidden }: DiceR
                   }`,
                 }}
               >
-                {d.value}
+                {formatDieBadge(d, rollData.dice)}
               </span>
             );
           })}
         </div>
       </div>
+
+      {isPercentileRoll && (
+        <div
+          style={{
+            fontSize: 10,
+            color: theme.text.muted,
+            fontFamily: 'monospace',
+            marginTop: -2,
+            marginBottom: 6,
+          }}
+        >
+          {PERCENTILE_HELP_TEXT}
+        </div>
+      )}
 
       {/* Reason (if any) */}
       {rollData.reason && (
