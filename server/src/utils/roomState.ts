@@ -32,9 +32,22 @@ export interface ConditionMetadata {
   /** Combat round AFTER which it auto-expires (e.g. 1-min spell at round 1 → expiresAfter 10) */
   expiresAfterRound?: number;
   /** Save the target rolls at end of their turn — Hold Person etc. */
-  saveAtEndOfTurn?: { ability: 'str' | 'dex' | 'con' | 'int' | 'wis' | 'cha'; dc: number; advantage?: boolean };
+  saveAtEndOfTurn?: {
+    ability: 'str' | 'dex' | 'con' | 'int' | 'wis' | 'cha';
+    dc: number;
+    advantage?: boolean;
+  };
   /** Spell ends when the target takes any damage (Sleep) */
   endsOnDamage?: boolean;
+  /**
+   * This condition is maintained by the caster's concentration, so it
+   * ends when the caster loses concentration (drops to 0 HP, becomes
+   * incapacitated, or is removed). Non-concentration caster effects —
+   * Stunning Strike's stun, ongoing spell damage — leave this unset so
+   * they SURVIVE the caster going down (they are not concentration-
+   * dependent). Only used by the no-spell caster-drop cleanup path.
+   */
+  concentration?: boolean;
 }
 
 /**
@@ -251,7 +264,12 @@ export interface RoomState {
 // ── Rate limiting ──────────────────────────────────────────
 const _rateLimitCounters = new Map<string, { count: number; windowStart: number }>();
 
-export function checkRateLimit(socketId: string, event: string, maxPerWindow: number, windowMs: number = 1000): boolean {
+export function checkRateLimit(
+  socketId: string,
+  event: string,
+  maxPerWindow: number,
+  windowMs: number = 1000
+): boolean {
   const key = `${socketId}:${event}`;
   const now = Date.now();
   const entry = _rateLimitCounters.get(key);
@@ -267,11 +285,7 @@ const rooms = new Map<string, RoomState>();
 const roomCodeIndex = new Map<string, string>();
 const socketIndex = new Map<string, { sessionId: string; userId: string }>();
 
-export function createRoom(
-  sessionId: string,
-  roomCode: string,
-  dmUserId: string,
-): RoomState {
+export function createRoom(sessionId: string, roomCode: string, dmUserId: string): RoomState {
   const room: RoomState = {
     sessionId,
     roomCode,
@@ -318,10 +332,7 @@ export function getRoomByCode(roomCode: string): RoomState | undefined {
   return rooms.get(sessionId);
 }
 
-export function addPlayerToRoom(
-  sessionId: string,
-  player: RoomPlayer,
-): void {
+export function addPlayerToRoom(sessionId: string, player: RoomPlayer): void {
   const room = rooms.get(sessionId);
   if (!room) return;
   // Union sockets: a second tab for the same user adds its socketId
@@ -347,7 +358,7 @@ export function addPlayerToRoom(
  */
 export function removeSocketFromRoom(
   sessionId: string,
-  socketId: string,
+  socketId: string
 ): { userId: string; userFullyLeft: boolean } | null {
   const room = rooms.get(sessionId);
   if (!room) return null;
@@ -390,10 +401,7 @@ export function removeSocketFromRoom(
  * want the user gone. Individual disconnects should use
  * `removeSocketFromRoom` so other tabs survive.
  */
-export function removePlayerFromRoom(
-  sessionId: string,
-  userId: string,
-): void {
+export function removePlayerFromRoom(sessionId: string, userId: string): void {
   const room = rooms.get(sessionId);
   if (!room) return;
   const sockets = room.userSockets.get(userId) ?? new Set<string>();
@@ -415,7 +423,7 @@ export function removePlayerFromRoom(
 }
 
 export function getPlayerBySocketId(
-  socketId: string,
+  socketId: string
 ): { room: RoomState; player: RoomPlayer } | undefined {
   const entry = socketIndex.get(socketId);
   if (!entry) return undefined;
@@ -445,10 +453,8 @@ export function getPlayerBySocketId(
  * it can run on a tight interval without churn.
  */
 export function refreshSocketPresence(
-  socketId: string,
-):
-  | { ok: true; sessionId: string; userId: string; nextEventId: number }
-  | { ok: false } {
+  socketId: string
+): { ok: true; sessionId: string; userId: string; nextEventId: number } | { ok: false } {
   const ctx = getPlayerBySocketId(socketId);
   if (!ctx) return { ok: false };
   // Defensive: ensure this socket is still in the user's live-socket set
@@ -597,7 +603,7 @@ export function isCurrentTurnOwnerOrDM(ctx: PlayerContext): boolean {
 export function resolveViewingMapId(
   room: RoomState,
   userId: string,
-  role: 'dm' | 'player',
+  role: 'dm' | 'player'
 ): string | null {
   if (role === 'dm') {
     const preview = room.dmViewingMap.get(userId);
@@ -666,11 +672,14 @@ export function dmSocketsOnMap(room: RoomState, mapId: string): string[] {
     .map((recipient) => recipient.socketId);
 }
 
-export function socketRecipientsForToken(room: RoomState, mapId: string, token: Token): MapSocketRecipient[] {
-  return socketRecipientsOnMap(room, mapId)
-    .filter((recipient) => (
-      recipient.role === 'dm' || tokenVisibleToPlayer(token, recipient.userId)
-    ));
+export function socketRecipientsForToken(
+  room: RoomState,
+  mapId: string,
+  token: Token
+): MapSocketRecipient[] {
+  return socketRecipientsOnMap(room, mapId).filter(
+    (recipient) => recipient.role === 'dm' || tokenVisibleToPlayer(token, recipient.userId)
+  );
 }
 
 export function socketsForToken(room: RoomState, mapId: string, token: Token): string[] {

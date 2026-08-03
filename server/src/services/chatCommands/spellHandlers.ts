@@ -38,7 +38,7 @@ function resolveTarget(ctx: PlayerContext, name: string): Token | null {
   if (!name) return null;
   const needle = name.toLowerCase();
   const matches = Array.from(ctx.room.tokens.values()).filter(
-    (t) => t.name.toLowerCase() === needle,
+    (t) => t.name.toLowerCase() === needle
   );
   if (matches.length === 0) return null;
   matches.sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
@@ -57,10 +57,24 @@ interface SaveOrSuckArgs {
   saveAtEndOfTurn: boolean;
   endsOnDamage?: boolean;
   savingAgainst?: string | readonly string[] | null;
+  /** Set for concentration spells so the effect ends if the caster drops. */
+  concentration?: boolean;
 }
 
 function apply(args: SaveOrSuckArgs): void {
-  const { ctx, c, spellName, conditionName, dc, saveAbility, durationRounds, target, saveAtEndOfTurn, endsOnDamage } = args;
+  const {
+    ctx,
+    c,
+    spellName,
+    conditionName,
+    dc,
+    saveAbility,
+    durationRounds,
+    target,
+    saveAtEndOfTurn,
+    endsOnDamage,
+    concentration,
+  } = args;
   const caller = resolveCaller(ctx);
   const currentRound = ctx.room.combatState?.roundNumber ?? 0;
   ConditionService.applyConditionWithMeta(ctx.room.sessionId, target.id, {
@@ -71,6 +85,7 @@ function apply(args: SaveOrSuckArgs): void {
     expiresAfterRound: currentRound + durationRounds,
     ...(saveAtEndOfTurn ? { saveAtEndOfTurn: { ability: saveAbility, dc } } : {}),
     ...(endsOnDamage ? { endsOnDamage: true } : {}),
+    ...(concentration ? { concentration: true } : {}),
   });
   c.io.to(ctx.room.sessionId).emit('map:token-updated', {
     tokenId: target.id,
@@ -82,13 +97,15 @@ function saveNotesLabel(notes: string[]): string {
   return notes.length > 0 ? ` [${notes.join('; ')}]` : '';
 }
 
-async function applyOnFailedSave(args: SaveOrSuckArgs): Promise<{ applied: boolean; line: string }> {
+async function applyOnFailedSave(
+  args: SaveOrSuckArgs
+): Promise<{ applied: boolean; line: string }> {
   const saveResult = await rollTargetSave(
     args.c,
     args.target,
     args.saveAbility,
     args.dc,
-    args.savingAgainst ?? args.spellName,
+    args.savingAgainst ?? args.spellName
   );
   if (!saveResult.saved) apply(args);
   const outcome = saveResult.saved ? 'SAVED' : 'FAILED';
@@ -113,17 +130,22 @@ async function handleHoldPerson(c: ChatCommandContext): Promise<boolean> {
     return true;
   }
   const result = await applyOnFailedSave({
-    ctx: c.ctx, c,
+    ctx: c.ctx,
+    c,
     spellName: 'Hold Person',
     conditionName: 'paralyzed',
-    dc, saveAbility: 'wis',
-    durationRounds: 10, target,
+    dc,
+    saveAbility: 'wis',
+    durationRounds: 10,
+    target,
     saveAtEndOfTurn: true,
+    concentration: true,
     savingAgainst: 'magic',
   });
   broadcastSystem(
-    c.io, c.ctx,
-    `🖐 **Hold Person** — ${result.line}. ${result.applied ? 'PARALYZED, save at end of each turn, 1 min.' : 'No effect.'}`,
+    c.io,
+    c.ctx,
+    `🖐 **Hold Person** — ${result.line}. ${result.applied ? 'PARALYZED, save at end of each turn, 1 min.' : 'No effect.'}`
   );
   return true;
 }
@@ -143,15 +165,23 @@ async function handleHoldMonster(c: ChatCommandContext): Promise<boolean> {
     return true;
   }
   const result = await applyOnFailedSave({
-    ctx: c.ctx, c,
+    ctx: c.ctx,
+    c,
     spellName: 'Hold Monster',
     conditionName: 'paralyzed',
-    dc, saveAbility: 'wis',
-    durationRounds: 10, target,
+    dc,
+    saveAbility: 'wis',
+    durationRounds: 10,
+    target,
     saveAtEndOfTurn: true,
+    concentration: true,
     savingAgainst: 'magic',
   });
-  broadcastSystem(c.io, c.ctx, `🖐 **Hold Monster** — ${result.line}. ${result.applied ? 'PARALYZED, save at end of each turn, 1 min.' : 'No effect.'}`);
+  broadcastSystem(
+    c.io,
+    c.ctx,
+    `🖐 **Hold Monster** — ${result.line}. ${result.applied ? 'PARALYZED, save at end of each turn, 1 min.' : 'No effect.'}`
+  );
   return true;
 }
 
@@ -171,17 +201,21 @@ async function handleSleep(c: ChatCommandContext): Promise<boolean> {
     return true;
   }
   apply({
-    ctx: c.ctx, c,
+    ctx: c.ctx,
+    c,
     spellName: 'Sleep',
     conditionName: 'unconscious',
-    dc: 0, saveAbility: 'wis',
-    durationRounds: 10, target,
+    dc: 0,
+    saveAbility: 'wis',
+    durationRounds: 10,
+    target,
     saveAtEndOfTurn: false,
     endsOnDamage: true,
   });
   broadcastSystem(
-    c.io, c.ctx,
-    `💤 ${target.name} falls UNCONSCIOUS from Sleep (ends on any damage; 1 min max).`,
+    c.io,
+    c.ctx,
+    `💤 ${target.name} falls UNCONSCIOUS from Sleep (ends on any damage; 1 min max).`
   );
   return true;
 }
@@ -201,17 +235,22 @@ async function handleFear(c: ChatCommandContext): Promise<boolean> {
     return true;
   }
   const result = await applyOnFailedSave({
-    ctx: c.ctx, c,
+    ctx: c.ctx,
+    c,
     spellName: 'Fear',
     conditionName: 'frightened',
-    dc, saveAbility: 'wis',
-    durationRounds: 10, target,
+    dc,
+    saveAbility: 'wis',
+    durationRounds: 10,
+    target,
     saveAtEndOfTurn: true,
+    concentration: true,
     savingAgainst: ['magic', 'frightened'],
   });
   broadcastSystem(
-    c.io, c.ctx,
-    `😱 **Fear** — ${result.line}. ${result.applied ? 'FRIGHTENED, save at end of each turn, 1 min.' : 'No effect.'}`,
+    c.io,
+    c.ctx,
+    `😱 **Fear** — ${result.line}. ${result.applied ? 'FRIGHTENED, save at end of each turn, 1 min.' : 'No effect.'}`
   );
   return true;
 }
@@ -231,17 +270,22 @@ async function handleSlow(c: ChatCommandContext): Promise<boolean> {
     return true;
   }
   const result = await applyOnFailedSave({
-    ctx: c.ctx, c,
+    ctx: c.ctx,
+    c,
     spellName: 'Slow',
     conditionName: 'slowed',
-    dc, saveAbility: 'wis',
-    durationRounds: 10, target,
+    dc,
+    saveAbility: 'wis',
+    durationRounds: 10,
+    target,
     saveAtEndOfTurn: true,
+    concentration: true,
     savingAgainst: 'magic',
   });
   broadcastSystem(
-    c.io, c.ctx,
-    `🐢 **Slow** — ${result.line}. ${result.applied ? 'SLOWED: half speed, -2 AC + DEX saves, no reactions.' : 'No effect.'}`,
+    c.io,
+    c.ctx,
+    `🐢 **Slow** — ${result.line}. ${result.applied ? 'SLOWED: half speed, -2 AC + DEX saves, no reactions.' : 'No effect.'}`
   );
   return true;
 }
@@ -277,8 +321,9 @@ async function handleBless(c: ChatCommandContext): Promise<boolean> {
     return true;
   }
   broadcastSystem(
-    c.io, c.ctx,
-    `✨ Bless on ${applied.join(', ')} — +1d4 to attacks + saves for 10 rounds (concentration).`,
+    c.io,
+    c.ctx,
+    `✨ Bless on ${applied.join(', ')} — +1d4 to attacks + saves for 10 rounds (concentration).`
   );
   return true;
 }
@@ -302,12 +347,16 @@ async function handleBane(c: ChatCommandContext): Promise<boolean> {
     const t = resolveTarget(c.ctx, name);
     if (!t) continue;
     const result = await applyOnFailedSave({
-      ctx: c.ctx, c,
+      ctx: c.ctx,
+      c,
       spellName: 'Bane',
       conditionName: 'baned',
-      dc, saveAbility: 'cha',
-      durationRounds: 10, target: t,
+      dc,
+      saveAbility: 'cha',
+      durationRounds: 10,
+      target: t,
       saveAtEndOfTurn: false,
+      concentration: true,
       savingAgainst: 'magic',
     });
     lines.push(`   • ${result.line} → ${result.applied ? 'BANED' : 'no effect'}`);
@@ -317,13 +366,12 @@ async function handleBane(c: ChatCommandContext): Promise<boolean> {
     whisperToCaller(c.io, c.ctx, '!bane: no targets matched.');
     return true;
   }
-  lines.push(applied.length > 0
-    ? `   Baned targets: ${applied.join(', ')}. -1d4 to attacks + saves for 10 rounds.`
-    : '   All targets saved.');
-  broadcastSystem(
-    c.io, c.ctx,
-    lines.join('\n'),
+  lines.push(
+    applied.length > 0
+      ? `   Baned targets: ${applied.join(', ')}. -1d4 to attacks + saves for 10 rounds.`
+      : '   All targets saved.'
   );
+  broadcastSystem(c.io, c.ctx, lines.join('\n'));
   return true;
 }
 
@@ -345,12 +393,16 @@ async function handleFaerieFire(c: ChatCommandContext): Promise<boolean> {
     const t = resolveTarget(c.ctx, name);
     if (!t) continue;
     const result = await applyOnFailedSave({
-      ctx: c.ctx, c,
+      ctx: c.ctx,
+      c,
       spellName: 'Faerie Fire',
       conditionName: 'outlined',
-      dc, saveAbility: 'dex',
-      durationRounds: 10, target: t,
+      dc,
+      saveAbility: 'dex',
+      durationRounds: 10,
+      target: t,
       saveAtEndOfTurn: false,
+      concentration: true,
       savingAgainst: 'magic',
     });
     lines.push(`   • ${result.line} → ${result.applied ? 'OUTLINED' : 'no effect'}`);
@@ -360,13 +412,12 @@ async function handleFaerieFire(c: ChatCommandContext): Promise<boolean> {
     whisperToCaller(c.io, c.ctx, '!faeriefire: no targets matched.');
     return true;
   }
-  lines.push(applied.length > 0
-    ? `   Outlined targets: ${applied.join(', ')}. Attacks against them have advantage; no invisibility.`
-    : '   All targets saved.');
-  broadcastSystem(
-    c.io, c.ctx,
-    lines.join('\n'),
+  lines.push(
+    applied.length > 0
+      ? `   Outlined targets: ${applied.join(', ')}. Attacks against them have advantage; no invisibility.`
+      : '   All targets saved.'
   );
+  broadcastSystem(c.io, c.ctx, lines.join('\n'));
   return true;
 }
 
