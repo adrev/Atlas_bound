@@ -3,7 +3,13 @@ import { useCharacterStore } from '../../stores/useCharacterStore';
 import { useSessionStore } from '../../stores/useSessionStore';
 import { useMapStore } from '../../stores/useMapStore';
 import { useCombatStore } from '../../stores/useCombatStore';
-import { emitSystemMessage, emitSpellSlotAdjust, emitUseAction } from '../../socket/emitters';
+import {
+  emitSystemMessage,
+  emitSpellSlotAdjust,
+  emitUseAction,
+  emitSpellCounterspelled,
+} from '../../socket/emitters';
+import { COUNTERSPELL_WINDOW_MS } from '../../socket/counterspellWindow';
 import { theme } from '../../styles/theme';
 import type { Character, Spell, Token } from '@dnd-vtt/shared';
 
@@ -33,7 +39,10 @@ interface CounterspellPromptData {
   castId: string;
 }
 
-const DISMISS_MS = 8_000;
+// The prompt stays open exactly as long as the caster's resolver waits
+// for a counter (shared constant — they MUST match, else the caster
+// resolves before the counterer can click).
+const DISMISS_MS = COUNTERSPELL_WINDOW_MS;
 
 const queue: CounterspellPromptData[] = [];
 const listeners = new Set<() => void>();
@@ -111,16 +120,23 @@ export function CounterspellModal() {
         : `🛑 ${myCharacter?.name ?? 'Caster'} casts COUNTERSPELL — needs DC ${10 + head.spellLevel} ability check to cancel ${head.spellName} (DM resolves manually)`;
       emitSystemMessage(message);
 
-      // Dispatch a window event the cast resolver listens for so it
-      // can short-circuit the spell. Same-tab only — counterspeller
-      // and target caster are usually the same room but the resolver
-      // also listens to the chat broadcast as a fallback.
+      // Route the counter through the SERVER so it reaches the caster's
+      // client (a different browser). The old code only dispatched a
+      // same-tab window event, which the caster — in another tab — never
+      // received, so the spell resolved despite being countered and the
+      // counterer's slot + reaction were burned for nothing. The server
+      // relays combat:spell-counterspelled room-wide; the caster's
+      // listener turns it back into the 'spell-counterspelled' window
+      // event its resolver awaits (see socket/listeners.ts). Only fires
+      // on an auto-cancel (slotLevel >= spell level); the DC-check case
+      // is resolved manually by the DM.
       if (success) {
-        window.dispatchEvent(
-          new CustomEvent('spell-counterspelled', {
-            detail: { castId: head.castId },
-          })
-        );
+        emitSpellCounterspelled({
+          castId: head.castId,
+          counterCasterName: myCharacter?.name ?? 'Caster',
+          counterSlotLevel: slotLevel,
+          counterCasterTokenId: eligibility?.counterCasterTokenId,
+        });
       }
 
       queue.shift();
@@ -288,6 +304,8 @@ interface Eligibility {
   canCounter: boolean;
   availableSlots: number[];
   slots: Record<string, { max: number; used: number }>;
+  /** The counterer's own token — the server requires it for the ownership check. */
+  counterCasterTokenId?: string;
 }
 
 function checkEligibility(
@@ -339,7 +357,7 @@ function checkEligibility(
     if (distFt > 60) return empty;
   }
 
-  return { canCounter: true, availableSlots, slots };
+  return { canCounter: true, availableSlots, slots, counterCasterTokenId: myToken.id };
 }
 
 function parseJson<T>(val: unknown, fallback: T): T {
