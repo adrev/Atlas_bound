@@ -202,10 +202,13 @@ export function emitTokenUpdate(
     ...(currentVersion !== undefined ? { expectedVersion: currentVersion } : {}),
   });
   if (!opts.skipLocal) {
-    useMapStore.getState().updateToken(tokenId, {
-      ...changes,
-      ...(currentVersion !== undefined ? { version: currentVersion + 1 } : {}),
-    });
+    // Do NOT optimistically bump the version here. The token version is a
+    // POSITION lock and only advances when x/y change (see the DB trigger);
+    // a property update — conditions, aura, light — leaves it untouched. The
+    // authoritative version still arrives on the map:token-updated echo. If
+    // we bumped it locally, the next drag would send a version the server
+    // never reached and rubber-band (the client-side half of audit #3).
+    useMapStore.getState().updateToken(tokenId, changes);
   }
   triggerSnapshot('token:update');
 }
