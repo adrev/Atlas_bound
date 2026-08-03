@@ -453,9 +453,24 @@ export function clearConcentrationConditions(
     const removed: string[] = [];
     for (const [name, meta] of Array.from(metaMap.entries())) {
       if (name.toLowerCase() === 'grappled') continue;
-      const sourceMatches =
-        normalizedSpellName === undefined || meta.source.toLowerCase() === normalizedSpellName;
-      if (meta.casterTokenId === casterTokenId && sourceMatches) {
+      if (meta.casterTokenId !== casterTokenId) continue;
+      // Two callers, two semantics:
+      //  - WITH a spellName (a specific concentration spell ended — e.g.
+      //    the caster failed a CON save): end exactly that spell's
+      //    conditions, matched by source.
+      //  - WITHOUT a spellName (the caster LOST concentration entirely —
+      //    dropped to 0 HP / incapacitated / removed): end only conditions
+      //    the caster was *concentrating* on. This is the fix for the
+      //    over-clear: previously an undefined spellName matched every
+      //    caster-attributed condition, so a monk's Stunning Strike stun
+      //    or an ongoing-damage effect vanished when the caster went down.
+      //    Those are not concentration effects (no `concentration` flag),
+      //    so they now correctly survive.
+      const matches =
+        normalizedSpellName !== undefined
+          ? meta.source.toLowerCase() === normalizedSpellName
+          : meta.concentration === true;
+      if (matches) {
         removed.push(name);
         removeCondition(sessionId, tokenId, name);
       }

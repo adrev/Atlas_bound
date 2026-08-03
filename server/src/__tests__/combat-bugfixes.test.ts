@@ -1110,6 +1110,7 @@ describe('CombatService — concentration and token removal cleanup', () => {
       source: 'Hold Person',
       appliedRound: 1,
       casterTokenId: 'tCaster',
+      concentration: true, // Hold Person is a concentration spell (audit #7)
       saveAtEndOfTurn: { ability: 'wis', dc: 14 },
     });
 
@@ -1158,6 +1159,7 @@ describe('CombatService — concentration and token removal cleanup', () => {
             source: 'Hold Person',
             appliedRound: 1,
             casterTokenId: 'tCaster',
+            concentration: true, // Hold Person is a concentration spell (audit #7)
           },
         ],
       ])
