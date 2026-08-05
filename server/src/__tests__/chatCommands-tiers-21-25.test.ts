@@ -973,11 +973,16 @@ describe('Utility — !turnundead', () => {
   it('applies frightened on a failed shared WIS save', async () => {
     const target = makeToken('tSkeleton', 'Skeleton', { characterId: 'char-skeleton' });
     const s = makeScenario({ role: 'dm', inCombat: true, otherTokens: [target] });
-    routeCharacterQueries({
+    const rowsById: Record<string, Record<string, unknown>> = {
       'char-caller': {
-        class: 'Cleric',
+        class: 'Cleric 2',
+        level: 2,
         spell_save_dc: 15,
         name: 'Priest',
+        version: 7,
+        features: JSON.stringify([
+          { name: 'Channel Divinity', usesTotal: 1, usesRemaining: 1, resetOn: 'short' },
+        ]),
       },
       'char-skeleton': {
         ability_scores: { wis: 10 },
@@ -985,6 +990,11 @@ describe('Utility — !turnundead', () => {
         proficiency_bonus: 2,
         name: 'Skeleton',
       },
+    };
+    mockQuery.mockImplementation(async (sql: string, params?: unknown[]) => {
+      if (sql.startsWith('UPDATE characters')) return { rows: [{ version: 8 }] };
+      const id = params?.[0] as string | undefined;
+      return { rows: id && rowsById[id] ? [rowsById[id]] : [] };
     });
     const { io, emissions } = makeFakeIo();
 
@@ -999,11 +1009,16 @@ describe('Utility — !turnundead', () => {
   it('applies halfling Brave advantage before Turn Undead frightens', async () => {
     const target = makeToken('tGhostwise', 'Ghostwise', { characterId: 'char-ghostwise' });
     const s = makeScenario({ role: 'dm', inCombat: true, otherTokens: [target] });
-    routeCharacterQueries({
+    const rowsById: Record<string, Record<string, unknown>> = {
       'char-caller': {
-        class: 'Cleric',
+        class: 'Cleric 2',
+        level: 2,
         spell_save_dc: 15,
         name: 'Priest',
+        version: 7,
+        features: JSON.stringify([
+          { name: 'Channel Divinity', usesTotal: 1, usesRemaining: 1, resetOn: 'short' },
+        ]),
       },
       'char-ghostwise': {
         ability_scores: { wis: 10 },
@@ -1012,6 +1027,11 @@ describe('Utility — !turnundead', () => {
         name: 'Ghostwise',
         race: 'Ghostwise Halfling',
       },
+    };
+    mockQuery.mockImplementation(async (sql: string, params?: unknown[]) => {
+      if (sql.startsWith('UPDATE characters')) return { rows: [{ version: 8 }] };
+      const id = params?.[0] as string | undefined;
+      return { rows: id && rowsById[id] ? [rowsById[id]] : [] };
     });
     const { io, emissions } = makeFakeIo();
 

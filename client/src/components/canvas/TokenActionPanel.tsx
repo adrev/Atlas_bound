@@ -1870,7 +1870,12 @@ export function TokenActionPanel({
         // Vow of Enmity (Vengeance Paladin): caster has advantage
         // vs cursed target. Only the caster benefits, so we check
         // the attacker's features against the target's vowed meta.
-        if (wTargetConds.includes('vowed') && wCasterToken?.characterId) {
+        const vowedCasterTokenId = targetToken.conditionSources?.vowed;
+        if (
+          wTargetConds.includes('vowed') &&
+          wCasterToken?.characterId &&
+          vowedCasterTokenId === wCasterToken.id
+        ) {
           const vowedCaster = useCharacterStore.getState().allCharacters[wCasterToken.characterId];
           try {
             const rawFeats = (vowedCaster as any)?.features;
