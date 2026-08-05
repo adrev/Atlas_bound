@@ -168,6 +168,12 @@ function channelsFor(emissions: Emission[], event: string): string[] {
     .sort();
 }
 
+function whispersTo(emissions: Emission[], socketId: string): string[] {
+  return emissions
+    .filter((e) => e.event === 'chat:new-message' && e.channelId === socketId)
+    .map((e) => (e.payload as { content?: string }).content ?? '');
+}
+
 function characterChanges(emissions: Emission[]): Record<string, unknown> {
   const payload = emissions.find((e) => e.event === 'character:updated')?.payload as
     | { changes?: Record<string, unknown> }
@@ -178,9 +184,11 @@ function characterChanges(emissions: Emission[]): Record<string, unknown> {
 
 /** Mock the SELECT reads used by the direct HP/temp-HP helpers, plus the
  *  `UPDATE ... RETURNING version` write. `versionRow` is what the UPDATE
- *  returns ([] simulates a mocked/failed RETURNING). */
+ *  returns ([] simulates a conflicted/zero-row write). The direct
+ *  damage/heal path requires `version` on the selected row (its UPDATE
+ *  is optimistic-locked); the set/temp-HP paths don't. */
 function mockCharacterRow(
-  row: { hit_points: number; max_hit_points: number; temp_hit_points: number },
+  row: { hit_points: number; max_hit_points: number; temp_hit_points: number; version?: number },
   versionRow: Array<Record<string, unknown>>
 ): void {
   mockQuery.mockImplementation(async (sql: string) => {
@@ -216,7 +224,9 @@ beforeEach(() => {
 describe('hp command exact-stat scoping', () => {
   it('keeps a hidden NPC !damage exact payload DM-only', async () => {
     seedRoom([tok('goblin', { characterId: 'char-npc', visible: false })]);
-    mockCharacterRow({ hit_points: 10, max_hit_points: 20, temp_hit_points: 0 }, [{ version: 4 }]);
+    mockCharacterRow({ hit_points: 10, max_hit_points: 20, temp_hit_points: 0, version: 3 }, [
+      { version: 4 },
+    ]);
     const em: Emission[] = [];
     await tryHandleChatCommand(fakeIo(em), getPlayerBySocketId('dm-sock')!, '!damage 5 goblin');
     expect(channelsFor(em, 'combat:hp-changed')).toEqual(DM_TABS);
@@ -225,7 +235,9 @@ describe('hp command exact-stat scoping', () => {
 
   it('withholds a VISIBLE NPC !damage exact payload from players while creature sharing is off', async () => {
     seedRoom([tok('goblin', { characterId: 'char-npc' })]);
-    mockCharacterRow({ hit_points: 10, max_hit_points: 20, temp_hit_points: 0 }, [{ version: 4 }]);
+    mockCharacterRow({ hit_points: 10, max_hit_points: 20, temp_hit_points: 0, version: 3 }, [
+      { version: 4 },
+    ]);
     const em: Emission[] = [];
     await tryHandleChatCommand(fakeIo(em), getPlayerBySocketId('dm-sock')!, '!damage 5 goblin');
     expect(channelsFor(em, 'combat:hp-changed')).toEqual(DM_TABS);
@@ -235,7 +247,9 @@ describe('hp command exact-stat scoping', () => {
   it('shares a visible NPC !damage payload with map players when showCreatureStatsToPlayers is on', async () => {
     const room = seedRoom([tok('goblin', { characterId: 'char-npc' })]);
     room.showCreatureStatsToPlayers = true;
-    mockCharacterRow({ hit_points: 10, max_hit_points: 20, temp_hit_points: 0 }, [{ version: 4 }]);
+    mockCharacterRow({ hit_points: 10, max_hit_points: 20, temp_hit_points: 0, version: 3 }, [
+      { version: 4 },
+    ]);
     const em: Emission[] = [];
     await tryHandleChatCommand(fakeIo(em), getPlayerBySocketId('dm-sock')!, '!damage 5 goblin');
     expect(channelsFor(em, 'combat:hp-changed')).toEqual(['by-sock', ...DM_TABS, ...OWNER_TABS]);
@@ -243,7 +257,9 @@ describe('hp command exact-stat scoping', () => {
 
   it('delivers an owned PC !heal payload to every DM and owner tab but not bystanders', async () => {
     seedRoom([tok('pc', { characterId: 'char-pc', ownerUserId: 'owner-user' })]);
-    mockCharacterRow({ hit_points: 5, max_hit_points: 20, temp_hit_points: 0 }, [{ version: 6 }]);
+    mockCharacterRow({ hit_points: 5, max_hit_points: 20, temp_hit_points: 0, version: 5 }, [
+      { version: 6 },
+    ]);
     const em: Emission[] = [];
     await tryHandleChatCommand(fakeIo(em), getPlayerBySocketId('owner-sock')!, '!heal 5 pc');
     expect(channelsFor(em, 'combat:hp-changed')).toEqual([...DM_TABS, ...OWNER_TABS]);
@@ -253,7 +269,9 @@ describe('hp command exact-stat scoping', () => {
   it('includes bystanders for a PC payload only when showPlayersToPlayers is on', async () => {
     const room = seedRoom([tok('pc', { characterId: 'char-pc', ownerUserId: 'owner-user' })]);
     room.showPlayersToPlayers = true;
-    mockCharacterRow({ hit_points: 5, max_hit_points: 20, temp_hit_points: 0 }, [{ version: 6 }]);
+    mockCharacterRow({ hit_points: 5, max_hit_points: 20, temp_hit_points: 0, version: 5 }, [
+      { version: 6 },
+    ]);
     const em: Emission[] = [];
     await tryHandleChatCommand(fakeIo(em), getPlayerBySocketId('owner-sock')!, '!heal 5 pc');
     expect(channelsFor(em, 'character:updated')).toEqual(['by-sock', ...DM_TABS, ...OWNER_TABS]);
@@ -276,31 +294,36 @@ describe('hp command exact-stat scoping', () => {
 describe('hp command version propagation', () => {
   it('carries the RETURNING version on an out-of-combat !damage character update', async () => {
     seedRoom([tok('pc', { characterId: 'char-pc', ownerUserId: 'owner-user' })]);
-    mockCharacterRow({ hit_points: 10, max_hit_points: 20, temp_hit_points: 2 }, [{ version: 7 }]);
+    mockCharacterRow({ hit_points: 10, max_hit_points: 20, temp_hit_points: 2, version: 6 }, [
+      { version: 7 },
+    ]);
     const em: Emission[] = [];
     await tryHandleChatCommand(fakeIo(em), getPlayerBySocketId('owner-sock')!, '!damage 4 pc');
     expect(updateCalls('RETURNING version').length).toBe(1);
-    expect(characterChanges(em)).toEqual({ hitPoints: 6, tempHitPoints: 2, version: 7 });
+    // Temp HP soaks first: 2 temp absorb, the remaining 2 hit base HP.
+    expect(characterChanges(em)).toEqual({ hitPoints: 8, tempHitPoints: 0, version: 7 });
   });
 
-  it('omits version (but still fans out) when the UPDATE returns no valid version', async () => {
+  it('fails closed (whisper, no fanout) when the !damage UPDATE returns no valid version', async () => {
     seedRoom([tok('pc', { characterId: 'char-pc', ownerUserId: 'owner-user' })]);
-    mockCharacterRow({ hit_points: 10, max_hit_points: 20, temp_hit_points: 0 }, [{ version: 0 }]);
+    mockCharacterRow({ hit_points: 10, max_hit_points: 20, temp_hit_points: 0, version: 6 }, [
+      { version: 0 },
+    ]);
     const em: Emission[] = [];
     await tryHandleChatCommand(fakeIo(em), getPlayerBySocketId('owner-sock')!, '!damage 4 pc');
-    const changes = characterChanges(em);
-    expect(changes.hitPoints).toBe(6);
-    expect('version' in changes).toBe(false);
+    expect(channelsFor(em, 'character:updated')).toEqual([]);
+    expect(channelsFor(em, 'combat:hp-changed')).toEqual([]);
+    expect(whispersTo(em, 'owner-sock').join(' ')).toMatch(/changed mid-action/);
   });
 
-  it('omits version when the UPDATE returns no row at all (mocked/failed RETURNING)', async () => {
+  it('fails closed when the !heal UPDATE returns no row at all (version conflict)', async () => {
     seedRoom([tok('pc', { characterId: 'char-pc', ownerUserId: 'owner-user' })]);
-    mockCharacterRow({ hit_points: 10, max_hit_points: 20, temp_hit_points: 0 }, []);
+    mockCharacterRow({ hit_points: 10, max_hit_points: 20, temp_hit_points: 0, version: 6 }, []);
     const em: Emission[] = [];
     await tryHandleChatCommand(fakeIo(em), getPlayerBySocketId('owner-sock')!, '!heal 4 pc');
-    const changes = characterChanges(em);
-    expect(changes.hitPoints).toBe(14);
-    expect('version' in changes).toBe(false);
+    expect(channelsFor(em, 'character:updated')).toEqual([]);
+    expect(channelsFor(em, 'combat:hp-changed')).toEqual([]);
+    expect(whispersTo(em, 'owner-sock').join(' ')).toMatch(/changed mid-action/);
   });
 
   it('forwards CombatService.applyDamage().version on the in-combat !damage path', async () => {

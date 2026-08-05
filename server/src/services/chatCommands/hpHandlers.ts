@@ -22,6 +22,14 @@ import { emitWildShapePrivate } from '../../utils/wildShapeSync.js';
 
 type WildShapeChange = NonNullable<CombatService.HpChangeResult['wildShape']>;
 
+interface DirectHpChange {
+  hp: number;
+  tempHp: number;
+  change: number;
+  version?: number;
+  wildShape?: WildShapeChange;
+}
+
 /**
  * Only a real DB version (integer >= 1) may propagate — the column
  * defaults to 1 and only ever increments. Number(null) is 0, so a
@@ -45,9 +53,10 @@ function emitHpAdjustCard(
   targetTokenId: string,
   hpBefore: number,
   hpAfter: number,
+  appliedChange = hpAfter - hpBefore,
   label?: string
 ): void {
-  const delta = hpAfter - hpBefore;
+  const delta = appliedChange;
   const verb = kind === 'damage' ? 'takes damage' : kind === 'heal' ? 'is healed' : 'HP set';
   const effect =
     kind === 'damage'
@@ -222,7 +231,7 @@ const UNREADABLE_WILD_SHAPE =
 async function applyDirectHp(
   characterId: string,
   delta: number
-): Promise<{ hp: number; tempHp: number; version?: number; wildShape?: WildShapeChange } | null> {
+): Promise<DirectHpChange | null> {
   const { rows } = await pool.query(
     'SELECT hit_points, max_hit_points, temp_hit_points, wild_shape, version FROM characters WHERE id = $1',
     [characterId]
@@ -244,6 +253,7 @@ async function applyDirectHp(
       return {
         hp: curHp,
         tempHp,
+        change: 0,
         version: expectedVersion,
         wildShape: { formName: state.formName, ended: false, state },
       };
@@ -282,6 +292,7 @@ async function applyDirectHp(
     return {
       hp: nextHp,
       tempHp: nextTempHp,
+      change: delta < 0 ? delta : (route as { healed: number }).healed,
       version,
       wildShape: {
         formName: state.formName,
@@ -293,13 +304,58 @@ async function applyDirectHp(
       },
     };
   }
-  // Untransformed: mutate the character row directly. Clamp to [0, max].
-  const nextHp = Math.max(0, Math.min(maxHp, curHp + delta));
+  // Untransformed: same authority rules as the transformed path —
+  // damage consumes temp HP before base HP, healing tops up base HP
+  // and leaves temp HP alone, and every changed pool lands in one
+  // version-guarded UPDATE. A conflict leaves every pool unchanged.
+  const expectedVersion = parseCharacterVersion(row);
+  if (
+    expectedVersion === undefined ||
+    !Number.isInteger(curHp) ||
+    curHp < 0 ||
+    curHp > 9999 ||
+    !Number.isInteger(maxHp) ||
+    maxHp < 1 ||
+    maxHp > 9999 ||
+    curHp > maxHp ||
+    !Number.isInteger(tempHp) ||
+    tempHp < 0 ||
+    tempHp > 9999
+  ) {
+    throw new Error('could not verify the character state — nothing was changed.');
+  }
+  const tempAbsorbed = delta < 0 ? Math.min(tempHp, -delta) : 0;
+  const nextTempHp = tempHp - tempAbsorbed;
+  const nextHp = Math.max(0, Math.min(maxHp, curHp + delta + tempAbsorbed));
+  // No-op keeps the row untouched: no UPDATE, no version-trigger bump.
+  if (nextHp === curHp && nextTempHp === tempHp) {
+    return { hp: curHp, tempHp, change: 0, version: expectedVersion };
+  }
+  const clauses: string[] = [];
+  const params: unknown[] = [];
+  if (nextHp !== curHp) {
+    params.push(nextHp);
+    clauses.push(`hit_points = $${params.length}`);
+  }
+  if (nextTempHp !== tempHp) {
+    params.push(nextTempHp);
+    clauses.push(`temp_hit_points = $${params.length}`);
+  }
+  params.push(characterId, expectedVersion);
   const { rows: versionRows } = await pool.query(
-    'UPDATE characters SET hit_points = $1 WHERE id = $2 RETURNING version',
-    [nextHp, characterId]
+    `UPDATE characters SET ${clauses.join(', ')} WHERE id = $${params.length - 1} AND version = $${params.length} RETURNING version`,
+    params
   );
-  return { hp: nextHp, tempHp, version: parseCharacterVersion(versionRows[0]) };
+  const version = parseCharacterVersion(versionRows[0]);
+  if (version === undefined) {
+    throw new Error('nothing was applied — the character changed mid-action. Retry.');
+  }
+  return {
+    hp: nextHp,
+    tempHp: nextTempHp,
+    change: delta < 0 ? delta : nextHp - curHp,
+    version,
+  };
 }
 
 async function setDirectHp(
@@ -388,6 +444,7 @@ async function handleDamage(c: ChatCommandContext): Promise<boolean> {
   try {
     let hpBefore = 0;
     let hpAfter = 0;
+    let appliedChange = 0;
     if (c.ctx.room.combatState?.active) {
       const combatant = c.ctx.room.combatState.combatants.find(
         (x) => x.tokenId === res.target!.token.id
@@ -395,6 +452,7 @@ async function handleDamage(c: ChatCommandContext): Promise<boolean> {
       hpBefore = combatant?.hp ?? (await readHpBefore(res.target.characterId));
       const r = await CombatService.applyDamage(c.ctx.room.sessionId, res.target.token.id, amount);
       hpAfter = r.hp;
+      appliedChange = r.change;
       broadcastHpChange(
         c.io,
         c.ctx,
@@ -415,6 +473,7 @@ async function handleDamage(c: ChatCommandContext): Promise<boolean> {
         return true;
       }
       hpAfter = r.hp;
+      appliedChange = r.change;
       broadcastHpChange(
         c.io,
         c.ctx,
@@ -422,7 +481,7 @@ async function handleDamage(c: ChatCommandContext): Promise<boolean> {
         res.target.characterId,
         r.hp,
         r.tempHp,
-        -amount,
+        r.change,
         'damage',
         r.version,
         r.wildShape
@@ -435,7 +494,15 @@ async function handleDamage(c: ChatCommandContext): Promise<boolean> {
       );
       return true;
     }
-    emitHpAdjustCard(c, 'damage', res.target.token.name, res.target.token.id, hpBefore, hpAfter);
+    emitHpAdjustCard(
+      c,
+      'damage',
+      res.target.token.name,
+      res.target.token.id,
+      hpBefore,
+      hpAfter,
+      appliedChange
+    );
     // R2: concentration save + endsOnDamage / saveOnDamage side effects.
     await applyDamageSideEffects(c.io, c.ctx.room, res.target.token.id, amount);
   } catch (err) {
@@ -466,6 +533,7 @@ async function handleHeal(c: ChatCommandContext): Promise<boolean> {
   try {
     let hpBefore = 0;
     let hpAfter = 0;
+    let appliedChange = 0;
     if (c.ctx.room.combatState?.active) {
       const combatant = c.ctx.room.combatState.combatants.find(
         (x) => x.tokenId === res.target!.token.id
@@ -473,6 +541,7 @@ async function handleHeal(c: ChatCommandContext): Promise<boolean> {
       hpBefore = combatant?.hp ?? (await readHpBefore(res.target.characterId));
       const r = await CombatService.applyHeal(c.ctx.room.sessionId, res.target.token.id, amount);
       hpAfter = r.hp;
+      appliedChange = r.change;
       broadcastHpChange(
         c.io,
         c.ctx,
@@ -493,6 +562,7 @@ async function handleHeal(c: ChatCommandContext): Promise<boolean> {
         return true;
       }
       hpAfter = r.hp;
+      appliedChange = r.change;
       broadcastHpChange(
         c.io,
         c.ctx,
@@ -500,7 +570,7 @@ async function handleHeal(c: ChatCommandContext): Promise<boolean> {
         res.target.characterId,
         r.hp,
         r.tempHp,
-        amount,
+        r.change,
         'heal',
         r.version,
         r.wildShape
@@ -509,7 +579,15 @@ async function handleHeal(c: ChatCommandContext): Promise<boolean> {
       whisperToCaller(c.io, c.ctx, '!heal: this token has no character and combat is not active.');
       return true;
     }
-    emitHpAdjustCard(c, 'heal', res.target.token.name, res.target.token.id, hpBefore, hpAfter);
+    emitHpAdjustCard(
+      c,
+      'heal',
+      res.target.token.name,
+      res.target.token.id,
+      hpBefore,
+      hpAfter,
+      appliedChange
+    );
   } catch (err) {
     whisperToCaller(c.io, c.ctx, `!heal: ${err instanceof Error ? err.message : 'failed'}`);
   }
@@ -580,7 +658,7 @@ async function handleHp(c: ChatCommandContext): Promise<boolean> {
           res.target.characterId,
           r.hp,
           r.tempHp,
-          delta,
+          r.change,
           delta >= 0 ? 'heal' : 'damage',
           r.version,
           r.wildShape
