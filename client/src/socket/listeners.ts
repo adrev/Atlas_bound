@@ -8,7 +8,7 @@ import { useDiceStore } from '../stores/useDiceStore';
 import { useCharacterStore } from '../stores/useCharacterStore';
 import { useDrawStore } from '../stores/useDrawStore';
 import { useSceneStore } from '../stores/useSceneStore';
-import { pushHandout } from '../components/session/HandoutModal';
+import { pushHandout } from '../stores/handoutQueue';
 import { triggerSnapshot } from './stateSnapshot';
 import { pushOpportunityAttack } from '../components/combat/OpportunityAttackModal';
 import { pushCounterspellOpportunity } from '../components/combat/CounterspellModal';
