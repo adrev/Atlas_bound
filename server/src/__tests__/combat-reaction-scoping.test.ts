@@ -24,11 +24,15 @@ import type { Token } from '@dnd-vtt/shared';
 
 // Stub the DB before importing handlers that transitively pull in the
 // combat services (which open a pg pool at module load).
-const { mockQuery, mockExecuteOpportunityAttack } = vi.hoisted(() => ({
+const { mockQuery, mockExecuteOpportunityAttack, mockApplyDamageSideEffects } = vi.hoisted(() => ({
   mockQuery: vi.fn(),
   mockExecuteOpportunityAttack: vi.fn(),
+  mockApplyDamageSideEffects: vi.fn(),
 }));
 vi.mock('../db/connection.js', () => ({ default: { query: mockQuery } }));
+vi.mock('../services/damageEffects.js', () => ({
+  applyDamageSideEffects: mockApplyDamageSideEffects,
+}));
 // Stub only executeOpportunityAttack (the DB-touching resolver); keep the
 // real, pure isHostileTo the handler now uses as its cross-faction pre-gate.
 vi.mock('../services/OpportunityAttackService.js', async () => {
@@ -146,6 +150,8 @@ beforeEach(() => {
   mockQuery.mockReset();
   mockQuery.mockResolvedValue({ rows: [] });
   mockExecuteOpportunityAttack.mockReset();
+  mockApplyDamageSideEffects.mockReset();
+  mockApplyDamageSideEffects.mockResolvedValue(undefined);
   for (const id of Array.from(getAllRooms().keys())) getAllRooms().delete(id);
 });
 
@@ -231,6 +237,38 @@ describe('combat:attack-hit-attempt — Shield-prompt scoping', () => {
 });
 
 describe('combat:oa-execute — result-card scoping', () => {
+  it('runs the canonical damage side effects with actual applied OA damage', async () => {
+    const em: Emission[] = [];
+    const room = seedRoom([
+      tok('attacker', { faction: 'hostile', name: 'Guard' }),
+      tok('target', { ownerUserId: 'player-user', faction: 'friendly', name: 'Pip' }),
+    ]);
+    room.combatState = {
+      sessionId: SESSION,
+      active: true,
+      roundNumber: 1,
+      currentTurnIndex: 0,
+      combatants: [],
+      startedAt: new Date().toISOString(),
+    };
+    mockExecuteOpportunityAttack.mockResolvedValue({
+      success: true,
+      messages: [],
+      hpChange: { tokenId: 'target', hp: 8, tempHp: 0, change: -12 },
+    });
+
+    const io = fakeIo(em);
+    const h = handlersFor(io, 'dm-sock');
+    await h.get('combat:oa-execute')!({
+      opportunityId: 'opp-damage',
+      attackerTokenId: 'attacker',
+      moverTokenId: 'target',
+    });
+
+    expect(mockApplyDamageSideEffects).toHaveBeenCalledOnce();
+    expect(mockApplyDamageSideEffects).toHaveBeenCalledWith(io, room, 'target', 12);
+  });
+
   it('does not leak hidden attacker OA chat to uninvolved players or history', async () => {
     const em: Emission[] = [];
     const room = seedRoom([

@@ -25,6 +25,7 @@ import {
   emitMultiTokenScopedChat,
   multiTokenScopedChatIsPrivate,
 } from '../../utils/tokenScopedChat.js';
+import { applyDamageSideEffects } from '../../services/damageEffects.js';
 
 /**
  * Reaction events: opportunity attacks, counterspell / Shield prompts,
@@ -203,6 +204,15 @@ export function registerCombatReactions(io: Server, socket: Socket): void {
           tokenId,
           changes: tokenConditionChanges(ctx.room, tokenId),
         });
+      }
+
+      // Opportunity attacks use the same authoritative HP mutation as
+      // regular damage, but previously skipped the follow-up rule pipeline.
+      // Feed the actual post-defense damage into it so concentration saves,
+      // Sleep wake-up, and other ends-on-damage effects cannot be bypassed.
+      if (result.hpChange) {
+        const appliedDamage = Math.max(0, -result.hpChange.change);
+        await applyDamageSideEffects(io, ctx.room, result.hpChange.tokenId, appliedDamage);
       }
 
       // Broadcast the updated reaction state for the attacker. We use
