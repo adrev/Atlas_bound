@@ -54,6 +54,87 @@ function characterAuthRow(overrides: Record<string, unknown> = {}) {
   };
 }
 
+function characterRow(overrides: Record<string, unknown> = {}) {
+  return {
+    id: 'char-1',
+    user_id: 'caller',
+    name: 'Rook',
+    level: 3,
+    hit_points: 10,
+    max_hit_points: 20,
+    temp_hit_points: 0,
+    version: 3,
+    ...overrides,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// PUT /api/characters/:id must share the socket optimistic-lock contract
+// ---------------------------------------------------------------------------
+describe('PUT /api/characters/:id — version authority', () => {
+  async function getUpdateCharacterHandler() {
+    const mod = await import('../routes/characters.js');
+    const router = mod.default as any;
+    const layer = router.stack.find(
+      (entry: any) => entry.route?.path === '/:id' && entry.route?.methods?.put
+    );
+    expect(layer).toBeTruthy();
+    return layer.route.stack[0].handle as (req: Request, res: any) => Promise<void>;
+  }
+
+  it('rejects a versionless offline write before authorization or mutation', async () => {
+    const handler = await getUpdateCharacterHandler();
+    const req = {
+      user: { id: 'caller' },
+      params: { id: 'char-1' },
+      body: { hitPoints: 15 },
+    } as unknown as Request;
+    const res = makeRes();
+    await handler(req, res);
+
+    expect(res.statusCode).toBe(400);
+    expect(mockQuery).not.toHaveBeenCalled();
+  });
+
+  it('guards the update with expectedVersion and returns the committed row', async () => {
+    mockQuery
+      .mockResolvedValueOnce({ rows: [characterAuthRow()] })
+      .mockResolvedValueOnce({ rows: [characterRow({ hit_points: 15, version: 4 })] });
+    const handler = await getUpdateCharacterHandler();
+    const req = {
+      user: { id: 'caller' },
+      params: { id: 'char-1' },
+      body: { hitPoints: 15, expectedVersion: 3 },
+    } as unknown as Request;
+    const res = makeRes();
+    await handler(req, res);
+
+    expect(res.statusCode).toBe(200);
+    const update = mockQuery.mock.calls[1];
+    expect(String(update[0])).toContain('WHERE id = $2 AND version = $3 RETURNING *');
+    expect(update[1]).toEqual([15, 'char-1', 3]);
+    expect(res.body).toMatchObject({ id: 'char-1', hitPoints: 15, version: 4 });
+  });
+
+  it('returns HTTP 409 and the latest character after a stale REST write', async () => {
+    mockQuery
+      .mockResolvedValueOnce({ rows: [characterAuthRow()] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [characterRow({ hit_points: 12, version: 4 })] });
+    const handler = await getUpdateCharacterHandler();
+    const req = {
+      user: { id: 'caller' },
+      params: { id: 'char-1' },
+      body: { hitPoints: 15, expectedVersion: 3 },
+    } as unknown as Request;
+    const res = makeRes();
+    await handler(req, res);
+
+    expect(res.statusCode).toBe(409);
+    expect(res.body.character).toMatchObject({ id: 'char-1', hitPoints: 12, version: 4 });
+  });
+});
+
 // ---------------------------------------------------------------------------
 // P1 #1 — GET /api/sessions/:id must not leak prep maps to players
 // ---------------------------------------------------------------------------

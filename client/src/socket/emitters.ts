@@ -567,23 +567,42 @@ function isSocketConnected(): boolean {
  * partial of the create schema). Failures surface as a toast instead of
  * silent data loss.
  */
-async function restPersistCharacter(characterId: string, changes: Record<string, unknown>) {
+function showCharacterSaveError(message: string) {
+  import('../components/ui/Toast').then(({ showToast }) => {
+    showToast({
+      message,
+      variant: 'danger',
+      duration: 6000,
+    });
+  });
+}
+
+async function restPersistCharacter(
+  characterId: string,
+  changes: Record<string, unknown>,
+  expectedVersion: number
+) {
   try {
     const res = await fetch(`/api/characters/${characterId}`, {
       method: 'PUT',
       credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(changes),
+      body: JSON.stringify({ ...changes, expectedVersion }),
     });
+    if (res.status === 409) {
+      const payload = (await res.json().catch(() => null)) as {
+        character?: Record<string, unknown>;
+      } | null;
+      if (payload?.character) {
+        useCharacterStore.getState().applyRemoteSync(payload.character);
+      }
+      triggerSnapshot('character:update-conflict');
+      showCharacterSaveError('This character changed elsewhere. Latest values were restored.');
+      return;
+    }
     if (!res.ok) throw new Error(`save failed (${res.status})`);
   } catch {
-    import('../components/ui/Toast').then(({ showToast }) => {
-      showToast({
-        message: 'Could not save character changes — check your connection and retry.',
-        variant: 'danger',
-        duration: 6000,
-      });
-    });
+    showCharacterSaveError('Could not save character changes — check your connection and retry.');
   }
 }
 
@@ -622,19 +641,25 @@ export function emitCharacterUpdate(
     (useCharacterStore.getState().myCharacter?.id === characterId
       ? useCharacterStore.getState().myCharacter?.version
       : undefined);
+  if (!Number.isInteger(currentVersion) || Number(currentVersion) < 1) {
+    showCharacterSaveError('Character state is still loading. Refresh and retry your change.');
+    triggerSnapshot('character:update-missing-version');
+    return;
+  }
+  const expectedVersion = Number(currentVersion);
   if (isSocketConnected()) {
     getSocket().emit('character:update', {
       characterId,
       changes,
-      ...(currentVersion !== undefined ? { expectedVersion: currentVersion } : {}),
+      expectedVersion,
     });
   } else {
-    void restPersistCharacter(characterId, changes);
+    void restPersistCharacter(characterId, changes, expectedVersion);
   }
   if (!opts.skipLocal) {
     useCharacterStore.getState().applyRemoteUpdate(characterId, {
       ...changes,
-      ...(currentVersion !== undefined ? { version: currentVersion + 1 } : {}),
+      version: expectedVersion + 1,
     });
   }
   // Every character edit (HP, inventory, spells, conditions, class
@@ -673,8 +698,7 @@ export function emitSpellSlotAdjust(characterId: string, level: number, delta: 1
     const used = Math.min(slots.max, Math.max(0, slots.used + delta));
     if (used === slots.used) return;
     const spellSlots = { ...character.spellSlots, [level]: { ...slots, used } };
-    useCharacterStore.getState().applyRemoteUpdate(characterId, { spellSlots });
-    void restPersistCharacter(characterId, { spellSlots });
+    emitCharacterUpdate(characterId, { spellSlots });
     return;
   }
   getSocket().emit('character:spell-slot-adjust', { characterId, level, delta });

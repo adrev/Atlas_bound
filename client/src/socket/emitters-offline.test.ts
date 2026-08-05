@@ -68,7 +68,7 @@ beforeEach(() => {
   mockShowToast.mockReset();
   mockTriggerSnapshot.mockReset();
   globalThis.fetch = vi.fn().mockResolvedValue({ ok: true }) as unknown as typeof fetch;
-  useCharacterStore.setState({ allCharacters: { c1: fixtureCharacter() } });
+  useCharacterStore.setState({ myCharacter: null, allCharacters: { c1: fixtureCharacter() } });
 });
 
 describe('emitCharacterUpdate offline', () => {
@@ -80,12 +80,15 @@ describe('emitCharacterUpdate offline', () => {
     const [url, init] = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
     expect(url).toBe('/api/characters/c1');
     expect(init.method).toBe('PUT');
-    expect(JSON.parse(init.body).spells[0].name).toBe('Vicious Mockery');
+    const body = JSON.parse(init.body);
+    expect(body.spells[0].name).toBe('Vicious Mockery');
+    expect(body.expectedVersion).toBe(7);
   });
 
   it('still applies the change to the local store (optimistic UI unchanged)', () => {
     emitCharacterUpdate('c1', { hitPoints: 15 });
     expect(useCharacterStore.getState().allCharacters['c1'].hitPoints).toBe(15);
+    expect(useCharacterStore.getState().allCharacters['c1'].version).toBe(8);
   });
 
   it('uses the socket (no REST) when connected', async () => {
@@ -107,6 +110,36 @@ describe('emitCharacterUpdate offline', () => {
     expect(mockShowToast).toHaveBeenCalledTimes(1);
     expect(mockShowToast.mock.calls[0][0].variant).toBe('danger');
   });
+
+  it('restores the authoritative character when the REST write conflicts', async () => {
+    const latest = { ...fixtureCharacter(), hitPoints: 12, version: 8 };
+    (globalThis.fetch as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ok: false,
+      status: 409,
+      json: vi.fn().mockResolvedValue({ character: latest }),
+    });
+    emitCharacterUpdate('c1', { hitPoints: 15 });
+    expect(useCharacterStore.getState().allCharacters['c1'].hitPoints).toBe(15);
+    await flush();
+    expect(useCharacterStore.getState().allCharacters['c1']).toMatchObject({
+      hitPoints: 12,
+      version: 8,
+    });
+    expect(mockShowToast.mock.calls[0][0].message).toMatch(/changed elsewhere/);
+    expect(mockTriggerSnapshot).toHaveBeenCalledWith('character:update-conflict');
+  });
+
+  it('refuses to send or apply a write when the local version is missing', async () => {
+    const withoutVersion = { ...fixtureCharacter(), version: undefined } as unknown as Character;
+    useCharacterStore.setState({ myCharacter: null, allCharacters: { c1: withoutVersion } });
+    emitCharacterUpdate('c1', { hitPoints: 15 });
+    await flush();
+    expect(globalThis.fetch).not.toHaveBeenCalled();
+    expect(mockSocket.emit).not.toHaveBeenCalled();
+    expect(useCharacterStore.getState().allCharacters['c1'].hitPoints).toBe(21);
+    expect(mockShowToast.mock.calls[0][0].message).toMatch(/still loading/);
+    expect(mockTriggerSnapshot).toHaveBeenCalledWith('character:update-missing-version');
+  });
 });
 
 describe('emitSpellSlotAdjust offline', () => {
@@ -117,7 +150,9 @@ describe('emitSpellSlotAdjust offline', () => {
     expect(stored).toEqual({ max: 4, used: 2 });
     expect(globalThis.fetch).toHaveBeenCalledTimes(1);
     const [, init] = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
-    expect(JSON.parse(init.body).spellSlots['1']).toEqual({ max: 4, used: 2 });
+    const body = JSON.parse(init.body);
+    expect(body.spellSlots['1']).toEqual({ max: 4, used: 2 });
+    expect(body.expectedVersion).toBe(7);
     expect(mockSocket.emit).not.toHaveBeenCalled();
   });
 

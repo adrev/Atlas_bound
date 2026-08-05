@@ -87,6 +87,11 @@ describe('character:update version conflict handling', () => {
       expectedVersion: 3,
     });
 
+    const update = mockQuery.mock.calls.find(([sql]) =>
+      String(sql).trim().startsWith('UPDATE characters SET')
+    );
+    expect(update?.[0]).toContain('AND version = $3 RETURNING version');
+    expect(update?.[1]).toEqual([15, 'char-1', 3]);
     expect(emissions.some((e) => e.event === 'character:updated')).toBe(false);
     expect(emissions.map((e) => e.event)).toEqual(['character:update-conflict']);
     const conflict = emissions[0].payload as {
@@ -95,5 +100,47 @@ describe('character:update version conflict handling', () => {
     expect(conflict.character?.id).toBe('char-1');
     expect(conflict.character?.version).toBe(4);
     expect(conflict.character?.hitPoints).toBe(10);
+  });
+
+  it('rejects a versionless legacy write and returns the authoritative character', async () => {
+    seedRoom();
+    mockQuery.mockImplementation(async (sql: string) => {
+      if (sql.includes('SELECT id, user_id, version FROM characters')) {
+        return { rows: [{ id: 'char-1', user_id: 'player-1', version: 3 }] };
+      }
+      if (sql.includes('SELECT * FROM characters WHERE id = $1')) {
+        return {
+          rows: [
+            {
+              id: 'char-1',
+              user_id: 'player-1',
+              version: 3,
+              name: 'Rook',
+              hit_points: 10,
+              max_hit_points: 20,
+              temp_hit_points: 0,
+            },
+          ],
+        };
+      }
+      return { rows: [] };
+    });
+    const { io, emissions } = fakeIo();
+    const { socket, handlers } = fakeSocket();
+    registerCharacterEvents(io, socket);
+
+    await handlers.get('character:update')?.({
+      characterId: 'char-1',
+      changes: { hitPoints: 15 },
+    });
+
+    expect(
+      mockQuery.mock.calls.some(([sql]) => String(sql).trim().startsWith('UPDATE characters SET'))
+    ).toBe(false);
+    expect(emissions.map((entry) => entry.event)).toEqual(['character:update-conflict']);
+    const conflict = emissions[0].payload as {
+      character?: { version?: number; hitPoints?: number };
+    };
+    expect(conflict.character).toMatchObject({ version: 3, hitPoints: 10 });
   });
 });
