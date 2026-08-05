@@ -31,6 +31,7 @@ import { AoePalette } from './AoePalette';
 import { emitDrawingStream } from '../../socket/emitters';
 import { askPrompt } from '../ui';
 import { theme } from '../../styles/theme';
+import { finalizeDrawingStroke } from './drawingStrokeLifecycle';
 
 /* ---- Ping animation overlay ---- */
 function PingAnimation({
@@ -365,6 +366,39 @@ export function BattleMap() {
     }, DRAW_STREAM_INTERVAL_MS - since);
   }, [streamInProgressNow]);
 
+  const finishActiveStroke = useCallback(() => {
+    if (!isStrokeDrawing.current) return false;
+
+    if (streamTimeoutRef.current != null) {
+      window.clearTimeout(streamTimeoutRef.current);
+      streamTimeoutRef.current = null;
+    }
+    return finalizeDrawingStroke(isStrokeDrawing, useDrawStore.getState);
+  }, []);
+
+  useEffect(() => {
+    // Konva only reports Stage mouseup events while the pointer remains
+    // over the canvas. Window-level release and blur handling prevents a
+    // stroke from getting stuck when it ends over UI or outside the tab.
+    const onRelease = () => {
+      finishActiveStroke();
+    };
+    window.addEventListener('mouseup', onRelease, true);
+    window.addEventListener('blur', onRelease);
+    return () => {
+      window.removeEventListener('mouseup', onRelease, true);
+      window.removeEventListener('blur', onRelease);
+      if (streamTimeoutRef.current != null) {
+        window.clearTimeout(streamTimeoutRef.current);
+        streamTimeoutRef.current = null;
+      }
+      if (isStrokeDrawing.current) {
+        isStrokeDrawing.current = false;
+        useDrawStore.getState().cancelStroke();
+      }
+    };
+  }, [finishActiveStroke]);
+
   // Drag-drop from the DM creature / compendium panels. The card
   // writes the monster slug to dataTransfer under a custom MIME type;
   // on drop we convert the container-relative pixel position into
@@ -490,14 +524,7 @@ export function BattleMap() {
         }}
         onMouseUp={(e) => {
           // Draw mode: commit in-progress stroke
-          if (isStrokeDrawing.current) {
-            isStrokeDrawing.current = false;
-            const drawState = useDrawStore.getState();
-            if (drawState.drawingInProgress) {
-              drawState.commitStroke();
-            }
-            return;
-          }
+          if (finishActiveStroke()) return;
           stageProps.onMouseUp?.(e);
         }}
         onClick={(e) => {
