@@ -173,6 +173,9 @@ describe('chat command token fanout wrapper', () => {
   it('scopes the real !damage HP helper and rich card for hidden targets', async () => {
     seedRoom([tok('npc', { name: 'Hidden Goblin', characterId: 'char-npc', visible: false })]);
     mockQuery.mockImplementation(async (sql: string) => {
+      if (sql.startsWith('UPDATE characters')) {
+        return { rows: [{ version: 4 }] };
+      }
       if (sql.includes('SELECT hit_points FROM characters WHERE id = $1')) {
         return { rows: [{ hit_points: 10 }] };
       }

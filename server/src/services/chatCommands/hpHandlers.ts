@@ -293,13 +293,46 @@ async function applyDirectHp(
       },
     };
   }
-  // Untransformed: mutate the character row directly. Clamp to [0, max].
-  const nextHp = Math.max(0, Math.min(maxHp, curHp + delta));
+  // Untransformed: same authority rules as the transformed path —
+  // damage consumes temp HP before base HP, healing tops up base HP
+  // and leaves temp HP alone, and every changed pool lands in one
+  // version-guarded UPDATE. A conflict leaves every pool unchanged.
+  const expectedVersion = parseCharacterVersion(row);
+  if (
+    expectedVersion === undefined ||
+    !Number.isFinite(curHp) ||
+    !Number.isFinite(maxHp) ||
+    !Number.isFinite(tempHp)
+  ) {
+    throw new Error('could not verify the character state — nothing was changed.');
+  }
+  const tempAbsorbed = delta < 0 ? Math.min(tempHp, -delta) : 0;
+  const nextTempHp = tempHp - tempAbsorbed;
+  const nextHp = Math.max(0, Math.min(maxHp, curHp + delta + tempAbsorbed));
+  // No-op keeps the row untouched: no UPDATE, no version-trigger bump.
+  if (nextHp === curHp && nextTempHp === tempHp) {
+    return { hp: curHp, tempHp, version: expectedVersion };
+  }
+  const clauses: string[] = [];
+  const params: unknown[] = [];
+  if (nextHp !== curHp) {
+    params.push(nextHp);
+    clauses.push(`hit_points = $${params.length}`);
+  }
+  if (nextTempHp !== tempHp) {
+    params.push(nextTempHp);
+    clauses.push(`temp_hit_points = $${params.length}`);
+  }
+  params.push(characterId, expectedVersion);
   const { rows: versionRows } = await pool.query(
-    'UPDATE characters SET hit_points = $1 WHERE id = $2 RETURNING version',
-    [nextHp, characterId]
+    `UPDATE characters SET ${clauses.join(', ')} WHERE id = $${params.length - 1} AND version = $${params.length} RETURNING version`,
+    params
   );
-  return { hp: nextHp, tempHp, version: parseCharacterVersion(versionRows[0]) };
+  const version = parseCharacterVersion(versionRows[0]);
+  if (version === undefined) {
+    throw new Error('nothing was applied — the character changed mid-action. Retry.');
+  }
+  return { hp: nextHp, tempHp: nextTempHp, version };
 }
 
 async function setDirectHp(
