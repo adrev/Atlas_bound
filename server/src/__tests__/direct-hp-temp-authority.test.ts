@@ -121,6 +121,12 @@ function characterChanges(emissions: Emission[]): Record<string, unknown> | unde
   return payload?.changes;
 }
 
+function hpChange(emissions: Emission[]): Record<string, unknown> | undefined {
+  return emissions.find((e) => e.event === 'combat:hp-changed')?.payload as
+    | Record<string, unknown>
+    | undefined;
+}
+
 const ROW = { hit_points: 10, max_hit_points: 20, wild_shape: null, version: 6 };
 
 beforeEach(() => {
@@ -144,6 +150,7 @@ describe('untransformed out-of-combat direct HP authority', () => {
     expect(writes[0].sql).toContain('AND version = $3');
     expect(writes[0].params).toEqual([2, 'char-pc', 6]);
     expect(characterChanges(em)).toEqual({ hitPoints: 10, tempHitPoints: 2, version: 7 });
+    expect(hpChange(em)).toMatchObject({ hp: 10, tempHp: 2, change: -3, type: 'damage' });
   });
 
   it('temp HP partially absorbs: remainder carries into base HP in one guarded UPDATE', async () => {
@@ -156,6 +163,7 @@ describe('untransformed out-of-combat direct HP authority', () => {
     expect(writes[0].sql).toContain('AND version = $4');
     expect(writes[0].params).toEqual([6, 0, 'char-pc', 6]);
     expect(characterChanges(em)).toEqual({ hitPoints: 6, tempHitPoints: 0, version: 7 });
+    expect(hpChange(em)).toMatchObject({ hp: 6, tempHp: 0, change: -6, type: 'damage' });
   });
 
   it('healing raises base HP up to max and leaves temp HP unchanged', async () => {
@@ -168,6 +176,7 @@ describe('untransformed out-of-combat direct HP authority', () => {
     expect(writes[0].sql).not.toContain('temp_hit_points');
     expect(writes[0].params).toEqual([20, 'char-pc', 6]);
     expect(characterChanges(em)).toEqual({ hitPoints: 20, tempHitPoints: 3, version: 7 });
+    expect(hpChange(em)).toMatchObject({ hp: 20, tempHp: 3, change: 10, type: 'heal' });
   });
 
   it('signed `!hp -N` routes through the same temp-first authority', async () => {
@@ -219,5 +228,6 @@ describe('untransformed out-of-combat direct HP authority', () => {
     await tryHandleChatCommand(fakeIo(em), getPlayerBySocketId('owner-sock')!, '!heal 5 pc');
     expect(updates()).toEqual([]);
     expect(characterChanges(em)).toEqual({ hitPoints: 20, tempHitPoints: 3, version: 6 });
+    expect(hpChange(em)).toMatchObject({ hp: 20, tempHp: 3, change: 0, type: 'heal' });
   });
 });

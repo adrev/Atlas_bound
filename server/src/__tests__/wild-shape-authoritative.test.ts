@@ -638,7 +638,7 @@ describe('out-of-combat direct !damage / !heal / !hp with an active form', () =>
     });
     // The committed temp HP is what fans out.
     const hpChanged = emissions.find((e) => e.event === 'combat:hp-changed');
-    expect(hpChanged?.payload).toMatchObject({ hp: 18, tempHp: 3 });
+    expect(hpChanged?.payload).toMatchObject({ hp: 18, tempHp: 3, change: -5 });
   });
 
   it('!damage exhausts temp HP, then the form, then carries the excess into the druid — one guarded write', async () => {
@@ -656,7 +656,7 @@ describe('out-of-combat direct !damage / !heal / !hp with an active form', () =>
     expect(params[1]).toBe(12);
     expect(params[2]).toBe(0);
     const hpChanged = emissions.find((e) => e.event === 'combat:hp-changed');
-    expect(hpChanged?.payload).toMatchObject({ hp: 12, tempHp: 0 });
+    expect(hpChanged?.payload).toMatchObject({ hp: 12, tempHp: 0, change: -20 });
     // Smaller hit: temp exhausted, remainder dents only the form.
     mockQuery.mockClear();
     arrange({ character: druidRow({ wild_shape: ACTIVE_WOLF, temp_hit_points: 3 }) });
@@ -700,7 +700,7 @@ describe('out-of-combat direct !damage / !heal / !hp with an active form', () =>
       state: { formHp: 9 },
     });
     const hpChanged = emissions.find((e) => e.event === 'combat:hp-changed');
-    expect(hpChanged?.payload).toMatchObject({ hp: 18, tempHp: 6 });
+    expect(hpChanged?.payload).toMatchObject({ hp: 18, tempHp: 6, change: 5 });
   });
 
   it('!heal restores the form (bounded), never the druid pool', async () => {
