@@ -1259,6 +1259,22 @@ router.get('/:id/events', async (req: Request, res: Response) => {
     return;
   }
 
+  // A zero cursor means the caller has no authoritative baseline in the
+  // event stream yet — a fresh join, or a client that just reset after a
+  // 410. Serving the retained backlog here would make it replay historical
+  // events out of context: e.g. an old `combat:ended` whose matching
+  // `combat:started` has already aged out of the log, transiently wiping an
+  // active fight and opening a bogus recap. The client (re)hydrates
+  // authoritatively via session:join + /state instead; we only return the
+  // current cursor position so it can resume nonzero delta replay from a
+  // known-good baseline. This also fast-forwards older clients that still
+  // ask `?since=0` on the keep-alive tick, since their empty-delta branch
+  // advances the cursor to `latestEventId` without applying anything.
+  if (since === 0) {
+    res.json({ events: [], latestEventId: room.nextEventId });
+    return;
+  }
+
   // If the caller's cursor is older than the oldest entry we still
   // have, we can't guarantee a complete replay. Signal a full resync
   // so the client re-emits session:join and rebuilds its state from

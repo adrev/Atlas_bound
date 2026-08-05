@@ -46,11 +46,29 @@ export async function pullEventCursor(socket: Socket): Promise<number> {
   const sessionId = useSessionStore.getState().sessionId;
   if (!sessionId) return 0;
 
+  // Cursor 0 means we have no authoritative baseline in the event
+  // stream yet — either a brand-new join or a just-performed 410 reset
+  // (see below). A `?since=0` request would make the server hand back
+  // its entire retained backlog, and replaying that historical log is
+  // unsafe: it applies old events out of context. The canonical failure
+  // is an aged `combat:ended` whose matching `combat:started` has
+  // already fallen out of the buffer (and which the replay dispatcher
+  // can't re-establish anyway) — replaying it endCombat()s a fight
+  // that's currently active and pops a bogus end-of-battle recap.
+  //
+  // Backlog replay is only meaningful as a *delta* from a known-good
+  // baseline. At cursor 0 there is no baseline, so we defer entirely to
+  // authoritative hydration: session:join re-sync + the /state snapshot
+  // (pullStateSnapshot) rebuild the stores directly and advance this
+  // cursor via `nextEventId`. Once the cursor is nonzero, normal delta
+  // replay resumes below. This is the invariant: cursor 0 never requests
+  // or replays historical room backlog.
+  if (lastEventId === 0) return 0;
+
   try {
-    const resp = await fetch(
-      `/api/sessions/${sessionId}/events?since=${lastEventId}`,
-      { credentials: 'include' },
-    );
+    const resp = await fetch(`/api/sessions/${sessionId}/events?since=${lastEventId}`, {
+      credentials: 'include',
+    });
     if (resp.status === 410) {
       // Our cursor is older than the replay buffer — server can't
       // guarantee a complete delta. Force a fresh session:join so
