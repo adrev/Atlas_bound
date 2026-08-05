@@ -192,6 +192,91 @@ function spendActionSurge(poolState: ActionSurgePool): Feature[] {
   );
 }
 
+interface ChannelDivinityPool {
+  features: Feature[];
+  maximum: number;
+  remaining: number;
+}
+
+function channelDivinityMaximum(
+  className: string,
+  totalLevelValue: unknown
+): { maximum: number; clericLevel: number | null; paladinLevel: number | null } | null {
+  const totalLevel = Number(totalLevelValue);
+  if (!Number.isInteger(totalLevel) || totalLevel < 1 || totalLevel > 20) return null;
+
+  const clericLevel = classLevel(className, 'Cleric', totalLevel);
+  const paladinLevel = classLevel(className, 'Paladin', totalLevel);
+  if (
+    (clericLevel !== null && clericLevel > totalLevel) ||
+    (paladinLevel !== null && paladinLevel > totalLevel) ||
+    (clericLevel !== null && paladinLevel !== null && clericLevel + paladinLevel > totalLevel)
+  ) {
+    return null;
+  }
+  const clericMaximum =
+    clericLevel !== null && clericLevel >= 18
+      ? 3
+      : clericLevel !== null && clericLevel >= 6
+        ? 2
+        : clericLevel !== null && clericLevel >= 2
+          ? 1
+          : 0;
+  const paladinMaximum = paladinLevel !== null && paladinLevel >= 3 ? 1 : 0;
+  return {
+    maximum: Math.max(clericMaximum, paladinMaximum),
+    clericLevel,
+    paladinLevel,
+  };
+}
+
+function channelDivinityPool(features: Feature[], maximum: number): ChannelDivinityPool | null {
+  const index = features.findIndex((feature) => /^channel\s+divinity$/i.test(feature.name.trim()));
+  if (index < 0) return { features, maximum, remaining: maximum };
+
+  const rawRemaining = features[index].usesRemaining;
+  if (rawRemaining === undefined || rawRemaining === null) {
+    return { features, maximum, remaining: maximum };
+  }
+  if (typeof rawRemaining !== 'number' || !Number.isInteger(rawRemaining)) return null;
+  return {
+    features,
+    maximum,
+    remaining: Math.max(0, Math.min(maximum, rawRemaining)),
+  };
+}
+
+function spendChannelDivinity(poolState: ChannelDivinityPool): Feature[] {
+  const index = poolState.features.findIndex((feature) =>
+    /^channel\s+divinity$/i.test(feature.name.trim())
+  );
+  const nextRemaining = poolState.remaining - 1;
+  if (index < 0) {
+    return [
+      ...poolState.features,
+      {
+        name: 'Channel Divinity',
+        description: 'Invoke a Cleric or Paladin Channel Divinity effect.',
+        source: 'Cleric / Paladin',
+        sourceType: 'class',
+        usesTotal: poolState.maximum,
+        usesRemaining: nextRemaining,
+        resetOn: 'short',
+      },
+    ];
+  }
+  return poolState.features.map((feature, featureIndex) =>
+    featureIndex === index
+      ? {
+          ...feature,
+          usesTotal: poolState.maximum,
+          usesRemaining: nextRemaining,
+          resetOn: 'short',
+        }
+      : feature
+  );
+}
+
 function spendSecondWind(features: Feature[]): Feature[] | null {
   const index = features.findIndex((feature) => /^second\s+wind$/i.test(feature.name.trim()));
   if (index < 0) {
@@ -917,30 +1002,144 @@ async function handleLayOnHands(c: ChatCommandContext): Promise<boolean> {
 
 // ───── !channel <name> ────────────────────────────────────────
 async function handleChannelDivinity(c: ChatCommandContext): Promise<boolean> {
-  const effectName = c.rest.trim();
+  const rawArgument = c.rest.trim();
+  const isStatus = rawArgument.toLowerCase() === 'status';
+  const effectName = rawArgument.replace(/\s+/g, ' ');
   if (!effectName) {
+    whisperToCaller(c.io, c.ctx, '!channel: usage `!channel <effect name>` or `!channel status`');
+    return true;
+  }
+  if (
+    !isStatus &&
+    (effectName.length > 64 || !/^[\p{L}\p{N}][\p{L}\p{N}\s'():,+/-]*$/u.test(effectName))
+  ) {
     whisperToCaller(
       c.io,
       c.ctx,
-      '!channel: usage `!channel <effect name>` (e.g. "Turn Undead", "Sacred Weapon")'
+      '!channel: effect name must be 1-64 letters, numbers, spaces, or simple punctuation.'
     );
     return true;
   }
-  const caller = resolveCallerToken(c.ctx);
-  if (!caller) {
+  const caller = resolveCurrentMapToken(
+    c.ctx,
+    (token) => token.ownerUserId === c.ctx.player.userId
+  );
+  if (!caller?.characterId) {
     whisperToCaller(c.io, c.ctx, '!channel: no owned PC token on this map.');
     return true;
   }
-  const row = caller.characterId ? await loadCharacter(caller.characterId) : null;
-  const classLower = String(row?.class || '').toLowerCase();
-  if (!(classLower.includes('cleric') || classLower.includes('paladin'))) {
+  const row = await loadCharacter(caller.characterId);
+  if (!row) {
+    whisperToCaller(c.io, c.ctx, '!channel: character not found.');
+    return true;
+  }
+  const entitlement = channelDivinityMaximum(String(row.class || ''), row.level);
+  if (!entitlement) {
+    whisperToCaller(
+      c.io,
+      c.ctx,
+      '!channel: could not verify the character class levels. No use was spent; refresh or re-sync the character sheet.'
+    );
+    return true;
+  }
+  if (entitlement.clericLevel === null && entitlement.paladinLevel === null) {
     whisperToCaller(c.io, c.ctx, `!channel: ${caller.name} isn't a Cleric or Paladin.`);
     return true;
   }
+  if (entitlement.maximum === 0) {
+    const requirement = entitlement.clericLevel !== null ? 'Cleric level 2' : 'Paladin level 3';
+    whisperToCaller(c.io, c.ctx, `!channel: Channel Divinity requires ${requirement}.`);
+    return true;
+  }
+
+  const features = parseFeatures(row.features);
+  const expectedVersion = parseCharacterVersion(row.version);
+  if (!features || expectedVersion === null) {
+    whisperToCaller(
+      c.io,
+      c.ctx,
+      '!channel: could not verify the character feature state. No use was spent; refresh or re-sync the character sheet.'
+    );
+    return true;
+  }
+  const poolState = channelDivinityPool(features, entitlement.maximum);
+  if (!poolState) {
+    whisperToCaller(
+      c.io,
+      c.ctx,
+      '!channel: Channel Divinity resource data is invalid. No use was spent; refresh or re-sync the character sheet.'
+    );
+    return true;
+  }
+  if (isStatus) {
+    whisperToCaller(
+      c.io,
+      c.ctx,
+      `!channel: ${caller.name} has ${poolState.remaining}/${poolState.maximum} uses remaining.`
+    );
+    return true;
+  }
+  if (poolState.remaining <= 0) {
+    whisperToCaller(
+      c.io,
+      c.ctx,
+      `!channel: ${caller.name} has no uses remaining. Take a short or long rest to refresh it.`
+    );
+    return true;
+  }
+
+  const updatedFeatures = spendChannelDivinity(poolState);
+  let updatedRows: unknown[];
+  try {
+    ({ rows: updatedRows } = await pool.query(
+      `UPDATE characters
+          SET features = $1
+        WHERE id = $2 AND version = $3
+        RETURNING version`,
+      [JSON.stringify(updatedFeatures), caller.characterId, expectedVersion]
+    ));
+  } catch (error) {
+    console.warn('[!channel] feature write failed:', error);
+    whisperToCaller(
+      c.io,
+      c.ctx,
+      '!channel: saving the use failed. No effect was invoked; try again.'
+    );
+    return true;
+  }
+  if (updatedRows.length === 0) {
+    whisperToCaller(
+      c.io,
+      c.ctx,
+      '!channel: the character sheet changed while processing. No effect was invoked; refresh and try again.'
+    );
+    return true;
+  }
+  const authoritativeVersion = parseCharacterVersion(
+    (updatedRows[0] as Record<string, unknown>).version
+  );
+  if (authoritativeVersion === null) {
+    whisperToCaller(
+      c.io,
+      c.ctx,
+      '!channel: the use was saved, but synchronization failed. Refresh the character sheet before retrying.'
+    );
+    return true;
+  }
+
+  c.io.to(c.ctx.room.sessionId).emit('character:updated', {
+    characterId: caller.characterId,
+    changes: { features: updatedFeatures, version: authoritativeVersion },
+  });
   broadcastSystem(
     c.io,
     c.ctx,
-    `✨ ${caller.name} invokes Channel Divinity — **${effectName}**. DM narrates / resolves save DC + effect.`
+    `✨ ${caller.name} invokes Channel Divinity — **${effectName}**. DM resolves the effect and its action cost.`
+  );
+  whisperToCaller(
+    c.io,
+    c.ctx,
+    `!channel: ${poolState.remaining - 1}/${poolState.maximum} uses remaining.`
   );
   return true;
 }
