@@ -29,6 +29,7 @@ import { shouldDeliverChatRow } from '../utils/chatHistoryFilter.js';
 import { safeParseJSON } from '../utils/safeJson.js';
 import { rowToToken } from '../utils/tokenMapper.js';
 import { tokenVisibleToPlayer } from '../utils/tokenVisibility.js';
+import { canReceiveFullCharacter } from '../utils/characterVisibility.js';
 
 export function registerSessionEvents(io: Server, socket: Socket): void {
   socket.on(
@@ -389,10 +390,10 @@ export function registerSessionEvents(io: Server, socket: Socket): void {
         }
       }
 
-      // Auto-load characters. The joiner needs their OWN character (to
-      // populate myCharacter) AND every other linked character in the
-      // session (so the DM can open any player's sheet, and players can
-      // see tooltips / portraits on each other's tokens).
+      // Auto-load full character sheets. They contain private notes,
+      // inventory, currency, and spell data, so players receive their own
+      // sheet plus other players' sheets only when the DM opted into party
+      // sharing. DMs always receive every linked sheet.
       //
       // We send all of them via character:synced — the client's
       // applyRemoteSync adds to allCharacters and mirrors into
@@ -401,12 +402,22 @@ export function registerSessionEvents(io: Server, socket: Socket): void {
       // who joined after a player imported from D&D Beyond still saw
       // stale / missing data for that player.
       const { rows: sessionCharRows } = await pool.query(
-        `SELECT c.* FROM characters c
+        `SELECT sp.user_id AS session_player_user_id, c.* FROM characters c
        JOIN session_players sp ON sp.character_id = c.id
        WHERE sp.session_id = $1`,
         [session.id]
       );
       for (const charRow of sessionCharRows) {
+        if (
+          !canReceiveFullCharacter({
+            recipientUserId: userId,
+            recipientRole: roomPlayer.role,
+            characterOwnerUserId: String(charRow.session_player_user_id),
+            showPlayersToPlayers: settings.showPlayersToPlayers === true,
+          })
+        ) {
+          continue;
+        }
         socket.emit('character:synced', {
           character: dbRowToCharacter(charRow as Record<string, unknown>),
         });
