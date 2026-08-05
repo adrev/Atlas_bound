@@ -5,6 +5,11 @@ import { getPlayerBySocketId, playerIsDM } from '../utils/roomState.js';
 import { broadcastEvent } from '../utils/eventBroadcast.js';
 import { dbRowToCharacter } from '../utils/characterMapper.js';
 import { safeHandler } from '../utils/socketHelpers.js';
+import { safeParseJSON } from '../utils/safeJson.js';
+import {
+  canReceiveFullCharacter,
+  fullCharacterRecipientSocketIds,
+} from '../utils/characterVisibility.js';
 import { broadcastSystem } from '../services/ChatCommands.js';
 import {
   computeAdjustSpellSlot,
@@ -424,22 +429,47 @@ export function registerCharacterEvents(io: Server, socket: Socket): void {
 
       const { characterId } = parsed.data;
 
-      // Verify character belongs to a player in this session
+      // Verify the character is linked to this session and load the
+      // session's explicit party-sheet sharing policy.
       const { rows: linkCheck } = await pool.query(
-        'SELECT 1 FROM session_players WHERE session_id = $1 AND character_id = $2',
+        `SELECT sp.user_id AS owner_user_id, s.settings
+           FROM session_players sp
+           JOIN sessions s ON s.id = sp.session_id
+          WHERE sp.session_id = $1 AND sp.character_id = $2
+          LIMIT 1`,
         [ctx.room.sessionId, characterId]
       );
       if (linkCheck.length === 0) return;
 
+      const characterOwnerUserId = String(linkCheck[0].owner_user_id);
+      const settings = safeParseJSON<Record<string, unknown>>(
+        linkCheck[0].settings,
+        {},
+        'sessions.settings'
+      );
+      const showPlayersToPlayers = settings.showPlayersToPlayers === true;
+      if (
+        !canReceiveFullCharacter({
+          recipientUserId: ctx.player.userId,
+          recipientRole: ctx.player.role,
+          characterOwnerUserId,
+          showPlayersToPlayers,
+        })
+      ) {
+        return;
+      }
+
       const { rows } = await pool.query('SELECT * FROM characters WHERE id = $1', [characterId]);
       if (rows.length === 0) return;
 
-      // Broadcast to the whole session room (requester included) so the
-      // DM and every other connected player refresh their copy of this
-      // character. Previously only the requester got the synced data,
-      // which left the DM viewing stale stats after a player re-imported
-      // from D&D Beyond.
-      io.to(ctx.room.sessionId).emit('character:synced', { character: dbRowToCharacter(rows[0]) });
+      const payload = { character: dbRowToCharacter(rows[0]) };
+      for (const socketId of fullCharacterRecipientSocketIds(
+        ctx.room,
+        characterOwnerUserId,
+        showPlayersToPlayers
+      )) {
+        io.to(socketId).emit('character:synced', payload);
+      }
     })
   );
 }
