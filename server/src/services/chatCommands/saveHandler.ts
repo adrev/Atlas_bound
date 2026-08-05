@@ -32,11 +32,39 @@ const ABILITIES = new Set(['str', 'dex', 'con', 'int', 'wis', 'cha']);
 
 type Ability = 'str' | 'dex' | 'con' | 'int' | 'wis' | 'cha';
 
+function classLevel(className: string, classToFind: string, totalLevel: number): number | null {
+  const escaped = classToFind.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const match = className.match(
+    new RegExp(`(?:^|/)\\s*${escaped}(?:\\s*\\([^)]*\\))?\\s+(\\d+)`, 'i')
+  );
+  if (match) return Number(match[1]);
+  const singleClass = new RegExp(`^\\s*${escaped}(?:\\s*\\([^)]*\\))?\\s*$`, 'i');
+  return singleClass.test(className) ? totalLevel : null;
+}
+
+function evasionSource(row: Record<string, unknown>): 'Rogue' | 'Monk' | null {
+  const totalLevel = Number(row.level);
+  if (!Number.isInteger(totalLevel) || totalLevel < 1 || totalLevel > 20) return null;
+  const className = String(row.class || '');
+  const rogueLevel = classLevel(className, 'Rogue', totalLevel);
+  const monkLevel = classLevel(className, 'Monk', totalLevel);
+  if (
+    (rogueLevel !== null && rogueLevel > totalLevel) ||
+    (monkLevel !== null && monkLevel > totalLevel) ||
+    (rogueLevel !== null && monkLevel !== null && rogueLevel + monkLevel > totalLevel)
+  ) {
+    return null;
+  }
+  if ((rogueLevel ?? 0) >= 7) return 'Rogue';
+  if ((monkLevel ?? 0) >= 7) return 'Monk';
+  return null;
+}
+
 function resolveTarget(ctx: PlayerContext, name: string): Token | null {
   if (!name) return null;
   const needle = name.toLowerCase();
   const matches = Array.from(ctx.room.tokens.values()).filter(
-    (t) => t.name.toLowerCase() === needle,
+    (t) => t.name.toLowerCase() === needle
   );
   if (matches.length === 0) return null;
   matches.sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
@@ -62,49 +90,72 @@ function rollDice(notation: string): { total: number; rolls: number[] } {
 
 async function loadSaveMod(
   characterId: string,
-  ability: Ability,
-): Promise<{ mod: number; name: string; race: string | null; defenses: Partial<DefenseLists> }> {
+  ability: Ability
+): Promise<{
+  mod: number;
+  name: string;
+  race: string | null;
+  defenses: Partial<DefenseLists>;
+  evasion: 'Rogue' | 'Monk' | null;
+}> {
   const { rows } = await pool.query(
-    'SELECT ability_scores, saving_throws, proficiency_bonus, name, race, defenses FROM characters WHERE id = $1',
-    [characterId],
+    'SELECT ability_scores, saving_throws, proficiency_bonus, name, race, defenses, class, level FROM characters WHERE id = $1',
+    [characterId]
   );
   const row = rows[0] as Record<string, unknown> | undefined;
-  if (!row) return { mod: 0, name: '', race: null, defenses: {} };
+  if (!row) return { mod: 0, name: '', race: null, defenses: {}, evasion: null };
   try {
-    const scores = typeof row.ability_scores === 'string' ? JSON.parse(row.ability_scores) : (row.ability_scores ?? {});
+    const scores =
+      typeof row.ability_scores === 'string'
+        ? JSON.parse(row.ability_scores)
+        : (row.ability_scores ?? {});
     const ab = Math.floor((((scores as Record<string, number>)[ability] ?? 10) - 10) / 2);
     const prof = Number(row.proficiency_bonus) || 2;
-    const saves = typeof row.saving_throws === 'string' ? JSON.parse(row.saving_throws) : (row.saving_throws ?? []);
+    const saves =
+      typeof row.saving_throws === 'string'
+        ? JSON.parse(row.saving_throws)
+        : (row.saving_throws ?? []);
     const isProf = Array.isArray(saves) && saves.includes(ability);
-    const defenses = typeof row.defenses === 'string' ? JSON.parse(row.defenses) : (row.defenses ?? {});
+    const defenses =
+      typeof row.defenses === 'string' ? JSON.parse(row.defenses) : (row.defenses ?? {});
     return {
       mod: ab + (isProf ? prof : 0),
       name: (row.name as string) || '',
       race: (row.race as string) ?? null,
       defenses: defenses as Partial<DefenseLists>,
+      evasion: evasionSource(row),
     };
   } catch {
-    return { mod: 0, name: '', race: null, defenses: {} };
+    return { mod: 0, name: '', race: null, defenses: {}, evasion: null };
   }
 }
 
 async function handleSave(c: ChatCommandContext): Promise<boolean> {
   if (c.ctx.player.role !== 'dm') {
-    whisperToCaller(c.io, c.ctx, '!save: DM only — resolves a spell save + damage against multiple targets.');
+    whisperToCaller(
+      c.io,
+      c.ctx,
+      '!save: DM only — resolves a spell save + damage against multiple targets.'
+    );
     return true;
   }
   const parts = c.rest.split(/\s+/).filter(Boolean);
   if (parts.length < 4) {
     whisperToCaller(
-      c.io, c.ctx,
-      '!save: usage `!save <ability> <dc> <dice>/<type> <target1> [target2 …]`\n  e.g. `!save dex 15 8d6/fire goblin orc bugbear`',
+      c.io,
+      c.ctx,
+      '!save: usage `!save <ability> <dc> <dice>/<type> <target1> [target2 …]`\n  e.g. `!save dex 15 8d6/fire goblin orc bugbear`'
     );
     return true;
   }
 
   const abilityRaw = parts.shift()!.toLowerCase();
   if (!ABILITIES.has(abilityRaw)) {
-    whisperToCaller(c.io, c.ctx, `!save: unknown ability "${abilityRaw}". Use str/dex/con/int/wis/cha.`);
+    whisperToCaller(
+      c.io,
+      c.ctx,
+      `!save: unknown ability "${abilityRaw}". Use str/dex/con/int/wis/cha.`
+    );
     return true;
   }
   const ability = abilityRaw as Ability;
@@ -140,7 +191,7 @@ async function handleSave(c: ChatCommandContext): Promise<boolean> {
   const lines: string[] = [];
   const typeLabel = dmgType ? ` ${dmgType}` : '';
   lines.push(
-    `🎯 ${c.ctx.player.displayName} resolves save: **${ability.toUpperCase()} DC ${dc}**, damage ${dmgNotation}${typeLabel} (${dmgRolls.join('+')} = ${fullDmg})`,
+    `🎯 ${c.ctx.player.displayName} resolves save: **${ability.toUpperCase()} DC ${dc}**, damage ${dmgNotation}${typeLabel} (${dmgRolls.join('+')} = ${fullDmg})`
   );
   const saveOutcomes: SpellTargetOutcome[] = [];
 
@@ -163,12 +214,14 @@ async function handleSave(c: ChatCommandContext): Promise<boolean> {
     let tName = target.name;
     let tRace: string | null = null;
     let defenses: Partial<DefenseLists> = {};
+    let targetEvasion: 'Rogue' | 'Monk' | null = null;
     if (target.characterId) {
       const info = await loadSaveMod(target.characterId, ability);
       saveMod = info.mod;
       if (info.name) tName = info.name;
       tRace = info.race;
       defenses = info.defenses;
+      targetEvasion = info.evasion;
     }
 
     // Hand the damage type to computeSaveModifiers as the `savingAgainst`
@@ -185,7 +238,8 @@ async function handleSave(c: ChatCommandContext): Promise<boolean> {
     let auraBonus = 0;
     let auraSource = '';
     try {
-      const gridSize = (c.ctx.room.currentMapId && c.ctx.room.mapGridSizes.get(c.ctx.room.currentMapId)) || 70;
+      const gridSize =
+        (c.ctx.room.currentMapId && c.ctx.room.mapGridSizes.get(c.ctx.room.currentMapId)) || 70;
       const tSize = (target as Token).size || 1;
       const tcx = target.x + (gridSize * tSize) / 2;
       const tcy = target.y + (gridSize * tSize) / 2;
@@ -195,18 +249,29 @@ async function handleSave(c: ChatCommandContext): Promise<boolean> {
         const palIsPC = !!pal.ownerUserId;
         if (palIsPC !== tIsPC) continue; // ally side only
         const palConds = (pal.conditions as string[]) || [];
-        if (palConds.includes('unconscious') || palConds.includes('incapacitated') || palConds.includes('dead')) continue;
+        if (
+          palConds.includes('unconscious') ||
+          palConds.includes('incapacitated') ||
+          palConds.includes('dead')
+        )
+          continue;
         // Edge-to-edge distance — aura reaches 10 ft (2 cells).
         const pSize = (pal as Token).size || 1;
         const pcx = pal.x + (gridSize * pSize) / 2;
         const pcy = pal.y + (gridSize * pSize) / 2;
-        const dx = Math.max(0, Math.abs(pcx - tcx) - (pSize * gridSize) / 2 - (tSize * gridSize) / 2);
-        const dy = Math.max(0, Math.abs(pcy - tcy) - (pSize * gridSize) / 2 - (tSize * gridSize) / 2);
+        const dx = Math.max(
+          0,
+          Math.abs(pcx - tcx) - (pSize * gridSize) / 2 - (tSize * gridSize) / 2
+        );
+        const dy = Math.max(
+          0,
+          Math.abs(pcy - tcy) - (pSize * gridSize) / 2 - (tSize * gridSize) / 2
+        );
         const edge = Math.max(dx, dy);
         if (edge > gridSize * 2 + 1) continue;
         const { rows: prows } = await pool.query(
           'SELECT class, level, features, ability_scores, name FROM characters WHERE id = $1',
-          [pal.characterId],
+          [pal.characterId]
         );
         const prow = prows[0] as Record<string, unknown> | undefined;
         if (!prow) continue;
@@ -218,15 +283,23 @@ async function handleSave(c: ChatCommandContext): Promise<boolean> {
         try {
           const rawF = prow.features;
           const feats = typeof rawF === 'string' ? JSON.parse(rawF) : (rawF ?? []);
-          const has = Array.isArray(feats) && feats.some(
-            (f: { name?: string }) => typeof f?.name === 'string' && /aura\s+of\s+protection/i.test(f.name),
-          );
+          const has =
+            Array.isArray(feats) &&
+            feats.some(
+              (f: { name?: string }) =>
+                typeof f?.name === 'string' && /aura\s+of\s+protection/i.test(f.name)
+            );
           // Per PHB, Aura of Protection is automatic at L6 — accept
           // if level matches even when the feature isn't explicitly
           // listed in the imported features.
           if (!has && palLevel < 6) continue;
-        } catch { if (palLevel < 6) continue; }
-        const scores = typeof prow.ability_scores === 'string' ? JSON.parse(prow.ability_scores) : (prow.ability_scores ?? {});
+        } catch {
+          if (palLevel < 6) continue;
+        }
+        const scores =
+          typeof prow.ability_scores === 'string'
+            ? JSON.parse(prow.ability_scores)
+            : (prow.ability_scores ?? {});
         const cha = Math.floor((((scores as Record<string, number>).cha ?? 10) - 10) / 2);
         const chaBonus = Math.max(1, cha); // min +1 per RAW
         if (chaBonus > auraBonus) {
@@ -234,7 +307,9 @@ async function handleSave(c: ChatCommandContext): Promise<boolean> {
           auraSource = (prow.name as string) || pal.name;
         }
       }
-    } catch { /* aura detection best-effort */ }
+    } catch {
+      /* aura detection best-effort */
+    }
     if (auraBonus > 0) {
       saveMod += auraBonus;
     }
@@ -266,18 +341,31 @@ async function handleSave(c: ChatCommandContext): Promise<boolean> {
     const modSign = totalMod >= 0 ? '+' : '';
     const total = mods.autoFail ? 0 : d20 + totalMod;
     const saved = !mods.autoFail && total >= dc;
-    const rawDmg = saved ? halfDmg : fullDmg;
+    const evasionApplies = ability === 'dex' && targetEvasion !== null;
+    const rawDmg = evasionApplies ? (saved ? 0 : halfDmg) : saved ? halfDmg : fullDmg;
     const resisted = applyDamageWithResist(rawDmg, dmgType, defenses, targetConds, true);
     const dmg = resisted.amount;
-    const auraLabel = auraBonus > 0 ? ` (incl. +${auraBonus} Aura of Protection from ${auraSource})` : '';
+    const auraLabel =
+      auraBonus > 0 ? ` (incl. +${auraBonus} Aura of Protection from ${auraSource})` : '';
     const resistanceLabel = resisted.source ? ` (${rawDmg}→${dmg}, ${resisted.source})` : '';
 
+    const outcomeLabel = evasionApplies
+      ? saved
+        ? 'SAVED (Evasion: none)'
+        : 'FAILED (Evasion: half)'
+      : saved
+        ? 'SAVED (half)'
+        : 'FAILED (full)';
     lines.push(
-      `   • ${tName}: d20=${rollsStr}${mods.autoFail ? '' : `${modSign}${totalMod}=${total}`} vs ${dc}${auraLabel} → ${saved ? 'SAVED (half)' : 'FAILED (full)'} — ${dmg}${typeLabel} dmg${resistanceLabel}`,
+      `   • ${tName}: d20=${rollsStr}${mods.autoFail ? '' : `${modSign}${totalMod}=${total}`} vs ${dc}${auraLabel} → ${outcomeLabel} — ${dmg}${typeLabel} dmg${resistanceLabel}`
     );
 
     // Collect structured per-target outcome for the breakdown card.
-    const saveModifiersList: Array<{ label: string; value: number; source?: 'ability' | 'magic' | 'other' }> = [];
+    const saveModifiersList: Array<{
+      label: string;
+      value: number;
+      source?: 'ability' | 'magic' | 'other';
+    }> = [];
     if (saveMod - auraBonus !== 0) {
       saveModifiersList.push({
         label: `${ability.toUpperCase()} save mod`,
@@ -299,10 +387,13 @@ async function handleSave(c: ChatCommandContext): Promise<boolean> {
         source: 'other',
       });
     }
-    const advState =
-      mods.autoFail ? 'normal' :
-      mods.effectiveAdvantage === 'advantage' ? 'advantage' :
-      mods.effectiveAdvantage === 'disadvantage' ? 'disadvantage' : 'normal';
+    const advState = mods.autoFail
+      ? 'normal'
+      : mods.effectiveAdvantage === 'advantage'
+        ? 'advantage'
+        : mods.effectiveAdvantage === 'disadvantage'
+          ? 'disadvantage'
+          : 'normal';
     saveOutcomes.push({
       name: tName,
       tokenId: target.id,
@@ -317,17 +408,23 @@ async function handleSave(c: ChatCommandContext): Promise<boolean> {
         saved,
         autoFailed: mods.autoFail || undefined,
       },
-      damage: dmg > 0 ? {
-        dice: dmgNotation,
-        diceRolls: dmgRolls,
-        mainRoll: fullDmg,
-        bonuses: [],
-        halfDamage: saved || undefined,
-        finalDamage: dmg,
-        targetHpBefore: 0,
-        targetHpAfter: 0,
-      } : undefined,
-      notes: resisted.source ? [`Defenses: ${resisted.source}`] : undefined,
+      damage:
+        dmg > 0
+          ? {
+              dice: dmgNotation,
+              diceRolls: dmgRolls,
+              mainRoll: fullDmg,
+              bonuses: [],
+              halfDamage: (evasionApplies ? !saved : saved) || undefined,
+              finalDamage: dmg,
+              targetHpBefore: 0,
+              targetHpAfter: 0,
+            }
+          : undefined,
+      notes: [
+        ...(evasionApplies ? [`Evasion (${targetEvasion} L7+)`] : []),
+        ...(resisted.source ? [`Defenses: ${resisted.source}`] : []),
+      ],
     });
 
     // Apply damage. Use CombatService.applyDamage when in combat
@@ -355,7 +452,7 @@ async function handleSave(c: ChatCommandContext): Promise<boolean> {
         } else if (target.characterId) {
           const { rows } = await pool.query(
             'SELECT hit_points, max_hit_points, temp_hit_points FROM characters WHERE id = $1',
-            [target.characterId],
+            [target.characterId]
           );
           const row = rows[0] as Record<string, unknown> | undefined;
           if (row) {
@@ -372,7 +469,7 @@ async function handleSave(c: ChatCommandContext): Promise<boolean> {
             const newHp = Math.max(0, curHp - remaining);
             await pool.query(
               'UPDATE characters SET hit_points = $1, temp_hit_points = $2 WHERE id = $3',
-              [newHp, newTempHp, target.characterId],
+              [newHp, newTempHp, target.characterId]
             );
             c.io.to(c.ctx.room.sessionId).emit('character:updated', {
               characterId: target.characterId,
