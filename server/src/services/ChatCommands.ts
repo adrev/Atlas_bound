@@ -256,7 +256,7 @@ export function whisperToCaller(io: Server, ctx: PlayerContext, content: string)
     rollData: null,
     createdAt: new Date().toISOString(),
   };
-  io.to(ctx.player.socketId).emit('chat:new-message', message);
+  io.to(ctx.socketId ?? ctx.player.socketId).emit('chat:new-message', message);
 }
 
 /**

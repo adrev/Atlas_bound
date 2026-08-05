@@ -490,14 +490,14 @@ export function removePlayerFromRoom(sessionId: string, userId: string): void {
 
 export function getPlayerBySocketId(
   socketId: string
-): { room: RoomState; player: RoomPlayer } | undefined {
+): PlayerContext | undefined {
   const entry = socketIndex.get(socketId);
   if (!entry) return undefined;
   const room = rooms.get(entry.sessionId);
   if (!room) return undefined;
   const player = room.players.get(entry.userId);
   if (!player) return undefined;
-  return { room, player };
+  return { room, player, socketId };
 }
 
 /**
@@ -573,7 +573,12 @@ export function deleteRoom(sessionId: string): void {
 // control. All return booleans — callers should silently return
 // on false (matching the existing pattern in mapEvents/sceneEvents).
 
-export type PlayerContext = { room: RoomState; player: RoomPlayer };
+export type PlayerContext = {
+  room: RoomState;
+  player: RoomPlayer;
+  /** Socket that initiated the current event; older manual contexts fall back to player.socketId. */
+  socketId?: string;
+};
 
 /** True if the player is the DM. */
 export function playerIsDM(ctx: PlayerContext): boolean {

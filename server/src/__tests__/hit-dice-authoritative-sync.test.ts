@@ -200,7 +200,7 @@ describe('!hd authoritative persistence and privacy', () => {
 
     expect(channelsFor(emissions, 'character:updated')).toEqual([]);
     expect(emissions.some((emission) => emission.channelId === SESSION)).toBe(false);
-    const privateMessage = emissions.find((emission) => emission.channelId === 'owner-2');
+    const privateMessage = emissions.find((emission) => emission.channelId === 'owner-1');
     expect(privateMessage).toBeDefined();
     expect(String((privateMessage?.payload as { content?: string }).content)).toContain(
       'could not save'
