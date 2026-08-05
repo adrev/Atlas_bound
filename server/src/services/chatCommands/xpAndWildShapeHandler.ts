@@ -15,6 +15,7 @@ import {
   type WildShapeState,
 } from '../../utils/wildShapeState.js';
 import { emitWildShapePrivate } from '../../utils/wildShapeSync.js';
+import { emitCombatStateSync } from '../../utils/combatStateVisibility.js';
 import * as CombatService from '../CombatService.js';
 
 /**
@@ -640,10 +641,11 @@ interface DruidRow {
 }
 
 async function loadDruidRow(characterId: string): Promise<DruidRow | null> {
-  const { rows } = await pool.query(
-    'SELECT name, class, level, hit_points, temp_hit_points, features, wild_shape, version FROM characters WHERE id = $1',
-    [characterId]
-  );
+  // The full row: Wild Shape checks need only a handful of columns,
+  // but the post-commit combat stat sync derives the baseline AC/speed
+  // (armor, inventory, ability scores…) from THIS same version-guarded
+  // row, so the whole sheet rides along.
+  const { rows } = await pool.query('SELECT * FROM characters WHERE id = $1', [characterId]);
   const row = rows[0] as Record<string, unknown> | undefined;
   if (!row) return null;
   const version = asAuthoritativeVersion(row.version);
@@ -747,6 +749,30 @@ function wildShapeCombatGate(
     return { error: 'your bonus action is already spent this turn.' };
   }
   return { economy };
+}
+
+/**
+ * After a committed transform/revert/form-drop, re-point the live
+ * combatant at the authoritative post-write AC/speed and fan the
+ * tracker out through the redacting combat:state-sync — bystanders
+ * without stat access still receive zeroed AC/speed. `effective` is
+ * computed from the same validated row the guarded write was checked
+ * against (plus the validated form for a transform), so the stat
+ * transition is deterministic — no follow-up read can fail and leave
+ * the combatant stranded on the old numbers. No-op out of combat or
+ * for non-combatants.
+ */
+function syncCombatFormStats(
+  c: ChatCommandContext,
+  characterId: string,
+  effective: { ac: number; speed: number }
+): void {
+  const changed = CombatService.syncWildShapeCombatStats(
+    c.ctx.room.sessionId,
+    characterId,
+    effective
+  );
+  if (changed) emitCombatStateSync(c.io, c.ctx.room);
 }
 
 function markEconomy(
@@ -945,6 +971,9 @@ async function handleWildShape(c: ChatCommandContext): Promise<boolean> {
   }
 
   markEconomy(c, caller.id, gate.economy, cost);
+  // Transforming mid-fight immediately swaps the combatant to the
+  // form's AC and walking speed (movement already spent stays spent).
+  syncCombatFormStats(c, caller.characterId, CombatService.computeEffectiveAcSpeed(row, newState));
   // Exact form stats + the uses pool are owner/DM material. The
   // dispatcher's stat-scoped wrapper widens under sharing toggles, so
   // active-form payloads go through the strictly private channel.
@@ -1013,6 +1042,13 @@ async function handleRevert(c: ChatCommandContext): Promise<boolean> {
     return true;
   }
   if (column.status === 'active') markEconomy(c, caller.id, economy, 'bonusAction');
+  // Reverting (including clearing an unreadable state) restores the
+  // character's own AC/speed on the live combatant immediately.
+  syncCombatFormStats(
+    c,
+    caller.characterId,
+    CombatService.computeEffectiveAcSpeed(loaded.row, null)
+  );
   c.io.to(c.ctx.room.sessionId).emit('character:updated', {
     characterId: caller.characterId,
     changes: { wildShape: null, version: write.version },
@@ -1194,6 +1230,12 @@ async function handleBeast(c: ChatCommandContext): Promise<boolean> {
   if (combatant) {
     combatant.hp = newDruidHp;
     CombatService.persistSessionCombatState(c.ctx.room.sessionId);
+    // The form dropped from damage — restore the druid's own AC/speed.
+    syncCombatFormStats(
+      c,
+      caller.characterId,
+      CombatService.computeEffectiveAcSpeed(loaded.row, null)
+    );
     c.io.to(c.ctx.room.sessionId).emit('combat:hp-changed', {
       tokenId: combatant.tokenId,
       hp: newDruidHp,

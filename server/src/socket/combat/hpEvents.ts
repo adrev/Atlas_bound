@@ -13,6 +13,7 @@ import {
 import { safeHandler } from '../../utils/socketHelpers.js';
 import { tokenConditionChanges } from '../../utils/conditionSources.js';
 import { emitToTokenViewers, emitToTokenStatViewers } from '../../utils/combatBroadcast.js';
+import { emitCombatStateSync } from '../../utils/combatStateVisibility.js';
 import { emitWildShapePrivate } from '../../utils/wildShapeSync.js';
 import { emitTokenScopedChat, tokenScopedChatIsPrivate } from '../../utils/tokenScopedChat.js';
 import { v4 as uuidv4 } from 'uuid';
@@ -109,6 +110,10 @@ export function registerCombatHp(io: Server, socket: Socket): void {
             wildShape: result.wildShape.state,
             ...(result.version !== undefined ? { version: result.version } : {}),
           });
+          // Damage just dropped the form: CombatService already
+          // restored the druid's own AC/speed on the combatant, so
+          // re-fan the tracker (redacted per viewer) to sync it.
+          if (result.wildShape.ended) emitCombatStateSync(io, ctx.room);
         }
       }
       if (result.autoRemovedConditions && result.autoRemovedConditions.length > 0) {

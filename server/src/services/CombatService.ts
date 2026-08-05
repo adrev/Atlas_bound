@@ -108,6 +108,200 @@ function applyManualEquipmentSpeedPenalty(charRow: Record<string, unknown>, spee
   return Math.max(0, speed + bonuses.speedPenalty);
 }
 
+/**
+ * The character's own (untransformed) combat AC and speed, derived
+ * from the sheet row exactly the way combat-start hydration does:
+ * stored columns, manual-equipment speed penalty, Unarmored Defense /
+ * Draconic Resilience lifts, and the Defense fighting style. Wild
+ * Shape restoration reuses this so reverting mid-fight lands on the
+ * same numbers a fresh combat start would compute — the sheet row is
+ * the single baseline; form stats never overwrite these columns.
+ */
+function deriveBaselineAcSpeed(charRow: Record<string, unknown>): { ac: number; speed: number } {
+  let ac = (charRow.armor_class as number) ?? 10;
+  let speed = (charRow.speed as number) ?? 30;
+  speed = applyManualEquipmentSpeedPenalty(charRow, speed);
+
+  // ── Unarmored Defense (Barbarian + Monk) ───────────────
+  // RAW: class features compute AC from ability scores when
+  // the PC isn't wearing armor. The stored armor_class column
+  // is "what the sheet says" — for homebrew / manually-created
+  // characters without gear tracking, it's often just 10 even
+  // though the character should be 14-18 once DEX / CON / WIS
+  // modifiers apply. DDB imports already bake this correctly
+  // so we gate on no-ddb-id to avoid double-applying.
+  try {
+    const ddbId = charRow.dndbeyond_id as string | null;
+    if (!ddbId) {
+      const classLower = String(charRow.class || '').toLowerCase();
+      const rawAbilities = charRow.ability_scores;
+      const scores = (
+        typeof rawAbilities === 'string' ? JSON.parse(rawAbilities) : (rawAbilities ?? {})
+      ) as Record<string, number>;
+      const mod = (s: string): number => {
+        const v = Number(scores?.[s] ?? scores?.[s.toLowerCase()] ?? 10);
+        return Number.isFinite(v) ? Math.floor((v - 10) / 2) : 0;
+      };
+      // Detect equipped armor — if the character has any item
+      // with category 'armor' AND equipped=true (DDB shape) we
+      // assume the stored AC is correct. Absence of armor lets
+      // Unarmored Defense kick in.
+      let hasArmor = false;
+      let hasShield = false;
+      try {
+        const invRaw = charRow.inventory;
+        const inv = typeof invRaw === 'string' ? JSON.parse(invRaw) : (invRaw ?? []);
+        if (Array.isArray(inv)) {
+          for (const item of inv) {
+            const it = item as Record<string, unknown>;
+            const cat = String(it?.category ?? it?.type ?? '').toLowerCase();
+            const equipped = it?.equipped !== false; // default true when field absent
+            if (!equipped) continue;
+            if (/armor/.test(cat) && !/shield/.test(cat)) hasArmor = true;
+            if (/shield/.test(cat) || /shield/i.test(String(it?.name ?? ''))) hasShield = true;
+          }
+        }
+      } catch {
+        /* inventory unparseable — fall through */
+      }
+
+      if (!hasArmor) {
+        // Barbarian: 10 + DEX + CON (shield allowed).
+        if (classLower.includes('barbarian')) {
+          const barbAc = 10 + mod('dex') + mod('con') + (hasShield ? 2 : 0);
+          if (barbAc > ac) ac = barbAc;
+        }
+        // Monk: 10 + DEX + WIS (no shield).
+        if (classLower.includes('monk') && !hasShield) {
+          const monkAc = 10 + mod('dex') + mod('wis');
+          if (monkAc > ac) ac = monkAc;
+        }
+        // Draconic Sorcerer passive: 13 + DEX (no shield).
+        // Only lifts AC — doesn't downgrade.
+        if (classLower.includes('draconic')) {
+          const dragAc = 13 + mod('dex');
+          if (dragAc > ac) ac = dragAc;
+        }
+      }
+      // Defense fighting style: +1 AC while wearing armor. Same
+      // DDB heuristic as above — avoid double-counting when the
+      // import already baked it in.
+      try {
+        const rawFeatures = charRow.features;
+        const features =
+          typeof rawFeatures === 'string' ? JSON.parse(rawFeatures) : (rawFeatures ?? []);
+        const featureList: Array<{ name?: string }> = Array.isArray(features) ? features : [];
+        if (featureList.some((f) => typeof f?.name === 'string' && /defense/i.test(f.name))) {
+          ac += 1;
+        }
+      } catch {
+        /* features blob unparseable — skip */
+      }
+    }
+  } catch {
+    /* unarmored-defense best-effort */
+  }
+  return { ac, speed };
+}
+
+/**
+ * 2014 Wild Shape: while transformed the druid uses the beast's AC
+ * and movement. Grid movement runs on the walking speed — a form
+ * without one (a fish on land) genuinely has 0 ft. The form's AC and
+ * speeds come from the validated persisted state, never a client
+ * claim; a compendium row that carried no AC keeps the character's
+ * own AC rather than inventing one.
+ */
+function wildShapeFormStats(
+  state: WildShapeState,
+  baseline: { ac: number; speed: number }
+): { ac: number; speed: number } {
+  return { ac: state.formAc ?? baseline.ac, speed: state.formSpeed.walk ?? 0 };
+}
+
+/**
+ * Effective combat AC/speed from an already-validated character row
+ * plus an explicit form state (null = untransformed). Exported so the
+ * Wild Shape command path can compute the post-commit stats from the
+ * SAME row it version-guarded the write against — deterministic, no
+ * second DB read that could fail and strand the old numbers.
+ */
+export function computeEffectiveAcSpeed(
+  charRow: Record<string, unknown>,
+  formState: WildShapeState | null
+): { ac: number; speed: number } {
+  const baseline = deriveBaselineAcSpeed(charRow);
+  return formState ? wildShapeFormStats(formState, baseline) : baseline;
+}
+
+/**
+ * Effective combat AC/speed for a character row: the sheet baseline,
+ * overridden by the active Wild Shape form. An unreadable wild_shape
+ * column contributes NOTHING — the tampered/corrupt blob is never
+ * trusted for stats (HP changes against it already fail closed), so
+ * the character presents their own baseline until `!revert` clears it.
+ */
+function effectiveAcSpeed(charRow: Record<string, unknown>): { ac: number; speed: number } {
+  const column = readWildShapeColumn(charRow.wild_shape);
+  return computeEffectiveAcSpeed(charRow, column.status === 'active' ? column.state : null);
+}
+
+/**
+ * Re-point a live combatant at the character's current effective
+ * AC/speed (form or baseline). When it is that combatant's turn the
+ * remaining movement follows the PHB "using different speeds" rule:
+ * movement already spent stays spent and only the cap delta moves,
+ * so Dash extras and condition multipliers survive a mid-turn
+ * transform or revert. Returns true when anything changed.
+ */
+function applyEffectiveFormStats(
+  room: RoomState,
+  combatant: Combatant,
+  effective: { ac: number; speed: number }
+): boolean {
+  if (combatant.armorClass === effective.ac && combatant.speed === effective.speed) return false;
+  const current = room.combatState?.combatants[room.combatState.currentTurnIndex];
+  const economy = room.actionEconomies.get(combatant.tokenId);
+  if (current?.tokenId === combatant.tokenId && economy) {
+    const oldCap = computeMovementCap(combatant, room);
+    combatant.speed = effective.speed;
+    const delta = computeMovementCap(combatant, room) - oldCap;
+    economy.movementRemaining = Math.max(0, economy.movementRemaining + delta);
+    economy.movementMax = Math.max(0, economy.movementMax + delta);
+  } else {
+    combatant.speed = effective.speed;
+  }
+  combatant.armorClass = effective.ac;
+  return true;
+}
+
+/**
+ * Authoritative Wild Shape stat sync for a live fight. Called AFTER a
+ * successful version-guarded wild_shape write (transform, revert, or
+ * form-drop) with the effective AC/speed the caller computed from the
+ * same validated row/form data it guarded the write against. Purely
+ * in-memory and deterministic — the write has already committed, so
+ * no DB read sits between commit and the stat transition that could
+ * fail and strand the combatant on stale numbers. The tracker persist
+ * is fire-and-forget: the live room state is the combat source of
+ * truth and the next persist rewrites the full row anyway. Returns
+ * the new values for fanout (via the redacting combat:state-sync,
+ * never raw), or null when nothing needed to change.
+ */
+export function syncWildShapeCombatStats(
+  sessionId: string,
+  characterId: string,
+  effective: { ac: number; speed: number }
+): { tokenId: string; armorClass: number; speed: number } | null {
+  const room = getRoom(sessionId);
+  if (!room?.combatState?.active) return null;
+  const combatant = room.combatState.combatants.find((c) => c.characterId === characterId);
+  if (!combatant) return null;
+  if (!applyEffectiveFormStats(room, combatant, effective)) return null;
+  persistCombatState(room.combatState);
+  return { tokenId: combatant.tokenId, armorClass: combatant.armorClass, speed: combatant.speed };
+}
+
 export function startCombat(sessionId: string, tokenIds: string[]): CombatState {
   const room = getRoom(sessionId);
   if (!room) throw new Error('Room not found');
@@ -457,77 +651,13 @@ async function buildCombatState(
         hp = (charRow.hit_points as number) ?? 10;
         maxHp = (charRow.max_hit_points as number) ?? 10;
         tempHp = (charRow.temp_hit_points as number) ?? 0;
-        ac = (charRow.armor_class as number) ?? 10;
-        speed = (charRow.speed as number) ?? 30;
-        speed = applyManualEquipmentSpeedPenalty(charRow, speed);
+        // Baseline sheet AC/speed (Unarmored Defense, Defense style,
+        // equipment penalty), then the Wild Shape override: a druid
+        // entering combat already transformed hydrates the persisted
+        // form's AC and walking speed, so movement caps and the
+        // tracker are authoritative from the first turn.
+        ({ ac, speed } = effectiveAcSpeed(charRow));
         portrait = charRow.portrait_url as string | null;
-
-        // ── Unarmored Defense (Barbarian + Monk) ───────────────
-        // RAW: class features compute AC from ability scores when
-        // the PC isn't wearing armor. The stored armor_class column
-        // is "what the sheet says" — for homebrew / manually-created
-        // characters without gear tracking, it's often just 10 even
-        // though the character should be 14-18 once DEX / CON / WIS
-        // modifiers apply. DDB imports already bake this correctly
-        // so we gate on no-ddb-id to avoid double-applying.
-        try {
-          const ddbId = charRow.dndbeyond_id as string | null;
-          if (!ddbId) {
-            const classLower = String(charRow.class || '').toLowerCase();
-            const rawAbilities = charRow.ability_scores;
-            const scores = (
-              typeof rawAbilities === 'string' ? JSON.parse(rawAbilities) : (rawAbilities ?? {})
-            ) as Record<string, number>;
-            const mod = (s: string): number => {
-              const v = Number(scores?.[s] ?? scores?.[s.toLowerCase()] ?? 10);
-              return Number.isFinite(v) ? Math.floor((v - 10) / 2) : 0;
-            };
-            // Detect equipped armor — if the character has any item
-            // with category 'armor' AND equipped=true (DDB shape) we
-            // assume the stored AC is correct. Absence of armor lets
-            // Unarmored Defense kick in.
-            let hasArmor = false;
-            let hasShield = false;
-            try {
-              const invRaw = charRow.inventory;
-              const inv = typeof invRaw === 'string' ? JSON.parse(invRaw) : (invRaw ?? []);
-              if (Array.isArray(inv)) {
-                for (const item of inv) {
-                  const it = item as Record<string, unknown>;
-                  const cat = String(it?.category ?? it?.type ?? '').toLowerCase();
-                  const equipped = it?.equipped !== false; // default true when field absent
-                  if (!equipped) continue;
-                  if (/armor/.test(cat) && !/shield/.test(cat)) hasArmor = true;
-                  if (/shield/.test(cat) || /shield/i.test(String(it?.name ?? '')))
-                    hasShield = true;
-                }
-              }
-            } catch {
-              /* inventory unparseable — fall through */
-            }
-
-            if (!hasArmor) {
-              // Barbarian: 10 + DEX + CON (shield allowed).
-              if (classLower.includes('barbarian')) {
-                const barbAc = 10 + mod('dex') + mod('con') + (hasShield ? 2 : 0);
-                if (barbAc > ac) ac = barbAc;
-              }
-              // Monk: 10 + DEX + WIS (no shield).
-              if (classLower.includes('monk') && !hasShield) {
-                const monkAc = 10 + mod('dex') + mod('wis');
-                if (monkAc > ac) ac = monkAc;
-              }
-              // Draconic Sorcerer passive: 13 + DEX (no shield).
-              // Only lifts AC — doesn't downgrade.
-              if (classLower.includes('draconic')) {
-                const dragAc = 13 + mod('dex');
-                if (dragAc > ac) ac = dragAc;
-              }
-            }
-          }
-        } catch {
-          /* unarmored-defense best-effort */
-        }
 
         // Race traits: merge race-granted resistances into the
         // character's defenses JSON so the damage resolver picks them
@@ -721,18 +851,8 @@ async function buildCombatState(
               if (hp > maxHp) hp = maxHp;
             }
           }
-          // Defense fighting style: +1 AC while wearing armor. Same
-          // DDB heuristic as Tough — avoid double-counting when the
-          // import already baked it in.
-          const hasDefense = featureList.some(
-            (f) => typeof f?.name === 'string' && /defense/i.test(f.name)
-          );
-          if (hasDefense) {
-            const ddbId = charRow.dndbeyond_id as string | null;
-            if (!ddbId) {
-              ac += 1;
-            }
-          }
+          // Defense fighting style +1 AC lives in deriveBaselineAcSpeed
+          // so revert restoration computes the identical baseline.
         } catch {
           /* features blob unparseable — skip */
         }
@@ -971,9 +1091,10 @@ export async function addCombatantAsync(
       hp = (charRow.hit_points as number) ?? 10;
       maxHp = (charRow.max_hit_points as number) ?? 10;
       tempHp = (charRow.temp_hit_points as number) ?? 0;
-      ac = (charRow.armor_class as number) ?? 10;
-      speed = (charRow.speed as number) ?? 30;
-      speed = applyManualEquipmentSpeedPenalty(charRow, speed);
+      // Same derivation as combat start — sheet baseline plus the
+      // active Wild Shape form's AC/speed, so a transformed druid
+      // rejoining mid-fight hydrates authoritative form values.
+      ({ ac, speed } = effectiveAcSpeed(charRow));
       portrait = charRow.portrait_url as string | null;
       exhaustionLevel = Math.max(0, Math.min(6, Number(charRow.exhaustion_level ?? 0) || 0));
       if (exhaustionLevel >= 4) {
@@ -1448,6 +1569,13 @@ export interface HpChangeResult {
 interface ActiveWildShape {
   state: WildShapeState;
   version: number;
+  /**
+   * The full character row the state/version were read from. When the
+   * version-guarded write later succeeds, this row is proven to be the
+   * exact pre-write committed state, so baseline AC/speed restoration
+   * derives from it without a post-commit re-read that could fail.
+   */
+  row: Record<string, unknown>;
 }
 
 /**
@@ -1458,9 +1586,12 @@ interface ActiveWildShape {
  * rather than applied to the wrong pool; `!revert` clears bad state.
  */
 async function loadActiveWildShape(characterId: string): Promise<ActiveWildShape | null> {
-  const { rows } = await pool.query('SELECT wild_shape, version FROM characters WHERE id = $1', [
-    characterId,
-  ]);
+  const { rows } = await pool.query(
+    `SELECT wild_shape, version, armor_class, speed, dndbeyond_id,
+            ability_scores, inventory, class, features
+       FROM characters WHERE id = $1`,
+    [characterId]
+  );
   const row = rows[0] as Record<string, unknown> | undefined;
   if (!row) return null;
   const column = readWildShapeColumn(row.wild_shape);
@@ -1471,7 +1602,7 @@ async function loadActiveWildShape(characterId: string): Promise<ActiveWildShape
       'Wild Shape state is unreadable — the druid must `!revert` before HP changes can apply.'
     );
   }
-  return { state: column.state, version };
+  return { state: column.state, version, row };
 }
 
 /**
@@ -1719,6 +1850,16 @@ export async function applyDamage(
         combatant.tempHp = tempHpBefore;
         combatant.deathSaves = deathSavesBefore ?? { successes: 0, failures: 0 };
         throw new Error('Damage was not applied: the Wild Shape state changed mid-action. Retry.');
+      }
+      // The form just dropped: restore the druid's own AC/speed on the
+      // live combatant so movement caps and the tracker stop using the
+      // beast's numbers. Derived from the row the version guard just
+      // proved untouched (the write only changed HP/death-save/wild
+      // -shape columns, none of which feed the baseline), so this is
+      // pure computation — no post-commit read can fail and strand
+      // the beast's stats.
+      if (wildShapeEnded) {
+        applyEffectiveFormStats(room, combatant, deriveBaselineAcSpeed(activeWildShape.row));
       }
     } else {
       const { rows: versionRows } = await pool.query(
