@@ -6,9 +6,11 @@ import {
 } from '../ChatCommands.js';
 import pool from '../../db/connection.js';
 import type { Token, ActionBreakdown, Feature } from '@dnd-vtt/shared';
-import type { PlayerContext } from '../../utils/roomState.js';
+import type { PoolClient } from 'pg';
+import { resolveViewingMapId, type PlayerContext } from '../../utils/roomState.js';
 import * as CombatService from '../CombatService.js';
 import { tokenConditionChanges } from '../../utils/conditionSources.js';
+import { tokenVisibleToPlayer } from '../../utils/tokenVisibility.js';
 
 /**
  * Per-class bonus-action and feature commands that are common enough
@@ -33,16 +35,6 @@ function resolveCallerToken(ctx: PlayerContext): Token | null {
   return own[0] ?? null;
 }
 
-function resolveTargetByName(ctx: PlayerContext, name: string): Token | null {
-  const needle = name.toLowerCase();
-  const matches = Array.from(ctx.room.tokens.values()).filter(
-    (t) => t.name.toLowerCase() === needle
-  );
-  if (matches.length === 0) return null;
-  matches.sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
-  return matches[0];
-}
-
 async function loadCharacter(characterId: string): Promise<Record<string, unknown> | null> {
   const { rows } = await pool.query('SELECT * FROM characters WHERE id = $1', [characterId]);
   return (rows[0] as Record<string, unknown> | undefined) ?? null;
@@ -56,7 +48,18 @@ function parseCharacterVersion(value: unknown): number | null {
 function parseFeatures(value: unknown): Feature[] | null {
   try {
     const parsed = typeof value === 'string' ? JSON.parse(value) : value;
-    return Array.isArray(parsed) ? (parsed as Feature[]) : null;
+    if (
+      !Array.isArray(parsed) ||
+      parsed.some(
+        (feature) =>
+          typeof feature !== 'object' ||
+          feature === null ||
+          typeof (feature as { name?: unknown }).name !== 'string'
+      )
+    ) {
+      return null;
+    }
+    return parsed as Feature[];
   } catch {
     return null;
   }
@@ -66,6 +69,80 @@ function fighterLevel(className: string, totalLevel: number): number {
   const match = className.match(/(?:^|\/)\s*fighter(?:\s*\([^)]*\))?\s+(\d+)/i);
   if (match) return Math.max(1, Number(match[1]));
   return Math.max(1, totalLevel);
+}
+
+function classLevel(className: string, classToFind: string, totalLevel: number): number | null {
+  const escaped = classToFind.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const match = className.match(
+    new RegExp(`(?:^|/)\\s*${escaped}(?:\\s*\\([^)]*\\))?\\s+(\\d+)`, 'i')
+  );
+  if (match) return Math.max(1, Number(match[1]));
+  const singleClass = new RegExp(`^\\s*${escaped}(?:\\s*\\([^)]*\\))?\\s*$`, 'i');
+  if (singleClass.test(className)) return Math.max(1, totalLevel);
+  return null;
+}
+
+function resolveCurrentMapToken(
+  ctx: PlayerContext,
+  predicate: (token: Token) => boolean
+): Token | null {
+  const mapId = resolveViewingMapId(ctx.room, ctx.player.userId, ctx.player.role);
+  if (!mapId) return null;
+  const matches = Array.from(ctx.room.tokens.values()).filter(
+    (token) =>
+      token.mapId === mapId &&
+      predicate(token) &&
+      (ctx.player.role === 'dm' || tokenVisibleToPlayer(token, ctx.player.userId))
+  );
+  matches.sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
+  return matches[0] ?? null;
+}
+
+interface LayOnHandsPool {
+  features: Feature[];
+  maximum: number;
+  remaining: number;
+}
+
+function layOnHandsPool(features: Feature[], maximum: number): LayOnHandsPool {
+  const index = features.findIndex((feature) => /^lay\s+on\s+hands$/i.test(feature.name.trim()));
+  if (index < 0) return { features, maximum, remaining: maximum };
+  const rawRemaining = Number(features[index].usesRemaining);
+  const remaining = Number.isFinite(rawRemaining)
+    ? Math.max(0, Math.min(maximum, Math.floor(rawRemaining)))
+    : maximum;
+  return { features, maximum, remaining };
+}
+
+function spendLayOnHandsPool(poolState: LayOnHandsPool, amount: number): Feature[] {
+  const index = poolState.features.findIndex((feature) =>
+    /^lay\s+on\s+hands$/i.test(feature.name.trim())
+  );
+  const nextRemaining = poolState.remaining - amount;
+  if (index < 0) {
+    return [
+      ...poolState.features,
+      {
+        name: 'Lay on Hands',
+        description: 'Restore hit points from a pool equal to five times Paladin level.',
+        source: 'Paladin',
+        sourceType: 'class',
+        usesTotal: poolState.maximum,
+        usesRemaining: nextRemaining,
+        resetOn: 'long',
+      },
+    ];
+  }
+  return poolState.features.map((feature, featureIndex) =>
+    featureIndex === index
+      ? {
+          ...feature,
+          usesTotal: poolState.maximum,
+          usesRemaining: nextRemaining,
+          resetOn: 'long',
+        }
+      : feature
+  );
 }
 
 function spendSecondWind(features: Feature[]): Feature[] | null {
@@ -238,9 +315,7 @@ async function handleSecondWind(c: ChatCommandContext): Promise<boolean> {
       economy,
     });
   }
-  const combatant = combatState?.combatants.find(
-    (candidate) => candidate.tokenId === caller.id
-  );
+  const combatant = combatState?.combatants.find((candidate) => candidate.tokenId === caller.id);
   if (combatant) {
     combatant.hp = newHp;
     CombatService.persistSessionCombatState(c.ctx.room.sessionId);
@@ -393,68 +468,252 @@ async function handleCunning(c: ChatCommandContext): Promise<boolean> {
 
 // ───── !lay <target> <amount> ────────────────────────────────
 async function handleLayOnHands(c: ChatCommandContext): Promise<boolean> {
-  const parts = c.rest.split(/\s+/).filter(Boolean);
-  if (parts.length < 2) {
-    whisperToCaller(c.io, c.ctx, '!lay: usage `!lay <target> <amount>`');
-    return true;
-  }
-  const amount = parseInt(parts[parts.length - 1], 10);
-  if (!Number.isFinite(amount) || amount < 1 || amount > 999) {
-    whisperToCaller(c.io, c.ctx, '!lay: amount must be a positive integer.');
-    return true;
-  }
-  const targetName = parts.slice(0, -1).join(' ');
-  const target = targetName ? resolveTargetByName(c.ctx, targetName) : resolveCallerToken(c.ctx);
-  if (!target) {
-    whisperToCaller(c.io, c.ctx, `!lay: no token named "${targetName}".`);
-    return true;
-  }
-
-  const caller = resolveCallerToken(c.ctx);
+  const caller = resolveCurrentMapToken(
+    c.ctx,
+    (token) => token.ownerUserId === c.ctx.player.userId
+  );
   if (!caller?.characterId) {
     whisperToCaller(c.io, c.ctx, '!lay: no owned PC token on this map.');
     return true;
   }
-  const row = await loadCharacter(caller.characterId);
-  if (!row) {
+  const callerRow = await loadCharacter(caller.characterId);
+  if (!callerRow) {
     whisperToCaller(c.io, c.ctx, '!lay: character not found.');
     return true;
   }
-  const classLower = String(row.class || '').toLowerCase();
-  if (!classLower.includes('paladin')) {
+  const paladinLevel = classLevel(
+    String(callerRow.class || ''),
+    'Paladin',
+    Number(callerRow.level) || 1
+  );
+  if (paladinLevel === null) {
     whisperToCaller(c.io, c.ctx, `!lay: ${caller.name} isn't a Paladin.`);
     return true;
   }
-  // Heal pool = 5 * Paladin level. We don't track the pool in the DB
-  // today, so announce the heal and let the DM / player track the pool
-  // manually. The heal itself we DO apply to the target.
-  const level = Number(row.level) || 1;
-  const poolMax = 5 * level;
+  const currentFeatures = parseFeatures(callerRow.features);
+  const callerVersion = parseCharacterVersion(callerRow.version);
+  if (!currentFeatures || callerVersion === null) {
+    whisperToCaller(
+      c.io,
+      c.ctx,
+      '!lay: could not verify the character feature state. No points were spent; refresh or re-sync the character sheet.'
+    );
+    return true;
+  }
+  const poolState = layOnHandsPool(currentFeatures, 5 * paladinLevel);
 
+  if (c.rest.trim().toLowerCase() === 'status') {
+    whisperToCaller(
+      c.io,
+      c.ctx,
+      `!lay: ${caller.name} has ${poolState.remaining}/${poolState.maximum} Lay on Hands points remaining.`
+    );
+    return true;
+  }
+
+  const parts = c.rest.split(/\s+/).filter(Boolean);
+  if (parts.length < 2) {
+    whisperToCaller(c.io, c.ctx, '!lay: usage `!lay <target> <amount>` or `!lay status`');
+    return true;
+  }
+  const amountText = parts[parts.length - 1];
+  if (!/^\d+$/.test(amountText)) {
+    whisperToCaller(c.io, c.ctx, '!lay: amount must be a positive integer.');
+    return true;
+  }
+  const amount = Number(amountText);
+  if (!Number.isSafeInteger(amount) || amount < 1 || amount > poolState.maximum) {
+    whisperToCaller(c.io, c.ctx, `!lay: amount must be between 1 and ${poolState.maximum}.`);
+    return true;
+  }
+  const targetName = parts.slice(0, -1).join(' ');
+  const target = /^(?:me|self)$/i.test(targetName)
+    ? caller
+    : resolveCurrentMapToken(
+        c.ctx,
+        (token) => token.name.toLowerCase() === targetName.toLowerCase()
+      );
+  if (!target) {
+    whisperToCaller(c.io, c.ctx, `!lay: no token named "${targetName}".`);
+    return true;
+  }
   if (!target.characterId) {
     whisperToCaller(c.io, c.ctx, `!lay: ${target.name} isn't a linked character — cannot heal.`);
     return true;
   }
-  const targetRow = await loadCharacter(target.characterId);
+  const selfTarget = target.characterId === caller.characterId;
+  const targetRow = selfTarget ? callerRow : await loadCharacter(target.characterId);
   if (!targetRow) {
     whisperToCaller(c.io, c.ctx, '!lay: target character not found.');
     return true;
   }
-  const curHp = Number(targetRow.hit_points) || 0;
-  const maxHp = Number(targetRow.max_hit_points) || 0;
-  const newHp = Math.min(maxHp, curHp + amount);
-  await pool
-    .query('UPDATE characters SET hit_points = $1 WHERE id = $2', [newHp, target.characterId])
-    .catch((e) => console.warn('[!lay] hp write failed:', e));
-  c.io.to(c.ctx.room.sessionId).emit('character:updated', {
-    characterId: target.characterId,
-    changes: { hitPoints: newHp },
-  });
+  const currentHp = Number(targetRow.hit_points);
+  const maxHp = Number(targetRow.max_hit_points);
+  const targetVersion = parseCharacterVersion(targetRow.version);
+  if (
+    !Number.isFinite(currentHp) ||
+    !Number.isFinite(maxHp) ||
+    maxHp <= 0 ||
+    targetVersion === null
+  ) {
+    whisperToCaller(
+      c.io,
+      c.ctx,
+      '!lay: could not verify the target character state. No points were spent; refresh and try again.'
+    );
+    return true;
+  }
+  if (currentHp >= maxHp) {
+    whisperToCaller(c.io, c.ctx, `!lay: ${target.name} is already at maximum HP.`);
+    return true;
+  }
+  if (amount > poolState.remaining) {
+    whisperToCaller(
+      c.io,
+      c.ctx,
+      `!lay: only ${poolState.remaining} Lay on Hands points remain. No points were spent.`
+    );
+    return true;
+  }
+  const missingHp = maxHp - currentHp;
+  if (amount > missingHp) {
+    whisperToCaller(
+      c.io,
+      c.ctx,
+      `!lay: ${target.name} is missing only ${missingHp} HP. Choose a smaller amount; no points were spent.`
+    );
+    return true;
+  }
+
+  const combatState = c.ctx.room.combatState;
+  const economy = c.ctx.room.actionEconomies.get(caller.id);
+  if (combatState?.active) {
+    const currentCombatant = combatState.combatants[combatState.currentTurnIndex];
+    if (currentCombatant?.tokenId !== caller.id) {
+      whisperToCaller(c.io, c.ctx, `!lay: ${caller.name} can use this action only on their turn.`);
+      return true;
+    }
+    if (!economy) {
+      whisperToCaller(
+        c.io,
+        c.ctx,
+        '!lay: combat action state is unavailable. No points were spent; refresh and try again.'
+      );
+      return true;
+    }
+    if (economy.action) {
+      whisperToCaller(
+        c.io,
+        c.ctx,
+        `!lay: ${caller.name} has already spent their action this turn.`
+      );
+      return true;
+    }
+  }
+
+  const nextFeatures = spendLayOnHandsPool(poolState, amount);
+  const newHp = currentHp + amount;
+  let authoritativeCallerVersion: number | null = null;
+  let authoritativeTargetVersion: number | null = null;
+  let client: PoolClient | null = null;
+  let commitStarted = false;
+  try {
+    client = await pool.connect();
+    await client.query('BEGIN');
+    if (selfTarget) {
+      const { rows } = await client.query(
+        `UPDATE characters
+            SET hit_points = $1, features = $2
+          WHERE id = $3 AND version = $4
+          RETURNING version`,
+        [newHp, JSON.stringify(nextFeatures), caller.characterId, callerVersion]
+      );
+      authoritativeCallerVersion = parseCharacterVersion(rows[0]?.version);
+      authoritativeTargetVersion = authoritativeCallerVersion;
+    } else {
+      const callerResult = await client.query(
+        `UPDATE characters
+            SET features = $1
+          WHERE id = $2 AND version = $3
+          RETURNING version`,
+        [JSON.stringify(nextFeatures), caller.characterId, callerVersion]
+      );
+      authoritativeCallerVersion = parseCharacterVersion(callerResult.rows[0]?.version);
+      if (authoritativeCallerVersion === null) throw new Error('caller-version-conflict');
+      const targetResult = await client.query(
+        `UPDATE characters
+            SET hit_points = $1
+          WHERE id = $2 AND version = $3
+          RETURNING version`,
+        [newHp, target.characterId, targetVersion]
+      );
+      authoritativeTargetVersion = parseCharacterVersion(targetResult.rows[0]?.version);
+    }
+    if (authoritativeCallerVersion === null || authoritativeTargetVersion === null) {
+      throw new Error('character-version-conflict');
+    }
+    commitStarted = true;
+    await client.query('COMMIT');
+  } catch (error) {
+    if (client) {
+      try {
+        await client.query('ROLLBACK');
+      } catch (rollbackError) {
+        console.warn('[!lay] rollback failed:', rollbackError);
+      }
+    }
+    console.warn('[!lay] character transaction failed:', error);
+    whisperToCaller(
+      c.io,
+      c.ctx,
+      commitStarted
+        ? '!lay: saving could not be confirmed. Refresh and verify HP and pool totals before retrying.'
+        : '!lay: saving failed or a character sheet changed. No points were spent; refresh and try again.'
+    );
+    return true;
+  } finally {
+    client?.release();
+  }
+
+  if (economy && combatState?.active) {
+    economy.action = true;
+    c.io.to(c.ctx.room.sessionId).emit('combat:action-used', {
+      tokenId: caller.id,
+      actionType: 'action',
+      economy,
+    });
+  }
+  const targetCombatant = combatState?.combatants.find(
+    (candidate) => candidate.tokenId === target.id
+  );
+  if (targetCombatant) {
+    targetCombatant.hp = newHp;
+    CombatService.persistSessionCombatState(c.ctx.room.sessionId);
+  }
+  if (selfTarget) {
+    c.io.to(c.ctx.room.sessionId).emit('character:updated', {
+      characterId: caller.characterId,
+      changes: {
+        hitPoints: newHp,
+        features: nextFeatures,
+        version: authoritativeCallerVersion,
+      },
+    });
+  } else {
+    c.io.to(c.ctx.room.sessionId).emit('character:updated', {
+      characterId: caller.characterId,
+      changes: { features: nextFeatures, version: authoritativeCallerVersion },
+    });
+    c.io.to(c.ctx.room.sessionId).emit('character:updated', {
+      characterId: target.characterId,
+      changes: { hitPoints: newHp, version: authoritativeTargetVersion },
+    });
+  }
   c.io.to(c.ctx.room.sessionId).emit('combat:hp-changed', {
     tokenId: target.id,
     hp: newHp,
     tempHp: Number(targetRow.temp_hit_points) || 0,
-    change: newHp - curHp,
+    change: amount,
     type: 'heal',
   });
   const lohBreakdown: ActionBreakdown = {
@@ -470,17 +729,21 @@ async function handleLayOnHands(c: ChatCommandContext): Promise<boolean> {
       {
         name: target.name,
         tokenId: target.id,
-        effect: `HP ${curHp} → ${newHp} (+${amount})`,
-        healing: { amount, hpBefore: curHp, hpAfter: newHp },
+        effect: `Regains ${amount} HP`,
       },
     ],
-    notes: [`Paladin L${level}`, `Pool: 5 × level = ${poolMax}/day`, `Spent: ${amount} from pool`],
+    notes: [`Paladin class feature`, `Action`, `Pool refreshes on a long rest`],
   };
   broadcastSystem(
     c.io,
     c.ctx,
-    `🙌 ${caller.name} lays on hands — ${target.name} heals **${amount}** HP → ${newHp}/${maxHp}. (Pool ≤ ${poolMax}/day, reset on long rest.)`,
+    `🙌 ${caller.name} uses Lay on Hands — ${target.name} regains **${amount} HP**.`,
     { actionResult: lohBreakdown }
+  );
+  whisperToCaller(
+    c.io,
+    c.ctx,
+    `!lay: ${poolState.remaining - amount}/${poolState.maximum} points remaining.`
   );
   return true;
 }
