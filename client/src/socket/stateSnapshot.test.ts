@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { Token, Combatant } from '@dnd-vtt/shared';
-import { pullStateSnapshot } from './stateSnapshot';
+import { pullStateSnapshot, triggerSnapshot } from './stateSnapshot';
 import { useSessionStore } from '../stores/useSessionStore';
 import { useMapStore } from '../stores/useMapStore';
 import { useCombatStore } from '../stores/useCombatStore';
@@ -614,5 +614,76 @@ describe('pullStateSnapshot — token diff self-heals aura/faction/visionOverrid
     const vo = { darkvision: 60 };
     const t = await pullWithSameToken({ visionOverrides: vo } as Partial<Token>);
     expect(t.visionOverrides).toEqual(vo);
+  });
+});
+
+describe('state snapshot ETag policy', () => {
+  const emptySnapshot = {
+    mapId: 'map-1',
+    tokens: [],
+    combat: null,
+    characters: {},
+    nextEventId: 1,
+    roundNumber: 0,
+  };
+
+  beforeEach(() => {
+    resetEventCursor();
+    useSessionStore.setState({ sessionId: 'etag-session' } as never);
+    useMapStore.setState({ tokens: {}, currentMap: { id: 'map-1' } } as never);
+    useCombatStore.setState({ active: false } as never);
+  });
+
+  afterEach(() => {
+    vi.clearAllTimers();
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  it('reuses the cached validator for an idle periodic pull', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({
+        status: 200,
+        ok: true,
+        headers: { get: () => 'W/"idle-v1"' },
+        json: async () => emptySnapshot,
+      })
+      .mockResolvedValueOnce({
+        status: 304,
+        ok: false,
+        headers: { get: () => null },
+      });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await pullStateSnapshot();
+    await pullStateSnapshot();
+
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      '/api/sessions/etag-session/state',
+      expect.objectContaining({ headers: { 'If-None-Match': 'W/"idle-v1"' } })
+    );
+  });
+
+  it('does not reuse the cached validator after a mutation trigger', async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn().mockResolvedValue({
+      status: 200,
+      ok: true,
+      headers: { get: () => 'W/"mutation-v1"' },
+      json: async () => emptySnapshot,
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await pullStateSnapshot();
+    triggerSnapshot('test-mutation');
+    await pullStateSnapshot();
+
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      '/api/sessions/etag-session/state',
+      expect.objectContaining({ headers: {} })
+    );
   });
 });

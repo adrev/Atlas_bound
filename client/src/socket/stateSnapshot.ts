@@ -26,8 +26,11 @@ let snapshotTimer: ReturnType<typeof setTimeout> | null = null;
 let lastSnapshotAt = 0;
 const MIN_INTERVAL_MS = 80;
 
-// ETag from the last 200 response, sent back as If-None-Match so the server
-// can answer 304 (unchanged) and we skip the JSON parse + full reconcile.
+// ETag from the last 200 response, sent back as If-None-Match so idle polling
+// can answer 304 (unchanged) and skip the JSON parse + full reconcile.
+// Mutation-triggered pulls clear this validator first: not every mutation is
+// represented in the event cursor/ETag yet, so reusing it there could delay
+// authoritative reconciliation until the server's periodic cache refresh.
 // Scoped to the session it came from: navigating to a different session must
 // NOT send the previous session's ETag (the server now namespaces the ETag
 // by sessionId, but clearing it client-side also avoids a needless
@@ -76,6 +79,11 @@ function combatantsChanged(current: Combatant[], next: Combatant[]): boolean {
  * server, just logged for local debugging.
  */
 export function triggerSnapshot(_reason?: string): void {
+  // A caller only triggers this after learning that server state mutated.
+  // Force that reconciliation to fetch a body instead of allowing a cached
+  // validator to mask writes that are not yet reflected in the ETag inputs.
+  // Direct periodic pullStateSnapshot() calls continue to use the cache.
+  lastStateEtag = null;
   if (snapshotTimer) clearTimeout(snapshotTimer);
   // Hard floor so rapid-fire triggers (e.g. a token drag emitting
   // 30 move events/sec) can't escalate into 30 HTTP calls.
