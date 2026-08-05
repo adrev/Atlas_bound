@@ -12,6 +12,13 @@ import { resolveViewingMapId, type PlayerContext } from '../../utils/roomState.j
 import { tokenVisibleToPlayer } from '../../utils/tokenVisibility.js';
 import { tokenConditionChanges } from '../../utils/conditionSources.js';
 import { formatSaveTotal, rollTargetSave } from './saveRoll.js';
+import {
+  checkChannelDivinityAction,
+  markChannelDivinityAction,
+  resolveChannelDivinityCaller,
+  resolveChannelDivinityTarget,
+  spendChannelDivinityUse,
+} from './channelDivinity.js';
 
 /**
  * Utility commands for common mid-session effects that players
@@ -762,38 +769,72 @@ async function handleUnmark(c: ChatCommandContext): Promise<boolean> {
  *   !turnundead <target> [target2] [...]    DC = caller's spell save DC
  */
 async function handleTurnUndead(c: ChatCommandContext): Promise<boolean> {
-  const parts = c.rest.split(/\s+/).filter(Boolean);
-  if (parts.length === 0) {
-    whisperToCaller(c.io, c.ctx, '!turnundead: usage `!turnundead <target> [target2] ...`');
+  const rawTargets = c.rest.trim();
+  if (!rawTargets) {
+    whisperToCaller(
+      c.io,
+      c.ctx,
+      '!turnundead: usage `!turnundead <target>` or `!turnundead <target one>, <target two>`'
+    );
     return true;
   }
-  const caller = resolveCallerToken(c.ctx);
+  const caller = resolveChannelDivinityCaller(c.ctx);
   if (!caller?.characterId) {
-    whisperToCaller(c.io, c.ctx, '!turnundead: no owned PC token.');
+    whisperToCaller(c.io, c.ctx, '!turnundead: no owned PC token on this map.');
     return true;
   }
-  const { rows } = await pool.query(
-    'SELECT spell_save_dc, class, name FROM characters WHERE id = $1',
-    [caller.characterId]
-  );
-  const row = rows[0] as Record<string, unknown> | undefined;
-  const dc = Number(row?.spell_save_dc) || 13;
-  const classLower = String(row?.class || '').toLowerCase();
-  if (!classLower.includes('cleric') && !classLower.includes('paladin')) {
-    whisperToCaller(c.io, c.ctx, `!turnundead: ${caller.name} isn't a Cleric or Paladin.`);
+  const exactTarget = resolveChannelDivinityTarget(c.ctx, rawTargets);
+  const targetNames = exactTarget
+    ? [rawTargets]
+    : rawTargets.includes(',')
+      ? rawTargets
+          .split(',')
+          .map((name) => name.trim())
+          .filter(Boolean)
+      : rawTargets.split(/\s+/).filter(Boolean);
+  const normalizedNames = targetNames.map((name) => name.toLowerCase());
+  if (
+    targetNames.length === 0 ||
+    targetNames.length > 50 ||
+    new Set(normalizedNames).size !== normalizedNames.length
+  ) {
+    whisperToCaller(
+      c.io,
+      c.ctx,
+      '!turnundead: provide 1-50 unique visible targets, separated by commas for multiword names.'
+    );
     return true;
   }
+  const targets = targetNames.map((name) => resolveChannelDivinityTarget(c.ctx, name));
+  const missingIndex = targets.findIndex((target) => target === null);
+  if (missingIndex >= 0) {
+    whisperToCaller(
+      c.io,
+      c.ctx,
+      `!turnundead: no visible token named "${targetNames[missingIndex]}" on this map; no use was spent.`
+    );
+    return true;
+  }
+  const action = checkChannelDivinityAction(c, caller, '!turnundead', 'action');
+  if (!action) return true;
+  let dc = 0;
+  const spend = await spendChannelDivinityUse(c, caller, '!turnundead', (row, entitlement) => {
+    if ((entitlement.clericLevel ?? 0) < 2) return 'Turn Undead requires Cleric level 2.';
+    const parsedDc = Number(row.spell_save_dc);
+    if (!Number.isInteger(parsedDc) || parsedDc < 1 || parsedDc > 40) {
+      return 'spell save DC is unreadable; no use was spent.';
+    }
+    dc = parsedDc;
+    return null;
+  });
+  if (!spend) return true;
+  markChannelDivinityAction(c, caller, 'action', action.economy);
 
   const lines: string[] = [];
   lines.push(
     `⚱ ${caller.name} presents their holy symbol and speaks — Turn Undead (DC ${dc} WIS save)`
   );
-  for (const targetName of parts) {
-    const target = resolveTargetByName(c.ctx, targetName);
-    if (!target) {
-      lines.push(`   • ${targetName}: not found`);
-      continue;
-    }
+  for (const target of targets as Token[]) {
     // Roll target's WIS save. If they have a character, use the shared save
     // resolver; otherwise the DM rolls externally and applies.
     if (!target.characterId) {
@@ -822,6 +863,7 @@ async function handleTurnUndead(c: ChatCommandContext): Promise<boolean> {
     }
   }
   broadcastSystem(c.io, c.ctx, lines.join('\n'));
+  whisperToCaller(c.io, c.ctx, `!turnundead: ${spend.remaining}/${spend.maximum} uses remaining.`);
   return true;
 }
 

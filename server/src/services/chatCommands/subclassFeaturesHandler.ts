@@ -10,6 +10,13 @@ import type { Token, ActionBreakdown } from '@dnd-vtt/shared';
 import type { PlayerContext } from '../../utils/roomState.js';
 import { tokenConditionChanges } from '../../utils/conditionSources.js';
 import { formatSaveTotal, rollTargetSave, type RolledSave, type SaveAbility } from './saveRoll.js';
+import {
+  checkChannelDivinityAction,
+  markChannelDivinityAction,
+  resolveChannelDivinityCaller,
+  resolveChannelDivinityTarget,
+  spendChannelDivinityUse,
+} from './channelDivinity.js';
 
 /**
  * High-frequency subclass features that interact meaningfully with
@@ -33,6 +40,19 @@ function resolveTargetByName(ctx: PlayerContext, name: string): Token | null {
   if (matches.length === 0) return null;
   matches.sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
   return matches[0];
+}
+
+function hasFeatureName(row: Record<string, unknown>, pattern: RegExp): boolean {
+  try {
+    const raw = row.features;
+    const features = typeof raw === 'string' ? JSON.parse(raw) : (raw ?? []);
+    return Array.isArray(features) && features.some(
+      (feature: { name?: unknown }) =>
+        typeof feature?.name === 'string' && pattern.test(feature.name),
+    );
+  } catch {
+    return false;
+  }
 }
 
 function saveNotesLabel(saveResult: RolledSave): string {
@@ -336,35 +356,28 @@ async function handleAssassinate(c: ChatCommandContext): Promise<boolean> {
 
 // ────── Guided Strike (War Cleric Channel Divinity) ──────
 async function handleGuided(c: ChatCommandContext): Promise<boolean> {
-  const caller = resolveCallerToken(c.ctx);
+  const caller = resolveChannelDivinityCaller(c.ctx);
   if (!caller?.characterId) {
-    whisperToCaller(c.io, c.ctx, '!guided: no owned PC token.');
+    whisperToCaller(c.io, c.ctx, '!guided: no owned PC token on this map.');
     return true;
   }
-  const { rows } = await pool.query('SELECT class, level, name, features FROM characters WHERE id = $1', [caller.characterId]);
-  const row = rows[0] as Record<string, unknown> | undefined;
-  const classLower = String(row?.class || '').toLowerCase();
-  if (!classLower.includes('cleric')) {
-    whisperToCaller(c.io, c.ctx, `!guided: ${caller.name} isn't a Cleric.`);
-    return true;
-  }
-  let hasIt = false;
-  try {
-    const rawF = row?.features;
-    const feats = typeof rawF === 'string' ? JSON.parse(rawF as string) : (rawF ?? []);
-    hasIt = Array.isArray(feats) && feats.some(
-      (f: { name?: string }) => typeof f?.name === 'string' && /guided\s+strike/i.test(f.name),
-    );
-  } catch { /* ignore */ }
-  if (!hasIt && !classLower.includes('war')) {
-    whisperToCaller(c.io, c.ctx, `!guided: ${caller.name} doesn't have Guided Strike (War Cleric L2 Channel Divinity).`);
-    return true;
-  }
-  const charName = (row?.name as string) || caller.name;
+  let charName = caller.name;
+  const spend = await spendChannelDivinityUse(c, caller, '!guided', (row, entitlement) => {
+    const classLower = String(row.class || '').toLowerCase();
+    if (!classLower.includes('cleric')) return `${caller.name} isn't a Cleric.`;
+    if (!hasFeatureName(row, /guided\s+strike/i) && !classLower.includes('war')) {
+      return `${caller.name} doesn't have Guided Strike (War Cleric L2 Channel Divinity).`;
+    }
+    if ((entitlement.clericLevel ?? 0) < 2) return 'Guided Strike requires Cleric level 2.';
+    charName = String(row.name || caller.name);
+    return null;
+  });
+  if (!spend) return true;
   broadcastSystem(
     c.io, c.ctx,
     `⚔ **Guided Strike** — ${charName} uses Channel Divinity, adds **+10** to the attack roll just made (after seeing the roll). 1 CD charge spent.`,
   );
+  whisperToCaller(c.io, c.ctx, `!guided: ${spend.remaining}/${spend.maximum} uses remaining.`);
   return true;
 }
 
@@ -740,37 +753,49 @@ async function handleFastHands(c: ChatCommandContext): Promise<boolean> {
  * beyond. Uses 1 Channel Divinity.
  */
 async function handleSacredWeapon(c: ChatCommandContext): Promise<boolean> {
-  const caller = resolveCallerToken(c.ctx);
+  const caller = resolveChannelDivinityCaller(c.ctx);
   if (!caller?.characterId) {
-    whisperToCaller(c.io, c.ctx, '!sacredweapon: no owned PC token.');
+    whisperToCaller(c.io, c.ctx, '!sacredweapon: no owned PC token on this map.');
     return true;
   }
-  const { rows } = await pool.query('SELECT class, ability_scores, name, features FROM characters WHERE id = $1', [caller.characterId]);
-  const row = rows[0] as Record<string, unknown> | undefined;
-  const classLower = String(row?.class || '').toLowerCase();
-  if (!classLower.includes('paladin')) {
-    whisperToCaller(c.io, c.ctx, `!sacredweapon: ${caller.name} isn't a Paladin.`);
-    return true;
-  }
-  let hasIt = false;
-  try {
-    const rawF = row?.features;
-    const feats = typeof rawF === 'string' ? JSON.parse(rawF as string) : (rawF ?? []);
-    hasIt = Array.isArray(feats) && feats.some(
-      (f: { name?: string }) => typeof f?.name === 'string' && /sacred\s+weapon/i.test(f.name),
-    );
-  } catch { /* ignore */ }
-  if (!hasIt && !classLower.includes('devotion')) {
-    whisperToCaller(c.io, c.ctx, `!sacredweapon: ${caller.name} doesn't have Sacred Weapon (Oath of Devotion).`);
-    return true;
-  }
-  const scores = typeof row?.ability_scores === 'string' ? JSON.parse(row.ability_scores as string) : (row?.ability_scores ?? {});
-  const chaMod = Math.max(1, Math.floor((((scores as Record<string, number>).cha ?? 10) - 10) / 2));
-  const charName = (row?.name as string) || caller.name;
+  const action = checkChannelDivinityAction(c, caller, '!sacredweapon', 'action');
+  if (!action) return true;
+  let charName = caller.name;
+  let chaMod = 1;
+  const spend = await spendChannelDivinityUse(c, caller, '!sacredweapon', (row, entitlement) => {
+    const classLower = String(row.class || '').toLowerCase();
+    if (!classLower.includes('paladin')) return `${caller.name} isn't a Paladin.`;
+    if (!hasFeatureName(row, /sacred\s+weapon/i) && !classLower.includes('devotion')) {
+      return `${caller.name} doesn't have Sacred Weapon (Oath of Devotion).`;
+    }
+    if ((entitlement.paladinLevel ?? 0) < 3) return 'Sacred Weapon requires Paladin level 3.';
+    let scores: Record<string, unknown>;
+    try {
+      const parsed = typeof row.ability_scores === 'string'
+        ? JSON.parse(row.ability_scores as string)
+        : (row.ability_scores ?? {});
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        return 'ability scores are unreadable; no use was spent.';
+      }
+      scores = parsed as Record<string, unknown>;
+    } catch {
+      return 'ability scores are unreadable; no use was spent.';
+    }
+    const charisma = Number(scores.cha ?? 10);
+    if (!Number.isInteger(charisma) || charisma < 1 || charisma > 30) {
+      return 'Charisma is unreadable; no use was spent.';
+    }
+    chaMod = Math.max(1, Math.floor((charisma - 10) / 2));
+    charName = String(row.name || caller.name);
+    return null;
+  });
+  if (!spend) return true;
+  markChannelDivinityAction(c, caller, 'action', action.economy);
   broadcastSystem(
     c.io, c.ctx,
     `✨ **Sacred Weapon** — ${charName}'s weapon glows (1 min, CD): **+${chaMod}** to attack rolls, weapon is MAGICAL, sheds bright 20 ft + dim 20 ft light.`,
   );
+  whisperToCaller(c.io, c.ctx, `!sacredweapon: ${spend.remaining}/${spend.maximum} uses remaining.`);
   return true;
 }
 
@@ -781,35 +806,31 @@ async function handleVowOfEnmity(c: ChatCommandContext): Promise<boolean> {
     whisperToCaller(c.io, c.ctx, '!vow: usage `!vow <target>`');
     return true;
   }
-  const target = resolveTargetByName(c.ctx, targetName);
-  if (!target) {
-    whisperToCaller(c.io, c.ctx, `!vow: no token named "${targetName}".`);
-    return true;
-  }
-  const caller = resolveCallerToken(c.ctx);
+  const caller = resolveChannelDivinityCaller(c.ctx);
   if (!caller?.characterId) {
-    whisperToCaller(c.io, c.ctx, '!vow: no owned PC token.');
+    whisperToCaller(c.io, c.ctx, '!vow: no owned PC token on this map.');
     return true;
   }
-  const { rows } = await pool.query('SELECT class, name, features FROM characters WHERE id = $1', [caller.characterId]);
-  const row = rows[0] as Record<string, unknown> | undefined;
-  const classLower = String(row?.class || '').toLowerCase();
-  if (!classLower.includes('paladin')) {
-    whisperToCaller(c.io, c.ctx, `!vow: ${caller.name} isn't a Paladin.`);
+  const target = resolveChannelDivinityTarget(c.ctx, targetName);
+  if (!target) {
+    whisperToCaller(c.io, c.ctx, `!vow: no visible token named "${targetName}" on this map.`);
     return true;
   }
-  let hasIt = false;
-  try {
-    const rawF = row?.features;
-    const feats = typeof rawF === 'string' ? JSON.parse(rawF as string) : (rawF ?? []);
-    hasIt = Array.isArray(feats) && feats.some(
-      (f: { name?: string }) => typeof f?.name === 'string' && /vow\s+of\s+enmity/i.test(f.name),
-    );
-  } catch { /* ignore */ }
-  if (!hasIt && !classLower.includes('vengeance')) {
-    whisperToCaller(c.io, c.ctx, `!vow: ${caller.name} doesn't have Vow of Enmity (Oath of Vengeance).`);
-    return true;
-  }
+  const action = checkChannelDivinityAction(c, caller, '!vow', 'bonusAction');
+  if (!action) return true;
+  let charName = caller.name;
+  const spend = await spendChannelDivinityUse(c, caller, '!vow', (row, entitlement) => {
+    const classLower = String(row.class || '').toLowerCase();
+    if (!classLower.includes('paladin')) return `${caller.name} isn't a Paladin.`;
+    if (!hasFeatureName(row, /vow\s+of\s+enmity/i) && !classLower.includes('vengeance')) {
+      return `${caller.name} doesn't have Vow of Enmity (Oath of Vengeance).`;
+    }
+    if ((entitlement.paladinLevel ?? 0) < 3) return 'Vow of Enmity requires Paladin level 3.';
+    charName = String(row.name || caller.name);
+    return null;
+  });
+  if (!spend) return true;
+  markChannelDivinityAction(c, caller, 'bonusAction', action.economy);
   const currentRound = c.ctx.room.combatState?.roundNumber ?? 0;
   ConditionService.applyConditionWithMeta(c.ctx.room.sessionId, target.id, {
     name: 'vowed',
@@ -822,11 +843,11 @@ async function handleVowOfEnmity(c: ChatCommandContext): Promise<boolean> {
     tokenId: target.id,
     changes: tokenConditionChanges(c.ctx.room, target.id),
   });
-  const charName = (row?.name as string) || caller.name;
   broadcastSystem(
     c.io, c.ctx,
     `🗡 **Vow of Enmity** — ${charName} vows to destroy ${target.name}. Advantage on attack rolls against them for 1 minute (CD).`,
   );
+  whisperToCaller(c.io, c.ctx, `!vow: ${spend.remaining}/${spend.maximum} uses remaining.`);
   return true;
 }
 
