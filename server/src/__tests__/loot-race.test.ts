@@ -78,9 +78,9 @@ describe('POST /characters/:id/loot/take — race safety', () => {
     clientQuery
       .mockResolvedValueOnce(undefined) // BEGIN
       .mockResolvedValueOnce({ rows: [{ id: 'e1', character_id: 'src', quantity: 2, item_name: 'Sword', item_rarity: 'common', item_slug: null, custom_item_id: null }] }) // SELECT FOR UPDATE loot_entries
-      .mockResolvedValueOnce({ rows: [{ id: 'tgt', inventory: '[]' }] }) // SELECT FOR UPDATE characters
+      .mockResolvedValueOnce({ rows: [{ id: 'tgt', inventory: '[]', user_id: 'user-1' }] }) // SELECT FOR UPDATE characters
       .mockResolvedValueOnce(undefined) // UPDATE loot_entries
-      .mockResolvedValueOnce(undefined) // UPDATE characters
+      .mockResolvedValueOnce({ rows: [{ version: 3 }] }) // UPDATE characters
       .mockResolvedValueOnce(undefined); // COMMIT
 
     const handler = findTakeHandler(lootRouter);
@@ -106,6 +106,8 @@ describe('POST /characters/:id/loot/take — race safety', () => {
     expect(decrementIdx).toBeGreaterThan(-1);
     expect(decrementIdx).toBeLessThan(commitIdx);
     expect(res.statusCode).toBe(200);
+    expect(res.body.version).toBe(3);
+    expect(calls.some((query) => /UPDATE characters[\s\S]+RETURNING version/.test(query))).toBe(true);
   });
 
   it('rolls back and 400s when the locked loot row has quantity 0', async () => {
