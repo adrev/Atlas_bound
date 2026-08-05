@@ -5,7 +5,7 @@ import {
   type ChatCommandContext,
 } from '../ChatCommands.js';
 import pool from '../../db/connection.js';
-import type { Token, ActionBreakdown, SpellCastBreakdown } from '@dnd-vtt/shared';
+import type { Token, ActionBreakdown, Feature } from '@dnd-vtt/shared';
 import type { PlayerContext } from '../../utils/roomState.js';
 import * as CombatService from '../CombatService.js';
 import { tokenConditionChanges } from '../../utils/conditionSources.js';
@@ -36,7 +36,7 @@ function resolveCallerToken(ctx: PlayerContext): Token | null {
 function resolveTargetByName(ctx: PlayerContext, name: string): Token | null {
   const needle = name.toLowerCase();
   const matches = Array.from(ctx.room.tokens.values()).filter(
-    (t) => t.name.toLowerCase() === needle,
+    (t) => t.name.toLowerCase() === needle
   );
   if (matches.length === 0) return null;
   matches.sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
@@ -48,6 +48,64 @@ async function loadCharacter(characterId: string): Promise<Record<string, unknow
   return (rows[0] as Record<string, unknown> | undefined) ?? null;
 }
 
+function parseCharacterVersion(value: unknown): number | null {
+  const version = Number(value);
+  return Number.isInteger(version) && version >= 1 ? version : null;
+}
+
+function parseFeatures(value: unknown): Feature[] | null {
+  try {
+    const parsed = typeof value === 'string' ? JSON.parse(value) : value;
+    return Array.isArray(parsed) ? (parsed as Feature[]) : null;
+  } catch {
+    return null;
+  }
+}
+
+function fighterLevel(className: string, totalLevel: number): number {
+  const match = className.match(/(?:^|\/)\s*fighter(?:\s*\([^)]*\))?\s+(\d+)/i);
+  if (match) return Math.max(1, Number(match[1]));
+  return Math.max(1, totalLevel);
+}
+
+function spendSecondWind(features: Feature[]): Feature[] | null {
+  const index = features.findIndex((feature) => /^second\s+wind$/i.test(feature.name.trim()));
+  if (index < 0) {
+    return [
+      ...features,
+      {
+        name: 'Second Wind',
+        description: 'Bonus action: regain 1d10 + Fighter level hit points.',
+        source: 'Fighter',
+        sourceType: 'class',
+        usesTotal: 1,
+        usesRemaining: 0,
+        resetOn: 'short',
+      },
+    ];
+  }
+
+  const feature = features[index];
+  const total = Number.isFinite(Number(feature.usesTotal))
+    ? Math.max(1, Math.floor(Number(feature.usesTotal)))
+    : 1;
+  const remaining = Number.isFinite(Number(feature.usesRemaining))
+    ? Math.max(0, Math.floor(Number(feature.usesRemaining)))
+    : total;
+  if (remaining <= 0) return null;
+
+  return features.map((item, itemIndex) =>
+    itemIndex === index
+      ? {
+          ...item,
+          usesTotal: total,
+          usesRemaining: remaining - 1,
+          resetOn: item.resetOn ?? 'short',
+        }
+      : item
+  );
+}
+
 // ───── !secondwind ─────────────────────────────────────────────
 async function handleSecondWind(c: ChatCommandContext): Promise<boolean> {
   const caller = resolveCallerToken(c.ctx);
@@ -56,23 +114,140 @@ async function handleSecondWind(c: ChatCommandContext): Promise<boolean> {
     return true;
   }
   const row = await loadCharacter(caller.characterId);
-  if (!row) { whisperToCaller(c.io, c.ctx, '!secondwind: character not found.'); return true; }
+  if (!row) {
+    whisperToCaller(c.io, c.ctx, '!secondwind: character not found.');
+    return true;
+  }
   const classLower = String(row.class || '').toLowerCase();
   if (!classLower.includes('fighter')) {
     whisperToCaller(c.io, c.ctx, `!secondwind: ${caller.name} isn't a Fighter.`);
     return true;
   }
-  const level = Number(row.level) || 1;
-  const hp = Number(row.hit_points) || 0;
-  const maxHp = Number(row.max_hit_points) || 0;
+  const level = fighterLevel(String(row.class || ''), Number(row.level) || 1);
+  const hp = Number(row.hit_points);
+  const maxHp = Number(row.max_hit_points);
+  const expectedVersion = parseCharacterVersion(row.version);
+  if (!Number.isFinite(hp) || !Number.isFinite(maxHp) || maxHp <= 0 || expectedVersion === null) {
+    whisperToCaller(
+      c.io,
+      c.ctx,
+      '!secondwind: could not verify the character sheet state. No use was spent; refresh and try again.'
+    );
+    return true;
+  }
+  if (hp >= maxHp) {
+    whisperToCaller(c.io, c.ctx, `!secondwind: ${caller.name} is already at maximum HP.`);
+    return true;
+  }
+
+  const combatState = c.ctx.room.combatState;
+  const economy = c.ctx.room.actionEconomies.get(caller.id);
+  if (combatState?.active) {
+    const currentCombatant = combatState.combatants[combatState.currentTurnIndex];
+    if (currentCombatant?.tokenId !== caller.id) {
+      whisperToCaller(
+        c.io,
+        c.ctx,
+        `!secondwind: ${caller.name} can use this bonus action only on their turn.`
+      );
+      return true;
+    }
+    if (!economy) {
+      whisperToCaller(
+        c.io,
+        c.ctx,
+        '!secondwind: combat action state is unavailable. No use was spent; refresh and try again.'
+      );
+      return true;
+    }
+    if (economy.bonusAction) {
+      whisperToCaller(
+        c.io,
+        c.ctx,
+        `!secondwind: ${caller.name} has already spent their bonus action this turn.`
+      );
+      return true;
+    }
+  }
+
+  const currentFeatures = parseFeatures(row.features);
+  if (!currentFeatures) {
+    whisperToCaller(
+      c.io,
+      c.ctx,
+      '!secondwind: the character feature data is invalid. No use was spent; refresh or re-sync the character sheet.'
+    );
+    return true;
+  }
+  const features = spendSecondWind(currentFeatures);
+  if (!features) {
+    whisperToCaller(
+      c.io,
+      c.ctx,
+      `!secondwind: ${caller.name} has no Second Wind uses remaining. Take a short rest to refresh it.`
+    );
+    return true;
+  }
+
   const roll = Math.floor(Math.random() * 10) + 1;
   const heal = roll + level;
   const newHp = Math.min(maxHp, hp + heal);
-  await pool.query('UPDATE characters SET hit_points = $1 WHERE id = $2', [newHp, caller.characterId])
-    .catch((e) => console.warn('[!secondwind] hp write failed:', e));
+  let updatedRows: unknown[];
+  try {
+    ({ rows: updatedRows } = await pool.query(
+      `UPDATE characters
+          SET hit_points = $1, features = $2
+        WHERE id = $3 AND version = $4
+        RETURNING version`,
+      [newHp, JSON.stringify(features), caller.characterId, expectedVersion]
+    ));
+  } catch (error) {
+    console.warn('[!secondwind] character write failed:', error);
+    whisperToCaller(
+      c.io,
+      c.ctx,
+      '!secondwind: saving the heal failed. No use was spent; try again.'
+    );
+    return true;
+  }
+  if (updatedRows.length === 0) {
+    whisperToCaller(
+      c.io,
+      c.ctx,
+      '!secondwind: the character sheet changed while processing. No use was spent; refresh and try again.'
+    );
+    return true;
+  }
+  const authoritativeVersion = parseCharacterVersion(
+    (updatedRows[0] as Record<string, unknown>).version
+  );
+  if (authoritativeVersion === null) {
+    whisperToCaller(
+      c.io,
+      c.ctx,
+      '!secondwind: the heal and use were saved, but synchronization failed. Refresh the character sheet before retrying.'
+    );
+    return true;
+  }
+
+  if (economy && combatState?.active) {
+    economy.bonusAction = true;
+    c.io.to(c.ctx.room.sessionId).emit('combat:action-used', {
+      tokenId: caller.id,
+      actionType: 'bonusAction',
+      economy,
+    });
+  }
+  const combatant = combatState?.combatants.find(
+    (candidate) => candidate.tokenId === caller.id
+  );
+  if (combatant) {
+    combatant.hp = newHp;
+    CombatService.persistSessionCombatState(c.ctx.room.sessionId);
+  }
   c.io.to(c.ctx.room.sessionId).emit('character:updated', {
     characterId: caller.characterId,
-    changes: { hitPoints: newHp },
+    changes: { hitPoints: newHp, features, version: authoritativeVersion },
   });
   c.io.to(c.ctx.room.sessionId).emit('combat:hp-changed', {
     tokenId: caller.id,
@@ -81,35 +256,33 @@ async function handleSecondWind(c: ChatCommandContext): Promise<boolean> {
     change: newHp - hp,
     type: 'heal',
   });
-  const swBreakdown: SpellCastBreakdown = {
-    caster: { name: caller.name, tokenId: caller.id },
-    spell: {
-      name: `Second Wind (1d10+${level} = ${heal})`,
-      level: 0,
-      kind: 'heal',
+  const swBreakdown: ActionBreakdown = {
+    actor: { name: caller.name, tokenId: caller.id },
+    action: {
+      name: 'Second Wind',
+      category: 'class-feature',
+      icon: '💨',
+      cost: 'Bonus action',
     },
+    effect: `${caller.name} regains ${newHp - hp} HP (rolled ${roll} + Fighter level ${level}).`,
     notes: [
       `Fighter class feature L${level}`,
       `Bonus action, 1/short rest`,
       `Heal formula: 1d10 (${roll}) + fighter level (${level}) = ${heal}`,
     ],
-    targets: [{
-      name: caller.name,
-      tokenId: caller.id,
-      kind: 'heal',
-      healing: {
-        dice: `1d10+${level}`,
-        diceRolls: [roll],
-        mainRoll: heal,
-        targetHpBefore: hp,
-        targetHpAfter: newHp,
+    targets: [
+      {
+        name: caller.name,
+        tokenId: caller.id,
+        effect: `Regains ${newHp - hp} HP`,
       },
-    }],
+    ],
   };
   broadcastSystem(
-    c.io, c.ctx,
-    `💨 ${caller.name} uses Second Wind — heals d10(${roll})+${level} = **${heal}** HP → ${newHp}/${maxHp}. Bonus action. 1/short rest.`,
-    { spellResult: swBreakdown },
+    c.io,
+    c.ctx,
+    `💨 ${caller.name} uses Second Wind — d10(${roll}) + Fighter level ${level} restores **${newHp - hp} HP**. Bonus action; recharges on a short rest.`,
+    { actionResult: swBreakdown }
   );
   return true;
 }
@@ -142,8 +315,9 @@ async function handleActionSurge(c: ChatCommandContext): Promise<boolean> {
     });
   }
   broadcastSystem(
-    c.io, c.ctx,
-    `⚡ ${caller.name} uses Action Surge — takes an additional action this turn. 1/short rest (2/short rest at L17).`,
+    c.io,
+    c.ctx,
+    `⚡ ${caller.name} uses Action Surge — takes an additional action this turn. 1/short rest (2/short rest at L17).`
   );
   return true;
 }
@@ -172,7 +346,11 @@ async function handleCunning(c: ChatCommandContext): Promise<boolean> {
   const economy = c.ctx.room.actionEconomies.get(caller.id);
   if (economy) {
     if (economy.bonusAction) {
-      whisperToCaller(c.io, c.ctx, `!cunning: ${caller.name} has already spent their bonus action this turn.`);
+      whisperToCaller(
+        c.io,
+        c.ctx,
+        `!cunning: ${caller.name} has already spent their bonus action this turn.`
+      );
       return true;
     }
     economy.bonusAction = true;
@@ -206,8 +384,9 @@ async function handleCunning(c: ChatCommandContext): Promise<boolean> {
   }
 
   broadcastSystem(
-    c.io, c.ctx,
-    `🗡 ${caller.name} uses Cunning Action — ${kind.charAt(0).toUpperCase() + kind.slice(1)} (bonus action).`,
+    c.io,
+    c.ctx,
+    `🗡 ${caller.name} uses Cunning Action — ${kind.charAt(0).toUpperCase() + kind.slice(1)} (bonus action).`
   );
   return true;
 }
@@ -237,7 +416,10 @@ async function handleLayOnHands(c: ChatCommandContext): Promise<boolean> {
     return true;
   }
   const row = await loadCharacter(caller.characterId);
-  if (!row) { whisperToCaller(c.io, c.ctx, '!lay: character not found.'); return true; }
+  if (!row) {
+    whisperToCaller(c.io, c.ctx, '!lay: character not found.');
+    return true;
+  }
   const classLower = String(row.class || '').toLowerCase();
   if (!classLower.includes('paladin')) {
     whisperToCaller(c.io, c.ctx, `!lay: ${caller.name} isn't a Paladin.`);
@@ -254,11 +436,15 @@ async function handleLayOnHands(c: ChatCommandContext): Promise<boolean> {
     return true;
   }
   const targetRow = await loadCharacter(target.characterId);
-  if (!targetRow) { whisperToCaller(c.io, c.ctx, '!lay: target character not found.'); return true; }
+  if (!targetRow) {
+    whisperToCaller(c.io, c.ctx, '!lay: target character not found.');
+    return true;
+  }
   const curHp = Number(targetRow.hit_points) || 0;
   const maxHp = Number(targetRow.max_hit_points) || 0;
   const newHp = Math.min(maxHp, curHp + amount);
-  await pool.query('UPDATE characters SET hit_points = $1 WHERE id = $2', [newHp, target.characterId])
+  await pool
+    .query('UPDATE characters SET hit_points = $1 WHERE id = $2', [newHp, target.characterId])
     .catch((e) => console.warn('[!lay] hp write failed:', e));
   c.io.to(c.ctx.room.sessionId).emit('character:updated', {
     characterId: target.characterId,
@@ -280,22 +466,21 @@ async function handleLayOnHands(c: ChatCommandContext): Promise<boolean> {
       cost: 'Action',
     },
     effect: `${target.name} heals **${amount} HP** from the Lay on Hands pool.`,
-    targets: [{
-      name: target.name,
-      tokenId: target.id,
-      effect: `HP ${curHp} → ${newHp} (+${amount})`,
-      healing: { amount, hpBefore: curHp, hpAfter: newHp },
-    }],
-    notes: [
-      `Paladin L${level}`,
-      `Pool: 5 × level = ${poolMax}/day`,
-      `Spent: ${amount} from pool`,
+    targets: [
+      {
+        name: target.name,
+        tokenId: target.id,
+        effect: `HP ${curHp} → ${newHp} (+${amount})`,
+        healing: { amount, hpBefore: curHp, hpAfter: newHp },
+      },
     ],
+    notes: [`Paladin L${level}`, `Pool: 5 × level = ${poolMax}/day`, `Spent: ${amount} from pool`],
   };
   broadcastSystem(
-    c.io, c.ctx,
+    c.io,
+    c.ctx,
     `🙌 ${caller.name} lays on hands — ${target.name} heals **${amount}** HP → ${newHp}/${maxHp}. (Pool ≤ ${poolMax}/day, reset on long rest.)`,
-    { actionResult: lohBreakdown },
+    { actionResult: lohBreakdown }
   );
   return true;
 }
@@ -304,7 +489,11 @@ async function handleLayOnHands(c: ChatCommandContext): Promise<boolean> {
 async function handleChannelDivinity(c: ChatCommandContext): Promise<boolean> {
   const effectName = c.rest.trim();
   if (!effectName) {
-    whisperToCaller(c.io, c.ctx, '!channel: usage `!channel <effect name>` (e.g. "Turn Undead", "Sacred Weapon")');
+    whisperToCaller(
+      c.io,
+      c.ctx,
+      '!channel: usage `!channel <effect name>` (e.g. "Turn Undead", "Sacred Weapon")'
+    );
     return true;
   }
   const caller = resolveCallerToken(c.ctx);
@@ -319,8 +508,9 @@ async function handleChannelDivinity(c: ChatCommandContext): Promise<boolean> {
     return true;
   }
   broadcastSystem(
-    c.io, c.ctx,
-    `✨ ${caller.name} invokes Channel Divinity — **${effectName}**. DM narrates / resolves save DC + effect.`,
+    c.io,
+    c.ctx,
+    `✨ ${caller.name} invokes Channel Divinity — **${effectName}**. DM narrates / resolves save DC + effect.`
   );
   return true;
 }
@@ -329,7 +519,11 @@ async function handleChannelDivinity(c: ChatCommandContext): Promise<boolean> {
 async function handlePolearmButt(c: ChatCommandContext): Promise<boolean> {
   const targetName = c.rest.trim();
   if (!targetName) {
-    whisperToCaller(c.io, c.ctx, '!pam: usage `!pam <target>` — bonus action butt-end strike with your polearm.');
+    whisperToCaller(
+      c.io,
+      c.ctx,
+      '!pam: usage `!pam <target>` — bonus action butt-end strike with your polearm.'
+    );
     return true;
   }
   const caller = resolveCallerToken(c.ctx);
@@ -338,17 +532,25 @@ async function handlePolearmButt(c: ChatCommandContext): Promise<boolean> {
     return true;
   }
   const row = await loadCharacter(caller.characterId);
-  if (!row) { whisperToCaller(c.io, c.ctx, '!pam: character not found.'); return true; }
+  if (!row) {
+    whisperToCaller(c.io, c.ctx, '!pam: character not found.');
+    return true;
+  }
 
   // Feat + weapon check.
   let hasFeat = false;
   try {
     const rawF = row.features;
     const feats = typeof rawF === 'string' ? JSON.parse(rawF) : (rawF ?? []);
-    hasFeat = Array.isArray(feats) && feats.some(
-      (f: { name?: string }) => typeof f?.name === 'string' && /^\s*polearm\s+master\s*$/i.test(f.name),
-    );
-  } catch { /* ignore */ }
+    hasFeat =
+      Array.isArray(feats) &&
+      feats.some(
+        (f: { name?: string }) =>
+          typeof f?.name === 'string' && /^\s*polearm\s+master\s*$/i.test(f.name)
+      );
+  } catch {
+    /* ignore */
+  }
   if (!hasFeat) {
     whisperToCaller(c.io, c.ctx, `!pam: ${caller.name} doesn't have the Polearm Master feat.`);
     return true;
@@ -370,21 +572,31 @@ async function handlePolearmButt(c: ChatCommandContext): Promise<boolean> {
     if (Array.isArray(inv)) {
       for (const item of inv) {
         const name = String((item as Record<string, unknown>)?.name ?? '').toLowerCase();
-        if ((item as Record<string, unknown>)?.equipped && /glaive|halberd|pike|quarterstaff|spear/.test(name)) {
+        if (
+          (item as Record<string, unknown>)?.equipped &&
+          /glaive|halberd|pike|quarterstaff|spear/.test(name)
+        ) {
           weaponName = (item as Record<string, unknown>).name as string;
-          const props = ((item as Record<string, unknown>)?.properties as string[] | undefined) ?? [];
+          const props =
+            ((item as Record<string, unknown>)?.properties as string[] | undefined) ?? [];
           const isFinesse = props.some((p) => /finesse/i.test(String(p)));
           abilityMod = isFinesse ? Math.max(strMod, dexMod) : strMod;
           break;
         }
       }
     }
-  } catch { /* ignore */ }
+  } catch {
+    /* ignore */
+  }
 
   // Spend the bonus action slot.
   const economy = c.ctx.room.actionEconomies.get(caller.id);
   if (economy?.bonusAction) {
-    whisperToCaller(c.io, c.ctx, `!pam: ${caller.name} has already spent their bonus action this turn.`);
+    whisperToCaller(
+      c.io,
+      c.ctx,
+      `!pam: ${caller.name} has already spent their bonus action this turn.`
+    );
     return true;
   }
   if (economy) {
@@ -415,11 +627,13 @@ async function handlePolearmButt(c: ChatCommandContext): Promise<boolean> {
       cost: 'Bonus action',
     },
     effect: `Attack: d20=${d20}${atkSign}${atkBonus}=${atkTotal}${d20 === 20 ? ' 💥 CRIT' : d20 === 1 ? ' 💀 fumble' : ''}. Damage: d4 (${d4})${dmgSign}${abilityMod} = **${dmg} bludgeoning**.`,
-    targets: [{
-      name: targetName,
-      effect: `Attack ${atkTotal} / Damage ${dmg} bludgeoning`,
-      damage: { amount: dmg, damageType: 'bludgeoning' },
-    }],
+    targets: [
+      {
+        name: targetName,
+        effect: `Attack ${atkTotal} / Damage ${dmg} bludgeoning`,
+        damage: { amount: dmg, damageType: 'bludgeoning' },
+      },
+    ],
     notes: [
       `Polearm Master feat`,
       `Weapon: ${weaponName}`,
@@ -430,11 +644,12 @@ async function handlePolearmButt(c: ChatCommandContext): Promise<boolean> {
     ],
   };
   broadcastSystem(
-    c.io, c.ctx,
+    c.io,
+    c.ctx,
     `🪙 ${caller.name} butt-ends with ${weaponName} (PAM bonus):\n` +
-    `   to hit: d20=${d20}${atkSign}${atkBonus}=${atkTotal}${d20 === 20 ? ' 💥CRIT' : d20 === 1 ? ' 💀fumble' : ''}\n` +
-    `   dmg: d4(${d4})${dmgSign}${abilityMod}=${dmg} bludgeoning`,
-    { actionResult: pamBreakdown },
+      `   to hit: d20=${d20}${atkSign}${atkBonus}=${atkTotal}${d20 === 20 ? ' 💥CRIT' : d20 === 1 ? ' 💀fumble' : ''}\n` +
+      `   dmg: d4(${d4})${dmgSign}${abilityMod}=${dmg} bludgeoning`,
+    { actionResult: pamBreakdown }
   );
   return true;
 }
@@ -472,12 +687,20 @@ async function handleUncanny(c: ChatCommandContext): Promise<boolean> {
   }
   const level = Number(row?.level) || 1;
   if (level < 5) {
-    whisperToCaller(c.io, c.ctx, `!uncanny: Uncanny Dodge requires Rogue level 5 (${caller.name} is ${level}).`);
+    whisperToCaller(
+      c.io,
+      c.ctx,
+      `!uncanny: Uncanny Dodge requires Rogue level 5 (${caller.name} is ${level}).`
+    );
     return true;
   }
   const economy = c.ctx.room.actionEconomies.get(caller.id);
   if (economy?.reaction) {
-    whisperToCaller(c.io, c.ctx, `!uncanny: ${caller.name} has already used their reaction this round.`);
+    whisperToCaller(
+      c.io,
+      c.ctx,
+      `!uncanny: ${caller.name} has already used their reaction this round.`
+    );
     return true;
   }
   if (economy) {
@@ -499,7 +722,11 @@ async function handleUncanny(c: ChatCommandContext): Promise<boolean> {
     hpAfter = r.hp;
     hpBefore = r.hp - healback;
     c.io.to(c.ctx.room.sessionId).emit('combat:hp-changed', {
-      tokenId: caller.id, hp: r.hp, tempHp: r.tempHp, change: healback, type: 'heal',
+      tokenId: caller.id,
+      hp: r.hp,
+      tempHp: r.tempHp,
+      change: healback,
+      type: 'heal',
     });
     if (r.characterId) {
       c.io.to(c.ctx.room.sessionId).emit('character:updated', {
@@ -517,14 +744,16 @@ async function handleUncanny(c: ChatCommandContext): Promise<boolean> {
       cost: 'Reaction',
     },
     effect: `Halves incoming damage: ${dmg} → ${dmg - healback} (heal back ${healback}).`,
-    targets: [{
-      name: caller.name,
-      tokenId: caller.id,
-      effect: `Damage ${dmg} → ${dmg - healback} (reduced by ${healback})`,
-      ...(hpBefore !== undefined && hpAfter !== undefined
-        ? { healing: { amount: healback, hpBefore, hpAfter } }
-        : {}),
-    }],
+    targets: [
+      {
+        name: caller.name,
+        tokenId: caller.id,
+        effect: `Damage ${dmg} → ${dmg - healback} (reduced by ${healback})`,
+        ...(hpBefore !== undefined && hpAfter !== undefined
+          ? { healing: { amount: healback, hpBefore, hpAfter } }
+          : {}),
+      },
+    ],
     notes: [
       `Rogue L${level}`,
       `Incoming damage: ${dmg}`,
@@ -533,9 +762,10 @@ async function handleUncanny(c: ChatCommandContext): Promise<boolean> {
     ],
   };
   broadcastSystem(
-    c.io, c.ctx,
+    c.io,
+    c.ctx,
     `🗡 ${caller.name} uses Uncanny Dodge (reaction) — halves the incoming damage: ${dmg} → ${dmg - healback} (heal back ${healback}).`,
-    { actionResult: udBreakdown },
+    { actionResult: udBreakdown }
   );
   return true;
 }
@@ -577,7 +807,11 @@ async function handleEvasion(c: ChatCommandContext): Promise<boolean> {
   }
   const level = Number(row?.level) || 1;
   if (level < 7) {
-    whisperToCaller(c.io, c.ctx, `!evasion: Evasion requires Rogue/Monk level 7 (${caller.name} is ${level}).`);
+    whisperToCaller(
+      c.io,
+      c.ctx,
+      `!evasion: Evasion requires Rogue/Monk level 7 (${caller.name} is ${level}).`
+    );
     return true;
   }
   // pass = full save means ZERO damage, but the DM already applied
@@ -592,7 +826,11 @@ async function handleEvasion(c: ChatCommandContext): Promise<boolean> {
     hpAfter = r.hp;
     hpBefore = r.hp - refund;
     c.io.to(c.ctx.room.sessionId).emit('combat:hp-changed', {
-      tokenId: caller.id, hp: r.hp, tempHp: r.tempHp, change: refund, type: 'heal',
+      tokenId: caller.id,
+      hp: r.hp,
+      tempHp: r.tempHp,
+      change: refund,
+      type: 'heal',
     });
     if (r.characterId) {
       c.io.to(c.ctx.room.sessionId).emit('character:updated', {
@@ -609,17 +847,20 @@ async function handleEvasion(c: ChatCommandContext): Promise<boolean> {
       icon: '💨',
       cost: 'Passive (DEX save effect)',
     },
-    effect: outcome === 'pass'
-      ? `Saved: takes 0 damage. Refund full ${refund} HP.`
-      : `Failed: takes half. Refund other half (${refund} HP).`,
-    targets: [{
-      name: caller.name,
-      tokenId: caller.id,
-      effect: `Refund ${refund} HP`,
-      ...(hpBefore !== undefined && hpAfter !== undefined
-        ? { healing: { amount: refund, hpBefore, hpAfter } }
-        : {}),
-    }],
+    effect:
+      outcome === 'pass'
+        ? `Saved: takes 0 damage. Refund full ${refund} HP.`
+        : `Failed: takes half. Refund other half (${refund} HP).`,
+    targets: [
+      {
+        name: caller.name,
+        tokenId: caller.id,
+        effect: `Refund ${refund} HP`,
+        ...(hpBefore !== undefined && hpAfter !== undefined
+          ? { healing: { amount: refund, hpBefore, hpAfter } }
+          : {}),
+      },
+    ],
     notes: [
       `Rogue/Monk L${level}`,
       `Outcome: ${outcome}`,
@@ -628,9 +869,10 @@ async function handleEvasion(c: ChatCommandContext): Promise<boolean> {
     ],
   };
   broadcastSystem(
-    c.io, c.ctx,
+    c.io,
+    c.ctx,
     `💨 ${caller.name} uses Evasion (${outcome}) — ${outcome === 'pass' ? 'takes 0 damage (refund full)' : 'takes half (refund other half)'}: +${refund} HP.`,
-    { actionResult: evBreakdown },
+    { actionResult: evBreakdown }
   );
   return true;
 }
