@@ -193,6 +193,21 @@ describe('emitToTokenStatViewers — exact-stat scoping', () => {
     expect(channelsFor(em, 'combat:hp-changed')).toEqual(['by-sock', ...DM_TABS, ...OWNER_TABS]);
   });
 
+  it('classifies a legacy ownerUserId="npc" token as a creature outside combat', () => {
+    // Older rows stored the NPC pseudo-user instead of null. The PC
+    // toggle must NOT unlock its stats for bystanders.
+    const room = seedRoom([tok('legacy-npc', { ownerUserId: 'npc' })]);
+    room.showPlayersToPlayers = true;
+    const em: Emission[] = [];
+    emitToTokenStatViewers(fakeIo(em), room, 'legacy-npc', 'combat:hp-changed', { tokenId: 'legacy-npc', hp: 6 });
+    expect(channelsFor(em, 'combat:hp-changed')).toEqual(DM_TABS);
+
+    room.showCreatureStatsToPlayers = true;
+    em.length = 0;
+    emitToTokenStatViewers(fakeIo(em), room, 'legacy-npc', 'combat:hp-changed', { tokenId: 'legacy-npc', hp: 6 });
+    expect(channelsFor(em, 'combat:hp-changed')).toEqual(['by-sock', ...DM_TABS, ...OWNER_TABS]);
+  });
+
   it('tokenStatsSharedWithPlayers falls back to ownerless-token = creature outside combat', () => {
     const room = seedRoom([tok('npc'), tok('pc', { ownerUserId: 'owner-user' })]);
     expect(tokenStatsSharedWithPlayers(room, room.tokens.get('npc')!)).toBe(false);
@@ -286,5 +301,38 @@ describe('chat-command legacy emits — stat events gated, token visuals not', (
     em.length = 0;
     await tryHandleChatCommand(fakeIo(em), ctx, '!stat-privacy-probe');
     expect(channelsFor(em, 'combat:hp-changed')).toEqual(['by-sock', ...DM_TABS, ...OWNER_TABS]);
+  });
+
+  it('routes a TOKENLESS character:updated to every DM tab and every owner tab, not bystanders', async () => {
+    const room = seedRoom([]);
+    room.players.get('owner-user')!.characterId = 'char-1';
+    registerChatCommand('tokenless-sheet-probe', (c) => {
+      c.io.to(c.ctx.room.sessionId).emit('character:updated', { characterId: 'char-1', changes: { hitPoints: 9, version: 3 } });
+      return true;
+    });
+    const em: Emission[] = [];
+    const ctx = getPlayerBySocketId('dm-sock')!;
+
+    await tryHandleChatCommand(fakeIo(em), ctx, '!tokenless-sheet-probe');
+    expect(channelsFor(em, 'character:updated')).toEqual([...DM_TABS, ...OWNER_TABS]);
+
+    room.showPlayersToPlayers = true;
+    em.length = 0;
+    await tryHandleChatCommand(fakeIo(em), ctx, '!tokenless-sheet-probe');
+    expect(channelsFor(em, 'character:updated')).toEqual(['by-sock', ...DM_TABS, ...OWNER_TABS]);
+  });
+
+  it('fails a tokenless character:updated closed to DM-only when no player links the character', async () => {
+    const room = seedRoom([]);
+    room.showPlayersToPlayers = true; // must not matter without an owner
+    registerChatCommand('orphan-sheet-probe', (c) => {
+      c.io.to(c.ctx.room.sessionId).emit('character:updated', { characterId: 'no-such-char', changes: { hitPoints: 1 } });
+      return true;
+    });
+    const em: Emission[] = [];
+    const ctx = getPlayerBySocketId('dm-sock')!;
+
+    await tryHandleChatCommand(fakeIo(em), ctx, '!orphan-sheet-probe');
+    expect(channelsFor(em, 'character:updated')).toEqual(DM_TABS);
   });
 });

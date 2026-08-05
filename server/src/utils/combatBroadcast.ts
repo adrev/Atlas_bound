@@ -55,11 +55,13 @@ export function emitToTokenViewers(
 
 /** NPC-ness for stat privacy. During combat the combatant's `isNPC` is
  *  authoritative (it folds in the character row's `user_id === 'npc'`);
- *  outside combat an ownerless token is a creature. */
+ *  outside combat an ownerless token is a creature, as is a legacy
+ *  token whose `ownerUserId` is the sentinel `'npc'` (older rows stored
+ *  the NPC pseudo-user instead of null). */
 function tokenIsNpc(room: RoomState, token: Token): boolean {
   const combatant = room.combatState?.combatants.find((c) => c.tokenId === token.id);
   if (combatant) return combatant.isNPC;
-  return !token.ownerUserId;
+  return !token.ownerUserId || token.ownerUserId === 'npc';
 }
 
 /** Whether the room's sharing settings let non-owner players see this
@@ -102,6 +104,45 @@ export function emitToTokenStatViewers(
     }
     if (tokenStatsSharedWithPlayers(room, token)) {
       for (const sid of socketsForToken(room, token.mapId, token)) recipients.add(sid);
+    }
+  }
+  for (const sid of recipients) io.to(sid).emit(event, payload);
+}
+
+/**
+ * Emit an exact-stat character payload for a character with NO token on
+ * any map (e.g. a `character:updated` from a chat command before the PC
+ * has been placed). There is no token to scope visibility by, so route
+ * on the character link itself:
+ *   - every DM tab, always;
+ *   - every tab of the player whose room entry links this `characterId`;
+ *   - other players only when `showPlayersToPlayers` permits (a linked
+ *     character is a PC, so the PC toggle applies);
+ *   - no resolvable owner → DM-only (never leak).
+ */
+export function emitToCharacterStatViewers(
+  io: Server,
+  room: RoomState,
+  characterId: string | null,
+  event: string,
+  payload: unknown,
+): void {
+  const recipients = new Set(dmSocketIds(room));
+  const owners = characterId
+    ? Array.from(room.players.values()).filter((p) => p.characterId === characterId)
+    : [];
+  if (owners.length > 0) {
+    for (const owner of owners) {
+      const sockets = room.userSockets.get(owner.userId);
+      if (sockets && sockets.size > 0) for (const sid of sockets) recipients.add(sid);
+      else recipients.add(owner.socketId);
+    }
+    if (room.showPlayersToPlayers) {
+      for (const player of room.players.values()) {
+        const sockets = room.userSockets.get(player.userId);
+        if (sockets && sockets.size > 0) for (const sid of sockets) recipients.add(sid);
+        else recipients.add(player.socketId);
+      }
     }
   }
   for (const sid of recipients) io.to(sid).emit(event, payload);
