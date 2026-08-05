@@ -17,6 +17,11 @@ import { safeHandler } from '../../utils/socketHelpers.js';
 import { tokenConditionChanges } from '../../utils/conditionSources.js';
 import { emitToTokenViewers } from '../../utils/combatBroadcast.js';
 import { tokenVisibleToPlayer } from '../../utils/tokenVisibility.js';
+import {
+  canReceiveCombatantStats,
+  combatantsVisibleTo,
+} from '../../utils/combatStateVisibility.js';
+import type { Combatant } from '@dnd-vtt/shared';
 
 function liveSocketIdsForPlayer(room: RoomState, player: RoomPlayer): string[] {
   const liveSockets = room.userSockets.get(player.userId);
@@ -39,6 +44,36 @@ function combatantLabelForPlayer(
   return canSeeTokenDetails(room, player, combatant.tokenId) ? combatant.name : '???';
 }
 
+export function emitInitiativeSetForRecipients(
+  io: Server,
+  room: RoomState,
+  combatant: Combatant,
+  payload: { tokenId: string; roll: number; bonus: number; total: number }
+): void {
+  for (const player of room.players.values()) {
+    if (!canSeeTokenDetails(room, player, combatant.tokenId)) continue;
+    if (!canReceiveCombatantStats(room, combatant, player)) continue;
+    for (const socketId of liveSocketIdsForPlayer(room, player)) {
+      io.to(socketId).emit('combat:initiative-set', payload);
+    }
+  }
+}
+
+export function emitAllInitiativesReadyForRecipients(
+  io: Server,
+  room: RoomState,
+  combatants: Combatant[]
+): void {
+  for (const player of room.players.values()) {
+    const visibleCombatants = combatantsVisibleTo(room, combatants, player);
+    for (const socketId of liveSocketIdsForPlayer(room, player)) {
+      io.to(socketId).emit('combat:all-initiatives-ready', {
+        combatants: visibleCombatants,
+      });
+    }
+  }
+}
+
 /**
  * Initiative + turn-advance events. The end-of-turn / start-of-turn
  * ConditionService ticks, round-hook emits, and lair-action reminders
@@ -59,7 +94,8 @@ export function registerCombatInitiative(io: Server, socket: Socket): void {
 
       // Roll initiative
       const { roll, total } = DiceService.rollInitiative(bonus);
-      CombatService.setInitiative(ctx.room.sessionId, tokenId, total);
+      const combatant = CombatService.setInitiative(ctx.room.sessionId, tokenId, total);
+      if (!combatant) return;
 
       const result = {
         tokenId,
@@ -68,12 +104,12 @@ export function registerCombatInitiative(io: Server, socket: Socket): void {
         total,
       };
 
-      io.to(ctx.room.sessionId).emit('combat:initiative-set', result);
+      emitInitiativeSetForRecipients(io, ctx.room, combatant, result);
 
       // Check if all initiatives are rolled
       if (CombatService.allInitiativesRolled(ctx.room.sessionId)) {
         const sorted = CombatService.sortInitiative(ctx.room.sessionId);
-        io.to(ctx.room.sessionId).emit('combat:all-initiatives-ready', { combatants: sorted });
+        emitAllInitiativesReadyForRecipients(io, ctx.room, sorted);
       }
     })
   );
@@ -92,7 +128,7 @@ export function registerCombatInitiative(io: Server, socket: Socket): void {
       const combatant = CombatService.setInitiative(ctx.room.sessionId, tokenId, total);
       if (!combatant) return;
 
-      io.to(ctx.room.sessionId).emit('combat:initiative-set', {
+      emitInitiativeSetForRecipients(io, ctx.room, combatant, {
         tokenId,
         roll: total - combatant.initiativeBonus,
         bonus: combatant.initiativeBonus,
@@ -101,7 +137,7 @@ export function registerCombatInitiative(io: Server, socket: Socket): void {
 
       if (CombatService.allInitiativesRolled(ctx.room.sessionId)) {
         const sorted = CombatService.sortInitiative(ctx.room.sessionId);
-        io.to(ctx.room.sessionId).emit('combat:all-initiatives-ready', { combatants: sorted });
+        emitAllInitiativesReadyForRecipients(io, ctx.room, sorted);
       }
     })
   );
