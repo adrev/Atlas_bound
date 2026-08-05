@@ -205,6 +205,16 @@ describe('!attune fanout scoping', () => {
     expect(bystanderEvents.every((e) => e.event === 'chat:new-message')).toBe(true);
   });
 
+  it('excludes bystanders even when room sharing toggles are on (policy is fixed)', async () => {
+    const room = getAllRooms().get(SESSION)!;
+    room.showPlayersToPlayers = true;
+    room.showCreatureStatsToPlayers = true;
+    mockCharacter([RING], 7, [{ version: 8 }]);
+    const em: Emission[] = [];
+    await run(em, '!attune ring');
+    expect(channelsFor(em, 'character:updated')).toEqual(DM_AND_OWNER_TABS);
+  });
+
   it('never emits the inventory room-wide on the session channel', async () => {
     mockCharacter([RING], 7, [{ version: 8 }]);
     const em: Emission[] = [];

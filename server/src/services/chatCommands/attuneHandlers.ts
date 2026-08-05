@@ -7,7 +7,7 @@ import {
 import pool from '../../db/connection.js';
 import type { Token } from '@dnd-vtt/shared';
 import type { PlayerContext } from '../../utils/roomState.js';
-import { emitToDmAndOwner } from '../../utils/dmOwnerEmit.js';
+import { fullCharacterRecipientSocketIds } from '../../utils/characterVisibility.js';
 
 /**
  * Attunement tracking (DMG p.138). A character can be attuned to at
@@ -135,10 +135,12 @@ function emitInventoryToDmAndOwner(
 ): void {
   const changes: Record<string, unknown> = { inventory: inv };
   if (version !== null) changes.version = version;
-  emitToDmAndOwner(c.io, c.ctx.room, c.ctx.player.userId, 'character:updated', {
-    characterId,
-    changes,
-  });
+  // Full-sheet policy with sharing forced off: every DM tab and every
+  // owning-player tab, never bystanders, regardless of room toggles.
+  const recipients = fullCharacterRecipientSocketIds(c.ctx.room, c.ctx.player.userId, false);
+  for (const socketId of recipients) {
+    c.io.to(socketId).emit('character:updated', { characterId, changes });
+  }
 }
 
 function findItem(inv: InventoryItem[], needle: string): number {
