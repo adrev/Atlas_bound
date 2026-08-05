@@ -23,9 +23,9 @@ specific file/line.
 |---|---|---|---|
 | P0 | Clean dirty working trees before new feature work | CodeX/Claude | ✅ Done on main via PR #8 and PR #9. Continue to start new work from clean `origin/main`; local checkouts may run `git clean -fd dev public` only after confirming no real untracked work |
 | P1 | PR #2 unverified Tier-1 fixes | Claude prepares sliced PRs; CodeX reviews/ships | **Never merge PR #2 wholesale — slices only.** T1.2 ✅ #10, T1.7 ✅ #11, T1.6 ✅ #14; remaining T1.1/T1.3/T1.4/T1.5 are browser-verify |
-| P1 | OAuth + Chronicle migration verification | Claude | OAuth/Chronicle code landed in PR #8; verify Discord/Google login and Chronicle worker polling on the personal project |
+| P1 | OAuth + Chronicle migration verification | Claude | Andrew confirmed Discord + Google login and D&D Beyond import on the personal deployment; Chronicle worker polling remains unverified |
 | P1 | Browser websocket QA | Andrew/Claude desktop, coordinated by CodeX | Run the remaining browser-only rows: player ribbon refresh, reconnect/background tabs, kick/ban stale sockets |
-| P2 | Server-side socket/combat QA tests | Claude | Add tests for combat/spell recipients, chat whisper/hidden-roll visibility, and music late-joiner state where feasible |
+| P2 | Server-side socket/combat QA tests | CodeX/Claude | Core recipient scoping, replay safety, reactions, OA, HP, conditions, chat privacy, and music rehydration now have regressions. Continue adding focused tests with each confirmed bug |
 | P2 | Production infra hardening | Claude | Secret Manager migration and GCS old-bucket URL audit; upload persistence is live in #117 |
 | P3 | Performance/code quality backlog | CodeX/Claude by claim | TokenLayer selectors, dice bundle deferral, list caching, large refactors after P1 stabilizes |
 
@@ -74,7 +74,12 @@ Each item below needs a verification pass. "Unit-testable" = I can pin it headle
 | T3.5 | Await DB writes in `CombatService.applyDamage` (no fire-and-forget) | ✅ | Done in PR #88 for async HP mutation paths; `applyDamage`/`applyHeal` await combat-state, token-condition, and concentration persistence |
 | T3.6 | Wrap character DDB import+merge in a transaction | ✅ | Done in PR #92; DDB import/sync and character JSON re-import lock existing rows with `FOR UPDATE` inside transactions, with rollback regression coverage |
 | T3.7 | Tag `/state` snapshot with explicit `mapId` | ✅ | Done in PR #67; state payload carries map scope and client no longer infers empty snapshots from current map |
-| T3.8 | Refactor opportunity-attack multi-tab fan-out logic | ⬜ | byzantine fallback path |
+| T3.8 | Refactor opportunity-attack multi-tab fan-out logic | ✅ | Done in PR #151; OA execution is bound to a server-issued pending opportunity and multi-tab prompts resolve through one authoritative record |
+| T3.9 | Prevent cursor-zero reconnects from replaying stale event history | ✅ | Done in PR #155; zero/reset cursors establish an authoritative baseline before nonzero delta replay resumes |
+| T3.10 | Preserve the active combatant when initiative is re-sorted | ✅ | Done in PR #158; server and client both anchor by stable token id, while initiative lock explicitly selects the final opener |
+| T3.11 | Scope full character payloads and revoke cached access | ✅ | Done in PRs #157, #159, #160, and #161; join/sync/update/state paths honor party and creature sharing, hidden/prep NPC writes are constrained, revoked sheets are pruned, and privacy toggles invalidate state ETags immediately |
+| T3.12 | Make high-risk map/token persistence paths atomic | ✅ | Done in PRs #149, #152, and #153 for wall edits, scene activation, and token lifecycle persistence |
+| T3.13 | Complete OA damage side effects and drawing release recovery | ✅ | Done in PRs #154 and #156; drawing ends safely outside the canvas and OA damage uses the canonical concentration/condition side-effect pipeline |
 
 ## Tier 4 — code quality / hygiene
 
@@ -94,7 +99,7 @@ Each item below needs a verification pass. "Unit-testable" = I can pin it headle
 
 | # | Item | Status | Note |
 |---|---|---|---|
-| O.1 | Post-deploy verification: Discord OAuth, Google OAuth, char save round-trip, image upload round-trip, DGX Chronicle worker poll | ⬜ | needs new personal OAuth clients live + Andrew |
+| O.1 | Post-deploy verification: Discord OAuth, Google OAuth, char save round-trip, image upload round-trip, DGX Chronicle worker poll | ⚠️ | Andrew confirmed Discord, Google, and D&D Beyond login/import flows on `dnd.kbrt.ai`; player multi-user QA, image upload persistence, and Chronicle worker polling still need live verification |
 | O.2 | `UPLOAD_DIR` writes to local FS on Cloud Run — user uploads may not persist | ✅ | Done in PR #117; optional `UPLOAD_GCS_BUCKET` streams authorized uploads through `gs://atlas-bound-data-personal`, with local fallback for dev/tests |
 | O.3 | Move secrets to Google Secret Manager (`--set-secrets`) | ⬜ | currently plain env vars on the revision |
 | O.4 | Apple OAuth not plumbed through `deploy.sh` | ✅ | Done in PR #132; deploy env file now includes Apple OAuth vars and preserves live values when local env is unset |
