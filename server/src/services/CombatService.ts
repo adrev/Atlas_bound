@@ -1131,15 +1131,71 @@ export function setSurprise(
   return combatant;
 }
 
+// Initiative order: higher initiative first, ties broken by the higher
+// initiative bonus. Shared by every re-sort (sortInitiative /
+// lockInitiative) so start, review, and live combat can never disagree
+// on ordering.
+function byInitiativeDesc(a: Combatant, b: Combatant): number {
+  if (b.initiative !== a.initiative) return b.initiative - a.initiative;
+  return b.initiativeBonus - a.initiativeBonus;
+}
+
 export function sortInitiative(sessionId: string): Combatant[] {
   const room = getRoom(sessionId);
   if (!room?.combatState) return [];
-  room.combatState.combatants.sort((a, b) => {
-    if (b.initiative !== a.initiative) return b.initiative - a.initiative;
-    return b.initiativeBonus - a.initiativeBonus;
-  });
-  persistCombatState(room.combatState);
-  return room.combatState.combatants;
+  const state = room.combatState;
+
+  // Re-sorting the order (a DM initiative correction or reroll) must
+  // NEVER silently hand the turn to whoever lands at the old index.
+  // Anchor to the CURRENT combatant by stable tokenId — never by name,
+  // since duplicate names are the norm (Goblin ×3, Guard ×2) and a name
+  // lookup would jump the turn to a same-named creature. Mirrors the
+  // re-anchor in addCombatant / removeCombatant.
+  //
+  // This anchors UNCONDITIONALLY. Round 1 / index 0 is not proof of a
+  // review edit: after combat:lock-initiative that exact state is the
+  // opener's real live turn, so an initiative correction during it must
+  // preserve the opener like any other turn. The single place review→live
+  // is actually known — lockInitiative(), called from the
+  // combat:lock-initiative handler — snaps the opener to the sorted top,
+  // so we no longer infer review-vs-live from (roundNumber,
+  // currentTurnIndex), which are indistinguishable across the two states.
+  const anchorTokenId = state.combatants[state.currentTurnIndex]?.tokenId;
+
+  state.combatants.sort(byInitiativeDesc);
+
+  if (anchorTokenId !== undefined) {
+    const newIdx = state.combatants.findIndex((c) => c.tokenId === anchorTokenId);
+    // Leave the pointer untouched if the anchor somehow vanished — better
+    // a stale index than jumping the turn to an unrelated creature.
+    if (newIdx >= 0) state.currentTurnIndex = newIdx;
+  }
+
+  persistCombatState(state);
+  return state.combatants;
+}
+
+/**
+ * Lock the reviewed initiative order in and begin live combat.
+ *
+ * During the DM's review phase every hand-edit / reroll re-sorts via
+ * sortInitiative, which anchors the turn pointer to the current
+ * combatant by tokenId. That anchoring is exactly right once combat is
+ * live, but while still in review it can leave the pointer off the
+ * sorted top. combat:lock-initiative is the ONE moment the server knows
+ * the review is over, so here — and only here — we re-sort
+ * authoritatively and snap the opener to the highest final initiative
+ * (index 0). Returns the opener (null when there is no active combat) so
+ * the caller can honour a surprised-first skip.
+ */
+export function lockInitiative(sessionId: string): Combatant | null {
+  const room = getRoom(sessionId);
+  if (!room?.combatState) return null;
+  const state = room.combatState;
+  state.combatants.sort(byInitiativeDesc);
+  state.currentTurnIndex = 0;
+  persistCombatState(state);
+  return state.combatants[0] ?? null;
 }
 
 export function allInitiativesRolled(sessionId: string): boolean {

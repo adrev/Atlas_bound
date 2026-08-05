@@ -195,14 +195,22 @@ export function registerCombatLifecycle(io: Server, socket: Socket): void {
       if (!ctx || ctx.player.role !== 'dm') return;
       io.to(ctx.room.sessionId).emit('combat:review-complete', {});
 
+      // Review→live transition. Lock the reviewed order in
+      // authoritatively: sortInitiative anchors the turn pointer to the
+      // current combatant by tokenId (correct once combat is live), which
+      // can leave the pointer off the sorted top after a review edit, so
+      // lockInitiative snaps the opener to the highest final initiative.
+      // This is the one place the server KNOWS combat is going live, so
+      // the round-1 opener no longer has to be inferred from state.
+      const state = ctx.room.combatState;
+      const opener = state?.active ? CombatService.lockInitiative(ctx.room.sessionId) : undefined;
+
       // 5e RAW: a surprised combatant loses their first turn. nextTurn
       // enforces this for every slot EXCEPT the opener — the first turn
       // starts implicitly at the current index when the DM locks
       // initiative, so a surprised top-initiative combatant used to take
       // a full round-1 turn anyway. Advance past them here; nextTurn's
       // own skip logic carries through any consecutive surprised slots.
-      const state = ctx.room.combatState;
-      const opener = state?.active ? state.combatants[state.currentTurnIndex] : undefined;
       if (state?.active && state.roundNumber === 1 && opener?.surprised) {
         const result = CombatService.nextTurn(ctx.room.sessionId);
         broadcastEvent(io, ctx.room, 'combat:turn-advanced', {
