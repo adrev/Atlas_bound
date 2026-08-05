@@ -1,6 +1,46 @@
 import type { Server } from 'socket.io';
-import type { RoomState } from './roomState.js';
+import type { RoomEvent, RoomPlayer, RoomState } from './roomState.js';
 import { MAX_EVENT_LOG } from './roomState.js';
+import { canReceiveVisibleCombatantStats } from './combatStateVisibility.js';
+
+interface BroadcastEventOptions {
+  tokenId?: string | null;
+  mapId?: string | null;
+  includeEventId?: boolean;
+  /** Applies recipient-specific exact-stat policy to this event. */
+  statTokenId?: string | null;
+  /** Payload sent to recipients who cannot receive exact token stats. */
+  redactedPayload?: Record<string, unknown>;
+}
+
+function liveSocketIdsForPlayer(room: RoomState, player: RoomPlayer): string[] {
+  const sockets = room.userSockets.get(player.userId);
+  return sockets && sockets.size > 0 ? [...sockets] : [player.socketId];
+}
+
+function canReceiveEventStats(
+  room: RoomState,
+  tokenId: string | null | undefined,
+  recipient: Pick<RoomPlayer, 'userId' | 'role'>
+): boolean {
+  if (recipient.role === 'dm') return true;
+  if (!tokenId) return false;
+
+  const combatant = room.combatState?.combatants.find((candidate) => candidate.tokenId === tokenId);
+  return combatant ? canReceiveVisibleCombatantStats(room, combatant, recipient) : false;
+}
+
+/** Resolve the safe replay/live payload for one recipient. */
+export function eventPayloadForPlayer(
+  room: RoomState,
+  event: Pick<RoomEvent, 'payload' | 'statTokenId' | 'redactedPayload'>,
+  recipient: Pick<RoomPlayer, 'userId' | 'role'>
+): unknown {
+  if (event.redactedPayload === undefined) return event.payload;
+  return canReceiveEventStats(room, event.statTokenId, recipient)
+    ? event.payload
+    : event.redactedPayload;
+}
 
 /**
  * Wraps a socket.io broadcast with event-log bookkeeping so clients
@@ -39,7 +79,7 @@ export function broadcastEvent(
   room: RoomState,
   kind: string,
   payload: Record<string, unknown>,
-  opts: { tokenId?: string | null; mapId?: string | null; includeEventId?: boolean } = {},
+  opts: BroadcastEventOptions = {}
 ): void {
   const id = ++room.nextEventId;
   const entry = {
@@ -49,6 +89,8 @@ export function broadcastEvent(
     ts: Date.now(),
     mapId: opts.mapId ?? null,
     tokenId: opts.tokenId ?? null,
+    statTokenId: opts.statTokenId,
+    redactedPayload: opts.redactedPayload,
   };
   room.eventLog.push(entry);
   // Circular buffer — drop the oldest when we overflow so the log stays
@@ -58,9 +100,22 @@ export function broadcastEvent(
     room.eventLog.splice(0, room.eventLog.length - MAX_EVENT_LOG);
   }
 
-  const wirePayload = opts.includeEventId === false
-    ? payload
-    : { ...payload, _eventId: id };
+  if (opts.redactedPayload !== undefined) {
+    for (const player of room.players.values()) {
+      const recipientPayload = eventPayloadForPlayer(room, entry, player) as Record<
+        string,
+        unknown
+      >;
+      const wirePayload =
+        opts.includeEventId === false ? recipientPayload : { ...recipientPayload, _eventId: id };
+      for (const socketId of liveSocketIdsForPlayer(room, player)) {
+        io.to(socketId).emit(kind, wirePayload);
+      }
+    }
+    return;
+  }
+
+  const wirePayload = opts.includeEventId === false ? payload : { ...payload, _eventId: id };
   io.to(room.sessionId).emit(kind, wirePayload);
 }
 
@@ -76,7 +131,7 @@ export function broadcastEventToSockets(
   kind: string,
   payload: Record<string, unknown>,
   socketIds: Iterable<string>,
-  opts: { tokenId?: string | null; mapId?: string | null; includeEventId?: boolean } = {},
+  opts: { tokenId?: string | null; mapId?: string | null; includeEventId?: boolean } = {}
 ): void {
   const id = ++room.nextEventId;
   room.eventLog.push({
@@ -91,9 +146,7 @@ export function broadcastEventToSockets(
     room.eventLog.splice(0, room.eventLog.length - MAX_EVENT_LOG);
   }
 
-  const wirePayload = opts.includeEventId === false
-    ? payload
-    : { ...payload, _eventId: id };
+  const wirePayload = opts.includeEventId === false ? payload : { ...payload, _eventId: id };
   for (const sid of socketIds) {
     io.to(sid).emit(kind, wirePayload);
   }

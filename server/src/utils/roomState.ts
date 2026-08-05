@@ -72,6 +72,15 @@ export interface RoomEvent {
    *  per-recipient filtering on replay (e.g. hidden tokens shouldn't
    *  leak to players even if they missed the original event). */
   tokenId?: string | null;
+  /** Token whose exact combat statistics govern access to `payload`.
+   *  When present with `redactedPayload`, live fanout and replay return
+   *  the exact payload only to DMs, the token owner, and players allowed
+   *  by the matching stat-sharing toggle. */
+  statTokenId?: string | null;
+  /** Safe replacement for `payload` when the recipient cannot receive
+   *  exact statistics for `statTokenId`. This metadata is internal and
+   *  is stripped from the REST replay response. */
+  redactedPayload?: unknown;
 }
 
 /** Circular buffer size — ~15 minutes of active play at ~30 events/min. */

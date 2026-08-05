@@ -13,6 +13,7 @@ import {
 import { safeHandler } from '../../utils/socketHelpers.js';
 import { startCombat } from './startCombatHelper.js';
 import { emitCombatStateSync } from '../../utils/combatStateVisibility.js';
+import { broadcastTurnAdvanced } from './turnBroadcast.js';
 
 /**
  * Combat lifecycle events — start / add combatant / ready check /
@@ -209,12 +210,7 @@ export function registerCombatLifecycle(io: Server, socket: Socket): void {
       // own skip logic carries through any consecutive surprised slots.
       if (state?.active && state.roundNumber === 1 && opener?.surprised) {
         const result = CombatService.nextTurn(ctx.room.sessionId);
-        broadcastEvent(io, ctx.room, 'combat:turn-advanced', {
-          currentTurnIndex: result.currentTurnIndex,
-          currentTokenId: result.currentCombatant?.tokenId ?? null,
-          roundNumber: result.roundNumber,
-          actionEconomy: result.actionEconomy,
-        });
+        broadcastTurnAdvanced(io, ctx.room, result);
       }
     })
   );
