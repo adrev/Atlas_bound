@@ -86,6 +86,13 @@ export function registerCombatHp(io: Server, socket: Socket): void {
         if (result.autoDeathSaveFailure) {
           changes.deathSaves = result.autoDeathSaveFailure;
         }
+        // Final post-write characters.version (the DB trigger bumps it
+        // on every UPDATE, including concentration cleanup). Without it
+        // the owner's next sheet edit sends a stale expectedVersion and
+        // gets a false character:update-conflict.
+        if (result.version !== undefined) {
+          changes.version = result.version;
+        }
         emitToTokenViewers(io, ctx.room, parsed.data.tokenId, 'character:updated', {
           characterId: result.characterId,
           changes,
@@ -203,6 +210,10 @@ export function registerCombatHp(io: Server, socket: Socket): void {
         };
         if (result.hp > 0) {
           changes.deathSaves = { successes: 0, failures: 0 };
+        }
+        // Same stale-expectedVersion guard as the damage fanout above.
+        if (result.version !== undefined) {
+          changes.version = result.version;
         }
         emitToTokenViewers(io, ctx.room, parsed.data.tokenId, 'character:updated', {
           characterId: result.characterId,

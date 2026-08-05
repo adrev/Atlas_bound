@@ -1410,6 +1410,26 @@ export interface HpChangeResult {
   concentrationClearedTokenIds?: string[];
   /** True when the backing character's concentrating_on was nulled. */
   concentrationDropped?: boolean;
+  /**
+   * Final authoritative characters.version after every character write
+   * this action performed (HP persist plus any concentration cleanup —
+   * each UPDATE bumps the version trigger). Callers must include it as
+   * `changes.version` in the `character:updated` fanout, otherwise the
+   * owner's next optimistic `character:update` sends a stale
+   * expectedVersion and hits a false `character:update-conflict`.
+   * Undefined when the combatant has no backing character row.
+   */
+  version?: number;
+}
+
+/**
+ * Only a real DB version (integer >= 1) may propagate — the column
+ * defaults to 1 and only ever increments. Number(null) is 0, so a
+ * null/mocked row would otherwise masquerade as a valid version.
+ */
+function parseCharacterVersion(row: unknown): number | undefined {
+  const version = Number((row as { version?: unknown } | undefined)?.version);
+  return Number.isInteger(version) && version >= 1 ? version : undefined;
 }
 
 export interface ApplyDamageOptions {
@@ -1639,9 +1659,10 @@ export async function applyDamage(
     }
   }
 
+  let version: number | undefined;
   if (combatant.characterId) {
-    await pool.query(
-      'UPDATE characters SET hit_points = $1, temp_hit_points = $2, death_saves = $3 WHERE id = $4',
+    const { rows: versionRows } = await pool.query(
+      'UPDATE characters SET hit_points = $1, temp_hit_points = $2, death_saves = $3 WHERE id = $4 RETURNING version',
       [
         combatant.hp,
         combatant.tempHp,
@@ -1649,8 +1670,19 @@ export async function applyDamage(
         combatant.characterId,
       ]
     );
+    version = parseCharacterVersion(versionRows[0]) ?? version;
   }
   await Promise.all(persistence);
+  // Concentration cleanup issues its own characters UPDATE (nulling
+  // concentrating_on) on a separate connection, which fires the version
+  // trigger again. Re-read only after every write above has settled so
+  // the fanout never carries an intermediate version.
+  if (combatant.characterId && concentrationDropped) {
+    const { rows: finalRows } = await pool.query('SELECT version FROM characters WHERE id = $1', [
+      combatant.characterId,
+    ]);
+    version = parseCharacterVersion(finalRows[0]) ?? version;
+  }
   await persistCombatStateAsync(room.combatState);
   return {
     hp: combatant.hp,
@@ -1669,6 +1701,7 @@ export async function applyDamage(
     releasedGrappleTokenIds,
     concentrationClearedTokenIds,
     concentrationDropped,
+    version,
   };
 }
 
@@ -1694,12 +1727,17 @@ export async function applyHeal(
     if (conditionResult.removed.length > 0) autoRemovedConditions = conditionResult.removed;
   }
 
+  let version: number | undefined;
   if (combatant.characterId) {
-    await pool.query('UPDATE characters SET hit_points = $1, death_saves = $2 WHERE id = $3', [
-      combatant.hp,
-      JSON.stringify(combatant.deathSaves ?? { successes: 0, failures: 0 }),
-      combatant.characterId,
-    ]);
+    const { rows: versionRows } = await pool.query(
+      'UPDATE characters SET hit_points = $1, death_saves = $2 WHERE id = $3 RETURNING version',
+      [
+        combatant.hp,
+        JSON.stringify(combatant.deathSaves ?? { successes: 0, failures: 0 }),
+        combatant.characterId,
+      ]
+    );
+    version = parseCharacterVersion(versionRows[0]) ?? version;
   }
   await Promise.all(persistence);
   await persistCombatStateAsync(room.combatState);
@@ -1709,6 +1747,7 @@ export async function applyHeal(
     change: amount,
     characterId: combatant.characterId ?? null,
     autoRemovedConditions,
+    version,
   };
 }
 
