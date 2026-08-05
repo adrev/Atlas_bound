@@ -148,11 +148,19 @@ describe('chat command token fanout wrapper', () => {
     expect(channelsFor(em, 'character:updated')).toEqual(['dm-sock', 'player-sock']);
   });
 
-  it('leaves non-token character updates on the original room-wide path', async () => {
+  it('scopes non-token character updates to DMs plus the linked owner instead of the room', async () => {
+    const room = seedRoom([]);
+    room.players.get('player-user')!.characterId = 'unplaced-char';
+    const em: Emission[] = [];
+    await tryHandleChatCommand(fakeIo(em), getPlayerBySocketId('dm-sock')!, '!codex-character-fanout unplaced-char');
+    expect(channelsFor(em, 'character:updated')).toEqual(['dm-sock', 'player-sock']);
+  });
+
+  it('fails non-token character updates closed to DM-only when the character has no linked player', async () => {
     seedRoom([]);
     const em: Emission[] = [];
     await tryHandleChatCommand(fakeIo(em), getPlayerBySocketId('dm-sock')!, '!codex-character-fanout unplaced-char');
-    expect(channelsFor(em, 'character:updated')).toEqual([SESSION]);
+    expect(channelsFor(em, 'character:updated')).toEqual(['dm-sock']);
   });
 
   it('scopes legacy room-wide action economy updates for hidden owned tokens', async () => {

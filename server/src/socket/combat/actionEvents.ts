@@ -8,7 +8,7 @@ import {
   combatUseActionSchema, combatUseMovementSchema,
 } from '../../utils/validation.js';
 import { safeHandler } from '../../utils/socketHelpers.js';
-import { emitToTokenViewers } from '../../utils/combatBroadcast.js';
+import { emitToTokenStatViewers } from '../../utils/combatBroadcast.js';
 import { emitTokenScopedChat } from '../../utils/tokenScopedChat.js';
 
 /**
@@ -38,11 +38,14 @@ export function registerCombatActions(io: Server, socket: Socket): void {
     const combatant = ctx.room.combatState?.combatants[ctx.room.combatState.currentTurnIndex];
     if (!combatant) return;
 
-    emitToTokenViewers(io, ctx.room, combatant.tokenId, 'combat:action-used', {
+    // Action economy is an exact-stat payload: DM tabs + the acting
+    // token's owner always; other players only when the sharing toggle
+    // for this token type permits.
+    emitToTokenStatViewers(io, ctx.room, combatant.tokenId, 'combat:action-used', {
       tokenId: combatant.tokenId,
       actionType: parsed.data.actionType,
       economy,
-    }, { includeOwner: true });
+    });
   }));
 
   socket.on('combat:use-movement', safeHandler(socket, async (data) => {
@@ -63,10 +66,10 @@ export function registerCombatActions(io: Server, socket: Socket): void {
     const combatant = ctx.room.combatState?.combatants[ctx.room.combatState.currentTurnIndex];
     if (!combatant) return;
 
-    emitToTokenViewers(io, ctx.room, combatant.tokenId, 'combat:movement-used', {
+    emitToTokenStatViewers(io, ctx.room, combatant.tokenId, 'combat:movement-used', {
       tokenId: combatant.tokenId,
       remaining,
-    }, { includeOwner: true });
+    });
   }));
 
   // ----------------------------------------------------------------------
@@ -91,11 +94,11 @@ export function registerCombatActions(io: Server, socket: Socket): void {
     const combatant = ctx.room.combatState?.combatants[ctx.room.combatState.currentTurnIndex];
     if (!combatant) return;
 
-    emitToTokenViewers(io, ctx.room, combatant.tokenId, 'combat:action-used', {
+    emitToTokenStatViewers(io, ctx.room, combatant.tokenId, 'combat:action-used', {
       tokenId: combatant.tokenId,
       actionType: 'action',
       economy,
-    }, { includeOwner: true });
+    });
 
     emitTokenScopedChat(io, ctx.room, combatant.tokenId, {
       id: uuidv4(),

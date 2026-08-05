@@ -18,7 +18,7 @@ import {
   combatMobileAttackedSchema,
 } from '../../utils/validation.js';
 import { safeHandler } from '../../utils/socketHelpers.js';
-import { emitToTokenViewers } from '../../utils/combatBroadcast.js';
+import { emitToTokenViewers, emitToTokenStatViewers } from '../../utils/combatBroadcast.js';
 import { tokenConditionChanges } from '../../utils/conditionSources.js';
 import { tokenVisibleToPlayer } from '../../utils/tokenVisibility.js';
 import {
@@ -160,7 +160,7 @@ export function registerCombatReactions(io: Server, socket: Socket): void {
       // If HP changed, broadcast both the combat HP change AND the
       // character row update so the HP bar re-renders everywhere.
       if (result.hpChange) {
-        emitToTokenViewers(io, ctx.room, result.hpChange.tokenId, 'combat:hp-changed', {
+        emitToTokenStatViewers(io, ctx.room, result.hpChange.tokenId, 'combat:hp-changed', {
           tokenId: result.hpChange.tokenId,
           hp: result.hpChange.hp,
           tempHp: result.hpChange.tempHp,
@@ -169,9 +169,10 @@ export function registerCombatReactions(io: Server, socket: Socket): void {
         });
       }
       if (result.characterHpUpdated) {
-        // Scope the sheet sync to the same token whose HP changed — DM +
-        // players who can see it, plus the owner wherever they are.
-        emitToTokenViewers(
+        // Scope the sheet sync to the same token whose HP changed — DM
+        // tabs + the owner wherever they are + stat-sharing-permitted
+        // viewers only (a missing tokenId fails closed to DM-only).
+        emitToTokenStatViewers(
           io,
           ctx.room,
           result.hpChange?.tokenId ?? '',
@@ -182,12 +183,11 @@ export function registerCombatReactions(io: Server, socket: Socket): void {
               hitPoints: result.characterHpUpdated.hp,
               tempHitPoints: result.characterHpUpdated.tempHp,
             },
-          },
-          { includeOwner: true }
+          }
         );
       }
       if (result.deathSaveFailure) {
-        emitToTokenViewers(
+        emitToTokenStatViewers(
           io,
           ctx.room,
           result.deathSaveFailure.tokenId,
@@ -219,7 +219,7 @@ export function registerCombatReactions(io: Server, socket: Socket): void {
       // combat:action-used with the real economy from room state.
       const attackerEconomy = ctx.room.actionEconomies.get(parsed.data.attackerTokenId);
       if (attackerEconomy) {
-        emitToTokenViewers(
+        emitToTokenStatViewers(
           io,
           ctx.room,
           parsed.data.attackerTokenId,
@@ -228,8 +228,7 @@ export function registerCombatReactions(io: Server, socket: Socket): void {
             tokenId: parsed.data.attackerTokenId,
             actionType: 'reaction',
             economy: attackerEconomy,
-          },
-          { includeOwner: true }
+          }
         );
       }
     })

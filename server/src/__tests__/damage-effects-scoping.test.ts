@@ -103,7 +103,7 @@ describe('applyDamageSideEffects socket scoping', () => {
     expect(channels(emissions, 'character:updated')).toEqual(['dm-sock']);
   });
 
-  it('sends visible token side-effect updates to players on the map', async () => {
+  it('sends visible token condition updates to players, but sheet sync only when creature stats are shared', async () => {
     const room = seedRoom([
       token('visible-npc', { visible: true, conditions: ['sleep'] as never }),
     ]);
@@ -116,7 +116,14 @@ describe('applyDamageSideEffects socket scoping', () => {
 
     await applyDamageSideEffects(fakeIo(emissions), room, 'visible-npc', 12);
 
+    // Condition badges keep plain token visibility; the character:updated
+    // sheet payload is an exact-stat emit and the sharing toggle defaults off.
     expect(channels(emissions, 'map:token-updated')).toEqual(['dm-sock', 'player-sock']);
+    expect(channels(emissions, 'character:updated')).toEqual(['dm-sock']);
+
+    room.showCreatureStatsToPlayers = true;
+    emissions.length = 0;
+    await applyDamageSideEffects(fakeIo(emissions), room, 'visible-npc', 12);
     expect(channels(emissions, 'character:updated')).toEqual(['dm-sock', 'player-sock']);
   });
 
