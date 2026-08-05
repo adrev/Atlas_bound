@@ -11,7 +11,17 @@ import {
   type ChatCommandContext,
 } from '../ChatCommands.js';
 import type { PlayerContext } from '../../utils/roomState.js';
-import { emitToTokenViewers } from '../../utils/combatBroadcast.js';
+import { emitToTokenStatViewers } from '../../utils/combatBroadcast.js';
+
+/**
+ * Only a real DB version (integer >= 1) may propagate — the column
+ * defaults to 1 and only ever increments. Number(null) is 0, so a
+ * null/mocked row would otherwise masquerade as a valid version.
+ */
+function parseCharacterVersion(row: unknown): number | undefined {
+  const version = Number((row as { version?: unknown } | undefined)?.version);
+  return Number.isInteger(version) && version >= 1 ? version : undefined;
+}
 
 /**
  * Emit a compact ActionResultCard summarising an `!damage` / `!heal`
@@ -26,15 +36,16 @@ function emitHpAdjustCard(
   targetTokenId: string,
   hpBefore: number,
   hpAfter: number,
-  label?: string,
+  label?: string
 ): void {
   const delta = hpAfter - hpBefore;
   const verb = kind === 'damage' ? 'takes damage' : kind === 'heal' ? 'is healed' : 'HP set';
-  const effect = kind === 'damage'
-    ? `${targetName} takes ${Math.abs(delta)} damage.`
-    : kind === 'heal'
-      ? `${targetName} regains ${delta} HP.`
-      : `${targetName}'s HP set to ${hpAfter}.`;
+  const effect =
+    kind === 'damage'
+      ? `${targetName} takes ${Math.abs(delta)} damage.`
+      : kind === 'heal'
+        ? `${targetName} regains ${delta} HP.`
+        : `${targetName}'s HP set to ${hpAfter}.`;
   const card: ActionBreakdown = {
     actor: { name: c.ctx.player.displayName },
     action: {
@@ -43,15 +54,17 @@ function emitHpAdjustCard(
       icon: kind === 'damage' ? '\uD83E\uDE78' : kind === 'heal' ? '\uD83D\uDC9A' : '\u2699\uFE0F',
     },
     effect,
-    targets: [{
-      name: targetName,
-      tokenId: targetTokenId,
-      ...(kind === 'damage' && delta < 0
-        ? { damage: { amount: -delta, damageType: 'untyped', hpBefore, hpAfter } }
-        : kind === 'heal' && delta > 0
-          ? { healing: { amount: delta, hpBefore, hpAfter } }
-          : { effect: `${hpBefore} \u2192 ${hpAfter}` }),
-    }],
+    targets: [
+      {
+        name: targetName,
+        tokenId: targetTokenId,
+        ...(kind === 'damage' && delta < 0
+          ? { damage: { amount: -delta, damageType: 'untyped', hpBefore, hpAfter } }
+          : kind === 'heal' && delta > 0
+            ? { healing: { amount: delta, hpBefore, hpAfter } }
+            : { effect: `${hpBefore} \u2192 ${hpAfter}` }),
+      },
+    ],
   };
   const text = `${verb === 'HP set' ? '⚙' : kind === 'damage' ? '🩸' : '💚'} ${c.ctx.player.displayName} — ${targetName}: HP ${hpBefore} → ${hpAfter}`;
   broadcastTokenScopedSystem(c.io, c.ctx, targetTokenId, text, { actionResult: card });
@@ -65,9 +78,9 @@ function emitHpAdjustCard(
 async function readHpBefore(characterId: string | null | undefined): Promise<number> {
   if (!characterId) return 0;
   try {
-    const { rows } = await pool.query(
-      'SELECT hit_points FROM characters WHERE id = $1', [characterId],
-    );
+    const { rows } = await pool.query('SELECT hit_points FROM characters WHERE id = $1', [
+      characterId,
+    ]);
     const row = rows[0] as Record<string, unknown> | undefined;
     return Number(row?.hit_points) || 0;
   } catch {
@@ -109,7 +122,7 @@ interface ResolvedTarget {
 
 function resolveTarget(
   ctx: PlayerContext,
-  rest: string,
+  rest: string
 ): { target: ResolvedTarget | null; reason?: string } {
   const all = Array.from(ctx.room.tokens.values());
   if (!rest) {
@@ -148,8 +161,13 @@ function broadcastHpChange(
   tempHp: number,
   change: number,
   type: 'damage' | 'heal',
+  version?: number
 ): void {
-  emitToTokenViewers(io, ctx.room, tokenId, 'combat:hp-changed', {
+  // Exact numbers are gated by the room's sharing toggles — DM tabs and
+  // the owner's tabs always receive them; other players only when the
+  // matching share toggle permits. `emitToTokenViewers` scopes by token
+  // visibility alone and would leak precise HP the snapshots redact.
+  emitToTokenStatViewers(io, ctx.room, tokenId, 'combat:hp-changed', {
     tokenId,
     hp,
     tempHp,
@@ -157,21 +175,28 @@ function broadcastHpChange(
     type,
   });
   if (characterId) {
-    emitToTokenViewers(io, ctx.room, tokenId, 'character:updated', {
+    const changes: Record<string, unknown> = { hitPoints: hp, tempHitPoints: tempHp };
+    // Final post-write characters.version (the DB trigger bumps it on
+    // every UPDATE). Without it the owner's next sheet edit sends a
+    // stale expectedVersion and gets a false character:update-conflict.
+    if (version !== undefined) {
+      changes.version = version;
+    }
+    emitToTokenStatViewers(io, ctx.room, tokenId, 'character:updated', {
       characterId,
-      changes: { hitPoints: hp, tempHitPoints: tempHp },
-    }, { includeOwner: true });
+      changes,
+    });
   }
 }
 
 async function applyDirectHp(
   characterId: string,
-  delta: number,
-): Promise<{ hp: number; tempHp: number } | null> {
+  delta: number
+): Promise<{ hp: number; tempHp: number; version?: number } | null> {
   // Outside combat: mutate the character row directly. Clamp to [0, max].
   const { rows } = await pool.query(
     'SELECT hit_points, max_hit_points, temp_hit_points FROM characters WHERE id = $1',
-    [characterId],
+    [characterId]
   );
   const row = rows[0] as Record<string, unknown> | undefined;
   if (!row) return null;
@@ -179,25 +204,31 @@ async function applyDirectHp(
   const maxHp = Number(row.max_hit_points);
   const tempHp = Number(row.temp_hit_points ?? 0);
   const nextHp = Math.max(0, Math.min(maxHp, curHp + delta));
-  await pool.query('UPDATE characters SET hit_points = $1 WHERE id = $2', [nextHp, characterId]);
-  return { hp: nextHp, tempHp };
+  const { rows: versionRows } = await pool.query(
+    'UPDATE characters SET hit_points = $1 WHERE id = $2 RETURNING version',
+    [nextHp, characterId]
+  );
+  return { hp: nextHp, tempHp, version: parseCharacterVersion(versionRows[0]) };
 }
 
 async function setDirectHp(
   characterId: string,
-  value: number,
-): Promise<{ hp: number; tempHp: number } | null> {
+  value: number
+): Promise<{ hp: number; tempHp: number; version?: number } | null> {
   const { rows } = await pool.query(
     'SELECT max_hit_points, temp_hit_points FROM characters WHERE id = $1',
-    [characterId],
+    [characterId]
   );
   const row = rows[0] as Record<string, unknown> | undefined;
   if (!row) return null;
   const maxHp = Number(row.max_hit_points);
   const tempHp = Number(row.temp_hit_points ?? 0);
   const nextHp = Math.max(0, Math.min(maxHp, value));
-  await pool.query('UPDATE characters SET hit_points = $1 WHERE id = $2', [nextHp, characterId]);
-  return { hp: nextHp, tempHp };
+  const { rows: versionRows } = await pool.query(
+    'UPDATE characters SET hit_points = $1 WHERE id = $2 RETURNING version',
+    [nextHp, characterId]
+  );
+  return { hp: nextHp, tempHp, version: parseCharacterVersion(versionRows[0]) };
 }
 
 /**
@@ -209,11 +240,11 @@ async function setDirectHp(
  */
 async function applyDirectTempHp(
   characterId: string,
-  value: number,
-): Promise<{ hp: number; tempHp: number; replaced: boolean } | null> {
+  value: number
+): Promise<{ hp: number; tempHp: number; replaced: boolean; version?: number } | null> {
   const { rows } = await pool.query(
     'SELECT hit_points, temp_hit_points FROM characters WHERE id = $1',
-    [characterId],
+    [characterId]
   );
   const row = rows[0] as Record<string, unknown> | undefined;
   if (!row) return null;
@@ -222,10 +253,17 @@ async function applyDirectTempHp(
   // 0 always clears; otherwise keep the better value.
   const next = value === 0 ? 0 : Math.max(current, value);
   const replaced = next !== current;
+  // No-op keeps the row untouched: no UPDATE, no version-trigger bump,
+  // and no version in the result (a fabricated one would desync owners).
+  let version: number | undefined;
   if (replaced) {
-    await pool.query('UPDATE characters SET temp_hit_points = $1 WHERE id = $2', [next, characterId]);
+    const { rows: versionRows } = await pool.query(
+      'UPDATE characters SET temp_hit_points = $1 WHERE id = $2 RETURNING version',
+      [next, characterId]
+    );
+    version = parseCharacterVersion(versionRows[0]);
   }
-  return { hp, tempHp: next, replaced };
+  return { hp, tempHp: next, replaced, version };
 }
 
 async function handleDamage(c: ChatCommandContext): Promise<boolean> {
@@ -252,20 +290,47 @@ async function handleDamage(c: ChatCommandContext): Promise<boolean> {
     let hpAfter = 0;
     if (c.ctx.room.combatState?.active) {
       const combatant = c.ctx.room.combatState.combatants.find(
-        (x) => x.tokenId === res.target!.token.id,
+        (x) => x.tokenId === res.target!.token.id
       );
-      hpBefore = combatant?.hp ?? await readHpBefore(res.target.characterId);
+      hpBefore = combatant?.hp ?? (await readHpBefore(res.target.characterId));
       const r = await CombatService.applyDamage(c.ctx.room.sessionId, res.target.token.id, amount);
       hpAfter = r.hp;
-      broadcastHpChange(c.io, c.ctx, res.target.token.id, r.characterId, r.hp, r.tempHp, r.change, 'damage');
+      broadcastHpChange(
+        c.io,
+        c.ctx,
+        res.target.token.id,
+        r.characterId,
+        r.hp,
+        r.tempHp,
+        r.change,
+        'damage',
+        r.version
+      );
     } else if (res.target.characterId) {
       hpBefore = await readHpBefore(res.target.characterId);
       const r = await applyDirectHp(res.target.characterId, -amount);
-      if (!r) { whisperToCaller(c.io, c.ctx, '!damage: character not found'); return true; }
+      if (!r) {
+        whisperToCaller(c.io, c.ctx, '!damage: character not found');
+        return true;
+      }
       hpAfter = r.hp;
-      broadcastHpChange(c.io, c.ctx, res.target.token.id, res.target.characterId, r.hp, r.tempHp, -amount, 'damage');
+      broadcastHpChange(
+        c.io,
+        c.ctx,
+        res.target.token.id,
+        res.target.characterId,
+        r.hp,
+        r.tempHp,
+        -amount,
+        'damage',
+        r.version
+      );
     } else {
-      whisperToCaller(c.io, c.ctx, '!damage: this token has no character and combat is not active.');
+      whisperToCaller(
+        c.io,
+        c.ctx,
+        '!damage: this token has no character and combat is not active.'
+      );
       return true;
     }
     emitHpAdjustCard(c, 'damage', res.target.token.name, res.target.token.id, hpBefore, hpAfter);
@@ -301,18 +366,41 @@ async function handleHeal(c: ChatCommandContext): Promise<boolean> {
     let hpAfter = 0;
     if (c.ctx.room.combatState?.active) {
       const combatant = c.ctx.room.combatState.combatants.find(
-        (x) => x.tokenId === res.target!.token.id,
+        (x) => x.tokenId === res.target!.token.id
       );
-      hpBefore = combatant?.hp ?? await readHpBefore(res.target.characterId);
+      hpBefore = combatant?.hp ?? (await readHpBefore(res.target.characterId));
       const r = await CombatService.applyHeal(c.ctx.room.sessionId, res.target.token.id, amount);
       hpAfter = r.hp;
-      broadcastHpChange(c.io, c.ctx, res.target.token.id, r.characterId, r.hp, r.tempHp, r.change, 'heal');
+      broadcastHpChange(
+        c.io,
+        c.ctx,
+        res.target.token.id,
+        r.characterId,
+        r.hp,
+        r.tempHp,
+        r.change,
+        'heal',
+        r.version
+      );
     } else if (res.target.characterId) {
       hpBefore = await readHpBefore(res.target.characterId);
       const r = await applyDirectHp(res.target.characterId, amount);
-      if (!r) { whisperToCaller(c.io, c.ctx, '!heal: character not found'); return true; }
+      if (!r) {
+        whisperToCaller(c.io, c.ctx, '!heal: character not found');
+        return true;
+      }
       hpAfter = r.hp;
-      broadcastHpChange(c.io, c.ctx, res.target.token.id, res.target.characterId, r.hp, r.tempHp, amount, 'heal');
+      broadcastHpChange(
+        c.io,
+        c.ctx,
+        res.target.token.id,
+        res.target.characterId,
+        r.hp,
+        r.tempHp,
+        amount,
+        'heal',
+        r.version
+      );
     } else {
       whisperToCaller(c.io, c.ctx, '!heal: this token has no character and combat is not active.');
       return true;
@@ -359,14 +447,38 @@ async function handleHp(c: ChatCommandContext): Promise<boolean> {
     if (signed) {
       const delta = num;
       if (c.ctx.room.combatState?.active) {
-        const r = delta >= 0
-          ? await CombatService.applyHeal(c.ctx.room.sessionId, res.target.token.id, delta)
-          : await CombatService.applyDamage(c.ctx.room.sessionId, res.target.token.id, -delta);
-        broadcastHpChange(c.io, c.ctx, res.target.token.id, r.characterId, r.hp, r.tempHp, r.change, delta >= 0 ? 'heal' : 'damage');
+        const r =
+          delta >= 0
+            ? await CombatService.applyHeal(c.ctx.room.sessionId, res.target.token.id, delta)
+            : await CombatService.applyDamage(c.ctx.room.sessionId, res.target.token.id, -delta);
+        broadcastHpChange(
+          c.io,
+          c.ctx,
+          res.target.token.id,
+          r.characterId,
+          r.hp,
+          r.tempHp,
+          r.change,
+          delta >= 0 ? 'heal' : 'damage',
+          r.version
+        );
       } else if (res.target.characterId) {
         const r = await applyDirectHp(res.target.characterId, delta);
-        if (!r) { whisperToCaller(c.io, c.ctx, '!hp: character not found'); return true; }
-        broadcastHpChange(c.io, c.ctx, res.target.token.id, res.target.characterId, r.hp, r.tempHp, delta, delta >= 0 ? 'heal' : 'damage');
+        if (!r) {
+          whisperToCaller(c.io, c.ctx, '!hp: character not found');
+          return true;
+        }
+        broadcastHpChange(
+          c.io,
+          c.ctx,
+          res.target.token.id,
+          res.target.characterId,
+          r.hp,
+          r.tempHp,
+          delta,
+          delta >= 0 ? 'heal' : 'damage',
+          r.version
+        );
       } else {
         whisperToCaller(c.io, c.ctx, '!hp: this token has no character and combat is not active.');
         return true;
@@ -386,21 +498,47 @@ async function handleHp(c: ChatCommandContext): Promise<boolean> {
       return true;
     }
     if (c.ctx.room.combatState?.active) {
-      const combatant = c.ctx.room.combatState.combatants.find((k) => k.tokenId === res.target!.token.id);
+      const combatant = c.ctx.room.combatState.combatants.find(
+        (k) => k.tokenId === res.target!.token.id
+      );
       if (combatant) {
         const target = Math.max(0, Math.min(combatant.maxHp, num));
         const delta = target - combatant.hp;
-        const r = delta >= 0
-          ? await CombatService.applyHeal(c.ctx.room.sessionId, res.target.token.id, delta)
-          : await CombatService.applyDamage(c.ctx.room.sessionId, res.target.token.id, -delta);
-        broadcastHpChange(c.io, c.ctx, res.target.token.id, r.characterId, r.hp, r.tempHp, r.change, delta >= 0 ? 'heal' : 'damage');
+        const r =
+          delta >= 0
+            ? await CombatService.applyHeal(c.ctx.room.sessionId, res.target.token.id, delta)
+            : await CombatService.applyDamage(c.ctx.room.sessionId, res.target.token.id, -delta);
+        broadcastHpChange(
+          c.io,
+          c.ctx,
+          res.target.token.id,
+          r.characterId,
+          r.hp,
+          r.tempHp,
+          r.change,
+          delta >= 0 ? 'heal' : 'damage',
+          r.version
+        );
         return true;
       }
     }
     if (res.target.characterId) {
       const r = await setDirectHp(res.target.characterId, num);
-      if (!r) { whisperToCaller(c.io, c.ctx, '!hp: character not found'); return true; }
-      broadcastHpChange(c.io, c.ctx, res.target.token.id, res.target.characterId, r.hp, r.tempHp, 0, 'heal');
+      if (!r) {
+        whisperToCaller(c.io, c.ctx, '!hp: character not found');
+        return true;
+      }
+      broadcastHpChange(
+        c.io,
+        c.ctx,
+        res.target.token.id,
+        res.target.characterId,
+        r.hp,
+        r.tempHp,
+        0,
+        'heal',
+        r.version
+      );
     } else {
       whisperToCaller(c.io, c.ctx, '!hp: this token has no character and combat is not active.');
     }
@@ -410,7 +548,10 @@ async function handleHp(c: ChatCommandContext): Promise<boolean> {
   return true;
 }
 
-const ATTR_COLUMNS: Record<string, { column: string; min: number; max: number; abilityKey?: string }> = {
+const ATTR_COLUMNS: Record<
+  string,
+  { column: string; min: number; max: number; abilityKey?: string }
+> = {
   hp: { column: 'hit_points', min: 0, max: 9999 },
   maxhp: { column: 'max_hit_points', min: 1, max: 9999 },
   ac: { column: 'armor_class', min: 0, max: 99 },
@@ -441,7 +582,11 @@ async function handleSetattr(c: ChatCommandContext): Promise<boolean> {
 
   const spec = ATTR_COLUMNS[attr];
   if (!spec) {
-    whisperToCaller(c.io, c.ctx, `!setattr: unknown attr “${attr}”. Allowed: ${Object.keys(ATTR_COLUMNS).join(', ')}`);
+    whisperToCaller(
+      c.io,
+      c.ctx,
+      `!setattr: unknown attr “${attr}”. Allowed: ${Object.keys(ATTR_COLUMNS).join(', ')}`
+    );
     return true;
   }
   const value = parseInt(valueRaw, 10);
@@ -462,34 +607,48 @@ async function handleSetattr(c: ChatCommandContext): Promise<boolean> {
 
   try {
     if (spec.abilityKey) {
-      const { rows } = await pool.query(
-        'SELECT ability_scores FROM characters WHERE id = $1',
-        [res.target.characterId],
-      );
+      const { rows } = await pool.query('SELECT ability_scores FROM characters WHERE id = $1', [
+        res.target.characterId,
+      ]);
       const raw = rows[0]?.ability_scores as string | undefined;
       let scores: Record<string, number> = { str: 10, dex: 10, con: 10, int: 10, wis: 10, cha: 10 };
       if (raw) {
-        try { scores = { ...scores, ...JSON.parse(raw) }; } catch { /* keep defaults */ }
+        try {
+          scores = { ...scores, ...JSON.parse(raw) };
+        } catch {
+          /* keep defaults */
+        }
       }
       scores[spec.abilityKey] = value;
-      await pool.query(
-        'UPDATE characters SET ability_scores = $1 WHERE id = $2',
-        [JSON.stringify(scores), res.target.characterId],
+      const { rows: versionRows } = await pool.query(
+        'UPDATE characters SET ability_scores = $1 WHERE id = $2 RETURNING version',
+        [JSON.stringify(scores), res.target.characterId]
       );
-      c.io.to(c.ctx.room.sessionId).emit('character:updated', {
+      const changes: Record<string, unknown> = { abilityScores: scores };
+      const version = parseCharacterVersion(versionRows[0]);
+      if (version !== undefined) {
+        changes.version = version;
+      }
+      // Exact sheet numbers: scope by the target token through the
+      // sharing toggles instead of the room-wide channel.
+      emitToTokenStatViewers(c.io, c.ctx.room, res.target.token.id, 'character:updated', {
         characterId: res.target.characterId,
-        changes: { abilityScores: scores },
+        changes,
       });
     } else {
-      await pool.query(
-        `UPDATE characters SET ${spec.column} = $1 WHERE id = $2`,
-        [value, res.target.characterId],
+      const { rows: versionRows } = await pool.query(
+        `UPDATE characters SET ${spec.column} = $1 WHERE id = $2 RETURNING version`,
+        [value, res.target.characterId]
       );
-      const changes: Record<string, number> = {};
+      const changes: Record<string, unknown> = {};
       if (spec.column === 'hit_points') changes.hitPoints = value;
       else if (spec.column === 'max_hit_points') changes.maxHitPoints = value;
       else if (spec.column === 'armor_class') changes.armorClass = value;
-      c.io.to(c.ctx.room.sessionId).emit('character:updated', {
+      const version = parseCharacterVersion(versionRows[0]);
+      if (version !== undefined) {
+        changes.version = version;
+      }
+      emitToTokenStatViewers(c.io, c.ctx.room, res.target.token.id, 'character:updated', {
         characterId: res.target.characterId,
         changes,
       });
@@ -507,7 +666,11 @@ async function handleThp(c: ChatCommandContext): Promise<boolean> {
   const target = parts.join(' ').trim();
   const amount = parseAmount(amountRaw);
   if (amount === null) {
-    whisperToCaller(c.io, c.ctx, '!thp: usage `!thp <amount> [target]` — 0 clears, higher replaces, lower keeps existing.');
+    whisperToCaller(
+      c.io,
+      c.ctx,
+      '!thp: usage `!thp <amount> [target]` — 0 clears, higher replaces, lower keeps existing.'
+    );
     return true;
   }
   const res = resolveTarget(c.ctx, target);
@@ -528,24 +691,44 @@ async function handleThp(c: ChatCommandContext): Promise<boolean> {
         const prior = combatant.tempHp;
         // RAW: 0 clears; otherwise keep the higher value.
         combatant.tempHp = amount === 0 ? 0 : Math.max(prior, amount);
-        if (res.target.characterId) {
-          await pool.query(
-            'UPDATE characters SET temp_hit_points = $1 WHERE id = $2',
-            [combatant.tempHp, res.target.characterId],
+        let version: number | undefined;
+        // A no-op (same temp HP) must not touch the row — a same-value
+        // UPDATE still fires the version trigger and would desync owners.
+        if (res.target.characterId && combatant.tempHp !== prior) {
+          const { rows: versionRows } = await pool.query(
+            'UPDATE characters SET temp_hit_points = $1 WHERE id = $2 RETURNING version',
+            [combatant.tempHp, res.target.characterId]
           );
+          version = parseCharacterVersion(versionRows[0]);
         }
         broadcastHpChange(
-          c.io, c.ctx, res.target.token.id, res.target.characterId,
-          combatant.hp, combatant.tempHp,
-          combatant.tempHp - prior, 'heal',
+          c.io,
+          c.ctx,
+          res.target.token.id,
+          res.target.characterId,
+          combatant.hp,
+          combatant.tempHp,
+          combatant.tempHp - prior,
+          'heal',
+          version
         );
       }
     } else if (res.target.characterId) {
       const r = await applyDirectTempHp(res.target.characterId, amount);
-      if (!r) { whisperToCaller(c.io, c.ctx, '!thp: character not found'); return true; }
+      if (!r) {
+        whisperToCaller(c.io, c.ctx, '!thp: character not found');
+        return true;
+      }
       broadcastHpChange(
-        c.io, c.ctx, res.target.token.id, res.target.characterId,
-        r.hp, r.tempHp, 0, 'heal',
+        c.io,
+        c.ctx,
+        res.target.token.id,
+        res.target.characterId,
+        r.hp,
+        r.tempHp,
+        0,
+        'heal',
+        r.version
       );
     } else {
       whisperToCaller(c.io, c.ctx, '!thp: this token has no character and combat is not active.');
