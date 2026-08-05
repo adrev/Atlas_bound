@@ -1128,6 +1128,8 @@ router.get('/:id/state', async (req: Request, res: Response) => {
     userId,
     isDM,
     viewingMapId,
+    showCreatureStatsToPlayers: room.showCreatureStatsToPlayers,
+    showPlayersToPlayers: room.showPlayersToPlayers,
     nextEventId: room.nextEventId,
     now: Date.now(),
   });
