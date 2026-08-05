@@ -23,12 +23,15 @@ import type { PlayerContext } from '../../utils/roomState.js';
  * parse as a strict integer, the selected `characters.version` guards
  * the UPDATE (`WHERE version = <selected> RETURNING version`), and a
  * DB error, zero-row conflict, or unusable version yields only a
- * private retry whisper — no slot fanout, no damage roll, no success
- * announcement. Dice are rolled only after the slot write commits,
- * and the `character:updated` fanout carries the authoritative
- * post-write version (omitted, never fabricated, if RETURNING gave
- * no usable value). No-op paths (bad level, missing feature, no
- * slot remaining) never touch the row.
+ * private whisper — no slot fanout, no damage roll, no success
+ * announcement. Pre-write failures whisper a retry; if the write
+ * commits but RETURNING gives no usable version, the whisper is
+ * truthful (the slot was spent but synchronization failed; refresh
+ * before retrying) and the handler stops there. Dice are rolled only
+ * after the slot write commits with an authoritative version, and the
+ * `character:updated` fanout always carries that post-write version.
+ * No-op paths (bad level, missing feature, no slot remaining) never
+ * touch the row.
  */
 
 function resolveCallerToken(ctx: PlayerContext): Token | null {
@@ -163,16 +166,25 @@ async function handleSmite(c: ChatCommandContext): Promise<boolean> {
   const authoritativeVersion = asAuthoritativeVersion(
     (updated[0] as Record<string, unknown>).version
   );
+  if (authoritativeVersion === null) {
+    // The write committed but RETURNING gave no usable version, so no
+    // authoritative payload can be fanned out. Fail closed post-commit:
+    // tell the caller the truth and stop — no fanout, roll, or success.
+    whisperToCaller(
+      c.io,
+      c.ctx,
+      '!smite: the slot was spent but synchronization failed — refresh your character sheet before retrying.'
+    );
+    return true;
+  }
 
   // Broadcast the slot change so the caller's character sheet re-renders.
   // The dispatcher's scoped-io wrapper reroutes this through the
-  // stat-sharing gate; the payload carries the authoritative version
-  // when RETURNING gave a usable one (never fabricated).
-  const changes: Record<string, unknown> = { spellSlots: slots };
-  if (authoritativeVersion !== null) changes.version = authoritativeVersion;
+  // stat-sharing gate; the payload always carries the authoritative
+  // post-write version from RETURNING.
   c.io.to(c.ctx.room.sessionId).emit('character:updated', {
     characterId: caller.characterId,
-    changes,
+    changes: { spellSlots: slots, version: authoritativeVersion },
   });
 
   // Damage: base is (level+1)d8, cap at 5d8. Add +1d8 vs undead/fiend.

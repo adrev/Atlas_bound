@@ -9,14 +9,17 @@
  *
  * Now the slot spend is optimistic (`UPDATE ... WHERE version =
  * <selected> RETURNING version`) and fails closed: a DB error, a
- * zero-row version conflict, or an unusable selected version produces
- * only a private retry whisper — no slot fanout, no damage roll, no
- * success announcement. Dice are rolled only after the write commits,
- * the `character:updated` payload carries the authoritative post-write
- * version (omitted, never fabricated, when RETURNING is unusable), the
- * fanout keeps the dispatcher's stat-scoped wrapper behavior, level
- * parsing is strict-integer, and no-op paths (bad level, missing
- * feature, unavailable slot) never touch the row.
+ * zero-row version conflict, an unusable selected version, or an
+ * unusable RETURNING version produces only a private whisper — no slot
+ * fanout, no damage roll, no success announcement. Pre-write failures
+ * whisper a retry; a committed write whose RETURNING version is
+ * unusable whispers the truth (slot spent, synchronization failed,
+ * refresh before retrying). Dice are rolled only after the write
+ * commits with an authoritative version, the `character:updated`
+ * payload always carries that post-write version, the fanout keeps the
+ * dispatcher's stat-scoped wrapper behavior, level parsing is
+ * strict-integer, and no-op paths (bad level, missing feature,
+ * unavailable slot) never touch the row.
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Token } from '@dnd-vtt/shared';
@@ -255,16 +258,6 @@ describe('success path', () => {
     expect(channelsFor(em, 'character:updated')).toEqual([...DM_AND_OWNER_TABS, 'by-sock'].sort());
   });
 
-  it('omits changes.version (never fabricates) when RETURNING yields no usable value', async () => {
-    mockCharacter(paladinRow(7, TWO_OF_THREE), [{ version: null }]);
-    const em: Emission[] = [];
-    await run(em, '!smite 2');
-    const { changes } = characterUpdatePayload(em);
-    expect(changes.spellSlots).toEqual({ '2': { max: 3, used: 2 } });
-    expect('version' in changes).toBe(false);
-    expect(systemBroadcasts(em)).toHaveLength(1);
-  });
-
   it('preserves the damage rules: undead + crit on a level 2 slot rolls 8d8', async () => {
     mockCharacter(paladinRow(7, TWO_OF_THREE), [{ version: 8 }]);
     const em: Emission[] = [];
@@ -293,6 +286,16 @@ describe('fail-closed slot spend', () => {
     expectFailedClosed(em);
     expect(whispers(em)[0].content).toContain('changed while processing');
     expect(whispers(em)[0].content).toContain('Try again');
+  });
+
+  it('unusable RETURNING version after commit: truthful sync-failure whisper only — no fanout, no roll, no announcement', async () => {
+    mockCharacter(paladinRow(7, TWO_OF_THREE), [{ version: null }]);
+    const em: Emission[] = [];
+    await run(em, '!smite 2');
+    expect(updateCalls()).toHaveLength(1);
+    expectFailedClosed(em);
+    expect(whispers(em)[0].content).toContain('the slot was spent but synchronization failed');
+    expect(whispers(em)[0].content).toContain('refresh your character sheet before retrying');
   });
 
   it('unusable selected version: fails closed without attempting the write', async () => {
