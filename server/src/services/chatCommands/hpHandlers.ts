@@ -300,9 +300,16 @@ async function applyDirectHp(
   const expectedVersion = parseCharacterVersion(row);
   if (
     expectedVersion === undefined ||
-    !Number.isFinite(curHp) ||
-    !Number.isFinite(maxHp) ||
-    !Number.isFinite(tempHp)
+    !Number.isInteger(curHp) ||
+    curHp < 0 ||
+    curHp > 9999 ||
+    !Number.isInteger(maxHp) ||
+    maxHp < 1 ||
+    maxHp > 9999 ||
+    curHp > maxHp ||
+    !Number.isInteger(tempHp) ||
+    tempHp < 0 ||
+    tempHp > 9999
   ) {
     throw new Error('could not verify the character state — nothing was changed.');
   }

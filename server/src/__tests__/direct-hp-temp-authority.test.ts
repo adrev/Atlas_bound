@@ -197,10 +197,15 @@ describe('untransformed out-of-combat direct HP authority', () => {
     expect(em.filter((e) => e.event === 'character:updated')).toEqual([]);
   });
 
-  it('malformed numeric pools fail closed before any UPDATE', async () => {
-    mockRow({ ...ROW, hit_points: 'garbage', temp_hit_points: 0 }, () => ({
-      rows: [{ version: 7 }],
-    }));
+  it.each([
+    ['non-numeric HP', { hit_points: 'garbage' }],
+    ['negative HP', { hit_points: -1 }],
+    ['HP above maximum', { hit_points: 21 }],
+    ['zero maximum HP', { max_hit_points: 0 }],
+    ['fractional temp HP', { temp_hit_points: 1.5 }],
+    ['oversized temp HP', { temp_hit_points: 10_000 }],
+  ])('%s fails closed before any UPDATE', async (_label, malformed) => {
+    mockRow({ ...ROW, temp_hit_points: 0, ...malformed }, () => ({ rows: [{ version: 7 }] }));
     const em: Emission[] = [];
     await tryHandleChatCommand(fakeIo(em), getPlayerBySocketId('owner-sock')!, '!damage 4 pc');
     expect(updates()).toEqual([]);
