@@ -242,11 +242,12 @@ export function getCharacter(characterId: string) {
 
 export function updateCharacter(
   characterId: string,
-  data: Record<string, unknown>
+  data: Record<string, unknown>,
+  expectedVersion: number
 ) {
   return request<Record<string, unknown>>(`/characters/${characterId}`, {
-    method: 'PATCH',
-    body: JSON.stringify(data),
+    method: 'PUT',
+    body: JSON.stringify({ ...data, expectedVersion }),
   });
 }
 

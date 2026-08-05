@@ -1123,7 +1123,9 @@ export const createCharacterSchema = z.object({
   sessionId: z.string().min(1).optional(),
 });
 
-export const updateCharacterSchema = createCharacterSchema.partial();
+export const updateCharacterSchema = createCharacterSchema.partial().extend({
+  expectedVersion: z.number().int().min(1),
+});
 
 // --- Loot schemas ---
 export const createLootSchema = z.object({

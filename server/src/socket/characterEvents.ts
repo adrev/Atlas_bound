@@ -154,6 +154,18 @@ function emitCharacterUpdate(
   }
 }
 
+async function emitCharacterConflict(
+  io: Server,
+  socketId: string,
+  characterId: string
+): Promise<void> {
+  const { rows } = await pool.query('SELECT * FROM characters WHERE id = $1', [characterId]);
+  if (!rows[0]) return;
+  io.to(socketId).emit('character:update-conflict', {
+    character: dbRowToCharacter(rows[0] as Record<string, unknown>),
+  });
+}
+
 export function registerCharacterEvents(io: Server, socket: Socket): void {
   socket.on(
     'character:update',
@@ -246,6 +258,14 @@ export function registerCharacterEvents(io: Server, socket: Socket): void {
         }
       }
 
+      // Old/stale clients may omit the field because it used to be
+      // optional on the wire. Never turn that into an unconditional
+      // overwrite: return the authoritative row so the caller can retry.
+      if (expectedVersion === undefined) {
+        await emitCharacterConflict(io, socket.id, characterId);
+        return;
+      }
+
       const setClauses: string[] = [];
       const params: unknown[] = [];
       let paramIdx = 1;
@@ -260,26 +280,14 @@ export function registerCharacterEvents(io: Server, socket: Socket): void {
       if (setClauses.length === 0) return;
 
       setClauses.push(`updated_at = NOW()::text`);
-      params.push(characterId);
-      let updateSql = `UPDATE characters SET ${setClauses.join(', ')} WHERE id = $${paramIdx}`;
-      if (expectedVersion !== undefined) {
-        params.push(expectedVersion);
-        updateSql += ` AND version = $${paramIdx + 1}`;
-      }
-      updateSql += ' RETURNING version';
+      params.push(characterId, expectedVersion);
+      const updateSql = `UPDATE characters SET ${setClauses.join(', ')} WHERE id = $${paramIdx} AND version = $${paramIdx + 1} RETURNING version`;
       const { rows: updatedRows } = await pool.query(updateSql, params);
       if (updatedRows.length === 0) {
-        const { rows: latestRows } = await pool.query('SELECT * FROM characters WHERE id = $1', [
-          characterId,
-        ]);
-        if (latestRows[0]) {
-          io.to(socket.id).emit('character:update-conflict', {
-            character: dbRowToCharacter(latestRows[0] as Record<string, unknown>),
-          });
-        }
+        await emitCharacterConflict(io, socket.id, characterId);
         return;
       }
-      changes.version = Number(updatedRows[0].version ?? expectedVersion ?? existing.version ?? 1);
+      changes.version = Number(updatedRows[0].version);
 
       emitCharacterUpdate(io, ctx.room, characterId, charUserId, changes);
     })

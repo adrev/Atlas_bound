@@ -211,7 +211,7 @@ router.put('/:id', async (req: Request, res: Response) => {
 
   await assertCharacterOwnerOrDM(String(req.params.id), userId);
 
-  const updates = parsed.data;
+  const { expectedVersion, ...updates } = parsed.data;
   const setClauses: string[] = [];
   const params: unknown[] = [];
   let paramIdx = 1;
@@ -359,19 +359,40 @@ router.put('/:id', async (req: Request, res: Response) => {
 
   if (setClauses.length === 0) {
     const { rows } = await pool.query('SELECT * FROM characters WHERE id = $1', [req.params.id]);
-    res.json(dbRowToCharacter(rows[0]));
+    if (!rows[0]) {
+      res.status(404).json({ error: 'Character not found' });
+      return;
+    }
+    const character = dbRowToCharacter(rows[0]);
+    if (Number(rows[0].version) !== expectedVersion) {
+      res.status(409).json({ error: 'Character changed; refresh and retry', character });
+      return;
+    }
+    res.json(character);
     return;
   }
 
   setClauses.push(`updated_at = NOW()::text`);
-  params.push(req.params.id);
+  params.push(req.params.id, expectedVersion);
 
-  await pool.query(
-    `UPDATE characters SET ${setClauses.join(', ')} WHERE id = $${paramIdx}`,
+  const { rows } = await pool.query(
+    `UPDATE characters SET ${setClauses.join(', ')} WHERE id = $${paramIdx} AND version = $${paramIdx + 1} RETURNING *`,
     params
   );
-
-  const { rows } = await pool.query('SELECT * FROM characters WHERE id = $1', [req.params.id]);
+  if (!rows[0]) {
+    const { rows: latestRows } = await pool.query('SELECT * FROM characters WHERE id = $1', [
+      req.params.id,
+    ]);
+    if (!latestRows[0]) {
+      res.status(404).json({ error: 'Character not found' });
+      return;
+    }
+    res.status(409).json({
+      error: 'Character changed; refresh and retry',
+      character: dbRowToCharacter(latestRows[0]),
+    });
+    return;
+  }
   res.json(dbRowToCharacter(rows[0]));
 });
 

@@ -282,7 +282,7 @@ export interface ClientCharacterEvents {
   'character:update': {
     characterId: string;
     changes: Record<string, unknown>;
-    expectedVersion?: number;
+    expectedVersion: number;
   };
   'character:rest': { characterId: string; kind: 'short' | 'long' };
   'character:spend-hit-die': { characterId: string; dieSize: number };
