@@ -102,6 +102,43 @@ function getOrSeedSP(ctx: PlayerContext, charId: string, level: number): { max: 
   return sp;
 }
 
+function parseCharacterVersion(value: unknown): number | null {
+  const version = Number(value);
+  return Number.isInteger(version) && version >= 1 ? version : null;
+}
+
+async function commitSpellSlots(
+  c: ChatCommandContext,
+  characterId: string,
+  slots: Record<string, { max: number; used: number }>,
+  expectedVersion: number | null,
+): Promise<number | null> {
+  if (expectedVersion === null) {
+    whisperToCaller(c.io, c.ctx, '!flexible: character version unavailable; refresh and try again.');
+    return null;
+  }
+  try {
+    const { rows } = await pool.query(
+      'UPDATE characters SET spell_slots = $1 WHERE id = $2 AND version = $3 RETURNING version',
+      [JSON.stringify(slots), characterId, expectedVersion],
+    );
+    if (rows.length === 0) {
+      whisperToCaller(c.io, c.ctx, '!flexible: your character changed in another tab; refresh and try again.');
+      return null;
+    }
+    const version = parseCharacterVersion((rows[0] as Record<string, unknown>).version);
+    if (version === null) {
+      whisperToCaller(c.io, c.ctx, '!flexible: slot change saved, but synchronization failed; refresh your sheet.');
+      return null;
+    }
+    return version;
+  } catch (error) {
+    console.warn('[flexible] slot write failed:', error);
+    whisperToCaller(c.io, c.ctx, '!flexible: could not save the conversion; no resources were changed.');
+    return null;
+  }
+}
+
 // ────── !sp [status | use <n> | reset | set <n>] ───────────
 async function handleSP(c: ChatCommandContext): Promise<boolean> {
   const parts = c.rest.split(/\s+/).filter(Boolean);
@@ -121,7 +158,7 @@ async function handleSP(c: ChatCommandContext): Promise<boolean> {
       whisperToCaller(c.io, c.ctx, '!sp set: DM only.');
       return true;
     }
-    const n = parseInt(parts[1], 10);
+    const n = /^\d+$/.test(parts[1] ?? '') ? Number(parts[1]) : Number.NaN;
     if (!Number.isFinite(n) || n < 0 || n > 20) {
       whisperToCaller(c.io, c.ctx, '!sp set: max must be 0-20.');
       return true;
@@ -139,7 +176,12 @@ async function handleSP(c: ChatCommandContext): Promise<boolean> {
   }
 
   if (sub === 'use' || sub === 'spend') {
-    const n = parseInt(parts[1], 10) || 1;
+    const amountArg = parts[1] ?? '1';
+    const n = /^\d+$/.test(amountArg) ? Number(amountArg) : Number.NaN;
+    if (!Number.isInteger(n) || n < 1 || n > 20) {
+      whisperToCaller(c.io, c.ctx, '!sp use: amount must be an integer from 1-20.');
+      return true;
+    }
     if (sp.remaining < n) {
       whisperToCaller(c.io, c.ctx, `!sp: not enough (${sp.remaining}/${sp.max}).`);
       return true;
@@ -170,7 +212,7 @@ async function handleMetamagic(c: ChatCommandContext): Promise<boolean> {
 
   let cost: number;
   if (name === 'twinned') {
-    const lvl = parseInt(parts[1], 10);
+    const lvl = /^\d+$/.test(parts[1] ?? '') ? Number(parts[1]) : Number.NaN;
     if (!Number.isFinite(lvl) || lvl < 0 || lvl > 9) {
       whisperToCaller(c.io, c.ctx, '!meta twinned: second arg = spell level (0 for cantrip).');
       return true;
@@ -219,7 +261,11 @@ async function handleFlexible(c: ChatCommandContext): Promise<boolean> {
     return true;
   }
   const direction = parts[0].toLowerCase();
-  const lvl = parseInt(parts[1], 10);
+  if (direction !== 'slot2sp' && direction !== 'sp2slot') {
+    whisperToCaller(c.io, c.ctx, `!flexible: unknown direction "${direction}". Use slot2sp or sp2slot.`);
+    return true;
+  }
+  const lvl = /^\d+$/.test(parts[1]) ? Number(parts[1]) : Number.NaN;
   if (!Number.isFinite(lvl) || lvl < 1 || lvl > 9) {
     whisperToCaller(c.io, c.ctx, '!flexible: level must be 1-9.');
     return true;
@@ -230,10 +276,11 @@ async function handleFlexible(c: ChatCommandContext): Promise<boolean> {
 
   // Load slots from the character row.
   const { rows } = await pool.query(
-    'SELECT spell_slots FROM characters WHERE id = $1',
+    'SELECT spell_slots, version FROM characters WHERE id = $1',
     [sorc.charId],
   );
   const row = rows[0] as Record<string, unknown> | undefined;
+  const expectedVersion = parseCharacterVersion(row?.version);
   let slots: Record<string, { max: number; used: number }> = {};
   try {
     const raw = row?.spell_slots;
@@ -247,15 +294,20 @@ async function handleFlexible(c: ChatCommandContext): Promise<boolean> {
       whisperToCaller(c.io, c.ctx, `!flexible: no level ${lvl} slot to burn.`);
       return true;
     }
+    if (sp.remaining >= sp.max) {
+      whisperToCaller(c.io, c.ctx, '!flexible: Sorcery Points are already full.');
+      return true;
+    }
     const gain = slotToSpReturn(lvl);
-    slots[key] = { ...slot, used: slot.used + 1 };
-    sp.remaining = Math.min(sp.max, sp.remaining + gain);
-    await pool.query('UPDATE characters SET spell_slots = $1 WHERE id = $2',
-      [JSON.stringify(slots), sorc.charId],
-    ).catch((e) => console.warn('[flexible] slot write failed:', e));
+    const nextSlots = { ...slots, [key]: { ...slot, used: slot.used + 1 } };
+    const nextSp = Math.min(sp.max, sp.remaining + gain);
+    const version = await commitSpellSlots(c, sorc.charId, nextSlots, expectedVersion);
+    if (version === null) return true;
+    slots = nextSlots;
+    sp.remaining = nextSp;
     c.io.to(c.ctx.room.sessionId).emit('character:updated', {
       characterId: sorc.charId,
-      changes: { spellSlots: slots },
+      changes: { spellSlots: slots, version },
     });
     broadcastSystem(
       c.io, c.ctx,
@@ -285,14 +337,15 @@ async function handleFlexible(c: ChatCommandContext): Promise<boolean> {
       whisperToCaller(c.io, c.ctx, `!flexible: level ${lvl} slot is already full.`);
       return true;
     }
-    sp.remaining -= cost;
-    slots[key] = { ...slot, used: slot.used - 1 };
-    await pool.query('UPDATE characters SET spell_slots = $1 WHERE id = $2',
-      [JSON.stringify(slots), sorc.charId],
-    ).catch((e) => console.warn('[flexible] slot refill failed:', e));
+    const nextSlots = { ...slots, [key]: { ...slot, used: slot.used - 1 } };
+    const nextSp = sp.remaining - cost;
+    const version = await commitSpellSlots(c, sorc.charId, nextSlots, expectedVersion);
+    if (version === null) return true;
+    slots = nextSlots;
+    sp.remaining = nextSp;
     c.io.to(c.ctx.room.sessionId).emit('character:updated', {
       characterId: sorc.charId,
-      changes: { spellSlots: slots },
+      changes: { spellSlots: slots, version },
     });
     broadcastSystem(
       c.io, c.ctx,
@@ -301,7 +354,6 @@ async function handleFlexible(c: ChatCommandContext): Promise<boolean> {
     return true;
   }
 
-  whisperToCaller(c.io, c.ctx, `!flexible: unknown direction "${direction}". Use slot2sp or sp2slot.`);
   return true;
 }
 
