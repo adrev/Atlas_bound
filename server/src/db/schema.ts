@@ -104,6 +104,7 @@ export async function initDatabase(): Promise<void> {
       compendium_slug TEXT DEFAULT NULL,
       exhaustion_level INTEGER NOT NULL DEFAULT 0,
       version INTEGER NOT NULL DEFAULT 1,
+      experience INTEGER NOT NULL DEFAULT 0 CONSTRAINT characters_experience_nonnegative CHECK (experience >= 0),
       created_at TEXT NOT NULL DEFAULT (NOW()::text),
       updated_at TEXT NOT NULL DEFAULT (NOW()::text)
     );
@@ -113,6 +114,15 @@ export async function initDatabase(): Promise<void> {
     -- column bolted on with the default 0 (no prior exhaustion).
     ALTER TABLE characters ADD COLUMN IF NOT EXISTS exhaustion_level INTEGER NOT NULL DEFAULT 0;
     ALTER TABLE characters ADD COLUMN IF NOT EXISTS version INTEGER NOT NULL DEFAULT 1;
+    -- Persisted XP for authoritative !xp (2026-08-05); the previous
+    -- in-memory tracker lost totals on restart and diverged across
+    -- instances. Existing DBs get the column bolted on at 0. The clamp
+    -- plus drop/re-add keeps the nonnegative CHECK enforceable even on
+    -- databases where the column predates the constraint.
+    ALTER TABLE characters ADD COLUMN IF NOT EXISTS experience INTEGER NOT NULL DEFAULT 0;
+    UPDATE characters SET experience = 0 WHERE experience < 0;
+    ALTER TABLE characters DROP CONSTRAINT IF EXISTS characters_experience_nonnegative;
+    ALTER TABLE characters ADD CONSTRAINT characters_experience_nonnegative CHECK (experience >= 0);
 
     CREATE TABLE IF NOT EXISTS maps (
       id TEXT PRIMARY KEY,

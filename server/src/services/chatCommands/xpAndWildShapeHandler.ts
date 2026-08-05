@@ -5,16 +5,38 @@ import {
   type ChatCommandContext,
 } from '../ChatCommands.js';
 import pool from '../../db/connection.js';
+import type { PoolClient } from 'pg';
 import type { Token } from '@dnd-vtt/shared';
-import type { PlayerContext } from '../../utils/roomState.js';
+import { resolveViewingMapId, type PlayerContext } from '../../utils/roomState.js';
+import { tokenVisibleToPlayer } from '../../utils/tokenVisibility.js';
 
 /**
  * Two kinda-orthogonal helpers bundled here:
  *
- *   XP — DMs award XP, characters level up when thresholds crossed.
- *     !xp <target1> [target2 …] <amount>
- *     !xp report                          — whispered party XP / levels
- *     !xp threshold                       — show thresholds + next level
+ *   XP — DMs award XP; characters become *eligible* to level when
+ *   thresholds are crossed.
+ *     !xp <target1> [target2 …] <amount>   — DM only
+ *     !xp report                           — DM only, whispered party XP
+ *     !xp threshold                        — caller's own linked character
+ *
+ *   XP is persisted on `characters.experience` (nonnegative), so totals
+ *   survive restarts and stay consistent across instances. Awards are
+ *   authoritative and fail closed: every target must resolve on the
+ *   DM's current viewing map, targets are deduplicated by character,
+ *   and all writes happen in ONE transaction where each character's
+ *   selected `version` guards its UPDATE (`WHERE version = <selected>
+ *   RETURNING version`). Any DB error, zero-row conflict, unusable
+ *   selected/returned version, malformed stored XP, or overflow rolls
+ *   the whole award back — no partial multi-target award, no exact-stat
+ *   fanout, no public success line. A COMMIT that cannot be confirmed
+ *   gets a truthful "verify before retrying" whisper instead of a
+ *   success claim. Levels are never mutated automatically: applying a
+ *   level without class/subclass choices would produce an invalid 5e
+ *   sheet, so crossing a threshold only reports eligibility. Exact
+ *   XP/version totals travel only through the dispatcher's stat-scoped
+ *   `character:updated` wrapper (DM tabs + owner tabs, widened only by
+ *   sharing toggles) and DM-facing whispers; the public line carries
+ *   the award amount and eligibility, never exact totals.
  *
  *   Wild Shape (Druid) — announce + HP swap. Full token-replacement
  *   is out of scope; this tracks the beast HP alongside the Druid's
@@ -26,18 +48,13 @@ import type { PlayerContext } from '../../utils/roomState.js';
 
 // XP thresholds per character level (PHB p.15).
 const XP_THRESHOLDS = [
-  0, 300, 900, 2700, 6500, 14000, 23000, 34000, 48000, 64000,
-  85000, 100000, 120000, 140000, 165000, 195000, 225000, 265000, 305000, 355000,
+  0, 300, 900, 2700, 6500, 14000, 23000, 34000, 48000, 64000, 85000, 100000, 120000, 140000, 165000,
+  195000, 225000, 265000, 305000, 355000,
 ];
-
-/**
- * In-memory XP tracker keyed by characterId. The `characters` table
- * doesn't currently have an `experience` column; rather than migrate
- * the schema we keep XP here for this session. Survives across
- * combats but not across server restarts — DMs running a multi-
- * session campaign should note the total between sessions.
- */
-const characterXp = new Map<string, number>();
+const MAX_LEVEL = 20;
+const MAX_AWARD = 999999;
+// Stored totals stay comfortably inside INT4 even after many max awards.
+const MAX_TOTAL_XP = 2_000_000_000;
 
 function resolveCallerToken(ctx: PlayerContext): Token | null {
   const all = Array.from(ctx.room.tokens.values());
@@ -47,73 +64,186 @@ function resolveCallerToken(ctx: PlayerContext): Token | null {
   return own[0] ?? null;
 }
 
-function resolveTargetByName(ctx: PlayerContext, name: string): Token | null {
-  const needle = name.toLowerCase();
+// ────── !xp ──────────────────────────────────────────────────
+
+function asAuthoritativeVersion(value: unknown): number | null {
+  const version = Number(value);
+  return Number.isInteger(version) && version >= 1 ? version : null;
+}
+
+/**
+ * Stored XP must already satisfy the schema's nonnegative-integer
+ * invariant. Null/empty is rejected rather than coerced (Number(null)
+ * is 0) — a row that predates the migration must fail closed, not
+ * silently read as zero.
+ */
+function asStoredXp(value: unknown): number | null {
+  if (value === null || value === undefined || value === '') return null;
+  const xp = Number(value);
+  return Number.isInteger(xp) && xp >= 0 ? xp : null;
+}
+
+/** Strict award parse: digits only, so `100abc` / `1e3` / `2.5` do not pass. */
+function parseAwardAmount(raw: string): number | null {
+  if (!/^\d+$/.test(raw)) return null;
+  const amount = Number(raw);
+  return amount >= 1 && amount <= MAX_AWARD ? amount : null;
+}
+
+function asCharacterLevel(value: unknown): number {
+  const level = Number(value);
+  if (!Number.isInteger(level) || level < 1) return 1;
+  return Math.min(level, MAX_LEVEL);
+}
+
+/** Highest level this XP total qualifies for, capped at 20. */
+function eligibleLevelForXp(xp: number): number {
+  let level = 1;
+  for (let i = 1; i < XP_THRESHOLDS.length; i++) {
+    if (xp >= XP_THRESHOLDS[i]) level = i + 1;
+  }
+  return Math.min(level, MAX_LEVEL);
+}
+
+/**
+ * XP-specific token resolution: only tokens on the map the caller is
+ * currently viewing, and (for non-DM callers) only tokens visible to
+ * them. A cross-map or hidden token gets the same "not found" as a
+ * nonexistent name. Mirrors the potion resolver; the room-wide
+ * resolveCallerToken above stays untouched for Wild Shape.
+ */
+function resolveXpToken(ctx: PlayerContext, match: (t: Token) => boolean): Token | null {
+  const viewingMapId = resolveViewingMapId(ctx.room, ctx.player.userId, ctx.player.role);
+  if (!viewingMapId) return null;
   const matches = Array.from(ctx.room.tokens.values()).filter(
-    (t) => t.name.toLowerCase() === needle,
+    (t) =>
+      t.mapId === viewingMapId &&
+      match(t) &&
+      (ctx.player.role === 'dm' || tokenVisibleToPlayer(t, ctx.player.userId))
   );
   if (matches.length === 0) return null;
   matches.sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
   return matches[0];
 }
 
-// ────── !xp ──────────────────────────────────────────────────
-async function handleXP(c: ChatCommandContext): Promise<boolean> {
-  const parts = c.rest.split(/\s+/).filter(Boolean);
-  if (parts.length === 0) {
-    whisperToCaller(c.io, c.ctx, '!xp: usage `!xp <target1> [target2 …] <amount>` | `!xp report` | `!xp threshold`');
-    return true;
-  }
-  const isDM = c.ctx.player.role === 'dm';
+/**
+ * The caller's own character for `!xp threshold`: the session-linked
+ * character first, else the caller's owned PC token on their current
+ * viewing map. Never another player's character, never an off-map
+ * token.
+ */
+function resolveOwnCharacterId(ctx: PlayerContext): string | null {
+  if (ctx.player.characterId) return ctx.player.characterId;
+  const own = resolveXpToken(
+    ctx,
+    (t) => t.ownerUserId === ctx.player.userId && Boolean(t.characterId)
+  );
+  return own?.characterId ?? null;
+}
 
-  if (parts[0].toLowerCase() === 'threshold') {
-    const caller = resolveCallerToken(c.ctx);
-    if (!caller?.characterId) {
-      whisperToCaller(c.io, c.ctx, '!xp threshold: no owned PC token.');
-      return true;
-    }
-    const { rows } = await pool.query('SELECT level, name FROM characters WHERE id = $1', [caller.characterId]);
-    const row = rows[0] as Record<string, unknown> | undefined;
-    const level = Number(row?.level) || 1;
-    const xp = characterXp.get(caller.characterId) ?? 0;
-    const name = (row?.name as string) || caller.name;
-    const nextLevel = XP_THRESHOLDS[level] ?? XP_THRESHOLDS[XP_THRESHOLDS.length - 1];
-    const toNext = Math.max(0, nextLevel - xp);
+async function handleXpThreshold(c: ChatCommandContext): Promise<boolean> {
+  const characterId = resolveOwnCharacterId(c.ctx);
+  if (!characterId) {
     whisperToCaller(
-      c.io, c.ctx,
-      `⭐ ${name} — Level ${level}, ${xp} XP. ${toNext} XP to level ${level + 1} (threshold ${nextLevel}).`,
+      c.io,
+      c.ctx,
+      '!xp threshold: no linked character or owned PC token on your current map.'
     );
     return true;
   }
-
-  if (parts[0].toLowerCase() === 'report') {
-    // Show every PC token's XP + level. DM-sees-all.
-    const pcs = Array.from(c.ctx.room.tokens.values()).filter(
-      (t) => t.characterId && t.ownerUserId,
+  const { rows } = await pool.query(
+    'SELECT name, level, experience FROM characters WHERE id = $1',
+    [characterId]
+  );
+  const row = rows[0] as Record<string, unknown> | undefined;
+  if (!row) {
+    whisperToCaller(c.io, c.ctx, '!xp threshold: character not found.');
+    return true;
+  }
+  const level = asCharacterLevel(row.level);
+  const xp = asStoredXp(row.experience);
+  if (xp === null) {
+    whisperToCaller(
+      c.io,
+      c.ctx,
+      '!xp threshold: stored XP is unreadable — refresh the character sheet.'
     );
-    const lines: string[] = ['⭐ Party XP report:'];
-    for (const pc of pcs) {
-      const { rows } = await pool.query('SELECT level, name FROM characters WHERE id = $1', [pc.characterId]);
-      const row = rows[0] as Record<string, unknown> | undefined;
-      if (!row) continue;
-      const level = Number(row.level) || 1;
-      const xp = characterXp.get(pc.characterId!) ?? 0;
-      const next = XP_THRESHOLDS[level] ?? XP_THRESHOLDS[XP_THRESHOLDS.length - 1];
-      lines.push(`  • ${row.name}: L${level}, ${xp} XP (${Math.max(0, next - xp)} to L${level + 1})`);
+    return true;
+  }
+  const name = String(row.name || 'Your character');
+  if (level >= MAX_LEVEL) {
+    whisperToCaller(
+      c.io,
+      c.ctx,
+      `⭐ ${name} — Level ${MAX_LEVEL}, ${xp} XP. Maximum level reached.`
+    );
+    return true;
+  }
+  const nextThreshold = XP_THRESHOLDS[level];
+  const toNext = Math.max(0, nextThreshold - xp);
+  const eligible = eligibleLevelForXp(xp);
+  const eligibleNote =
+    eligible > level ? ` 🎉 Eligible for level ${eligible} — apply it on the character sheet.` : '';
+  whisperToCaller(
+    c.io,
+    c.ctx,
+    `⭐ ${name} — Level ${level}, ${xp} XP. ${toNext} XP to level ${level + 1} (threshold ${nextThreshold}).${eligibleNote}`
+  );
+  return true;
+}
+
+async function handleXpReport(c: ChatCommandContext): Promise<boolean> {
+  // Exact party totals are DM information; the whisper goes only to
+  // the requesting DM tab.
+  const viewingMapId = resolveViewingMapId(c.ctx.room, c.ctx.player.userId, c.ctx.player.role);
+  const pcs = Array.from(c.ctx.room.tokens.values()).filter(
+    (t) => t.characterId && t.ownerUserId && t.mapId === viewingMapId
+  );
+  const seen = new Set<string>();
+  const lines: string[] = ['⭐ Party XP report (current map):'];
+  for (const pc of pcs) {
+    if (seen.has(pc.characterId!)) continue;
+    seen.add(pc.characterId!);
+    const { rows } = await pool.query(
+      'SELECT name, level, experience FROM characters WHERE id = $1',
+      [pc.characterId]
+    );
+    const row = rows[0] as Record<string, unknown> | undefined;
+    if (!row) continue;
+    const level = asCharacterLevel(row.level);
+    const xp = asStoredXp(row.experience);
+    if (xp === null) {
+      lines.push(`  • ${row.name}: L${level}, stored XP unreadable`);
+      continue;
     }
-    whisperToCaller(c.io, c.ctx, lines.join('\n'));
-    return true;
+    if (level >= MAX_LEVEL) {
+      lines.push(`  • ${row.name}: L${MAX_LEVEL}, ${xp} XP (max level)`);
+      continue;
+    }
+    const next = XP_THRESHOLDS[level];
+    const eligible = eligibleLevelForXp(xp);
+    lines.push(
+      `  • ${row.name}: L${level}, ${xp} XP (${Math.max(0, next - xp)} to L${level + 1})${eligible > level ? ` — eligible for L${eligible}` : ''}`
+    );
   }
+  if (lines.length === 1) lines.push('  • no PC tokens on this map.');
+  whisperToCaller(c.io, c.ctx, lines.join('\n'));
+  return true;
+}
 
-  if (!isDM) {
-    whisperToCaller(c.io, c.ctx, '!xp: DM only (award XP). Players can run `!xp threshold` for status.');
-    return true;
-  }
+interface XpAward {
+  characterId: string;
+  name: string;
+  level: number;
+  newXp: number;
+  eligibleLevel: number;
+  version: number;
+}
 
-  // Otherwise: !xp <target1> [target2 …] <amount>
-  const amount = parseInt(parts[parts.length - 1], 10);
-  if (!Number.isFinite(amount) || amount < 0 || amount > 999999) {
-    whisperToCaller(c.io, c.ctx, '!xp: amount must be a non-negative integer.');
+async function handleXpAward(c: ChatCommandContext, parts: string[]): Promise<boolean> {
+  const amount = parseAwardAmount(parts[parts.length - 1]);
+  if (amount === null) {
+    whisperToCaller(c.io, c.ctx, `!xp: amount must be a whole number from 1 to ${MAX_AWARD}.`);
     return true;
   }
   const targetNames = parts.slice(0, -1);
@@ -122,40 +252,165 @@ async function handleXP(c: ChatCommandContext): Promise<boolean> {
     return true;
   }
 
-  const lines: string[] = [];
-  lines.push(`⭐ ${c.ctx.player.displayName} awards ${amount} XP to ${targetNames.length} character${targetNames.length === 1 ? '' : 's'}:`);
+  // Resolve every target on the DM's current viewing map BEFORE any
+  // write; one bad name fails the whole award (no partial multi-target
+  // award). Duplicate names / tokens collapsing to one character are
+  // awarded once.
+  const characterIds: string[] = [];
+  const seen = new Set<string>();
+  const misses: string[] = [];
   for (const name of targetNames) {
-    const target = resolveTargetByName(c.ctx, name);
-    if (!target?.characterId) { lines.push(`  • ${name}: not found`); continue; }
-    const { rows } = await pool.query('SELECT level, name FROM characters WHERE id = $1', [target.characterId]);
-    const row = rows[0] as Record<string, unknown> | undefined;
-    if (!row) { lines.push(`  • ${name}: character missing`); continue; }
-    const oldLevel = Number(row.level) || 1;
-    const oldXp = characterXp.get(target.characterId) ?? 0;
-    const newXp = oldXp + amount;
-    // Compute new level.
-    let newLevel = oldLevel;
-    for (let i = oldLevel; i < XP_THRESHOLDS.length; i++) {
-      if (newXp >= XP_THRESHOLDS[i]) newLevel = i + 1;
+    const target = resolveXpToken(c.ctx, (t) => t.name.toLowerCase() === name.toLowerCase());
+    if (!target?.characterId) {
+      misses.push(name);
+      continue;
     }
-    const levelUp = newLevel > oldLevel;
-    characterXp.set(target.characterId, newXp);
-    if (levelUp) {
-      // Persist the level bump — the characters table has a `level`
-      // column — but leave XP in-memory since there's no column.
-      await pool.query(
-        'UPDATE characters SET level = $1 WHERE id = $2',
-        [newLevel, target.characterId],
-      ).catch((e) => console.warn('[!xp] level write failed:', e));
-      c.io.to(c.ctx.room.sessionId).emit('character:updated', {
-        characterId: target.characterId,
-        changes: { level: newLevel },
+    if (seen.has(target.characterId)) continue;
+    seen.add(target.characterId);
+    characterIds.push(target.characterId);
+  }
+  if (misses.length > 0) {
+    whisperToCaller(
+      c.io,
+      c.ctx,
+      `!xp: no XP was awarded — not a character token on your current map: ${misses.join(', ')}.`
+    );
+    return true;
+  }
+
+  const awards: XpAward[] = [];
+  let client: PoolClient | null = null;
+  let commitStarted = false;
+  try {
+    client = await pool.connect();
+    await client.query('BEGIN');
+    for (const characterId of characterIds) {
+      const { rows } = await client.query(
+        'SELECT name, level, experience, version FROM characters WHERE id = $1',
+        [characterId]
+      );
+      const row = rows[0] as Record<string, unknown> | undefined;
+      if (!row) throw new Error('character-missing');
+      const expectedVersion = asAuthoritativeVersion(row.version);
+      if (expectedVersion === null) throw new Error('character-version-unreadable');
+      const oldXp = asStoredXp(row.experience);
+      if (oldXp === null) throw new Error('character-xp-unreadable');
+      const newXp = oldXp + amount;
+      if (newXp > MAX_TOTAL_XP) throw new Error('character-xp-overflow');
+      const { rows: updated } = await client.query(
+        'UPDATE characters SET experience = $1 WHERE id = $2 AND version = $3 RETURNING version',
+        [newXp, characterId, expectedVersion]
+      );
+      const authoritativeVersion = asAuthoritativeVersion(
+        (updated[0] as Record<string, unknown> | undefined)?.version
+      );
+      if (authoritativeVersion === null) throw new Error('character-version-conflict');
+      awards.push({
+        characterId,
+        name: String(row.name || characterId),
+        level: asCharacterLevel(row.level),
+        newXp,
+        eligibleLevel: eligibleLevelForXp(newXp),
+        version: authoritativeVersion,
       });
     }
-    lines.push(`  • ${row.name}: ${oldXp} → ${newXp} XP${levelUp ? ` 🎉 LEVEL UP! L${oldLevel} → L${newLevel}` : ''}`);
+    commitStarted = true;
+    await client.query('COMMIT');
+  } catch (error) {
+    if (client) {
+      try {
+        await client.query('ROLLBACK');
+      } catch (rollbackError) {
+        console.warn('[!xp] rollback failed:', rollbackError);
+      }
+    }
+    console.warn('[!xp] award transaction failed:', error);
+    whisperToCaller(
+      c.io,
+      c.ctx,
+      commitStarted
+        ? '!xp: the award could not be confirmed — refresh the character sheets and verify XP before retrying.'
+        : '!xp: no XP was awarded — the save failed or a character sheet changed. Try again.'
+    );
+    return true;
+  } finally {
+    client?.release();
   }
-  broadcastSystem(c.io, c.ctx, lines.join('\n'));
+
+  // Exact totals + versions fan out only through the dispatcher's
+  // stat-scoped wrapper (DM tabs + each owner's tabs, widened only by
+  // sharing toggles). Payload always carries the post-write RETURNING
+  // version; `level` is never included — leveling stays a manual
+  // sheet decision.
+  for (const award of awards) {
+    c.io.to(c.ctx.room.sessionId).emit('character:updated', {
+      characterId: award.characterId,
+      changes: { experience: award.newXp, version: award.version },
+    });
+  }
+
+  // DM-only command, so exact new totals may be whispered back to the
+  // caller. The public line carries amount + eligibility only.
+  const dmLines = [`⭐ Awarded ${amount} XP:`];
+  for (const award of awards) {
+    dmLines.push(
+      `  • ${award.name}: ${award.newXp} XP total${award.eligibleLevel > award.level ? ` — eligible for L${award.eligibleLevel}` : ''}`
+    );
+  }
+  whisperToCaller(c.io, c.ctx, dmLines.join('\n'));
+
+  const publicLines = [
+    `⭐ ${c.ctx.player.displayName} awards ${amount} XP to ${awards.map((a) => a.name).join(', ')}.`,
+  ];
+  for (const award of awards) {
+    if (award.eligibleLevel > award.level) {
+      publicLines.push(
+        `   🎉 ${award.name} is now eligible for level ${award.eligibleLevel} — apply it on the character sheet.`
+      );
+    }
+  }
+  broadcastSystem(c.io, c.ctx, publicLines.join('\n'));
   return true;
+}
+
+async function handleXP(c: ChatCommandContext): Promise<boolean> {
+  const parts = c.rest.split(/\s+/).filter(Boolean);
+  if (parts.length === 0) {
+    whisperToCaller(
+      c.io,
+      c.ctx,
+      '!xp: usage `!xp <target1> [target2 …] <amount>` | `!xp report` | `!xp threshold`'
+    );
+    return true;
+  }
+  const isDM = c.ctx.player.role === 'dm';
+
+  if (parts[0].toLowerCase() === 'threshold') {
+    return handleXpThreshold(c);
+  }
+
+  if (parts[0].toLowerCase() === 'report') {
+    if (!isDM) {
+      whisperToCaller(
+        c.io,
+        c.ctx,
+        '!xp report: DM only. Players can run `!xp threshold` for their own status.'
+      );
+      return true;
+    }
+    return handleXpReport(c);
+  }
+
+  if (!isDM) {
+    whisperToCaller(
+      c.io,
+      c.ctx,
+      '!xp: DM only (award XP). Players can run `!xp threshold` for status.'
+    );
+    return true;
+  }
+
+  return handleXpAward(c, parts);
 }
 
 // ────── !wildshape <beast> <hp> [ac] [speed] ────────────────
@@ -171,21 +426,21 @@ async function handleXP(c: ChatCommandContext): Promise<boolean> {
  * HP pool mostly for the player to reference; the DM can apply
  * damage to the beast pool via a normal HP adjustment flow.
  */
-const wildShapePools = new Map<string, {
-  beastName: string;
-  beastHp: number;
-  beastMax: number;
-  beastAc: number | null;
-  beastSpeed: number | null;
-}>();
+const wildShapePools = new Map<
+  string,
+  {
+    beastName: string;
+    beastHp: number;
+    beastMax: number;
+    beastAc: number | null;
+    beastSpeed: number | null;
+  }
+>();
 
 async function handleWildShape(c: ChatCommandContext): Promise<boolean> {
   const parts = c.rest.split(/\s+/).filter(Boolean);
   if (parts.length < 2) {
-    whisperToCaller(
-      c.io, c.ctx,
-      '!wildshape: usage `!wildshape <beast-name> <hp> [ac] [speed]`',
-    );
+    whisperToCaller(c.io, c.ctx, '!wildshape: usage `!wildshape <beast-name> <hp> [ac] [speed]`');
     return true;
   }
   const caller = resolveCallerToken(c.ctx);
@@ -193,10 +448,9 @@ async function handleWildShape(c: ChatCommandContext): Promise<boolean> {
     whisperToCaller(c.io, c.ctx, '!wildshape: no owned PC token.');
     return true;
   }
-  const { rows } = await pool.query(
-    'SELECT class, level, name FROM characters WHERE id = $1',
-    [caller.characterId],
-  );
+  const { rows } = await pool.query('SELECT class, level, name FROM characters WHERE id = $1', [
+    caller.characterId,
+  ]);
   const row = rows[0] as Record<string, unknown> | undefined;
   const classLower = String(row?.class || '').toLowerCase();
   if (!classLower.includes('druid')) {
@@ -234,8 +488,9 @@ async function handleWildShape(c: ChatCommandContext): Promise<boolean> {
   if (beastAc !== null) extras.push(`AC ${beastAc}`);
   if (beastSpeed !== null) extras.push(`${beastSpeed} ft speed`);
   broadcastSystem(
-    c.io, c.ctx,
-    `🐺 ${druidName} Wild Shapes into a **${beastName}** — HP ${beastHp}/${beastHp}${extras.length > 0 ? `, ${extras.join(', ')}` : ''}. Revert with !revert (Druid's own HP unchanged).`,
+    c.io,
+    c.ctx,
+    `🐺 ${druidName} Wild Shapes into a **${beastName}** — HP ${beastHp}/${beastHp}${extras.length > 0 ? `, ${extras.join(', ')}` : ''}. Revert with !revert (Druid's own HP unchanged).`
   );
   return true;
 }
@@ -253,8 +508,9 @@ async function handleRevert(c: ChatCommandContext): Promise<boolean> {
   }
   wildShapePools.delete(caller.characterId);
   broadcastSystem(
-    c.io, c.ctx,
-    `🐺 ${caller.name} reverts from ${pool.beastName} back to Druid form.${pool.beastHp <= 0 ? ' (beast form dropped to 0 HP.)' : ''}`,
+    c.io,
+    c.ctx,
+    `🐺 ${caller.name} reverts from ${pool.beastName} back to Druid form.${pool.beastHp <= 0 ? ' (beast form dropped to 0 HP.)' : ''}`
   );
   return true;
 }
@@ -294,8 +550,9 @@ async function handleBeast(c: ChatCommandContext): Promise<boolean> {
   if (sub === 'dmg' || sub === 'damage') {
     bp.beastHp = Math.max(0, bp.beastHp - amount);
     broadcastSystem(
-      c.io, c.ctx,
-      `🐺 ${bp.beastName} takes ${amount} damage → ${bp.beastHp}/${bp.beastMax}${bp.beastHp <= 0 ? ' — BEAST DROPS, Druid reverts on excess.' : ''}`,
+      c.io,
+      c.ctx,
+      `🐺 ${bp.beastName} takes ${amount} damage → ${bp.beastHp}/${bp.beastMax}${bp.beastHp <= 0 ? ' — BEAST DROPS, Druid reverts on excess.' : ''}`
     );
     if (bp.beastHp <= 0) {
       wildShapePools.delete(caller.characterId);
@@ -304,7 +561,11 @@ async function handleBeast(c: ChatCommandContext): Promise<boolean> {
   }
   if (sub === 'heal') {
     bp.beastHp = Math.min(bp.beastMax, bp.beastHp + amount);
-    broadcastSystem(c.io, c.ctx, `🐺 ${bp.beastName} heals ${amount} → ${bp.beastHp}/${bp.beastMax}.`);
+    broadcastSystem(
+      c.io,
+      c.ctx,
+      `🐺 ${bp.beastName} heals ${amount} → ${bp.beastHp}/${bp.beastMax}.`
+    );
     return true;
   }
   whisperToCaller(c.io, c.ctx, `!beast: unknown subcommand "${sub}". Use status / dmg / heal.`);
