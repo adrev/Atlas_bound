@@ -260,8 +260,12 @@ describe('combat HP handlers — exact stats gated, condition visuals not', () =
       roll: 12, isSuccess: true, isCritSuccess: false, isCritFail: false,
     });
     const room = seedCombat(
-      tok('npc'),
-      combatant('npc', { hp: 0, deathSaves: { successes: 2, failures: 0 } }),
+      tok('npc', { characterId: 'char-npc' }),
+      combatant('npc', {
+        characterId: 'char-npc',
+        hp: 0,
+        deathSaves: { successes: 2, failures: 0 },
+      }),
     );
     const em: Emission[] = [];
     const handlers = new Map<string, (data: unknown) => Promise<void>>();
@@ -276,6 +280,7 @@ describe('combat HP handlers — exact stats gated, condition visuals not', () =
 
     // Third success → stabilized. The exact counters are private…
     expect(channelsFor(em, 'combat:death-save-updated')).toEqual(DM_TABS);
+    expect(channelsFor(em, 'character:updated')).toEqual(DM_TABS);
     // …but the resulting `stable` condition badge keeps token visibility.
     expect(channelsFor(em, 'map:token-updated')).toEqual(['by-sock', ...DM_TABS, ...OWNER_TABS]);
     void room;

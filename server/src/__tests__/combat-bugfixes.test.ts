@@ -202,7 +202,7 @@ describe('CombatService.nextTurn — skips downed combatants', () => {
 });
 
 describe('CombatService death-save state helpers', () => {
-  it('marks a downed PC stable while keeping them unconscious at 0 HP', () => {
+  it('marks a downed PC stable while keeping them unconscious at 0 HP', async () => {
     const sessionId = 's-stabilize';
     const token = makeToken('tPC', {
       ownerUserId: 'player-1',
@@ -218,7 +218,7 @@ describe('CombatService death-save state helpers', () => {
     });
     seedRoom(sessionId, [token], [combatant]);
 
-    CombatService.markStable(sessionId, 'tPC');
+    await CombatService.markStable(sessionId, 'tPC');
 
     expect(combatant.hp).toBe(0);
     expect(combatant.deathSaves).toEqual({ successes: 0, failures: 0 });

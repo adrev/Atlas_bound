@@ -1485,10 +1485,10 @@ function setTokenConditions(
   return { changed: true, conditions: after, removed, added, persistPromise };
 }
 
-export function markStable(
+export async function markStable(
   sessionId: string,
   tokenId: string
-): { conditions: string[]; added: string[] } {
+): Promise<{ conditions: string[]; added: string[]; version?: number }> {
   const room = getRoom(sessionId);
   if (!room?.combatState) throw new Error('No active combat');
   const combatant = room.combatState.combatants.find((c) => c.tokenId === tokenId);
@@ -1502,17 +1502,24 @@ export function markStable(
     if (!next.some((c) => c.toLowerCase() === 'stable')) next.push('stable');
     return next;
   });
+  let version: number | undefined;
   if (combatant.characterId) {
-    pool
-      .query('UPDATE characters SET hit_points = 0, death_saves = $1 WHERE id = $2', [
+    const { rows } = await pool.query(
+      'UPDATE characters SET hit_points = 0, death_saves = $1 WHERE id = $2 RETURNING version',
+      [
         JSON.stringify(combatant.deathSaves),
         combatant.characterId,
-      ])
-      .catch((e) => console.warn('[CombatService] stable character persist failed:', e));
+      ]
+    );
+    version = parseCharacterVersion(rows[0]);
   }
   persistCombatState(room.combatState);
 
-  return { conditions: result.conditions, added: result.added };
+  return {
+    conditions: result.conditions,
+    added: result.added,
+    ...(version !== undefined ? { version } : {}),
+  };
 }
 
 export function persistSessionCombatState(sessionId: string): void {

@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Server, Socket } from 'socket.io';
 import type { Combatant, CombatState, Token } from '@dnd-vtt/shared';
 
@@ -18,6 +18,8 @@ vi.mock('../db/connection.js', () => ({
 import { registerCombatHp } from '../socket/combat/hpEvents.js';
 import { registerCharacterEvents } from '../socket/characterEvents.js';
 import { addPlayerToRoom, createRoom, getAllRooms } from '../utils/roomState.js';
+import * as DiceService from '../services/DiceService.js';
+import * as DiscordService from '../services/DiscordService.js';
 
 interface Emission {
   channelId: string;
@@ -143,6 +145,10 @@ beforeEach(() => {
   for (const id of Array.from(getAllRooms().keys())) getAllRooms().delete(id);
 });
 
+afterEach(() => {
+  vi.restoreAllMocks();
+});
+
 describe('combat HP version propagation', () => {
   it('includes the RETURNING version in the damage character:updated fanout', async () => {
     seedCombatRoom('vers-damage-session');
@@ -263,6 +269,131 @@ describe('combat HP version propagation', () => {
 
     const update = characterUpdatePayload(emissions);
     expect(update?.characterId).toBe('char-1');
+    expect(update?.changes).not.toHaveProperty('version');
+  });
+});
+
+describe('death-save version propagation', () => {
+  it('persists an ordinary death-save result and fans out its authoritative version', async () => {
+    seedCombatRoom('vers-death-failure', {
+      hp: 0,
+      deathSaves: { successes: 0, failures: 0 },
+    });
+    vi.spyOn(DiceService, 'rollDeathSave').mockReturnValue({
+      roll: 5,
+      isSuccess: false,
+      isCritSuccess: false,
+      isCritFail: false,
+    });
+    mockQuery.mockImplementation(async (sql: string) => {
+      if (String(sql).includes('UPDATE characters SET death_saves')) {
+        expect(String(sql)).toContain('RETURNING version');
+        return { rows: [{ version: 9 }] };
+      }
+      return { rows: [] };
+    });
+
+    const emissions: Emission[] = [];
+    const { socket, handlers } = fakeSocket('dm-sock');
+    registerCombatHp(fakeIo(emissions), socket);
+
+    await handlers.get('combat:death-save')?.({ tokenId: 'pc-token' });
+
+    const update = characterUpdatePayload(emissions);
+    expect(update?.changes?.deathSaves).toEqual({ successes: 0, failures: 1 });
+    expect(update?.changes?.version).toBe(9);
+  });
+
+  it('broadcasts the HP and version returned by a natural-20 death-save heal', async () => {
+    seedCombatRoom('vers-death-nat20', {
+      hp: 0,
+      deathSaves: { successes: 1, failures: 1 },
+    });
+    vi.spyOn(DiceService, 'rollDeathSave').mockReturnValue({
+      roll: 20,
+      isSuccess: true,
+      isCritSuccess: true,
+      isCritFail: false,
+    });
+    vi.spyOn(DiscordService, 'notifySession').mockResolvedValue(undefined);
+    mockQuery.mockImplementation(async (sql: string) => {
+      if (String(sql).includes('UPDATE characters SET hit_points')) {
+        return { rows: [{ version: 10 }] };
+      }
+      return { rows: [] };
+    });
+
+    const emissions: Emission[] = [];
+    const { socket, handlers } = fakeSocket('dm-sock');
+    registerCombatHp(fakeIo(emissions), socket);
+
+    await handlers.get('combat:death-save')?.({ tokenId: 'pc-token' });
+
+    const hpChange = emissions.find((entry) => entry.event === 'combat:hp-changed')?.payload as
+      | Record<string, unknown>
+      | undefined;
+    expect(hpChange).toMatchObject({ tokenId: 'pc-token', hp: 1, type: 'heal' });
+    const update = characterUpdatePayload(emissions);
+    expect(update?.changes).toMatchObject({
+      hitPoints: 1,
+      tempHitPoints: 0,
+      deathSaves: { successes: 0, failures: 0 },
+      version: 10,
+    });
+  });
+
+  it('awaits the stable write and emits its version on a third success', async () => {
+    const { pcToken } = seedCombatRoom('vers-death-stable', {
+      hp: 0,
+      deathSaves: { successes: 2, failures: 0 },
+    });
+    pcToken.conditions = ['unconscious'] as never;
+    vi.spyOn(DiceService, 'rollDeathSave').mockReturnValue({
+      roll: 12,
+      isSuccess: true,
+      isCritSuccess: false,
+      isCritFail: false,
+    });
+    mockQuery.mockImplementation(async (sql: string) => {
+      if (String(sql).includes('UPDATE characters SET hit_points = 0')) {
+        expect(String(sql)).toContain('RETURNING version');
+        return { rows: [{ version: 11 }] };
+      }
+      return { rows: [] };
+    });
+
+    const emissions: Emission[] = [];
+    const { socket, handlers } = fakeSocket('dm-sock');
+    registerCombatHp(fakeIo(emissions), socket);
+
+    await handlers.get('combat:death-save')?.({ tokenId: 'pc-token' });
+
+    const update = characterUpdatePayload(emissions);
+    expect(update?.changes?.deathSaves).toEqual({ successes: 0, failures: 0 });
+    expect(update?.changes?.version).toBe(11);
+    expect(pcToken.conditions).toContain('stable');
+  });
+
+  it('omits an invalid version while still syncing death-save counters', async () => {
+    seedCombatRoom('vers-death-invalid', {
+      hp: 0,
+      deathSaves: { successes: 0, failures: 0 },
+    });
+    vi.spyOn(DiceService, 'rollDeathSave').mockReturnValue({
+      roll: 15,
+      isSuccess: true,
+      isCritSuccess: false,
+      isCritFail: false,
+    });
+
+    const emissions: Emission[] = [];
+    const { socket, handlers } = fakeSocket('dm-sock');
+    registerCombatHp(fakeIo(emissions), socket);
+
+    await handlers.get('combat:death-save')?.({ tokenId: 'pc-token' });
+
+    const update = characterUpdatePayload(emissions);
+    expect(update?.changes?.deathSaves).toEqual({ successes: 1, failures: 0 });
     expect(update?.changes).not.toHaveProperty('version');
   });
 });
