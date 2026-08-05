@@ -518,7 +518,7 @@ export async function executeOpportunityAttack(
           characterId: damageResult.characterId,
           hp: damageResult.hp,
           tempHp: damageResult.tempHp,
-          version: damageResult.version,
+          ...(damageResult.version !== undefined ? { version: damageResult.version } : {}),
         };
       }
       if (damageResult.autoDeathSaveFailure) {
