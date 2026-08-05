@@ -1191,6 +1191,19 @@ router.get('/:id/state', async (req: Request, res: Response) => {
   for (const t of visibleTokens) {
     if (t.characterId) charIds.add(t.characterId);
   }
+  // Full-sheet live updates are scoped to DMs, the owner, and players
+  // when party sharing is enabled. Include every session-linked PC for
+  // the same allowed audiences so a missed socket frame self-heals even
+  // when that character has no token on the caller's current map.
+  if (isDM || showPlayersToPlayers) {
+    const { rows: linkedCharRows } = await pool.query(
+      `SELECT character_id
+         FROM session_players
+        WHERE session_id = $1 AND character_id IS NOT NULL`,
+      [sessionId]
+    );
+    for (const row of linkedCharRows) charIds.add(row.character_id as string);
+  }
   // Always include the caller's own character row(s) even when their
   // token isn't on this map (late-join / Hero tab access).
   const { rows: myCharRows } = await pool.query('SELECT id FROM characters WHERE user_id = $1', [
