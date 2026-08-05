@@ -45,4 +45,13 @@ export default [
       '@typescript-eslint/no-explicit-any': 'off',
     },
   },
+  {
+    // This legacy panel predates the typed client model and still contains a
+    // large cluster of boundary casts. Keep every other TSX file gated now;
+    // remove this exception as the panel is split into typed feature modules.
+    files: ['client/src/components/canvas/TokenActionPanel.tsx'],
+    rules: {
+      '@typescript-eslint/no-explicit-any': 'off',
+    },
+  },
 ];

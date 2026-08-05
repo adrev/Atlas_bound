@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect } from 'react';
 import { useMapStore } from '../../stores/useMapStore';
 import { useCharacterStore } from '../../stores/useCharacterStore';
 import { useSessionStore } from '../../stores/useSessionStore';
@@ -8,7 +8,6 @@ import {
   emitCharacterUpdate,
   emitTokenUpdate,
   emitSystemMessage,
-  emitTokenAdd,
   emitUseAction,
   emitDash,
   emitAttackHitAttempt,
@@ -215,21 +214,10 @@ import {
 } from '@dnd-vtt/shared';
 import type { Token, AmbientLight } from '@dnd-vtt/shared';
 import { useEffectStore } from '../../stores/useEffectStore';
-import { LootBagPanel } from '../loot/LootBagPanel';
 import { TokenDeadState } from './tokenPanel/TokenDeadState';
 import { TokenTraits } from './tokenPanel/TokenTraits';
 import { TokenSensesLanguages } from './tokenPanel/TokenSensesLanguages';
 import { TokenCreatureSpells } from './tokenPanel/TokenCreatureSpells';
-
-// --- Inline Loot Section for DMs ---
-const RARITY_COLORS: Record<string, string> = {
-  common: '#9d9d9d',
-  uncommon: '#1eff00',
-  rare: '#0070dd',
-  'very rare': '#a335ee',
-  legendary: '#ff8000',
-  artifact: '#e6cc80',
-};
 
 interface LootEntry {
   id: string;
@@ -239,82 +227,6 @@ interface LootEntry {
   custom_item_id: string | null;
   quantity: number;
   equipped?: boolean;
-}
-
-function LootButton({ characterId, tokenName }: { characterId: string; tokenName: string }) {
-  const [count, setCount] = useState(0);
-
-  useEffect(() => {
-    let cancelled = false;
-    fetch(`/api/characters/${characterId}/loot`)
-      .then((r) => (r.ok ? r.json() : []))
-      .then((data: LootEntry[]) => {
-        if (!cancelled) setCount(data.reduce((s, e) => s + e.quantity, 0));
-      })
-      .catch(() => {});
-
-    const handler = () => {
-      fetch(`/api/characters/${characterId}/loot`)
-        .then((r) => (r.ok ? r.json() : []))
-        .then((data: LootEntry[]) => {
-          if (!cancelled) setCount(data.reduce((s, e) => s + e.quantity, 0));
-        })
-        .catch(() => {});
-    };
-    window.addEventListener('loot-updated', handler);
-    return () => {
-      cancelled = true;
-      window.removeEventListener('loot-updated', handler);
-    };
-  }, [characterId]);
-
-  return (
-    <button
-      onClick={() => {
-        window.dispatchEvent(
-          new CustomEvent('open-loot-editor', {
-            detail: { characterId, tokenName },
-          })
-        );
-      }}
-      style={{
-        display: 'flex',
-        alignItems: 'center',
-        gap: 6,
-        width: '100%',
-        padding: '6px 10px',
-        marginTop: 4,
-        borderRadius: 6,
-        background: `${C.gold}11`,
-        border: `1px solid ${C.gold}33`,
-        color: C.gold,
-        fontSize: 11,
-        fontWeight: 600,
-        cursor: 'pointer',
-        fontFamily: 'inherit',
-        transition: 'background 0.15s',
-      }}
-      onMouseEnter={(e) => (e.currentTarget.style.background = `${C.gold}22`)}
-      onMouseLeave={(e) => (e.currentTarget.style.background = `${C.gold}11`)}
-    >
-      <span>💰</span>
-      <span style={{ flex: 1, textAlign: 'left' }}>Inventory</span>
-      {count > 0 && (
-        <span
-          style={{
-            fontSize: 9,
-            fontWeight: 700,
-            background: `${C.gold}22`,
-            padding: '1px 6px',
-            borderRadius: 8,
-            border: `1px solid ${C.gold}44`,
-          }}
-        >
-          {count}
-        </span>
-      )}
-    </button>
-  );
 }
 
 // Thin alias over the shared theme tokens. Every color in this panel
@@ -2215,7 +2127,6 @@ export function TokenActionPanel({
           // them to the chat breakdown card as a transparent line.
           let wRolledDmg: number;
           let wBaseDiceRolls: number[] = [];
-          let wBaseMod = 0;
           if (wGwfReroll) {
             const match = String(wFinalDice).match(/(\d+)d(\d+)(?:\s*([+-])\s*(\d+))?/);
             if (match) {
@@ -2233,18 +2144,15 @@ export function TokenActionPanel({
               }
               wRolledDmg = Math.max(0, subTotal + modN);
               wBaseDiceRolls = rolls;
-              wBaseMod = modN;
             } else {
               const d = rollDamageDiceDetailed(wFinalDice);
               wRolledDmg = d.total;
               wBaseDiceRolls = d.rolls;
-              wBaseMod = d.mod;
             }
           } else {
             const d = rollDamageDiceDetailed(wFinalDice);
             wRolledDmg = d.total;
             wBaseDiceRolls = d.rolls;
-            wBaseMod = d.mod;
           }
           // Capture the BASE weapon damage (dice + ability mod) BEFORE
           // riders (Rage, Sneak, Power Attack, etc.) add in. The
@@ -5501,21 +5409,6 @@ async function castSpellFromButton(spell: any, casterTokenId: string, casterName
   await aimAndCastSpell(spell, casterTokenId, casterName);
 }
 
-function quickBtnStyle(color: string): React.CSSProperties {
-  return {
-    flex: 1,
-    padding: '6px 0',
-    borderRadius: 6,
-    fontSize: 10,
-    fontWeight: 600,
-    background: `${color}15`,
-    border: `1px solid ${color}33`,
-    color,
-    cursor: 'pointer',
-    fontFamily: 'inherit',
-  };
-}
-
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <div style={{ marginBottom: 6 }}>
@@ -5851,8 +5744,6 @@ function HPControls({
   onHeal: (amount: number) => void;
 }) {
   const [hpInput, setHpInput] = useState('');
-  const [showInput, setShowInput] = useState(false);
-
   return (
     <div style={{ marginTop: 6 }}>
       <div
