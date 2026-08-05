@@ -217,7 +217,7 @@ export function registerSceneEvents(io: Server, socket: Socket): void {
         'SELECT * FROM maps WHERE id = $1 AND session_id = $2',
         [mapId, ctx.room.sessionId]
       );
-      const mapRow = mapRows[0] as Record<string, unknown> | undefined;
+      let mapRow = mapRows[0] as Record<string, unknown> | undefined;
       if (!mapRow) {
         console.warn('[SCENE] map not found', mapId);
         socket.emit('session:error', { message: 'Map not found in this session' });
@@ -227,109 +227,148 @@ export function registerSceneEvents(io: Server, socket: Socket): void {
         `[SCENE] activating map ${mapRow.name} (${mapId}) for ${ctx.room.players.size} players`
       );
 
-      // Create tokens for staged heroes
-      for (const staged of stagedPositions) {
-        const { rows: existsRows } = await pool.query(
-          'SELECT id FROM tokens WHERE map_id = $1 AND character_id = $2',
-          [mapId, staged.characterId]
-        );
-        if (existsRows.length > 0) continue;
+      let oldPlayerMapId: string | null = null;
+      const dbClient = await pool.connect();
+      try {
+        await dbClient.query('BEGIN');
 
-        const tokenId = uuidv4();
-        const gridSize = (mapRow.grid_size as number) ?? 70;
-        // PCs coming through the DM staging flow always have a human
-        // owner — explicitly tag faction='friendly' so the name label
-        // renders with the party-green border instead of the default
-        // 'neutral' (black) that made PCs read as enemies to party
-        // members used to the green/red convention.
-        await pool.query(
-          `INSERT INTO tokens (
-        id, map_id, character_id, name, x, y, size, color, layer, visible,
-        image_url, has_light, light_radius, light_dim_radius, light_color,
-        conditions, owner_user_id, faction
-      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)`,
-          [
-            tokenId,
-            mapId,
-            staged.characterId,
-            staged.name,
-            staged.x,
-            staged.y,
-            1,
-            '#666',
-            'token',
-            1,
-            staged.imageUrl,
-            0,
-            gridSize * 4,
-            gridSize * 8,
-            '#ffcc66',
-            '[]',
-            staged.ownerUserId,
-            'friendly',
-          ]
+        // Lock both rows that define this scene transition. The map lock
+        // prevents deletion while tokens are being staged, and the session
+        // lock serializes two DMs trying to move the ribbon concurrently.
+        const { rows: lockedMapRows } = await dbClient.query(
+          'SELECT * FROM maps WHERE id = $1 AND session_id = $2 FOR UPDATE',
+          [mapId, ctx.room.sessionId]
         );
-        console.log(`[SCENE] staged hero ${staged.name} at (${staged.x}, ${staged.y})`);
+        if (lockedMapRows.length === 0) throw new Error('Target map no longer exists');
+        mapRow = lockedMapRows[0] as Record<string, unknown>;
+
+        const { rows: sessionRows } = await dbClient.query(
+          'SELECT player_map_id FROM sessions WHERE id = $1 FOR UPDATE',
+          [ctx.room.sessionId]
+        );
+        if (sessionRows.length === 0) throw new Error('Session no longer exists');
+        oldPlayerMapId = (sessionRows[0].player_map_id as string | null) ?? null;
+
+        // Create tokens for staged heroes.
+        for (const staged of stagedPositions) {
+          const { rows: existsRows } = await dbClient.query(
+            'SELECT id FROM tokens WHERE map_id = $1 AND character_id = $2',
+            [mapId, staged.characterId]
+          );
+          if (existsRows.length > 0) continue;
+
+          const tokenId = uuidv4();
+          const gridSize = (mapRow.grid_size as number) ?? 70;
+          // PCs coming through the DM staging flow always have a human
+          // owner — explicitly tag faction='friendly' so the name label
+          // renders with the party-green border instead of the default
+          // 'neutral' (black) that made PCs read as enemies to party
+          // members used to the green/red convention.
+          await dbClient.query(
+            `INSERT INTO tokens (
+          id, map_id, character_id, name, x, y, size, color, layer, visible,
+          image_url, has_light, light_radius, light_dim_radius, light_color,
+          conditions, owner_user_id, faction
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)`,
+            [
+              tokenId,
+              mapId,
+              staged.characterId,
+              staged.name,
+              staged.x,
+              staged.y,
+              1,
+              '#666',
+              'token',
+              1,
+              staged.imageUrl,
+              0,
+              gridSize * 4,
+              gridSize * 8,
+              '#ffcc66',
+              '[]',
+              staged.ownerUserId,
+              'friendly',
+            ]
+          );
+          console.log(`[SCENE] staged hero ${staged.name} at (${staged.x}, ${staged.y})`);
+        }
+
+        // Migrate player character tokens while the session row is locked.
+        if (oldPlayerMapId && oldPlayerMapId !== mapId) {
+          const { rows: pcTokens } = await dbClient.query(
+            `
+          SELECT id, character_id FROM tokens
+          WHERE map_id = $1 AND character_id IS NOT NULL AND owner_user_id IS NOT NULL
+          FOR UPDATE
+        `,
+            [oldPlayerMapId]
+          );
+
+          if (pcTokens.length > 0) {
+            const gridSize = (mapRow.grid_size as number) ?? 70;
+            const mapWidth = (mapRow.width as number) ?? 1400;
+            const mapHeight = (mapRow.height as number) ?? 1050;
+            const { rows: alreadyOnNewMap } = await dbClient.query(
+              'SELECT character_id FROM tokens WHERE map_id = $1 AND character_id IS NOT NULL',
+              [mapId]
+            );
+            const existingCharacterIds = new Set(
+              alreadyOnNewMap.map((r) => r.character_id as string)
+            );
+
+            const pcsToMigrate = pcTokens.filter(
+              (pc) => !existingCharacterIds.has(pc.character_id as string)
+            );
+            const lineWidth = pcsToMigrate.length * gridSize;
+            const startX = Math.round((mapWidth - lineWidth) / 2);
+            const centerY = Math.round(mapHeight / 2);
+
+            let spawnIndex = 0;
+            for (const pc of pcsToMigrate) {
+              const x = startX + spawnIndex * gridSize;
+              await dbClient.query('UPDATE tokens SET map_id = $1, x = $2, y = $3 WHERE id = $4', [
+                mapId,
+                x,
+                centerY,
+                pc.id,
+              ]);
+              spawnIndex++;
+            }
+            if (spawnIndex > 0) {
+              console.log(
+                `[SCENE] migrated ${spawnIndex} PC token${spawnIndex !== 1 ? 's' : ''} from ${oldPlayerMapId} → ${mapId}`
+              );
+            }
+          }
+        }
+
+        const pointerUpdate = await dbClient.query(
+          'UPDATE sessions SET player_map_id = $1, current_map_id = $2 WHERE id = $3',
+          [mapId, mapId, ctx.room.sessionId]
+        );
+        if (pointerUpdate.rowCount !== 1) throw new Error('Session map pointer update failed');
+
+        await dbClient.query('COMMIT');
+      } catch (err) {
+        try {
+          await dbClient.query('ROLLBACK');
+        } catch (rollbackErr) {
+          console.warn('[scene:activate] rollback failed:', rollbackErr);
+        }
+        console.warn('[scene:activate] transaction failed:', err);
+        socket.emit('session:error', { message: 'Failed to move players to this map' });
+        return;
+      } finally {
+        dbClient.release();
       }
 
-      const oldPlayerMapId = ctx.room.playerMapId;
-
+      // The database is now authoritative. Only mutate live room state
+      // after every staged token, migration, and pointer update committed.
       ctx.room.playerMapId = mapId;
       ctx.room.currentMapId = mapId;
       // Cache grid size for synchronous OA / reach math.
       ctx.room.mapGridSizes.set(mapId, Number(mapRow.grid_size) || 70);
-      try {
-        await pool.query(
-          'UPDATE sessions SET player_map_id = $1, current_map_id = $2 WHERE id = $3',
-          [mapId, mapId, ctx.room.sessionId]
-        );
-      } catch (err) {
-        console.warn('[scene:activate] session map pointers update failed:', err);
-      }
-
-      // Migrate player character tokens
-      if (oldPlayerMapId && oldPlayerMapId !== mapId) {
-        const { rows: pcTokens } = await pool.query(
-          `
-        SELECT id, character_id FROM tokens
-        WHERE map_id = $1 AND character_id IS NOT NULL AND owner_user_id IS NOT NULL
-      `,
-          [oldPlayerMapId]
-        );
-
-        if (pcTokens.length > 0) {
-          const gridSize = (mapRow.grid_size as number) ?? 70;
-          const mapWidth = (mapRow.width as number) ?? 1400;
-          const mapHeight = (mapRow.height as number) ?? 1050;
-          const { rows: alreadyOnNewMap } = await pool.query(
-            'SELECT character_id FROM tokens WHERE map_id = $1 AND character_id IS NOT NULL',
-            [mapId]
-          );
-          const existingCharacterIds = new Set(alreadyOnNewMap.map((r) => r.character_id));
-
-          const pcsToMigrate = pcTokens.filter((pc) => !existingCharacterIds.has(pc.character_id));
-          const lineWidth = pcsToMigrate.length * gridSize;
-          const startX = Math.round((mapWidth - lineWidth) / 2);
-          const centerY = Math.round(mapHeight / 2);
-
-          let spawnIndex = 0;
-          for (const pc of pcsToMigrate) {
-            const x = startX + spawnIndex * gridSize;
-            await pool.query('UPDATE tokens SET map_id = $1, x = $2, y = $3 WHERE id = $4', [
-              mapId,
-              x,
-              centerY,
-              pc.id,
-            ]);
-            spawnIndex++;
-          }
-          if (spawnIndex > 0) {
-            console.log(
-              `[SCENE] migrated ${spawnIndex} PC token${spawnIndex !== 1 ? 's' : ''} from ${oldPlayerMapId} → ${mapId}`
-            );
-          }
-        }
-      }
 
       // Load tokens + drawings for new ribbon map
       const { rows: tokenRows } = await pool.query('SELECT * FROM tokens WHERE map_id = $1', [
