@@ -379,15 +379,29 @@ export function emitDash() {
 /**
  * Execute an Opportunity Attack against a mover who just left the
  * attacker's melee reach. The server rolls the attack, applies
- * damage, and burns the attacker's reaction slot.
+ * damage, and burns the attacker's reaction slot. `opportunityId` binds
+ * the request to the exact server-issued opportunity so a stale prompt
+ * can't resolve a newer opportunity for the same pair.
  */
-export function emitOAExecute(attackerTokenId: string, moverTokenId: string) {
-  getSocket().emit('combat:oa-execute', { attackerTokenId, moverTokenId });
+export function emitOAExecute(
+  opportunityId: string,
+  attackerTokenId: string,
+  moverTokenId: string
+) {
+  getSocket().emit('combat:oa-execute', { opportunityId, attackerTokenId, moverTokenId });
 }
 
-/** Decline an OA prompt (reserved for future audit). */
-export function emitOADecline(attackerTokenId: string, moverTokenId: string) {
-  getSocket().emit('combat:oa-decline', { attackerTokenId, moverTokenId });
+/**
+ * Decline an OA prompt. Drops the matching server-issued pending
+ * opportunity so it can't be executed later; bound to `opportunityId` so a
+ * stale decline can't cancel a newer opportunity for the same pair.
+ */
+export function emitOADecline(
+  opportunityId: string,
+  attackerTokenId: string,
+  moverTokenId: string
+) {
+  getSocket().emit('combat:oa-decline', { opportunityId, attackerTokenId, moverTokenId });
 }
 
 /**

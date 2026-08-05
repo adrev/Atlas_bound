@@ -1,14 +1,20 @@
 import { v4 as uuidv4 } from 'uuid';
 import type { Server, Socket } from 'socket.io';
 import {
-  getPlayerBySocketId, isTokenActionable, socketRecipientsOnMap,
+  getPlayerBySocketId,
+  isTokenActionable,
+  socketRecipientsOnMap,
 } from '../../utils/roomState.js';
 import * as OpportunityAttackService from '../../services/OpportunityAttackService.js';
 import { getSpellAnimation } from '@dnd-vtt/shared';
 import {
-  combatCastSpellSchema, combatOaExecuteSchema,
-  combatSpellCastAttemptSchema, combatSpellCounterspelledSchema,
-  combatAttackHitAttemptSchema, combatShieldCastSchema,
+  combatCastSpellSchema,
+  combatOaExecuteSchema,
+  combatOaDeclineSchema,
+  combatSpellCastAttemptSchema,
+  combatSpellCounterspelledSchema,
+  combatAttackHitAttemptSchema,
+  combatShieldCastSchema,
   combatMobileAttackedSchema,
 } from '../../utils/validation.js';
 import { safeHandler } from '../../utils/socketHelpers.js';
@@ -30,141 +36,219 @@ import {
 export function registerCombatReactions(io: Server, socket: Socket): void {
   // ----------------------------------------------------------------------
   // combat:oa-execute \u2014 the player/DM clicked "Attack" on an
-  // Opportunity Attack prompt. Server rolls the attack, applies
-  // damage, consumes the attacker's reaction, and broadcasts the
-  // result to everyone.
+  // Opportunity Attack prompt. Server claims the server-issued pending
+  // opportunity, rolls the attack, applies damage, consumes the
+  // attacker's reaction, and broadcasts the result to everyone. A
+  // rejected execute (fabricated/stale/duplicate/declined) is NOT
+  // persisted or broadcast \u2014 the failure goes only to the requesting
+  // socket.
   //
-  // combat:oa-decline \u2014 player dismissed the prompt; we just swallow
-  // it silently. (Present for symmetry \u2014 the client can emit it so
-  // the server can audit-log in the future.)
+  // combat:oa-decline \u2014 the attacker's owner or the DM dismissed the
+  // prompt. Removes the matching server-issued pending opportunity so a
+  // later oa-execute for that exact opportunity is rejected.
   // ----------------------------------------------------------------------
-  socket.on('combat:oa-execute', safeHandler(socket, async (data: unknown) => {
-    const parsed = combatOaExecuteSchema.safeParse(data);
-    if (!parsed.success) return;
-    const ctx = getPlayerBySocketId(socket.id);
-    if (!ctx) return;
+  socket.on(
+    'combat:oa-execute',
+    safeHandler(socket, async (data: unknown) => {
+      const parsed = combatOaExecuteSchema.safeParse(data);
+      if (!parsed.success) return;
+      const ctx = getPlayerBySocketId(socket.id);
+      if (!ctx) return;
 
-    // Permission: must be the attacker's owner OR the DM.
-    const attacker = ctx.room.tokens.get(parsed.data.attackerTokenId);
-    if (!attacker) return;
-    const isDM = ctx.player.role === 'dm';
-    const isOwner = attacker.ownerUserId === ctx.player.userId;
-    if (!isDM && !isOwner) return;
+      // Permission: must be the attacker's owner OR the DM.
+      const attacker = ctx.room.tokens.get(parsed.data.attackerTokenId);
+      if (!attacker) return;
+      const isDM = ctx.player.role === 'dm';
+      const isOwner = attacker.ownerUserId === ctx.player.userId;
+      if (!isDM && !isOwner) return;
 
-    // Combat must be active \u2014 OA only happens during combat.
-    if (!ctx.room.combatState?.active) return;
+      // Combat must be active \u2014 OA only happens during combat.
+      if (!ctx.room.combatState?.active) return;
 
-    // The mover must exist and be hostile to the attacker. Without
-    // this, a player could manufacture a free attack against any
-    // token in the room by crafting an oa-execute payload.
-    const mover = ctx.room.tokens.get(parsed.data.moverTokenId);
-    if (!mover) return;
-    const attackerFaction = attacker.faction ?? 'neutral';
-    const moverFaction = mover.faction ?? 'neutral';
-    if (attackerFaction === moverFaction) return; // same faction, no OA
+      // The mover must exist and be hostile to the attacker. Without
+      // this, a player could manufacture a free attack against any
+      // token in the room by crafting an oa-execute payload. Use the same
+      // hostility predicate as the detector/executor (PC-vs-NPC fallback
+      // for faction-less tokens) so this pre-gate can't reject a
+      // legitimately-issued opportunity between two faction-less tokens.
+      const mover = ctx.room.tokens.get(parsed.data.moverTokenId);
+      if (!mover) return;
+      if (!OpportunityAttackService.isHostileTo(attacker, mover)) return;
 
-    const result = await OpportunityAttackService.executeOpportunityAttack(
-      ctx.room.sessionId,
-      parsed.data.attackerTokenId,
-      parsed.data.moverTokenId,
-    );
-
-    // Broadcast every result line as a single system chat message
-    // so the combat log shows the attack on one contiguous card.
-    // The breakdown (when present) ships the structured
-    // AttackBreakdown so chat renders the OA as a full per-source
-    // modifier card — matching what a regular weapon attack gets.
-    if (result.messages.length > 0) {
-      const msgId = uuidv4();
-      const createdAt = new Date().toISOString();
-      const attackResult = result.breakdown ?? null;
-      // Persist with attack_result so rehydrated history shows the
-      // card on refresh instead of falling back to plain text.
-      const attackResultJson = attackResult ? JSON.stringify(attackResult) : null;
-      const hidden = multiTokenScopedChatIsPrivate(ctx.room, [
+      const result = await OpportunityAttackService.executeOpportunityAttack(
+        ctx.room.sessionId,
         parsed.data.attackerTokenId,
         parsed.data.moverTokenId,
-      ]) ? 1 : 0;
-      void ctx; // silences "ctx not used in the fallthrough" when we
-      // persist inline; we already resolved it earlier in this handler.
-      void import('../../db/connection.js').then(({ default: dbPool }) => {
-        dbPool.query(
-          `INSERT INTO chat_messages (id, session_id, user_id, display_name, type, content, character_name, attack_result, hidden, created_at)
+        parsed.data.opportunityId
+      );
+
+      // A rejected execute (fabricated/stale/duplicate/declined pair, or a
+      // reaction already spent) must NOT be persisted or room-broadcast —
+      // otherwise an owner could spam fabricated attempts into chat_messages
+      // and the combat log. Report the failure only to the requesting socket
+      // via the established single-socket error channel, and emit nothing
+      // else (no chat, no HP change, no action-used).
+      if (!result.success) {
+        socket.emit('session:error', {
+          message: result.messages[0] ?? 'Opportunity attack could not be resolved.',
+        });
+        return;
+      }
+
+      // Broadcast every result line as a single system chat message
+      // so the combat log shows the attack on one contiguous card.
+      // The breakdown (when present) ships the structured
+      // AttackBreakdown so chat renders the OA as a full per-source
+      // modifier card — matching what a regular weapon attack gets.
+      if (result.messages.length > 0) {
+        const msgId = uuidv4();
+        const createdAt = new Date().toISOString();
+        const attackResult = result.breakdown ?? null;
+        // Persist with attack_result so rehydrated history shows the
+        // card on refresh instead of falling back to plain text.
+        const attackResultJson = attackResult ? JSON.stringify(attackResult) : null;
+        const hidden = multiTokenScopedChatIsPrivate(ctx.room, [
+          parsed.data.attackerTokenId,
+          parsed.data.moverTokenId,
+        ])
+          ? 1
+          : 0;
+        void ctx; // silences "ctx not used in the fallthrough" when we
+        // persist inline; we already resolved it earlier in this handler.
+        void import('../../db/connection.js').then(({ default: dbPool }) => {
+          dbPool
+            .query(
+              `INSERT INTO chat_messages (id, session_id, user_id, display_name, type, content, character_name, attack_result, hidden, created_at)
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
-          [msgId, ctx.room.sessionId, 'system', 'System', 'system',
-           result.messages.join('\n'), null, attackResultJson, hidden, createdAt],
-        ).catch((e) => console.warn('[OA] persist failed:', e));
-      });
-      emitMultiTokenScopedChat(io, ctx.room, [
+              [
+                msgId,
+                ctx.room.sessionId,
+                'system',
+                'System',
+                'system',
+                result.messages.join('\n'),
+                null,
+                attackResultJson,
+                hidden,
+                createdAt,
+              ]
+            )
+            .catch((e) => console.warn('[OA] persist failed:', e));
+        });
+        emitMultiTokenScopedChat(
+          io,
+          ctx.room,
+          [parsed.data.attackerTokenId, parsed.data.moverTokenId],
+          {
+            id: msgId,
+            sessionId: ctx.room.sessionId,
+            userId: 'system',
+            displayName: 'System',
+            type: 'system',
+            content: result.messages.join('\n'),
+            characterName: null,
+            whisperTo: null,
+            rollData: null,
+            attackResult,
+            hidden: hidden === 1,
+            createdAt,
+          }
+        );
+      }
+
+      // If HP changed, broadcast both the combat HP change AND the
+      // character row update so the HP bar re-renders everywhere.
+      if (result.hpChange) {
+        emitToTokenViewers(io, ctx.room, result.hpChange.tokenId, 'combat:hp-changed', {
+          tokenId: result.hpChange.tokenId,
+          hp: result.hpChange.hp,
+          tempHp: result.hpChange.tempHp,
+          change: result.hpChange.change,
+          type: 'damage',
+        });
+      }
+      if (result.characterHpUpdated) {
+        // Scope the sheet sync to the same token whose HP changed — DM +
+        // players who can see it, plus the owner wherever they are.
+        emitToTokenViewers(
+          io,
+          ctx.room,
+          result.hpChange?.tokenId ?? '',
+          'character:updated',
+          {
+            characterId: result.characterHpUpdated.characterId,
+            changes: {
+              hitPoints: result.characterHpUpdated.hp,
+              tempHitPoints: result.characterHpUpdated.tempHp,
+            },
+          },
+          { includeOwner: true }
+        );
+      }
+      if (result.deathSaveFailure) {
+        emitToTokenViewers(
+          io,
+          ctx.room,
+          result.deathSaveFailure.tokenId,
+          'combat:death-save-updated',
+          {
+            tokenId: result.deathSaveFailure.tokenId,
+            deathSaves: result.deathSaveFailure.deathSaves,
+            roll: 0,
+          }
+        );
+      }
+      for (const tokenId of result.conditionTokenIds ?? []) {
+        emitToTokenViewers(io, ctx.room, tokenId, 'map:token-updated', {
+          tokenId,
+          changes: tokenConditionChanges(ctx.room, tokenId),
+        });
+      }
+
+      // Broadcast the updated reaction state for the attacker. We use
+      // combat:action-used with the real economy from room state.
+      const attackerEconomy = ctx.room.actionEconomies.get(parsed.data.attackerTokenId);
+      if (attackerEconomy) {
+        emitToTokenViewers(
+          io,
+          ctx.room,
+          parsed.data.attackerTokenId,
+          'combat:action-used',
+          {
+            tokenId: parsed.data.attackerTokenId,
+            actionType: 'reaction',
+            economy: attackerEconomy,
+          },
+          { includeOwner: true }
+        );
+      }
+    })
+  );
+
+  socket.on(
+    'combat:oa-decline',
+    safeHandler(socket, async (data: unknown) => {
+      // Player/DM dismissed the prompt. Drop the server-issued pending
+      // opportunity so a later oa-execute for the same pair is rejected.
+      // Gated to the attacker's owner or the DM so a bystander can't grief
+      // by cancelling someone else's legitimate reaction.
+      const parsed = combatOaDeclineSchema.safeParse(data);
+      if (!parsed.success) return;
+      const ctx = getPlayerBySocketId(socket.id);
+      if (!ctx) return;
+      const attacker = ctx.room.tokens.get(parsed.data.attackerTokenId);
+      if (!attacker) return;
+      const isDM = ctx.player.role === 'dm';
+      const isOwner = attacker.ownerUserId === ctx.player.userId;
+      if (!isDM && !isOwner) return;
+      OpportunityAttackService.declinePendingOpportunity(
+        ctx.room,
         parsed.data.attackerTokenId,
         parsed.data.moverTokenId,
-      ], {
-        id: msgId,
-        sessionId: ctx.room.sessionId,
-        userId: 'system',
-        displayName: 'System',
-        type: 'system',
-        content: result.messages.join('\n'),
-        characterName: null,
-        whisperTo: null,
-        rollData: null,
-        attackResult,
-        hidden: hidden === 1,
-        createdAt,
-      });
-    }
-
-    // If HP changed, broadcast both the combat HP change AND the
-    // character row update so the HP bar re-renders everywhere.
-    if (result.hpChange) {
-      emitToTokenViewers(io, ctx.room, result.hpChange.tokenId, 'combat:hp-changed', {
-        tokenId: result.hpChange.tokenId,
-        hp: result.hpChange.hp,
-        tempHp: result.hpChange.tempHp,
-        change: result.hpChange.change,
-        type: 'damage',
-      });
-    }
-    if (result.characterHpUpdated) {
-      // Scope the sheet sync to the same token whose HP changed — DM +
-      // players who can see it, plus the owner wherever they are.
-      emitToTokenViewers(io, ctx.room, result.hpChange?.tokenId ?? '', 'character:updated', {
-        characterId: result.characterHpUpdated.characterId,
-        changes: {
-          hitPoints: result.characterHpUpdated.hp,
-          tempHitPoints: result.characterHpUpdated.tempHp,
-        },
-      }, { includeOwner: true });
-    }
-    if (result.deathSaveFailure) {
-      emitToTokenViewers(io, ctx.room, result.deathSaveFailure.tokenId, 'combat:death-save-updated', {
-        tokenId: result.deathSaveFailure.tokenId,
-        deathSaves: result.deathSaveFailure.deathSaves,
-        roll: 0,
-      });
-    }
-    for (const tokenId of result.conditionTokenIds ?? []) {
-      emitToTokenViewers(io, ctx.room, tokenId, 'map:token-updated', {
-        tokenId,
-        changes: tokenConditionChanges(ctx.room, tokenId),
-      });
-    }
-
-    // Broadcast the updated reaction state for the attacker. We use
-    // combat:action-used with the real economy from room state.
-    const attackerEconomy = ctx.room.actionEconomies.get(parsed.data.attackerTokenId);
-    if (attackerEconomy) {
-      emitToTokenViewers(io, ctx.room, parsed.data.attackerTokenId, 'combat:action-used', {
-        tokenId: parsed.data.attackerTokenId,
-        actionType: 'reaction',
-        economy: attackerEconomy,
-      }, { includeOwner: true });
-    }
-  }));
-
-  socket.on('combat:oa-decline', safeHandler(socket, async (_data) => {
-    // Intentional no-op \u2014 reserved for future audit logging.
-  }));
+        parsed.data.opportunityId
+      );
+    })
+  );
 
   // ----------------------------------------------------------------------
   // combat:spell-cast-attempt \u2014 broadcast a leveled spell cast intent
@@ -176,63 +260,73 @@ export function registerCombatReactions(io: Server, socket: Socket): void {
   // when they confirm they're spending their reaction. Broadcast back
   // to everyone so the original caster's client aborts the cast.
   // ----------------------------------------------------------------------
-  socket.on('combat:spell-cast-attempt', safeHandler(socket, async (data: unknown) => {
-    const parsed = combatSpellCastAttemptSchema.safeParse(data);
-    if (!parsed.success) return;
-    const ctx = getPlayerBySocketId(socket.id);
-    if (!ctx) return;
+  socket.on(
+    'combat:spell-cast-attempt',
+    safeHandler(socket, async (data: unknown) => {
+      const parsed = combatSpellCastAttemptSchema.safeParse(data);
+      if (!parsed.success) return;
+      const ctx = getPlayerBySocketId(socket.id);
+      if (!ctx) return;
 
-    // Ownership check: DM is always allowed. Players must own the
-    // caster token they claim to be casting from AND it must be alive.
-    // (If no caster token id is supplied, only DMs may emit this.)
-    const isDM = ctx.player.role === 'dm';
-    if (!isDM) {
-      const casterTokenId = parsed.data.casterTokenId;
-      if (!casterTokenId) return;
-      const casterToken = ctx.room.tokens.get(casterTokenId);
-      if (!casterToken) return;
-      if (casterToken.ownerUserId !== ctx.player.userId) return;
-      if (!isTokenActionable(ctx, casterTokenId)) return;
-    }
+      // Ownership check: DM is always allowed. Players must own the
+      // caster token they claim to be casting from AND it must be alive.
+      // (If no caster token id is supplied, only DMs may emit this.)
+      const isDM = ctx.player.role === 'dm';
+      if (!isDM) {
+        const casterTokenId = parsed.data.casterTokenId;
+        if (!casterTokenId) return;
+        const casterToken = ctx.room.tokens.get(casterTokenId);
+        if (!casterToken) return;
+        if (casterToken.ownerUserId !== ctx.player.userId) return;
+        if (!isTokenActionable(ctx, casterTokenId)) return;
+      }
 
-    // Scope the cast card to clients who can see the caster token. A
-    // HIDDEN NPC's cast must not leak to players at the socket layer —
-    // and RAW you can't counterspell a caster you can't see anyway, so
-    // withholding the prompt is also correct. `includeOwner` keeps the
-    // caster's own client in the loop (their resolver waits on counter
-    // responses). A token-less DM cast has no token position to leak, so
-    // it stays room-wide — players can still counterspell narrative casts
-    // exactly as before.
-    if (parsed.data.casterTokenId) {
-      emitToTokenViewers(
-        io, ctx.room, parsed.data.casterTokenId,
-        'combat:spell-cast-attempt', parsed.data, { includeOwner: true },
-      );
-    } else {
-      io.to(ctx.room.sessionId).emit('combat:spell-cast-attempt', parsed.data);
-    }
-  }));
+      // Scope the cast card to clients who can see the caster token. A
+      // HIDDEN NPC's cast must not leak to players at the socket layer —
+      // and RAW you can't counterspell a caster you can't see anyway, so
+      // withholding the prompt is also correct. `includeOwner` keeps the
+      // caster's own client in the loop (their resolver waits on counter
+      // responses). A token-less DM cast has no token position to leak, so
+      // it stays room-wide — players can still counterspell narrative casts
+      // exactly as before.
+      if (parsed.data.casterTokenId) {
+        emitToTokenViewers(
+          io,
+          ctx.room,
+          parsed.data.casterTokenId,
+          'combat:spell-cast-attempt',
+          parsed.data,
+          { includeOwner: true }
+        );
+      } else {
+        io.to(ctx.room.sessionId).emit('combat:spell-cast-attempt', parsed.data);
+      }
+    })
+  );
 
-  socket.on('combat:spell-counterspelled', safeHandler(socket, async (data: unknown) => {
-    const parsed = combatSpellCounterspelledSchema.safeParse(data);
-    if (!parsed.success) return;
-    const ctx = getPlayerBySocketId(socket.id);
-    if (!ctx) return;
+  socket.on(
+    'combat:spell-counterspelled',
+    safeHandler(socket, async (data: unknown) => {
+      const parsed = combatSpellCounterspelledSchema.safeParse(data);
+      if (!parsed.success) return;
+      const ctx = getPlayerBySocketId(socket.id);
+      if (!ctx) return;
 
-    // Ownership: DM always allowed. Players MUST provide their own
-    // counterCasterTokenId \u2014 the old "owns any token" fallback let a
-    // bystander spoof counterspells against any cast by knowing the
-    // broadcast castId.
-    const isDM = ctx.player.role === 'dm';
-    if (!isDM) {
-      const counterTokenId = parsed.data.counterCasterTokenId;
-      if (!counterTokenId) return;
-      const t = ctx.room.tokens.get(counterTokenId);
-      if (!t || t.ownerUserId !== ctx.player.userId) return;
-    }
+      // Ownership: DM always allowed. Players MUST provide their own
+      // counterCasterTokenId \u2014 the old "owns any token" fallback let a
+      // bystander spoof counterspells against any cast by knowing the
+      // broadcast castId.
+      const isDM = ctx.player.role === 'dm';
+      if (!isDM) {
+        const counterTokenId = parsed.data.counterCasterTokenId;
+        if (!counterTokenId) return;
+        const t = ctx.room.tokens.get(counterTokenId);
+        if (!t || t.ownerUserId !== ctx.player.userId) return;
+      }
 
-    io.to(ctx.room.sessionId).emit('combat:spell-counterspelled', parsed.data);
-  }));
+      io.to(ctx.room.sessionId).emit('combat:spell-counterspelled', parsed.data);
+    })
+  );
 
   // ----------------------------------------------------------------------
   // combat:attack-hit-attempt \u2014 broadcast when an attack rolls a value
@@ -244,139 +338,155 @@ export function registerCombatReactions(io: Server, socket: Socket): void {
   // confirm they're spending the slot+reaction on Shield. Broadcast
   // back so the original attacker's resolver can recompute the hit.
   // ----------------------------------------------------------------------
-  socket.on('combat:attack-hit-attempt', safeHandler(socket, async (data: unknown) => {
-    const parsed = combatAttackHitAttemptSchema.safeParse(data);
-    if (!parsed.success) return;
-    const ctx = getPlayerBySocketId(socket.id);
-    if (!ctx) return;
+  socket.on(
+    'combat:attack-hit-attempt',
+    safeHandler(socket, async (data: unknown) => {
+      const parsed = combatAttackHitAttemptSchema.safeParse(data);
+      if (!parsed.success) return;
+      const ctx = getPlayerBySocketId(socket.id);
+      if (!ctx) return;
 
-    // Target token must exist in this room.
-    if (!ctx.room.tokens.get(parsed.data.targetTokenId)) return;
+      // Target token must exist in this room.
+      if (!ctx.room.tokens.get(parsed.data.targetTokenId)) return;
 
-    // Ownership check: DM is always allowed. Players must be the
-    // current-turn combatant (i.e. own the attacker token making the
-    // attack) and that token must be alive. Prevents bystanders from
-    // spoofing fake "attack hit" events that would pop Shield prompts
-    // on other players.
-    const isDM = ctx.player.role === 'dm';
-    if (!isDM) {
-      const combatState = ctx.room.combatState;
-      if (!combatState?.active) return;
-      const currentCombatant = combatState.combatants[combatState.currentTurnIndex];
-      if (!currentCombatant) return;
-      const turnToken = ctx.room.tokens.get(currentCombatant.tokenId);
-      if (!turnToken || turnToken.ownerUserId !== ctx.player.userId) return;
-      if (!isTokenActionable(ctx, currentCombatant.tokenId)) return;
-    }
+      // Ownership check: DM is always allowed. Players must be the
+      // current-turn combatant (i.e. own the attacker token making the
+      // attack) and that token must be alive. Prevents bystanders from
+      // spoofing fake "attack hit" events that would pop Shield prompts
+      // on other players.
+      const isDM = ctx.player.role === 'dm';
+      if (!isDM) {
+        const combatState = ctx.room.combatState;
+        if (!combatState?.active) return;
+        const currentCombatant = combatState.combatants[combatState.currentTurnIndex];
+        if (!currentCombatant) return;
+        const turnToken = ctx.room.tokens.get(currentCombatant.tokenId);
+        if (!turnToken || turnToken.ownerUserId !== ctx.player.userId) return;
+        if (!isTokenActionable(ctx, currentCombatant.tokenId)) return;
+      }
 
-    // Scope the Shield prompt to clients who can see the TARGET token —
-    // only the target's owner (+ DM) ever acts on it. Broadcasting
-    // room-wide leaked the attack roll + a hidden target's existence to
-    // every player. The attacker already knows the roll (their own client
-    // emitted this); they learn the result from the shield-cast response.
-    emitToTokenViewers(
-      io, ctx.room, parsed.data.targetTokenId,
-      'combat:attack-hit-attempt', parsed.data, { includeOwner: true },
-    );
-  }));
+      // Scope the Shield prompt to clients who can see the TARGET token —
+      // only the target's owner (+ DM) ever acts on it. Broadcasting
+      // room-wide leaked the attack roll + a hidden target's existence to
+      // every player. The attacker already knows the roll (their own client
+      // emitted this); they learn the result from the shield-cast response.
+      emitToTokenViewers(
+        io,
+        ctx.room,
+        parsed.data.targetTokenId,
+        'combat:attack-hit-attempt',
+        parsed.data,
+        { includeOwner: true }
+      );
+    })
+  );
 
-  socket.on('combat:shield-cast', safeHandler(socket, async (data: unknown) => {
-    const parsed = combatShieldCastSchema.safeParse(data);
-    if (!parsed.success) return;
-    const ctx = getPlayerBySocketId(socket.id);
-    if (!ctx) return;
+  socket.on(
+    'combat:shield-cast',
+    safeHandler(socket, async (data: unknown) => {
+      const parsed = combatShieldCastSchema.safeParse(data);
+      if (!parsed.success) return;
+      const ctx = getPlayerBySocketId(socket.id);
+      if (!ctx) return;
 
-    // Ownership: DM always allowed. Players MUST provide their own
-    // defenderTokenId \u2014 the old "owns any token" fallback let a
-    // bystander forge a Shield response for another player's
-    // incoming attack.
-    const isDM = ctx.player.role === 'dm';
-    if (!isDM) {
-      const defenderTokenId = parsed.data.defenderTokenId;
-      if (!defenderTokenId) return;
-      const t = ctx.room.tokens.get(defenderTokenId);
-      if (!t || t.ownerUserId !== ctx.player.userId) return;
-    }
+      // Ownership: DM always allowed. Players MUST provide their own
+      // defenderTokenId \u2014 the old "owns any token" fallback let a
+      // bystander forge a Shield response for another player's
+      // incoming attack.
+      const isDM = ctx.player.role === 'dm';
+      if (!isDM) {
+        const defenderTokenId = parsed.data.defenderTokenId;
+        if (!defenderTokenId) return;
+        const t = ctx.room.tokens.get(defenderTokenId);
+        if (!t || t.ownerUserId !== ctx.player.userId) return;
+      }
 
-    io.to(ctx.room.sessionId).emit('combat:shield-cast', parsed.data);
-  }));
+      io.to(ctx.room.sessionId).emit('combat:shield-cast', parsed.data);
+    })
+  );
 
   // combat:mobile-attacked \u2014 the attacker's client fires this when a
   // Mobile-feat PC makes a melee attack, so detectOpportunityAttacks
   // can suppress the OA from this particular target for the rest of
   // the turn. No broadcast needed \u2014 state change lives server-side.
-  socket.on('combat:mobile-attacked', safeHandler(socket, async (data: unknown) => {
-    const parsed = combatMobileAttackedSchema.safeParse(data);
-    if (!parsed.success) return;
-    const ctx = getPlayerBySocketId(socket.id);
-    if (!ctx) return;
+  socket.on(
+    'combat:mobile-attacked',
+    safeHandler(socket, async (data: unknown) => {
+      const parsed = combatMobileAttackedSchema.safeParse(data);
+      if (!parsed.success) return;
+      const ctx = getPlayerBySocketId(socket.id);
+      if (!ctx) return;
 
-    // Ownership: attacker must be owned by the caller (or DM). Stops
-    // a bystander from neutering someone else's OA.
-    const attackerTok = ctx.room.tokens.get(parsed.data.attackerTokenId);
-    if (!attackerTok) return;
-    const isDM = ctx.player.role === 'dm';
-    if (!isDM && attackerTok.ownerUserId !== ctx.player.userId) return;
+      // Ownership: attacker must be owned by the caller (or DM). Stops
+      // a bystander from neutering someone else's OA.
+      const attackerTok = ctx.room.tokens.get(parsed.data.attackerTokenId);
+      if (!attackerTok) return;
+      const isDM = ctx.player.role === 'dm';
+      if (!isDM && attackerTok.ownerUserId !== ctx.player.userId) return;
 
-    let set = ctx.room.mobileMeleeTargets.get(parsed.data.attackerTokenId);
-    if (!set) {
-      set = new Set();
-      ctx.room.mobileMeleeTargets.set(parsed.data.attackerTokenId, set);
-    }
-    set.add(parsed.data.targetTokenId);
-  }));
-
-  socket.on('combat:cast-spell', safeHandler(socket, async (data) => {
-    const parsed = combatCastSpellSchema.safeParse(data);
-    if (!parsed.success) return;
-
-    const ctx = getPlayerBySocketId(socket.id);
-    if (!ctx) return;
-
-    const spellEvent = parsed.data;
-    const casterToken = ctx.room.tokens.get(spellEvent.casterId);
-    if (!casterToken) return;
-
-    // Ownership check for players: must own the caster token AND it
-    // must be alive. DMs may cast for any token (NPCs etc.).
-    const isDM = ctx.player.role === 'dm';
-    if (!isDM) {
-      if (casterToken.ownerUserId !== ctx.player.userId) return;
-      if (!isTokenActionable(ctx, spellEvent.casterId)) return;
-    }
-
-    // Get animation config for the spell
-    const animConfig = getSpellAnimation(spellEvent.spellName);
-
-    const payload = {
-      casterId: spellEvent.casterId,
-      spellName: spellEvent.spellName,
-      targetIds: spellEvent.targetIds,
-      targetPosition: spellEvent.targetPosition,
-      animationType: animConfig.type,
-      animationColor: animConfig.color,
-      aoeType: spellEvent.aoeType,
-      aoeSize: spellEvent.aoeSize,
-      aoeDirection: spellEvent.aoeDirection,
-    };
-
-    for (const recipient of socketRecipientsOnMap(ctx.room, casterToken.mapId)) {
-      if (recipient.role === 'dm') {
-        io.to(recipient.socketId).emit('combat:spell-cast', payload);
-        continue;
+      let set = ctx.room.mobileMeleeTargets.get(parsed.data.attackerTokenId);
+      if (!set) {
+        set = new Set();
+        ctx.room.mobileMeleeTargets.set(parsed.data.attackerTokenId, set);
       }
-      if (!tokenVisibleToPlayer(casterToken, recipient.userId)) continue;
-      io.to(recipient.socketId).emit('combat:spell-cast', {
-        ...payload,
-        targetIds: payload.targetIds.filter((targetId) => {
-          const targetToken = ctx.room.tokens.get(targetId);
-          return targetToken ? tokenVisibleToPlayer(targetToken, recipient.userId) : false;
-        }),
-      });
-    }
+      set.add(parsed.data.targetTokenId);
+    })
+  );
 
-    // Core 5e: casting a spell while adjacent does not itself
-    // provoke an opportunity attack. Keep spellcasting OAs out of the
-    // default flow unless we add an explicit house-rule session toggle.
-  }));
+  socket.on(
+    'combat:cast-spell',
+    safeHandler(socket, async (data) => {
+      const parsed = combatCastSpellSchema.safeParse(data);
+      if (!parsed.success) return;
+
+      const ctx = getPlayerBySocketId(socket.id);
+      if (!ctx) return;
+
+      const spellEvent = parsed.data;
+      const casterToken = ctx.room.tokens.get(spellEvent.casterId);
+      if (!casterToken) return;
+
+      // Ownership check for players: must own the caster token AND it
+      // must be alive. DMs may cast for any token (NPCs etc.).
+      const isDM = ctx.player.role === 'dm';
+      if (!isDM) {
+        if (casterToken.ownerUserId !== ctx.player.userId) return;
+        if (!isTokenActionable(ctx, spellEvent.casterId)) return;
+      }
+
+      // Get animation config for the spell
+      const animConfig = getSpellAnimation(spellEvent.spellName);
+
+      const payload = {
+        casterId: spellEvent.casterId,
+        spellName: spellEvent.spellName,
+        targetIds: spellEvent.targetIds,
+        targetPosition: spellEvent.targetPosition,
+        animationType: animConfig.type,
+        animationColor: animConfig.color,
+        aoeType: spellEvent.aoeType,
+        aoeSize: spellEvent.aoeSize,
+        aoeDirection: spellEvent.aoeDirection,
+      };
+
+      for (const recipient of socketRecipientsOnMap(ctx.room, casterToken.mapId)) {
+        if (recipient.role === 'dm') {
+          io.to(recipient.socketId).emit('combat:spell-cast', payload);
+          continue;
+        }
+        if (!tokenVisibleToPlayer(casterToken, recipient.userId)) continue;
+        io.to(recipient.socketId).emit('combat:spell-cast', {
+          ...payload,
+          targetIds: payload.targetIds.filter((targetId) => {
+            const targetToken = ctx.room.tokens.get(targetId);
+            return targetToken ? tokenVisibleToPlayer(targetToken, recipient.userId) : false;
+          }),
+        });
+      }
+
+      // Core 5e: casting a spell while adjacent does not itself
+      // provoke an opportunity attack. Keep spellcasting OAs out of the
+      // default flow unless we add an explicit house-rule session toggle.
+    })
+  );
 }

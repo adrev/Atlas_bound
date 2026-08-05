@@ -484,6 +484,19 @@ export const combatReadyResponseSchema = z.object({
 });
 
 export const combatOaExecuteSchema = z.object({
+  // Server-issued id for the exact opportunity being executed. Binding to
+  // it (not just the pair) means an old, still-open prompt can't resolve a
+  // newer opportunity for the same attacker/mover pair.
+  opportunityId: z.string().min(1),
+  attackerTokenId: z.string().min(1),
+  moverTokenId: z.string().min(1),
+});
+
+// Player/DM dismissed an OA prompt. Carries the same opportunityId as
+// execute so the server drops only the matching pending opportunity — a
+// stale decline must not cancel a newer opportunity for the same pair.
+export const combatOaDeclineSchema = z.object({
+  opportunityId: z.string().min(1),
   attackerTokenId: z.string().min(1),
   moverTokenId: z.string().min(1),
 });

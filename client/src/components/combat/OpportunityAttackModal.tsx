@@ -15,6 +15,8 @@ import { theme } from '../../styles/theme';
  * order. Clicking Attack or Let them go advances to the next entry.
  */
 interface OAPromptData {
+  /** Server-issued id for this exact opportunity; echoed back on execute/decline. */
+  opportunityId: string;
   attackerTokenId: string;
   attackerName: string;
   attackerOwnerUserId: string | null;
@@ -36,12 +38,11 @@ function notifyListeners() {
  * and triggers a re-render of any mounted modal.
  */
 export function pushOpportunityAttack(data: OAPromptData) {
-  // De-dupe: don't queue the same attacker/mover pair twice.
-  if (
-    oaQueue.some(
-      (q) => q.attackerTokenId === data.attackerTokenId && q.moverTokenId === data.moverTokenId
-    )
-  ) {
+  // De-dupe by the server-issued opportunityId — the same detected
+  // opportunity can arrive on multiple sockets (multi-tab / DM mirror),
+  // but a re-detection for the same pair is a distinct opportunity and
+  // must queue on its own so we never bind an action to a stale one.
+  if (oaQueue.some((q) => q.opportunityId === data.opportunityId)) {
     return;
   }
   oaQueue.push(data);
@@ -62,12 +63,13 @@ export function OpportunityAttackModal() {
   }, []);
 
   const head = oaQueue[0];
+  const headOpportunityId = head?.opportunityId;
   const headAttackerTokenId = head?.attackerTokenId;
   const headMoverTokenId = head?.moverTokenId;
 
   // Auto-dismiss countdown — resets whenever the head changes.
   useEffect(() => {
-    if (!headAttackerTokenId || !headMoverTokenId) return;
+    if (!headOpportunityId || !headAttackerTokenId || !headMoverTokenId) return;
     setSecondsLeft(Math.ceil(DISMISS_MS / 1000));
     const startedAt = Date.now();
     const tick = setInterval(() => {
@@ -77,24 +79,24 @@ export function OpportunityAttackModal() {
       if (remaining <= 0) {
         clearInterval(tick);
         // auto-decline
-        emitOADecline(headAttackerTokenId, headMoverTokenId);
+        emitOADecline(headOpportunityId, headAttackerTokenId, headMoverTokenId);
         oaQueue.shift();
         notifyListeners();
       }
     }, 200);
     return () => clearInterval(tick);
-  }, [headAttackerTokenId, headMoverTokenId]);
+  }, [headOpportunityId, headAttackerTokenId, headMoverTokenId]);
 
   const handleAttack = useCallback(() => {
     if (!head) return;
-    emitOAExecute(head.attackerTokenId, head.moverTokenId);
+    emitOAExecute(head.opportunityId, head.attackerTokenId, head.moverTokenId);
     oaQueue.shift();
     notifyListeners();
   }, [head]);
 
   const handleDecline = useCallback(() => {
     if (!head) return;
-    emitOADecline(head.attackerTokenId, head.moverTokenId);
+    emitOADecline(head.opportunityId, head.attackerTokenId, head.moverTokenId);
     oaQueue.shift();
     notifyListeners();
   }, [head]);
