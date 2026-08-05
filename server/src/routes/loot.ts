@@ -4,6 +4,7 @@ import { z } from 'zod';
 import pool from '../db/connection.js';
 import { getAuthUserId, assertCharacterOwnerOrDM } from '../utils/authorization.js';
 import { createLootSchema } from '../utils/validation.js';
+import { safeImageUrlSchema } from '../utils/imageUrlValidator.js';
 import { getIO } from '../socket/ioInstance.js';
 import { getRoom, socketsOnMap } from '../utils/roomState.js';
 import type { Token } from '@dnd-vtt/shared';
@@ -18,6 +19,12 @@ const lootDropSchema = z.object({
   x: z.number().finite().min(-10000).max(10000).optional(),
   y: z.number().finite().min(-10000).max(10000).optional(),
 });
+
+// Inventory JSON is stored unvalidated (z.array(z.any()) at the
+// character write boundary), so item.slug is attacker-controlled too.
+// Only slugs of this conservative shape may be interpolated into an
+// /uploads/items/<slug>.png path.
+const SAFE_ITEM_SLUG_RE = /^[a-z0-9][a-z0-9-]{0,127}$/;
 
 const updateLootSchema = z.object({
   quantity: z.number().int().min(0).max(9999).optional(),
@@ -68,6 +75,49 @@ interface CustomItemRow {
 }
 
 const router = Router();
+
+// Fan out an inventory change only to audiences allowed to receive this
+// full character sheet. Inventory contains private notes/items; a
+// room-wide emit leaks it even when party-sheet sharing is disabled.
+// Sessions are discovered through both session_players (PCs) and token
+// placement (NPCs/loot bags, which have no session_players row).
+//
+// Callers invoke this fire-and-forget AFTER the HTTP response: failures
+// here must never roll back or fail the mutation.
+async function broadcastInventoryUpdate(
+  characterId: string,
+  ownerUserId: string | null,
+  changes: Record<string, unknown>,
+): Promise<void> {
+  const io = getIO();
+  if (!io) return;
+  const { rows: sessionRows } = await pool.query(
+    `SELECT DISTINCT session_id
+       FROM (
+         SELECT session_id FROM session_players WHERE character_id = $1
+         UNION
+         SELECT m.session_id FROM tokens t
+         JOIN maps m ON m.id = t.map_id
+         WHERE t.character_id = $1
+       ) character_sessions`,
+    [characterId],
+  );
+  for (const row of sessionRows) {
+    const sessionId = row.session_id as string;
+    const room = getRoom(sessionId);
+    if (!room) continue;
+    const recipients =
+      ownerUserId && ownerUserId !== 'npc'
+        ? fullCharacterRecipientSocketIds(room, ownerUserId, room.showPlayersToPlayers)
+        : npcCharacterRecipientSocketIds(room, characterId, room.showCreatureStatsToPlayers);
+    for (const socketId of recipients) {
+      io.to(socketId).emit('character:updated', {
+        characterId,
+        changes,
+      });
+    }
+  }
+}
 
 // GET /api/characters/:id/loot
 router.get('/characters/:id/loot', async (req: Request, res: Response) => {
@@ -399,47 +449,10 @@ router.post('/characters/:id/loot/take', async (req: Request, res: Response) => 
     ...(responseVersion !== undefined ? { version: responseVersion } : {}),
   });
 
-  // Fan out the inventory change only to audiences allowed to receive
-  // this full character sheet. Inventory contains private notes/items;
-  // a room-wide emit leaks it even when party-sheet sharing is disabled.
-  //
-  // Fire-and-forget: failures here should NEVER roll back the take.
   try {
-    const io = getIO();
-    if (io) {
-      const { rows: sessionRows } = await pool.query(
-        `SELECT DISTINCT session_id
-           FROM (
-             SELECT session_id FROM session_players WHERE character_id = $1
-             UNION
-             SELECT m.session_id FROM tokens t
-             JOIN maps m ON m.id = t.map_id
-             WHERE t.character_id = $1
-           ) character_sessions`,
-        [targetCharacterId],
-      );
-      const changes: Record<string, unknown> = { inventory: responseInventory };
-      if (responseVersion !== undefined) changes.version = responseVersion;
-      for (const row of sessionRows) {
-        const sessionId = row.session_id as string;
-        const room = getRoom(sessionId);
-        if (!room) continue;
-        const recipients =
-          targetOwnerUserId && targetOwnerUserId !== 'npc'
-            ? fullCharacterRecipientSocketIds(room, targetOwnerUserId, room.showPlayersToPlayers)
-            : npcCharacterRecipientSocketIds(
-                room,
-                targetCharacterId,
-                room.showCreatureStatsToPlayers,
-              );
-        for (const socketId of recipients) {
-          io.to(socketId).emit('character:updated', {
-            characterId: targetCharacterId,
-            changes,
-          });
-        }
-      }
-    }
+    const changes: Record<string, unknown> = { inventory: responseInventory };
+    if (responseVersion !== undefined) changes.version = responseVersion;
+    await broadcastInventoryUpdate(targetCharacterId, targetOwnerUserId, changes);
   } catch (err) {
     // Log but don't throw — the HTTP response has already been sent.
     console.warn('[loot/take] inventory broadcast failed:', err);
@@ -502,9 +515,10 @@ router.post('/characters/:id/inventory/enrich', async (req: Request, res: Respon
   const userId = getAuthUserId(req);
   const charId = String(req.params.id);
   await assertCharacterOwnerOrDM(charId, userId);
-  const { rows: charRows } = await pool.query('SELECT id, inventory FROM characters WHERE id = $1', [charId]);
+  const { rows: charRows } = await pool.query('SELECT id, inventory, user_id FROM characters WHERE id = $1', [charId]);
   const char = charRows[0] as CharacterInventoryRow | undefined;
   if (!char) { res.status(404).json({ error: 'Character not found' }); return; }
+  const ownerUserId = char.user_id ?? null;
 
   const inventory = JSON.parse(char.inventory || '[]');
   let updated = false;
@@ -559,11 +573,32 @@ router.post('/characters/:id/inventory/enrich', async (req: Request, res: Respon
     }
   }
 
+  let responseVersion: number | undefined;
   if (updated) {
-    await pool.query('UPDATE characters SET inventory = $1 WHERE id = $2', [JSON.stringify(inventory), charId]);
+    const { rows: versionRows } = await pool.query(
+      'UPDATE characters SET inventory = $1 WHERE id = $2 RETURNING version',
+      [JSON.stringify(inventory), charId],
+    );
+    const version = Number((versionRows[0] as { version?: unknown } | undefined)?.version);
+    if (Number.isInteger(version) && version >= 1) responseVersion = version;
   }
 
-  res.json({ success: true, updated, inventory });
+  res.json({
+    success: true,
+    updated,
+    inventory,
+    ...(responseVersion !== undefined ? { version: responseVersion } : {}),
+  });
+
+  if (updated) {
+    try {
+      const changes: Record<string, unknown> = { inventory };
+      if (responseVersion !== undefined) changes.version = responseVersion;
+      await broadcastInventoryUpdate(charId, ownerUserId, changes);
+    } catch (err) {
+      console.warn('[inventory/enrich] inventory broadcast failed:', err);
+    }
+  }
 });
 
 // POST /api/loot/transfer
@@ -723,6 +758,8 @@ router.post('/characters/:id/loot/drop', async (req: Request, res: Response) => 
   const client = await pool.connect();
   let createdToken: Token | null = null;
   let updatedInventory: unknown[] = [];
+  let responseVersion: number | undefined;
+  let sourceOwnerUserId: string | null = null;
   try {
     await client.query('BEGIN');
 
@@ -730,15 +767,16 @@ router.post('/characters/:id/loot/drop', async (req: Request, res: Response) => 
     // character and prevent an attacker from draining a single item
     // twice via two parallel requests.
     const { rows: charRows } = await client.query(
-      'SELECT id, inventory FROM characters WHERE id = $1 FOR UPDATE',
+      'SELECT id, inventory, user_id FROM characters WHERE id = $1 FOR UPDATE',
       [charId],
     );
-    const char = charRows[0];
+    const char = charRows[0] as CharacterInventoryRow | undefined;
     if (!char) {
       await client.query('ROLLBACK');
       res.status(404).json({ error: 'Character not found' });
       return;
     }
+    sourceOwnerUserId = char.user_id ?? null;
 
     const inventory = JSON.parse(char.inventory || '[]');
     if (itemIndex < 0 || itemIndex >= inventory.length) {
@@ -773,14 +811,28 @@ router.post('/characters/:id/loot/drop', async (req: Request, res: Response) => 
     } else {
       inventory.splice(itemIndex, 1);
     }
-    await client.query(
-      'UPDATE characters SET inventory = $1 WHERE id = $2',
+    const { rows: versionRows } = await client.query(
+      'UPDATE characters SET inventory = $1 WHERE id = $2 RETURNING version',
       [JSON.stringify(inventory), charId],
     );
+    const version = Number((versionRows[0] as { version?: unknown } | undefined)?.version);
+    if (Number.isInteger(version) && version >= 1) responseVersion = version;
     updatedInventory = inventory;
 
-    // Create the loot-bag token on the target map.
-    const imgUrl: string = item.imageUrl || (item.slug ? `/uploads/items/${item.slug}.png` : '/uploads/items/default-item.svg');
+    // Create the loot-bag token on the target map. item.imageUrl comes
+    // straight from the unvalidated inventory JSON — copying it into
+    // tokens.image_url verbatim would let javascript:/data:text URIs or
+    // arbitrary external hosts reach every client that renders the
+    // token. Accept it only when it passes the shared image allowlist;
+    // otherwise derive the path from a conservatively-shaped slug, or
+    // fall back to the default icon.
+    const rawImageUrl = typeof item.imageUrl === 'string' ? item.imageUrl : '';
+    let imgUrl = '/uploads/items/default-item.svg';
+    if (rawImageUrl && safeImageUrlSchema.safeParse(rawImageUrl).success) {
+      imgUrl = rawImageUrl;
+    } else if (typeof item.slug === 'string' && SAFE_ITEM_SLUG_RE.test(item.slug)) {
+      imgUrl = `/uploads/items/${item.slug}.png`;
+    }
     const tokenId = uuidv4();
     const now = new Date().toISOString();
     const dropX = typeof x === 'number' ? x : 0;
@@ -834,7 +886,17 @@ router.post('/characters/:id/loot/drop', async (req: Request, res: Response) => 
     inventory: updatedInventory,
     tokenId: createdToken?.id ?? null,
     token: createdToken,
+    ...(responseVersion !== undefined ? { version: responseVersion } : {}),
   });
+
+  // Fire-and-forget: the drop already committed and the response is sent.
+  try {
+    const changes: Record<string, unknown> = { inventory: updatedInventory };
+    if (responseVersion !== undefined) changes.version = responseVersion;
+    await broadcastInventoryUpdate(charId, sourceOwnerUserId, changes);
+  } catch (err) {
+    console.warn('[loot/drop] inventory broadcast failed:', err);
+  }
 });
 
 export default router;
