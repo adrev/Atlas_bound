@@ -4,34 +4,10 @@ import * as CombatService from '../../services/CombatService.js';
 import * as DiscordService from '../../services/DiscordService.js';
 import { getRoom } from '../../utils/roomState.js';
 import { tokenVisibleToPlayer } from '../../utils/tokenVisibility.js';
-import type { Combatant } from '@dnd-vtt/shared';
-
-/**
- * Build a combatant list filtered to what a given recipient should see.
- * DMs see everything; players never see combatants whose underlying
- * token is hidden (visible: false) so starting combat with a pre-hidden
- * ambusher doesn't leak the ambusher's name / initiative count to the
- * table. The hidden combatant still rolls initiative on the server —
- * when the DM reveals the token, a normal `combat:state-sync` brings
- * the player client up to speed.
- */
-function combatantsVisibleTo(
-  sessionId: string,
-  combatants: Combatant[],
-  recipient: { userId: string; role: 'dm' | 'player' }
-): Combatant[] {
-  if (recipient.role === 'dm') return combatants;
-  const room = getRoom(sessionId);
-  if (!room) return combatants;
-  return combatants.filter((c) => {
-    const tok = room.tokens.get(c.tokenId);
-    // If the token is missing from the live room map (e.g. a creature
-    // added by slug with no map presence), default to hidden — safer
-    // to drop than to leak.
-    if (!tok) return false;
-    return tokenVisibleToPlayer(tok, recipient.userId);
-  });
-}
+import {
+  canReceiveCombatantStats,
+  combatantsVisibleTo,
+} from '../../utils/combatStateVisibility.js';
 
 /**
  * Shared between the `combat:start` handler and the `combat:ready-check`
@@ -73,13 +49,16 @@ export async function startCombat(
   const currentTokenId = combatState.combatants[combatState.currentTurnIndex]?.tokenId ?? null;
   if (room) {
     for (const p of room.players.values()) {
-      const visibleCombatants = combatantsVisibleTo(sessionId, combatState.combatants, p);
-      io.to(p.socketId).emit('combat:started', {
-        combatants: visibleCombatants,
-        roundNumber: combatState.roundNumber,
-        currentTokenId,
-        reviewPhase: true,
-      });
+      const visibleCombatants = combatantsVisibleTo(room, combatState.combatants, p);
+      const sockets = room.userSockets.get(p.userId) ?? new Set([p.socketId]);
+      for (const socketId of sockets) {
+        io.to(socketId).emit('combat:started', {
+          combatants: visibleCombatants,
+          roundNumber: combatState.roundNumber,
+          currentTokenId,
+          reviewPhase: true,
+        });
+      }
     }
   } else {
     io.to(sessionId).emit('combat:started', {
@@ -106,7 +85,9 @@ export async function startCombat(
         out.push(`   ${marker} ${idx + 1}. ??? — ??`);
       } else {
         const tag = c.isNPC ? '' : ' (PC)';
-        out.push(`   ${marker} ${idx + 1}. ${c.name}${tag} — ${c.initiative}`);
+        const initiative =
+          room && canReceiveCombatantStats(room, c, recipient) ? c.initiative : '??';
+        out.push(`   ${marker} ${idx + 1}. ${c.name}${tag} — ${initiative}`);
       }
     });
     const firstVisibleName =
@@ -132,18 +113,21 @@ export async function startCombat(
 
   if (room) {
     for (const p of room.players.values()) {
-      io.to(p.socketId).emit('chat:new-message', {
-        id: uuidv4(),
-        sessionId,
-        userId: 'system',
-        displayName: 'System',
-        type: 'system',
-        content: buildLines(p),
-        characterName: null,
-        whisperTo: null,
-        rollData: null,
-        createdAt: new Date().toISOString(),
-      });
+      const sockets = room.userSockets.get(p.userId) ?? new Set([p.socketId]);
+      for (const socketId of sockets) {
+        io.to(socketId).emit('chat:new-message', {
+          id: uuidv4(),
+          sessionId,
+          userId: 'system',
+          displayName: 'System',
+          type: 'system',
+          content: buildLines(p),
+          characterName: null,
+          whisperTo: null,
+          rollData: null,
+          createdAt: new Date().toISOString(),
+        });
+      }
     }
   }
 
@@ -163,8 +147,14 @@ export async function startCombat(
       continue;
     }
     for (const p of room.players.values()) {
-      if (p.role === 'dm' || (tok ? tokenVisibleToPlayer(tok, p.userId) : false)) {
-        io.to(p.socketId).emit('combat:initiative-set', payload);
+      if (
+        (p.role === 'dm' || (tok ? tokenVisibleToPlayer(tok, p.userId) : false)) &&
+        canReceiveCombatantStats(room, combatant, p)
+      ) {
+        const sockets = room.userSockets.get(p.userId) ?? new Set([p.socketId]);
+        for (const socketId of sockets) {
+          io.to(socketId).emit('combat:initiative-set', payload);
+        }
       }
     }
   }
@@ -174,9 +164,12 @@ export async function startCombat(
     const sorted = CombatService.sortInitiative(sessionId);
     if (room) {
       for (const p of room.players.values()) {
-        io.to(p.socketId).emit('combat:all-initiatives-ready', {
-          combatants: combatantsVisibleTo(sessionId, sorted, p),
-        });
+        const sockets = room.userSockets.get(p.userId) ?? new Set([p.socketId]);
+        for (const socketId of sockets) {
+          io.to(socketId).emit('combat:all-initiatives-ready', {
+            combatants: combatantsVisibleTo(room, sorted, p),
+          });
+        }
       }
     } else {
       io.to(sessionId).emit('combat:all-initiatives-ready', { combatants: sorted });
