@@ -12,6 +12,15 @@ import {
 } from '../ChatCommands.js';
 import type { PlayerContext } from '../../utils/roomState.js';
 import { emitToTokenStatViewers } from '../../utils/combatBroadcast.js';
+import {
+  readWildShapeColumn,
+  routeWildShapeDamage,
+  routeWildShapeHeal,
+  serializeWildShapeState,
+} from '../../utils/wildShapeState.js';
+import { emitWildShapePrivate } from '../../utils/wildShapeSync.js';
+
+type WildShapeChange = NonNullable<CombatService.HpChangeResult['wildShape']>;
 
 /**
  * Only a real DB version (integer >= 1) may propagate — the column
@@ -161,7 +170,8 @@ function broadcastHpChange(
   tempHp: number,
   change: number,
   type: 'damage' | 'heal',
-  version?: number
+  version?: number,
+  wildShape?: WildShapeChange
 ): void {
   // Exact numbers are gated by the room's sharing toggles — DM tabs and
   // the owner's tabs always receive them; other players only when the
@@ -186,16 +196,35 @@ function broadcastHpChange(
       characterId,
       changes,
     });
+    // Exact form HP is owner/DM material — never the toggle-widened
+    // stat channel above, which can include bystanders.
+    if (wildShape) {
+      emitWildShapePrivate(io, ctx.room, characterId, {
+        wildShape: wildShape.state,
+        ...(version !== undefined ? { version } : {}),
+      });
+    }
   }
 }
 
+const UNREADABLE_WILD_SHAPE =
+  'the stored Wild Shape state is unreadable — run `!revert` to clear it before changing HP.';
+
+/**
+ * Out-of-combat direct HP change, Wild Shape aware: while transformed
+ * the same authoritative routing as the combat pipeline applies —
+ * damage consumes temp HP first, then the form (excess carries into
+ * the druid and ends the form), all in one version-guarded UPDATE;
+ * healing restores the form and leaves temp HP alone. Unreadable
+ * state and version conflicts fail closed by throwing; nothing is
+ * written.
+ */
 async function applyDirectHp(
   characterId: string,
   delta: number
-): Promise<{ hp: number; tempHp: number; version?: number } | null> {
-  // Outside combat: mutate the character row directly. Clamp to [0, max].
+): Promise<{ hp: number; tempHp: number; version?: number; wildShape?: WildShapeChange } | null> {
   const { rows } = await pool.query(
-    'SELECT hit_points, max_hit_points, temp_hit_points FROM characters WHERE id = $1',
+    'SELECT hit_points, max_hit_points, temp_hit_points, wild_shape, version FROM characters WHERE id = $1',
     [characterId]
   );
   const row = rows[0] as Record<string, unknown> | undefined;
@@ -203,6 +232,68 @@ async function applyDirectHp(
   const curHp = Number(row.hit_points);
   const maxHp = Number(row.max_hit_points);
   const tempHp = Number(row.temp_hit_points ?? 0);
+  const column = readWildShapeColumn(row.wild_shape);
+  if (column.status === 'invalid') throw new Error(UNREADABLE_WILD_SHAPE);
+  if (column.status === 'active') {
+    const expectedVersion = parseCharacterVersion(row);
+    if (expectedVersion === undefined) {
+      throw new Error('could not verify the character state — nothing was changed.');
+    }
+    const state = column.state;
+    if (delta === 0) {
+      return {
+        hp: curHp,
+        tempHp,
+        version: expectedVersion,
+        wildShape: { formName: state.formName, ended: false, state },
+      };
+    }
+    // Same order as the combat pipeline: temp HP soaks before the
+    // form does, and only what remains reaches the form/druid.
+    const tempAbsorbed = delta < 0 ? Math.min(tempHp, -delta) : 0;
+    const nextTempHp = tempHp - tempAbsorbed;
+    const route =
+      delta < 0
+        ? routeWildShapeDamage(state, -delta - tempAbsorbed)
+        : { ...routeWildShapeHeal(state, delta), absorbed: undefined, carryover: 0, ended: false };
+    const nextHp = Math.max(0, Math.min(maxHp, curHp - route.carryover));
+    // One guarded UPDATE: the form write plus the druid's HP / temp HP
+    // only when this change actually touches them — a conflict leaves
+    // every pool unchanged.
+    const clauses = ['wild_shape = $1'];
+    const params: unknown[] = [serializeWildShapeState(route.nextState)];
+    if (nextHp !== curHp) {
+      params.push(nextHp);
+      clauses.push(`hit_points = $${params.length}`);
+    }
+    if (nextTempHp !== tempHp) {
+      params.push(nextTempHp);
+      clauses.push(`temp_hit_points = $${params.length}`);
+    }
+    params.push(characterId, expectedVersion);
+    const { rows: versionRows } = await pool.query(
+      `UPDATE characters SET ${clauses.join(', ')} WHERE id = $${params.length - 1} AND version = $${params.length} RETURNING version`,
+      params
+    );
+    const version = parseCharacterVersion(versionRows[0]);
+    if (version === undefined) {
+      throw new Error('nothing was applied — the character changed mid-action. Retry.');
+    }
+    return {
+      hp: nextHp,
+      tempHp: nextTempHp,
+      version,
+      wildShape: {
+        formName: state.formName,
+        ...(delta < 0
+          ? { absorbed: route.absorbed }
+          : { healed: (route as { healed: number }).healed }),
+        ended: route.ended,
+        state: route.nextState,
+      },
+    };
+  }
+  // Untransformed: mutate the character row directly. Clamp to [0, max].
   const nextHp = Math.max(0, Math.min(maxHp, curHp + delta));
   const { rows: versionRows } = await pool.query(
     'UPDATE characters SET hit_points = $1 WHERE id = $2 RETURNING version',
@@ -216,11 +307,20 @@ async function setDirectHp(
   value: number
 ): Promise<{ hp: number; tempHp: number; version?: number } | null> {
   const { rows } = await pool.query(
-    'SELECT max_hit_points, temp_hit_points FROM characters WHERE id = $1',
+    'SELECT max_hit_points, temp_hit_points, wild_shape FROM characters WHERE id = $1',
     [characterId]
   );
   const row = rows[0] as Record<string, unknown> | undefined;
   if (!row) return null;
+  const column = readWildShapeColumn(row.wild_shape);
+  if (column.status === 'invalid') throw new Error(UNREADABLE_WILD_SHAPE);
+  if (column.status === 'active') {
+    // Fail closed: an absolute set is ambiguous while transformed
+    // (form HP vs druid HP). The relative commands route correctly.
+    throw new Error(
+      `target is wild-shaped (${column.state.formName}) — use \`!damage\`/\`!heal\` (routed through the form) or \`!revert\` first.`
+    );
+  }
   const maxHp = Number(row.max_hit_points);
   const tempHp = Number(row.temp_hit_points ?? 0);
   const nextHp = Math.max(0, Math.min(maxHp, value));
@@ -304,7 +404,8 @@ async function handleDamage(c: ChatCommandContext): Promise<boolean> {
         r.tempHp,
         r.change,
         'damage',
-        r.version
+        r.version,
+        r.wildShape
       );
     } else if (res.target.characterId) {
       hpBefore = await readHpBefore(res.target.characterId);
@@ -323,7 +424,8 @@ async function handleDamage(c: ChatCommandContext): Promise<boolean> {
         r.tempHp,
         -amount,
         'damage',
-        r.version
+        r.version,
+        r.wildShape
       );
     } else {
       whisperToCaller(
@@ -380,7 +482,8 @@ async function handleHeal(c: ChatCommandContext): Promise<boolean> {
         r.tempHp,
         r.change,
         'heal',
-        r.version
+        r.version,
+        r.wildShape
       );
     } else if (res.target.characterId) {
       hpBefore = await readHpBefore(res.target.characterId);
@@ -399,7 +502,8 @@ async function handleHeal(c: ChatCommandContext): Promise<boolean> {
         r.tempHp,
         amount,
         'heal',
-        r.version
+        r.version,
+        r.wildShape
       );
     } else {
       whisperToCaller(c.io, c.ctx, '!heal: this token has no character and combat is not active.');
@@ -460,7 +564,8 @@ async function handleHp(c: ChatCommandContext): Promise<boolean> {
           r.tempHp,
           r.change,
           delta >= 0 ? 'heal' : 'damage',
-          r.version
+          r.version,
+          r.wildShape
         );
       } else if (res.target.characterId) {
         const r = await applyDirectHp(res.target.characterId, delta);
@@ -477,7 +582,8 @@ async function handleHp(c: ChatCommandContext): Promise<boolean> {
           r.tempHp,
           delta,
           delta >= 0 ? 'heal' : 'damage',
-          r.version
+          r.version,
+          r.wildShape
         );
       } else {
         whisperToCaller(c.io, c.ctx, '!hp: this token has no character and combat is not active.');
@@ -517,7 +623,8 @@ async function handleHp(c: ChatCommandContext): Promise<boolean> {
           r.tempHp,
           r.change,
           delta >= 0 ? 'heal' : 'damage',
-          r.version
+          r.version,
+          r.wildShape
         );
         return true;
       }

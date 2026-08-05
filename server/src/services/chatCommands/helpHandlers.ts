@@ -157,14 +157,14 @@ const GROUPS: Array<{ title: string; entries: Entry[] }> = [
       },
       {
         name: 'wildshape',
-        usage: '!wildshape <beast> <hp> [ac] [speed]',
-        desc: 'Druid Wild Shape — announce + track beast HP pool.',
+        usage: '!wildshape <beast name>',
+        desc: 'Druid Wild Shape — server-checked compendium form, persisted HP/uses.',
       },
       { name: 'revert', usage: '!revert', desc: 'Revert Wild Shape back to Druid form.' },
       {
         name: 'beast',
         usage: '!beast dmg|heal|status <n>',
-        desc: 'Apply damage/heal to Wild-Shape beast pool.',
+        desc: 'Damage/heal the persisted Wild-Shape form (excess damage carries over).',
       },
       {
         name: 'reckless',

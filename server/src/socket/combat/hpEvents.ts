@@ -13,6 +13,7 @@ import {
 import { safeHandler } from '../../utils/socketHelpers.js';
 import { tokenConditionChanges } from '../../utils/conditionSources.js';
 import { emitToTokenViewers, emitToTokenStatViewers } from '../../utils/combatBroadcast.js';
+import { emitWildShapePrivate } from '../../utils/wildShapeSync.js';
 import { emitTokenScopedChat, tokenScopedChatIsPrivate } from '../../utils/tokenScopedChat.js';
 import { v4 as uuidv4 } from 'uuid';
 import pool from '../../db/connection.js';
@@ -100,6 +101,15 @@ export function registerCombatHp(io: Server, socket: Socket): void {
           characterId: result.characterId,
           changes,
         });
+        // Wild Shape sync is deliberately separate: exact form HP is
+        // owner/DM material and must never ride the toggle-widened
+        // stat channel above, which can include bystanders.
+        if (result.wildShape) {
+          emitWildShapePrivate(io, ctx.room, result.characterId, {
+            wildShape: result.wildShape.state,
+            ...(result.version !== undefined ? { version: result.version } : {}),
+          });
+        }
       }
       if (result.autoRemovedConditions && result.autoRemovedConditions.length > 0) {
         emitToTokenViewers(io, ctx.room, parsed.data.tokenId, 'map:token-updated', {
@@ -222,6 +232,13 @@ export function registerCombatHp(io: Server, socket: Socket): void {
           characterId: result.characterId,
           changes,
         });
+        // Same owner/DM-only Wild Shape sync as the damage path.
+        if (result.wildShape) {
+          emitWildShapePrivate(io, ctx.room, result.characterId, {
+            wildShape: result.wildShape.state,
+            ...(result.version !== undefined ? { version: result.version } : {}),
+          });
+        }
       }
       if (result.autoRemovedConditions && result.autoRemovedConditions.length > 0) {
         emitToTokenViewers(io, ctx.room, parsed.data.tokenId, 'map:token-updated', {
