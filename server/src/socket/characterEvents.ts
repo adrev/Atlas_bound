@@ -5,9 +5,11 @@ import { getPlayerBySocketId, playerIsDM } from '../utils/roomState.js';
 import { dbRowToCharacter } from '../utils/characterMapper.js';
 import { safeHandler } from '../utils/socketHelpers.js';
 import { safeParseJSON } from '../utils/safeJson.js';
+import { tokenVisibleToPlayer } from '../utils/tokenVisibility.js';
 import {
   canReceiveFullCharacter,
   fullCharacterRecipientSocketIds,
+  npcCharacterRecipientSocketIds,
 } from '../utils/characterVisibility.js';
 import type { RoomState } from '../utils/roomState.js';
 import { broadcastSystem } from '../services/ChatCommands.js';
@@ -126,11 +128,17 @@ function emitCharacterUpdate(
 ): void {
   const payload = { characterId, changes };
 
-  // NPC visibility follows token/creature rules rather than party-sheet
-  // sharing. Preserve its existing fanout until that separate path is
-  // audited; this helper closes the PC sheet-data leak only.
+  // NPC sheets follow the creature-sharing toggle and token visibility.
+  // Never send a hidden/prep-map creature payload merely because the caller
+  // knows its character id.
   if (characterOwnerUserId === 'npc') {
-    io.to(room.sessionId).emit('character:updated', payload);
+    for (const socketId of npcCharacterRecipientSocketIds(
+      room,
+      characterId,
+      room.showCreatureStatsToPlayers
+    )) {
+      io.to(socketId).emit('character:updated', payload);
+    }
     return;
   }
 
@@ -192,6 +200,18 @@ export function registerCharacterEvents(io: Server, socket: Socket): void {
           const requestedFields = Object.keys(changes);
           const hasDisallowed = requestedFields.some((f) => !allowedNpcFields.has(f));
           if (hasDisallowed) return;
+
+          // Free-roam attacks still resolve through this legacy absolute-HP
+          // update, but a player may only target an NPC they can currently
+          // see on the player ribbon. Knowing a character id must not permit
+          // edits to hidden creatures or tokens on a DM prep map.
+          const visibleTarget = Array.from(ctx.room.tokens.values()).some(
+            (token) =>
+              token.characterId === characterId &&
+              token.mapId === ctx.room.playerMapId &&
+              tokenVisibleToPlayer(token, ctx.player.userId)
+          );
+          if (!visibleTarget) return;
         }
       } else {
         // PCs: either owner-writes-their-own, OR a DM of THIS session

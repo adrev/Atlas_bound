@@ -143,6 +143,7 @@ export function registerSessionEvents(io: Server, socket: Socket): void {
         {},
         'sessions.settings'
       );
+      room.showCreatureStatsToPlayers = settings.showCreatureStatsToPlayers === true;
       room.showPlayersToPlayers = settings.showPlayersToPlayers === true;
 
       // Bans are public \u2014 every member sees the list. Non-DMs see the
@@ -618,6 +619,7 @@ export function registerSessionEvents(io: Server, socket: Socket): void {
         JSON.stringify(newSettings),
         ctx.room.sessionId,
       ]);
+      ctx.room.showCreatureStatsToPlayers = newSettings.showCreatureStatsToPlayers === true;
       ctx.room.showPlayersToPlayers = newSettings.showPlayersToPlayers === true;
 
       // Emit per-role so DMs get the webhook URL (they own it) and

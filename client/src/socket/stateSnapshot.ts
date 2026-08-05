@@ -2,7 +2,7 @@ import { useSessionStore } from '../stores/useSessionStore';
 import { useMapStore } from '../stores/useMapStore';
 import { useCombatStore, resolveTurnIndex } from '../stores/useCombatStore';
 import { useCharacterStore } from '../stores/useCharacterStore';
-import type { Token, Combatant } from '@dnd-vtt/shared';
+import type { Token, Combatant, Character } from '@dnd-vtt/shared';
 import { recordEventId, getLastEventId } from './eventCursor';
 
 /**
@@ -288,12 +288,22 @@ export async function pullStateSnapshot(): Promise<{ ok: boolean; applied: boole
       useSessionStore.getState().setGameMode('free-roam');
     }
 
-    // ── Characters: apply every one through the existing remote-sync
-    //    path, which is already idempotent.
+    // ── Characters: the snapshot is already filtered for this recipient,
+    //    so replace the shared cache rather than only upserting. Upserts left
+    //    sheets in browser memory after a DM revoked party/creature sharing.
+    //    Preserve the pinned owned character if a transient response omits it;
+    //    owned sheets are always authorized and should not blink out.
     const charStore = useCharacterStore.getState();
-    for (const charRow of Object.values(snap.characters ?? {})) {
-      charStore.applyRemoteSync(charRow as Record<string, unknown>);
+    const authorizedCharacters = { ...(snap.characters ?? {}) } as Record<string, Character>;
+    const userId = useSessionStore.getState().userId;
+    let myCharacter = charStore.myCharacter
+      ? (authorizedCharacters[charStore.myCharacter.id] ?? charStore.myCharacter)
+      : (Object.values(authorizedCharacters).find((character) => character.userId === userId) ??
+        null);
+    if (myCharacter && !authorizedCharacters[myCharacter.id]) {
+      authorizedCharacters[myCharacter.id] = myCharacter;
     }
+    useCharacterStore.setState({ allCharacters: authorizedCharacters, myCharacter });
 
     // ── Advance the event cursor so the next /events?since=N call
     //    doesn't redundantly replay the same data we just reconciled.

@@ -4,6 +4,7 @@ import { pullStateSnapshot } from './stateSnapshot';
 import { useSessionStore } from '../stores/useSessionStore';
 import { useMapStore } from '../stores/useMapStore';
 import { useCombatStore } from '../stores/useCombatStore';
+import { useCharacterStore } from '../stores/useCharacterStore';
 import { recordEventId, resetEventCursor } from './eventCursor';
 
 /**
@@ -52,7 +53,7 @@ function mockState(body: unknown, etag?: string) {
 describe('pullStateSnapshot — no-room fallback guard', () => {
   beforeEach(() => {
     resetEventCursor();
-    useSessionStore.setState({ sessionId: 's1' } as never);
+    useSessionStore.setState({ sessionId: 's1', userId: 'user-1' } as never);
     useMapStore.setState({ tokens: {}, currentMap: { id: 'map-1' } } as never);
     useCombatStore.setState({ active: false } as never);
   });
@@ -115,6 +116,89 @@ describe('pullStateSnapshot — no-room fallback guard', () => {
 
     expect(res.applied).toBe(true);
     expect(Object.keys(useMapStore.getState().tokens)).toEqual([]);
+  });
+});
+
+describe('pullStateSnapshot — authoritative character privacy', () => {
+  beforeEach(() => {
+    resetEventCursor();
+    useSessionStore.setState({ sessionId: 's1', userId: 'user-1' } as never);
+    useMapStore.setState({ tokens: {}, currentMap: { id: 'map-1' } } as never);
+    useCombatStore.setState({ active: false } as never);
+    useCharacterStore.setState({ myCharacter: null, allCharacters: {} } as never);
+  });
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('removes character sheets no longer present in the filtered snapshot', async () => {
+    useCharacterStore.setState({
+      allCharacters: {
+        'npc-secret': { id: 'npc-secret', userId: 'npc', name: 'Secret NPC' },
+      },
+    } as never);
+    mockState({
+      mapId: 'map-1',
+      tokens: [],
+      combat: null,
+      characters: {},
+      nextEventId: 9,
+      roundNumber: 0,
+    });
+
+    await pullStateSnapshot();
+
+    expect(useCharacterStore.getState().allCharacters).toEqual({});
+  });
+
+  it('retains the pinned owned character if a transient snapshot omits it', async () => {
+    const mine = { id: 'mine', userId: 'user-1', name: 'My Hero' };
+    useCharacterStore.setState({ myCharacter: mine, allCharacters: { mine } } as never);
+    mockState({
+      mapId: 'map-1',
+      tokens: [],
+      combat: null,
+      characters: {},
+      nextEventId: 10,
+      roundNumber: 0,
+    });
+
+    await pullStateSnapshot();
+
+    expect(useCharacterStore.getState().allCharacters).toEqual({ mine });
+  });
+
+  it('updates the pinned owned character from the authoritative snapshot', async () => {
+    const oldMine = { id: 'mine', userId: 'user-1', name: 'Old Name', version: 2 };
+    const freshMine = { id: 'mine', userId: 'user-1', name: 'Fresh Name', version: 3 };
+    useCharacterStore.setState({ myCharacter: oldMine, allCharacters: { mine: oldMine } } as never);
+    mockState({
+      mapId: 'map-1',
+      tokens: [],
+      combat: null,
+      characters: { mine: freshMine },
+      nextEventId: 11,
+      roundNumber: 0,
+    });
+
+    await pullStateSnapshot();
+
+    expect(useCharacterStore.getState().myCharacter).toEqual(freshMine);
+    expect(useCharacterStore.getState().allCharacters.mine).toEqual(freshMine);
+  });
+
+  it('pins an owned character when the store has not hydrated one yet', async () => {
+    const mine = { id: 'mine', userId: 'user-1', name: 'My Hero', version: 1 };
+    mockState({
+      mapId: 'map-1',
+      tokens: [],
+      combat: null,
+      characters: { mine },
+      nextEventId: 12,
+      roundNumber: 0,
+    });
+
+    await pullStateSnapshot();
+
+    expect(useCharacterStore.getState().myCharacter).toEqual(mine);
   });
 });
 

@@ -67,6 +67,10 @@ export function registerListeners(socket: Socket): () => void {
 
   socket.on('session:settings-updated', (settings) => {
     useSessionStore.getState().updateSettings(settings);
+    // Privacy toggles can revoke access to party/NPC sheets. Pull the
+    // authoritative filtered snapshot immediately so revoked records are
+    // removed from browser memory instead of lingering until navigation.
+    triggerSnapshot('session:settings-updated');
   });
 
   socket.on('session:error', ({ message }) => {
