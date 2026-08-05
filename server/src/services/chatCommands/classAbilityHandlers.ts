@@ -145,6 +145,53 @@ function spendLayOnHandsPool(poolState: LayOnHandsPool, amount: number): Feature
   );
 }
 
+interface ActionSurgePool {
+  maximum: number;
+  remaining: number;
+  features: Feature[];
+}
+
+function actionSurgePool(features: Feature[], maximum: number): ActionSurgePool {
+  const index = features.findIndex((feature) => /^action\s+surge$/i.test(feature.name.trim()));
+  if (index < 0) return { features, maximum, remaining: maximum };
+  const rawRemaining = Number(features[index].usesRemaining);
+  const remaining = Number.isFinite(rawRemaining)
+    ? Math.max(0, Math.min(maximum, Math.floor(rawRemaining)))
+    : maximum;
+  return { features, maximum, remaining };
+}
+
+function spendActionSurge(poolState: ActionSurgePool): Feature[] {
+  const index = poolState.features.findIndex((feature) =>
+    /^action\s+surge$/i.test(feature.name.trim())
+  );
+  const nextRemaining = poolState.remaining - 1;
+  if (index < 0) {
+    return [
+      ...poolState.features,
+      {
+        name: 'Action Surge',
+        description: 'Take one additional action on your turn.',
+        source: 'Fighter',
+        sourceType: 'class',
+        usesTotal: poolState.maximum,
+        usesRemaining: nextRemaining,
+        resetOn: 'short',
+      },
+    ];
+  }
+  return poolState.features.map((feature, featureIndex) =>
+    featureIndex === index
+      ? {
+          ...feature,
+          usesTotal: poolState.maximum,
+          usesRemaining: nextRemaining,
+          resetOn: 'short',
+        }
+      : feature
+  );
+}
+
 function spendSecondWind(features: Feature[]): Feature[] | null {
   const index = features.findIndex((feature) => /^second\s+wind$/i.test(feature.name.trim()));
   if (index < 0) {
@@ -363,36 +410,156 @@ async function handleSecondWind(c: ChatCommandContext): Promise<boolean> {
 }
 
 // ───── !actionsurge ────────────────────────────────────────────
-// Simpler path: we announce the effect and flip the combatant's
-// action slot back to available so the UI lets them take a second
-// action this turn. No hard class-check gate — action surge is
-// Fighter-only and mis-use is a player problem.
 async function handleActionSurge(c: ChatCommandContext): Promise<boolean> {
-  const caller = resolveCallerToken(c.ctx);
-  if (!caller) {
+  const arg = c.rest.trim().toLowerCase();
+  if (arg && arg !== 'status') {
+    whisperToCaller(c.io, c.ctx, '!actionsurge: usage `!actionsurge` or `!actionsurge status`');
+    return true;
+  }
+  const caller = resolveCurrentMapToken(
+    c.ctx,
+    (token) => token.ownerUserId === c.ctx.player.userId
+  );
+  if (!caller?.characterId) {
     whisperToCaller(c.io, c.ctx, '!actionsurge: no owned PC token on this map.');
     return true;
   }
-  const row = caller.characterId ? await loadCharacter(caller.characterId) : null;
-  const classLower = String(row?.class || '').toLowerCase();
-  if (!classLower.includes('fighter')) {
+  const row = await loadCharacter(caller.characterId);
+  if (!row) {
+    whisperToCaller(c.io, c.ctx, '!actionsurge: character not found.');
+    return true;
+  }
+  const level = classLevel(String(row.class || ''), 'Fighter', Number(row.level) || 1);
+  if (level === null) {
     whisperToCaller(c.io, c.ctx, `!actionsurge: ${caller.name} isn't a Fighter.`);
     return true;
   }
-  const economy = c.ctx.room.actionEconomies.get(caller.id);
-  if (economy) {
-    // Give the action slot back.
-    economy.action = false;
-    c.io.to(c.ctx.room.sessionId).emit('combat:action-used', {
-      tokenId: caller.id,
-      actionType: 'action',
-      economy,
-    });
+  if (level < 2) {
+    whisperToCaller(
+      c.io,
+      c.ctx,
+      `!actionsurge: Action Surge requires Fighter level 2 (${caller.name} is Fighter level ${level}).`
+    );
+    return true;
   }
+  const features = parseFeatures(row.features);
+  const expectedVersion = parseCharacterVersion(row.version);
+  if (!features || expectedVersion === null) {
+    whisperToCaller(
+      c.io,
+      c.ctx,
+      '!actionsurge: could not verify the character feature state. No use was spent; refresh or re-sync the character sheet.'
+    );
+    return true;
+  }
+  const poolState = actionSurgePool(features, level >= 17 ? 2 : 1);
+  if (arg === 'status') {
+    whisperToCaller(
+      c.io,
+      c.ctx,
+      `!actionsurge: ${caller.name} has ${poolState.remaining}/${poolState.maximum} uses remaining.`
+    );
+    return true;
+  }
+  if (poolState.remaining <= 0) {
+    whisperToCaller(
+      c.io,
+      c.ctx,
+      `!actionsurge: ${caller.name} has no uses remaining. Take a short or long rest to refresh it.`
+    );
+    return true;
+  }
+
+  const combatState = c.ctx.room.combatState;
+  const economy = c.ctx.room.actionEconomies.get(caller.id);
+  if (!combatState?.active) {
+    whisperToCaller(c.io, c.ctx, '!actionsurge: this command can be used only during combat.');
+    return true;
+  }
+  const currentCombatant = combatState.combatants[combatState.currentTurnIndex];
+  if (currentCombatant?.tokenId !== caller.id) {
+    whisperToCaller(
+      c.io,
+      c.ctx,
+      `!actionsurge: ${caller.name} can use Action Surge only on their turn.`
+    );
+    return true;
+  }
+  if (!economy) {
+    whisperToCaller(
+      c.io,
+      c.ctx,
+      '!actionsurge: combat action state is unavailable. No use was spent; refresh and try again.'
+    );
+    return true;
+  }
+  if (economy.actionSurgeUsed) {
+    whisperToCaller(c.io, c.ctx, '!actionsurge: Action Surge can be used only once on a turn.');
+    return true;
+  }
+  if (!economy.action) {
+    whisperToCaller(
+      c.io,
+      c.ctx,
+      '!actionsurge: take your normal action first so the additional action is not wasted.'
+    );
+    return true;
+  }
+
+  const updatedFeatures = spendActionSurge(poolState);
+  let updatedRows: unknown[];
+  try {
+    ({ rows: updatedRows } = await pool.query(
+      `UPDATE characters
+          SET features = $1
+        WHERE id = $2 AND version = $3
+        RETURNING version`,
+      [JSON.stringify(updatedFeatures), caller.characterId, expectedVersion]
+    ));
+  } catch (error) {
+    console.warn('[!actionsurge] feature write failed:', error);
+    whisperToCaller(
+      c.io,
+      c.ctx,
+      '!actionsurge: saving the use failed. No use was spent; try again.'
+    );
+    return true;
+  }
+  if (updatedRows.length === 0) {
+    whisperToCaller(
+      c.io,
+      c.ctx,
+      '!actionsurge: the character sheet changed while processing. No use was spent; refresh and try again.'
+    );
+    return true;
+  }
+  const authoritativeVersion = parseCharacterVersion(
+    (updatedRows[0] as Record<string, unknown>).version
+  );
+  if (authoritativeVersion === null) {
+    whisperToCaller(
+      c.io,
+      c.ctx,
+      '!actionsurge: the use was saved, but synchronization failed. Refresh the character sheet before retrying.'
+    );
+    return true;
+  }
+
+  economy.action = false;
+  economy.actionSurgeUsed = true;
+  c.io.to(c.ctx.room.sessionId).emit('combat:action-used', {
+    tokenId: caller.id,
+    actionType: 'action',
+    economy,
+  });
+  c.io.to(c.ctx.room.sessionId).emit('character:updated', {
+    characterId: caller.characterId,
+    changes: { features: updatedFeatures, version: authoritativeVersion },
+  });
   broadcastSystem(
     c.io,
     c.ctx,
-    `⚡ ${caller.name} uses Action Surge — takes an additional action this turn. 1/short rest (2/short rest at L17).`
+    `⚡ ${caller.name} uses Action Surge and gains one additional action this turn.`
   );
   return true;
 }

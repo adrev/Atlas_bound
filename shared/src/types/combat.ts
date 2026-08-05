@@ -92,6 +92,10 @@ export interface ActionEconomy {
   movementRemaining: number;
   movementMax: number;
   reaction: boolean;
+  /** Action Surge can be used only once on a turn, even when a
+   * level-17 Fighter has two uses between rests. Omitted means false
+   * for older snapshots and newly-created turn economies. */
+  actionSurgeUsed?: boolean;
 }
 
 export type ActionType = 'action' | 'bonusAction' | 'reaction';
