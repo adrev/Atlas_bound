@@ -77,9 +77,13 @@ export interface RoomEvent {
    *  the exact payload only to DMs, the token owner, and players allowed
    *  by the matching stat-sharing toggle. */
   statTokenId?: string | null;
+  /** Character whose full sheet governs access when no token is
+   *  available. Linked owners and DMs receive the exact payload;
+   *  other players require party-sheet sharing to be enabled. */
+  statCharacterId?: string | null;
   /** Safe replacement for `payload` when the recipient cannot receive
-   *  exact statistics for `statTokenId`. This metadata is internal and
-   *  is stripped from the REST replay response. */
+   *  exact statistics for the protected token/character. This metadata
+   *  is internal and stripped from the REST replay response. */
   redactedPayload?: unknown;
 }
 

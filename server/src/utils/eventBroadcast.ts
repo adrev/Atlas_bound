@@ -2,6 +2,8 @@ import type { Server } from 'socket.io';
 import type { RoomEvent, RoomPlayer, RoomState } from './roomState.js';
 import { MAX_EVENT_LOG } from './roomState.js';
 import { canReceiveVisibleCombatantStats } from './combatStateVisibility.js';
+import { tokenStatsSharedWithPlayers } from './combatBroadcast.js';
+import { tokenVisibleToPlayer } from './tokenVisibility.js';
 
 interface BroadcastEventOptions {
   tokenId?: string | null;
@@ -9,6 +11,8 @@ interface BroadcastEventOptions {
   includeEventId?: boolean;
   /** Applies recipient-specific exact-stat policy to this event. */
   statTokenId?: string | null;
+  /** Applies linked-character sheet privacy when no token is available. */
+  statCharacterId?: string | null;
   /** Payload sent to recipients who cannot receive exact token stats. */
   redactedPayload?: Record<string, unknown>;
 }
@@ -18,7 +22,7 @@ function liveSocketIdsForPlayer(room: RoomState, player: RoomPlayer): string[] {
   return sockets && sockets.size > 0 ? [...sockets] : [player.socketId];
 }
 
-function canReceiveEventStats(
+function canReceiveTokenEventStats(
   room: RoomState,
   tokenId: string | null | undefined,
   recipient: Pick<RoomPlayer, 'userId' | 'role'>
@@ -26,20 +30,43 @@ function canReceiveEventStats(
   if (recipient.role === 'dm') return true;
   if (!tokenId) return false;
 
+  const token = room.tokens.get(tokenId);
+  if (!token) return false;
+  if (token.ownerUserId === recipient.userId) return true;
+  if (!tokenVisibleToPlayer(token, recipient.userId)) return false;
+
   const combatant = room.combatState?.combatants.find((candidate) => candidate.tokenId === tokenId);
-  return combatant ? canReceiveVisibleCombatantStats(room, combatant, recipient) : false;
+  return combatant
+    ? canReceiveVisibleCombatantStats(room, combatant, recipient)
+    : tokenStatsSharedWithPlayers(room, token);
+}
+
+function canReceiveCharacterEventStats(
+  room: RoomState,
+  characterId: string | null | undefined,
+  recipient: Pick<RoomPlayer, 'userId' | 'role'>
+): boolean {
+  if (recipient.role === 'dm') return true;
+  if (!characterId) return false;
+  const owners = Array.from(room.players.values()).filter(
+    (player) => player.characterId === characterId
+  );
+  if (owners.some((owner) => owner.userId === recipient.userId)) return true;
+  return owners.length > 0 && room.showPlayersToPlayers;
 }
 
 /** Resolve the safe replay/live payload for one recipient. */
 export function eventPayloadForPlayer(
   room: RoomState,
-  event: Pick<RoomEvent, 'payload' | 'statTokenId' | 'redactedPayload'>,
+  event: Pick<RoomEvent, 'payload' | 'statTokenId' | 'statCharacterId' | 'redactedPayload'>,
   recipient: Pick<RoomPlayer, 'userId' | 'role'>
 ): unknown {
   if (event.redactedPayload === undefined) return event.payload;
-  return canReceiveEventStats(room, event.statTokenId, recipient)
-    ? event.payload
-    : event.redactedPayload;
+  const canReceive =
+    event.statTokenId && room.tokens.has(event.statTokenId)
+      ? canReceiveTokenEventStats(room, event.statTokenId, recipient)
+      : canReceiveCharacterEventStats(room, event.statCharacterId, recipient);
+  return canReceive ? event.payload : event.redactedPayload;
 }
 
 /**
@@ -90,6 +117,7 @@ export function broadcastEvent(
     mapId: opts.mapId ?? null,
     tokenId: opts.tokenId ?? null,
     statTokenId: opts.statTokenId,
+    statCharacterId: opts.statCharacterId,
     redactedPayload: opts.redactedPayload,
   };
   room.eventLog.push(entry);
