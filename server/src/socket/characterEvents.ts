@@ -2,7 +2,6 @@ import type { Server, Socket } from 'socket.io';
 import { z } from 'zod';
 import pool from '../db/connection.js';
 import { getPlayerBySocketId, playerIsDM } from '../utils/roomState.js';
-import { broadcastEvent } from '../utils/eventBroadcast.js';
 import { dbRowToCharacter } from '../utils/characterMapper.js';
 import { safeHandler } from '../utils/socketHelpers.js';
 import { safeParseJSON } from '../utils/safeJson.js';
@@ -10,6 +9,7 @@ import {
   canReceiveFullCharacter,
   fullCharacterRecipientSocketIds,
 } from '../utils/characterVisibility.js';
+import type { RoomState } from '../utils/roomState.js';
 import { broadcastSystem } from '../services/ChatCommands.js';
 import {
   computeAdjustSpellSlot,
@@ -115,6 +115,35 @@ async function characterIsInSession(characterId: string, sessionId: string): Pro
     [characterId, sessionId]
   );
   return tokenCheck.rows.length > 0;
+}
+
+function emitCharacterUpdate(
+  io: Server,
+  room: RoomState,
+  characterId: string,
+  characterOwnerUserId: string,
+  changes: Record<string, unknown>
+): void {
+  const payload = { characterId, changes };
+
+  // NPC visibility follows token/creature rules rather than party-sheet
+  // sharing. Preserve its existing fanout until that separate path is
+  // audited; this helper closes the PC sheet-data leak only.
+  if (characterOwnerUserId === 'npc') {
+    io.to(room.sessionId).emit('character:updated', payload);
+    return;
+  }
+
+  // PC updates can contain private notes, inventory, and spell choices.
+  // Do not put them in the room-wide event log: reconnecting allowed users
+  // self-heal from the privacy-filtered /state snapshot every five seconds.
+  for (const socketId of fullCharacterRecipientSocketIds(
+    room,
+    characterOwnerUserId,
+    room.showPlayersToPlayers
+  )) {
+    io.to(socketId).emit('character:updated', payload);
+  }
 }
 
 export function registerCharacterEvents(io: Server, socket: Socket): void {
@@ -232,16 +261,7 @@ export function registerCharacterEvents(io: Server, socket: Socket): void {
       }
       changes.version = Number(updatedRows[0].version ?? expectedVersion ?? existing.version ?? 1);
 
-      // Broadcast via event cursor so missed frames (dead socket,
-      // Cloud Run instance churn) can be replayed on reconnect. The
-      // sender is excluded via socket.to(...) emulation: we still fire
-      // the broadcast room-wide, but the sender already applied the
-      // change optimistically and applyRemoteUpdate is idempotent, so
-      // the echo is harmless. Token id is not tagged because character
-      // updates don't have a single authoritative token (a creature can
-      // share a character record across multiple map instances); the
-      // visibility filter for character data is looser anyway.
-      broadcastEvent(io, ctx.room, 'character:updated', { characterId, changes });
+      emitCharacterUpdate(io, ctx.room, characterId, charUserId, changes);
     })
   );
 
@@ -282,10 +302,7 @@ export function registerCharacterEvents(io: Server, socket: Socket): void {
       const hasUpdates = Object.keys(result.updates).length > 0;
       if (hasUpdates) {
         syncRestToCombatants(ctx.room, result.characterId, result.updates);
-        broadcastEvent(io, ctx.room, 'character:updated', {
-          characterId: result.characterId,
-          changes: result.updates,
-        });
+        emitCharacterUpdate(io, ctx.room, result.characterId, charUserId, result.updates);
       }
 
       socket.emit('character:rested', {
@@ -315,6 +332,7 @@ export function registerCharacterEvents(io: Server, socket: Socket): void {
 
       const { characterId, dieSize } = parsed.data;
       let result: ReturnType<typeof computeSpendHitDie> | null = null;
+      let characterOwnerUserId: string | null = null;
       const client = await pool.connect();
       try {
         await client.query('BEGIN');
@@ -331,6 +349,7 @@ export function registerCharacterEvents(io: Server, socket: Socket): void {
             (isDM || charUserId === ctx.player.userId) &&
             (isDM || charUserId !== 'npc')
           ) {
+            characterOwnerUserId = charUserId;
             result = computeSpendHitDie(row, dieSize);
             await persistRestUpdates(client, result.characterId, result.updates);
           }
@@ -343,15 +362,12 @@ export function registerCharacterEvents(io: Server, socket: Socket): void {
         client.release();
       }
 
-      if (!result) return;
+      if (!result || !characterOwnerUserId) return;
 
       const hasUpdates = Object.keys(result.updates).length > 0;
       if (hasUpdates) {
         syncRestToCombatants(ctx.room, result.characterId, result.updates);
-        broadcastEvent(io, ctx.room, 'character:updated', {
-          characterId: result.characterId,
-          changes: result.updates,
-        });
+        emitCharacterUpdate(io, ctx.room, result.characterId, characterOwnerUserId, result.updates);
       }
 
       socket.emit('character:hit-die-spent', result);
@@ -376,6 +392,7 @@ export function registerCharacterEvents(io: Server, socket: Socket): void {
 
       const { characterId, level, delta } = parsed.data;
       let result: ReturnType<typeof computeAdjustSpellSlot> | null = null;
+      let characterOwnerUserId: string | null = null;
       const client = await pool.connect();
       try {
         await client.query('BEGIN');
@@ -392,6 +409,7 @@ export function registerCharacterEvents(io: Server, socket: Socket): void {
             (isDM || charUserId === ctx.player.userId) &&
             (isDM || charUserId !== 'npc')
           ) {
+            characterOwnerUserId = charUserId;
             result = computeAdjustSpellSlot(row, level, delta);
             await persistRestUpdates(client, result.characterId, result.updates);
           }
@@ -404,14 +422,11 @@ export function registerCharacterEvents(io: Server, socket: Socket): void {
         client.release();
       }
 
-      if (!result) return;
+      if (!result || !characterOwnerUserId) return;
 
       const hasUpdates = Object.keys(result.updates).length > 0;
       if (hasUpdates) {
-        broadcastEvent(io, ctx.room, 'character:updated', {
-          characterId: result.characterId,
-          changes: result.updates,
-        });
+        emitCharacterUpdate(io, ctx.room, result.characterId, characterOwnerUserId, result.updates);
       }
 
       socket.emit('character:spell-slot-adjusted', result);

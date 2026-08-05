@@ -134,6 +134,8 @@ export interface RoomState {
    */
   mapGridSizes: Map<string, number>;
   gameMode: 'free-roam' | 'combat';
+  /** Whether players may receive other players' character-sheet payloads. */
+  showPlayersToPlayers: boolean;
   /**
    * Active ready check state. Non-null while a DM-initiated ready
    * check is in progress. Cleared once all players respond or the
@@ -341,6 +343,7 @@ export function createRoom(sessionId: string, roomCode: string, dmUserId: string
     userSockets: new Map(),
     mapGridSizes: new Map(),
     gameMode: 'free-roam',
+    showPlayersToPlayers: false,
     readyCheck: null,
     combatStarting: false,
     playerMapId: null,

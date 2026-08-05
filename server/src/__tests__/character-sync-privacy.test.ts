@@ -90,3 +90,28 @@ describe('character:sync-request privacy', () => {
     expect(emissions).toHaveLength(0);
   });
 });
+
+describe('character:updated privacy', () => {
+  it('keeps private sheet-field updates on the owner and DM sockets', async () => {
+    seedRoom();
+    mockQuery
+      .mockResolvedValueOnce({ rows: [{ id: 'char-1', user_id: 'owner', version: 4 }] })
+      .mockResolvedValueOnce({ rows: [{ version: 5 }] });
+    const emissions: Emission[] = [];
+    const handlers = registerFor('owner-1', emissions);
+
+    await handlers.get('character:update')!({
+      characterId: 'char-1',
+      expectedVersion: 4,
+      changes: { notes: { backstory: 'A private secret' } },
+    });
+
+    expect(
+      emissions
+        .filter((entry) => entry.event === 'character:updated')
+        .map((entry) => entry.channelId)
+    ).toEqual(['dm-1', 'owner-1', 'owner-2']);
+    expect(emissions.some((entry) => entry.channelId === 'other-1')).toBe(false);
+    expect(emissions.some((entry) => entry.channelId === 'character-sync-private')).toBe(false);
+  });
+});

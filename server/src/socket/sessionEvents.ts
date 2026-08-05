@@ -143,6 +143,7 @@ export function registerSessionEvents(io: Server, socket: Socket): void {
         {},
         'sessions.settings'
       );
+      room.showPlayersToPlayers = settings.showPlayersToPlayers === true;
 
       // Bans are public \u2014 every member sees the list. Non-DMs see the
       // same payload so they know who's been excluded (they just don't
@@ -617,6 +618,7 @@ export function registerSessionEvents(io: Server, socket: Socket): void {
         JSON.stringify(newSettings),
         ctx.room.sessionId,
       ]);
+      ctx.room.showPlayersToPlayers = newSettings.showPlayersToPlayers === true;
 
       // Emit per-role so DMs get the webhook URL (they own it) and
       // players don't (it's not a secret, but not something they need).
