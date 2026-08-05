@@ -334,11 +334,20 @@ export function computeAdjustSpellSlot(
   };
 }
 
+/**
+ * Persists rest/hit-die/spell-slot updates and returns the new
+ * authoritative characters.version (the DB trigger bumps it on every
+ * UPDATE). Callers must include it as `changes.version` in the
+ * `character:updated` fanout, otherwise the owner's next optimistic
+ * `character:update` sends a stale expectedVersion and hits a false
+ * `character:update-conflict`. Returns undefined when there was
+ * nothing to persist (no version bump happened).
+ */
 export async function persistRestUpdates(
   client: PoolClient,
   characterId: string,
   updates: Record<string, unknown>,
-): Promise<void> {
+): Promise<number | undefined> {
   const setClauses: string[] = [];
   const params: unknown[] = [];
   let idx = 1;
@@ -350,10 +359,18 @@ export async function persistRestUpdates(
     params.push(field.json ? JSON.stringify(value) : value);
   }
 
-  if (setClauses.length === 0) return;
+  if (setClauses.length === 0) return undefined;
   setClauses.push('updated_at = NOW()::text');
   params.push(characterId);
-  await client.query(`UPDATE characters SET ${setClauses.join(', ')} WHERE id = $${idx}`, params);
+  const { rows } = await client.query(
+    `UPDATE characters SET ${setClauses.join(', ')} WHERE id = $${idx} RETURNING version`,
+    params,
+  );
+  // Only a real DB version (integer >= 1) may propagate — the column
+  // defaults to 1 and only ever increments. Number(null) is 0, so a
+  // null/mocked row would otherwise masquerade as a valid version.
+  const version = Number((rows[0] as { version?: unknown } | undefined)?.version);
+  return Number.isInteger(version) && version >= 1 ? version : undefined;
 }
 
 export function syncRestToCombatants(

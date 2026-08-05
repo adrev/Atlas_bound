@@ -307,10 +307,11 @@ export function registerCharacterEvents(io: Server, socket: Socket): void {
       if (!isDM && charUserId === 'npc') return;
 
       const result = computeRest(row, kind);
+      let version: number | undefined;
       const client = await pool.connect();
       try {
         await client.query('BEGIN');
-        await persistRestUpdates(client, result.characterId, result.updates);
+        version = await persistRestUpdates(client, result.characterId, result.updates);
         await client.query('COMMIT');
       } catch (err) {
         await client.query('ROLLBACK');
@@ -322,7 +323,12 @@ export function registerCharacterEvents(io: Server, socket: Socket): void {
       const hasUpdates = Object.keys(result.updates).length > 0;
       if (hasUpdates) {
         syncRestToCombatants(ctx.room, result.characterId, result.updates);
-        emitCharacterUpdate(io, ctx.room, result.characterId, charUserId, result.updates);
+        // Carry the post-write characters.version so sheet stores stay in
+        // step and the owner's next optimistic edit doesn't send a stale
+        // expectedVersion (false character:update-conflict).
+        const fanoutChanges: Record<string, unknown> =
+          version !== undefined ? { ...result.updates, version } : result.updates;
+        emitCharacterUpdate(io, ctx.room, result.characterId, charUserId, fanoutChanges);
       }
 
       socket.emit('character:rested', {
@@ -353,6 +359,7 @@ export function registerCharacterEvents(io: Server, socket: Socket): void {
       const { characterId, dieSize } = parsed.data;
       let result: ReturnType<typeof computeSpendHitDie> | null = null;
       let characterOwnerUserId: string | null = null;
+      let version: number | undefined;
       const client = await pool.connect();
       try {
         await client.query('BEGIN');
@@ -371,7 +378,7 @@ export function registerCharacterEvents(io: Server, socket: Socket): void {
           ) {
             characterOwnerUserId = charUserId;
             result = computeSpendHitDie(row, dieSize);
-            await persistRestUpdates(client, result.characterId, result.updates);
+            version = await persistRestUpdates(client, result.characterId, result.updates);
           }
         }
         await client.query('COMMIT');
@@ -387,7 +394,10 @@ export function registerCharacterEvents(io: Server, socket: Socket): void {
       const hasUpdates = Object.keys(result.updates).length > 0;
       if (hasUpdates) {
         syncRestToCombatants(ctx.room, result.characterId, result.updates);
-        emitCharacterUpdate(io, ctx.room, result.characterId, characterOwnerUserId, result.updates);
+        // Same stale-expectedVersion guard as the character:rest fanout.
+        const fanoutChanges: Record<string, unknown> =
+          version !== undefined ? { ...result.updates, version } : result.updates;
+        emitCharacterUpdate(io, ctx.room, result.characterId, characterOwnerUserId, fanoutChanges);
       }
 
       socket.emit('character:hit-die-spent', result);
@@ -413,6 +423,7 @@ export function registerCharacterEvents(io: Server, socket: Socket): void {
       const { characterId, level, delta } = parsed.data;
       let result: ReturnType<typeof computeAdjustSpellSlot> | null = null;
       let characterOwnerUserId: string | null = null;
+      let version: number | undefined;
       const client = await pool.connect();
       try {
         await client.query('BEGIN');
@@ -431,7 +442,7 @@ export function registerCharacterEvents(io: Server, socket: Socket): void {
           ) {
             characterOwnerUserId = charUserId;
             result = computeAdjustSpellSlot(row, level, delta);
-            await persistRestUpdates(client, result.characterId, result.updates);
+            version = await persistRestUpdates(client, result.characterId, result.updates);
           }
         }
         await client.query('COMMIT');
@@ -446,7 +457,10 @@ export function registerCharacterEvents(io: Server, socket: Socket): void {
 
       const hasUpdates = Object.keys(result.updates).length > 0;
       if (hasUpdates) {
-        emitCharacterUpdate(io, ctx.room, result.characterId, characterOwnerUserId, result.updates);
+        // Same stale-expectedVersion guard as the character:rest fanout.
+        const fanoutChanges: Record<string, unknown> =
+          version !== undefined ? { ...result.updates, version } : result.updates;
+        emitCharacterUpdate(io, ctx.room, result.characterId, characterOwnerUserId, fanoutChanges);
       }
 
       socket.emit('character:spell-slot-adjusted', result);
