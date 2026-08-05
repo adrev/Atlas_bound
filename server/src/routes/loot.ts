@@ -7,6 +7,10 @@ import { createLootSchema } from '../utils/validation.js';
 import { getIO } from '../socket/ioInstance.js';
 import { getRoom, socketsOnMap } from '../utils/roomState.js';
 import type { Token } from '@dnd-vtt/shared';
+import {
+  fullCharacterRecipientSocketIds,
+  npcCharacterRecipientSocketIds,
+} from '../utils/characterVisibility.js';
 
 const lootDropSchema = z.object({
   itemIndex: z.number().int().min(0),
@@ -36,7 +40,7 @@ interface LootEntryRow {
 interface CharacterInventoryRow {
   id: string;
   inventory: string | null;
-  user_id?: string;
+  user_id?: string | null;
 }
 interface CompendiumItemRow {
   description: string | null;
@@ -229,6 +233,8 @@ router.post('/characters/:id/loot/take', async (req: Request, res: Response) => 
   const client = await pool.connect();
   let responseInventory: unknown[] = [];
   let responseItemName = '';
+  let responseVersion: number | undefined;
+  let targetOwnerUserId: string | null = null;
   try {
     await client.query('BEGIN');
 
@@ -251,7 +257,7 @@ router.post('/characters/:id/loot/take', async (req: Request, res: Response) => 
     // Lock the target character row too, so parallel inventory writers
     // to the same character serialize cleanly.
     const { rows: targetRows } = await client.query(
-      'SELECT id, inventory FROM characters WHERE id = $1 FOR UPDATE',
+      'SELECT id, inventory, user_id FROM characters WHERE id = $1 FOR UPDATE',
       [targetCharacterId],
     );
     const targetChar = targetRows[0] as CharacterInventoryRow | undefined;
@@ -260,6 +266,7 @@ router.post('/characters/:id/loot/take', async (req: Request, res: Response) => 
       res.status(404).json({ error: 'Target character not found' });
       return;
     }
+    targetOwnerUserId = targetChar.user_id ?? null;
 
     const inventory = JSON.parse(targetChar.inventory || '[]');
 
@@ -366,7 +373,12 @@ router.post('/characters/:id/loot/take', async (req: Request, res: Response) => 
     } else {
       await client.query('UPDATE loot_entries SET quantity = quantity - 1 WHERE id = $1', [entryId]);
     }
-    await client.query('UPDATE characters SET inventory = $1 WHERE id = $2', [inventoryJson, targetCharacterId]);
+    const { rows: versionRows } = await client.query(
+      'UPDATE characters SET inventory = $1 WHERE id = $2 RETURNING version',
+      [inventoryJson, targetCharacterId],
+    );
+    const version = Number((versionRows[0] as { version?: unknown } | undefined)?.version);
+    if (Number.isInteger(version) && version >= 1) responseVersion = version;
 
     await client.query('COMMIT');
 
@@ -379,29 +391,54 @@ router.post('/characters/:id/loot/take', async (req: Request, res: Response) => 
     client.release();
   }
 
-  res.json({ success: true, itemName: responseItemName, inventory: responseInventory, targetCharacterId });
+  res.json({
+    success: true,
+    itemName: responseItemName,
+    inventory: responseInventory,
+    targetCharacterId,
+    ...(responseVersion !== undefined ? { version: responseVersion } : {}),
+  });
 
-  // Fan out the inventory change to everyone in the target character's
-  // session. Without this the receiving player's inventory panel keeps
-  // showing stale data until they refresh — even though the DB is
-  // already updated and the response returned the new inventory.
+  // Fan out the inventory change only to audiences allowed to receive
+  // this full character sheet. Inventory contains private notes/items;
+  // a room-wide emit leaks it even when party-sheet sharing is disabled.
   //
   // Fire-and-forget: failures here should NEVER roll back the take.
   try {
-    const { rows: sessionRows } = await pool.query(
-      `SELECT DISTINCT m.session_id AS session_id
-       FROM tokens t JOIN maps m ON m.id = t.map_id
-       WHERE t.character_id = $1
-       LIMIT 1`,
-      [targetCharacterId],
-    );
-    const sessionId = sessionRows[0]?.session_id as string | undefined;
     const io = getIO();
-    if (sessionId && io) {
-      io.to(sessionId).emit('character:updated', {
-        characterId: targetCharacterId,
-        changes: { inventory: responseInventory },
-      });
+    if (io) {
+      const { rows: sessionRows } = await pool.query(
+        `SELECT DISTINCT session_id
+           FROM (
+             SELECT session_id FROM session_players WHERE character_id = $1
+             UNION
+             SELECT m.session_id FROM tokens t
+             JOIN maps m ON m.id = t.map_id
+             WHERE t.character_id = $1
+           ) character_sessions`,
+        [targetCharacterId],
+      );
+      const changes: Record<string, unknown> = { inventory: responseInventory };
+      if (responseVersion !== undefined) changes.version = responseVersion;
+      for (const row of sessionRows) {
+        const sessionId = row.session_id as string;
+        const room = getRoom(sessionId);
+        if (!room) continue;
+        const recipients =
+          targetOwnerUserId && targetOwnerUserId !== 'npc'
+            ? fullCharacterRecipientSocketIds(room, targetOwnerUserId, room.showPlayersToPlayers)
+            : npcCharacterRecipientSocketIds(
+                room,
+                targetCharacterId,
+                room.showCreatureStatsToPlayers,
+              );
+        for (const socketId of recipients) {
+          io.to(socketId).emit('character:updated', {
+            characterId: targetCharacterId,
+            changes,
+          });
+        }
+      }
     }
   } catch (err) {
     // Log but don't throw — the HTTP response has already been sent.
