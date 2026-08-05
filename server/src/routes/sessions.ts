@@ -32,6 +32,7 @@ import { dbRowToCharacter } from '../utils/characterMapper.js';
 import { privateNoStoreCache } from '../utils/cacheHeaders.js';
 import { rowToToken } from '../utils/tokenMapper.js';
 import { withConditionSources } from '../utils/conditionSources.js';
+import { combatantsVisibleTo } from '../utils/combatStateVisibility.js';
 
 const router = Router();
 
@@ -1155,12 +1156,7 @@ router.get('/:id/state', async (req: Request, res: Response) => {
   // see yet on the map.
   let combat: unknown = null;
   if (room.combatState?.active) {
-    const filtered = isDM
-      ? room.combatState.combatants
-      : room.combatState.combatants.filter((c) => {
-          const tok = room.tokens.get(c.tokenId);
-          return tok ? tokenVisibleToPlayer(tok, userId) : false;
-        });
+    const filtered = player ? combatantsVisibleTo(room, room.combatState.combatants, player) : [];
     combat = {
       active: true,
       roundNumber: room.combatState.roundNumber,

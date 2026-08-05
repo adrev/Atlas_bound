@@ -12,6 +12,7 @@ import {
 } from '../../utils/validation.js';
 import { safeHandler } from '../../utils/socketHelpers.js';
 import { startCombat } from './startCombatHelper.js';
+import { emitCombatStateSync } from '../../utils/combatStateVisibility.js';
 
 /**
  * Combat lifecycle events — start / add combatant / ready check /
@@ -79,12 +80,7 @@ export function registerCombatLifecycle(io: Server, socket: Socket): void {
       }
       const state = ctx.room.combatState;
       if (!state) return;
-      io.to(ctx.room.sessionId).emit('combat:state', {
-        active: state.active,
-        combatants: state.combatants,
-        roundNumber: state.roundNumber,
-        currentTurnIndex: state.currentTurnIndex,
-      });
+      emitCombatStateSync(io, ctx.room);
     })
   );
 

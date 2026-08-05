@@ -30,6 +30,7 @@ import { safeParseJSON } from '../utils/safeJson.js';
 import { rowToToken } from '../utils/tokenMapper.js';
 import { tokenVisibleToPlayer } from '../utils/tokenVisibility.js';
 import { canReceiveFullCharacter } from '../utils/characterVisibility.js';
+import { actionEconomyVisibleTo, combatantsVisibleTo } from '../utils/combatStateVisibility.js';
 
 export function registerSessionEvents(io: Server, socket: Socket): void {
   socket.on(
@@ -366,12 +367,13 @@ export function registerSessionEvents(io: Server, socket: Socket): void {
           // enemies that haven't been revealed yet. DMs see everything.
           // `currentTurnIndex` is left intact because it's also filtered
           // on the client (the out-of-view index just renders nothing).
-          const combatantsForRecipient = isDM
-            ? combatState.combatants
-            : combatState.combatants.filter((c) => {
-                const tok = room.tokens.get(c.tokenId);
-                return tok ? tokenVisibleToPlayer(tok, userId) : false;
-              });
+          const recipient = room.players.get(userId);
+          if (!recipient) return;
+          const combatantsForRecipient = combatantsVisibleTo(
+            room,
+            combatState.combatants,
+            recipient
+          );
 
           socket.emit('combat:state-sync', {
             combatants: combatantsForRecipient,
@@ -381,13 +383,18 @@ export function registerSessionEvents(io: Server, socket: Socket): void {
             // the raw index wrong for players whenever hidden combatants
             // precede it. Clients resolve the tokenId locally.
             currentTokenId: cur?.tokenId ?? null,
-            actionEconomy: economy ?? {
-              action: false,
-              bonusAction: false,
-              movementRemaining: 30,
-              movementMax: 30,
-              reaction: false,
-            },
+            actionEconomy: actionEconomyVisibleTo(
+              room,
+              cur ?? null,
+              economy ?? {
+                action: false,
+                bonusAction: false,
+                movementRemaining: 30,
+                movementMax: 30,
+                reaction: false,
+              },
+              recipient
+            ),
           });
         }
       }
