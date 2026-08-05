@@ -12,7 +12,7 @@ import {
 } from '../../utils/validation.js';
 import { safeHandler } from '../../utils/socketHelpers.js';
 import { tokenConditionChanges } from '../../utils/conditionSources.js';
-import { emitToTokenViewers } from '../../utils/combatBroadcast.js';
+import { emitToTokenViewers, emitToTokenStatViewers } from '../../utils/combatBroadcast.js';
 import { emitTokenScopedChat, tokenScopedChatIsPrivate } from '../../utils/tokenScopedChat.js';
 import { v4 as uuidv4 } from 'uuid';
 import pool from '../../db/connection.js';
@@ -64,7 +64,10 @@ export function registerCombatHp(io: Server, socket: Socket): void {
       const result = await CombatService.applyDamage(ctx.room.sessionId, parsed.data.tokenId, parsed.data.amount, {
         criticalHit: parsed.data.criticalHit,
       });
-      emitToTokenViewers(io, ctx.room, parsed.data.tokenId, 'combat:hp-changed', {
+      // Exact numbers are gated by the room's sharing toggles — visible
+      // players without the toggle still see the coarse bar via the
+      // redacted combat:state-sync, never the socket payload.
+      emitToTokenStatViewers(io, ctx.room, parsed.data.tokenId, 'combat:hp-changed', {
         tokenId: parsed.data.tokenId,
         hp: result.hp,
         tempHp: result.tempHp,
@@ -93,10 +96,10 @@ export function registerCombatHp(io: Server, socket: Socket): void {
         if (result.version !== undefined) {
           changes.version = result.version;
         }
-        emitToTokenViewers(io, ctx.room, parsed.data.tokenId, 'character:updated', {
+        emitToTokenStatViewers(io, ctx.room, parsed.data.tokenId, 'character:updated', {
           characterId: result.characterId,
           changes,
-        }, { includeOwner: true });
+        });
       }
       if (result.autoRemovedConditions && result.autoRemovedConditions.length > 0) {
         emitToTokenViewers(io, ctx.room, parsed.data.tokenId, 'map:token-updated', {
@@ -110,7 +113,7 @@ export function registerCombatHp(io: Server, socket: Socket): void {
       // every client sees the \u2717 land without the player having to
       // re-roll manually.
       if (result.autoDeathSaveFailure) {
-        emitToTokenViewers(io, ctx.room, parsed.data.tokenId, 'combat:death-save-updated', {
+        emitToTokenStatViewers(io, ctx.room, parsed.data.tokenId, 'combat:death-save-updated', {
           tokenId: parsed.data.tokenId,
           deathSaves: result.autoDeathSaveFailure,
           roll: 0,
@@ -196,7 +199,7 @@ export function registerCombatHp(io: Server, socket: Socket): void {
 
     try {
       const result = await CombatService.applyHeal(ctx.room.sessionId, parsed.data.tokenId, parsed.data.amount);
-      emitToTokenViewers(io, ctx.room, parsed.data.tokenId, 'combat:hp-changed', {
+      emitToTokenStatViewers(io, ctx.room, parsed.data.tokenId, 'combat:hp-changed', {
         tokenId: parsed.data.tokenId,
         hp: result.hp,
         tempHp: result.tempHp,
@@ -215,10 +218,10 @@ export function registerCombatHp(io: Server, socket: Socket): void {
         if (result.version !== undefined) {
           changes.version = result.version;
         }
-        emitToTokenViewers(io, ctx.room, parsed.data.tokenId, 'character:updated', {
+        emitToTokenStatViewers(io, ctx.room, parsed.data.tokenId, 'character:updated', {
           characterId: result.characterId,
           changes,
-        }, { includeOwner: true });
+        });
       }
       if (result.autoRemovedConditions && result.autoRemovedConditions.length > 0) {
         emitToTokenViewers(io, ctx.room, parsed.data.tokenId, 'map:token-updated', {
@@ -295,7 +298,7 @@ export function registerCombatHp(io: Server, socket: Socket): void {
     }
     CombatService.persistSessionCombatState(ctx.room.sessionId);
 
-    emitToTokenViewers(io, ctx.room, tokenId, 'combat:death-save-updated', {
+    emitToTokenStatViewers(io, ctx.room, tokenId, 'combat:death-save-updated', {
       tokenId,
       deathSaves: combatant.deathSaves,
       roll: result.roll,

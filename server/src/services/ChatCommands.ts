@@ -9,7 +9,7 @@ import type {
 import { v4 as uuidv4 } from 'uuid';
 import pool from '../db/connection.js';
 import type { PlayerContext } from '../utils/roomState.js';
-import { emitToTokenViewers } from '../utils/combatBroadcast.js';
+import { emitToTokenViewers, emitToTokenStatViewers } from '../utils/combatBroadcast.js';
 import { emitTokenScopedChat, tokenScopedChatIsPrivate } from '../utils/tokenScopedChat.js';
 
 /**
@@ -167,9 +167,14 @@ function scopedChatCommandIo(io: Server, ctx: PlayerContext): Server {
             return (event: string, payload?: unknown, ...args: unknown[]) => {
               const tokenId = tokenIdForScopedCommandEmit(ctx, event, payload);
               if (tokenId) {
-                emitToTokenViewers(io, ctx.room, tokenId, event, payload, {
-                  includeOwner: event === 'character:updated' || event === 'combat:action-used',
-                });
+                // Condition/visual token updates keep plain token
+                // visibility; exact-stat payloads (HP, sheet changes,
+                // action economy) go through the sharing-toggle gate.
+                if (event === 'map:token-updated') {
+                  emitToTokenViewers(io, ctx.room, tokenId, event, payload);
+                } else {
+                  emitToTokenStatViewers(io, ctx.room, tokenId, event, payload);
+                }
                 return true;
               }
               return (opTarget.emit as (...emitArgs: unknown[]) => unknown).call(

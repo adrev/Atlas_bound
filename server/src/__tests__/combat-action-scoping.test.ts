@@ -164,12 +164,26 @@ describe('combat action economy visibility scoping', () => {
     expect(channelsFor(em, 'chat:new-message')).toEqual(['dm-sock', 'owner-sock']);
   });
 
-  it('still sends visible combatant action use to everyone on the active map', async () => {
+  it('withholds a visible PC action use from bystanders while showPlayersToPlayers is off', async () => {
     const em: Emission[] = [];
     seedRoom(tok('visible-pc', {
       ownerUserId: 'owner-user',
       name: 'Visible PC',
     }));
+    const h = handlersFor(fakeIo(em), 'dm-sock');
+
+    await h.get('combat:use-action')!({ actionType: 'bonusAction' });
+
+    expect(channelsFor(em, 'combat:action-used')).toEqual(['dm-sock', 'owner-sock']);
+  });
+
+  it('sends visible PC action use to everyone on the map when showPlayersToPlayers is on', async () => {
+    const em: Emission[] = [];
+    const room = seedRoom(tok('visible-pc', {
+      ownerUserId: 'owner-user',
+      name: 'Visible PC',
+    }));
+    room.showPlayersToPlayers = true;
     const h = handlersFor(fakeIo(em), 'dm-sock');
 
     await h.get('combat:use-action')!({ actionType: 'bonusAction' });

@@ -4,7 +4,7 @@ import type { RoomState } from '../utils/roomState.js';
 import * as ConditionService from './ConditionService.js';
 import { tokenConditionChanges } from '../utils/conditionSources.js';
 import pool from '../db/connection.js';
-import { emitToTokenViewers } from '../utils/combatBroadcast.js';
+import { emitToTokenViewers, emitToTokenStatViewers } from '../utils/combatBroadcast.js';
 import { emitTokenScopedChat, tokenScopedChatIsPrivate } from '../utils/tokenScopedChat.js';
 
 /**
@@ -48,10 +48,13 @@ export async function applyDamageSideEffects(
   if (result.droppedConcentration) {
     const t = room.tokens.get(tokenId);
     if (t?.characterId) {
-      emitToTokenViewers(io, room, tokenId, 'character:updated', {
+      // Character-sheet sync payload — same exact-stat gate as HP fanout.
+      // The public concentration break already shows via the condition
+      // change above, which stays under plain token visibility.
+      emitToTokenStatViewers(io, room, tokenId, 'character:updated', {
         characterId: t.characterId,
         changes: { concentratingOn: null },
-      }, { includeOwner: true });
+      });
     }
   }
 

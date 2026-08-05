@@ -1,4 +1,5 @@
 import type { Server } from 'socket.io';
+import type { Token } from '@dnd-vtt/shared';
 import { type RoomState, socketsForToken } from './roomState.js';
 
 /** All live socket ids for the room's DMs (multi-tab aware). The safe
@@ -48,6 +49,60 @@ export function emitToTokenViewers(
   if (opts.includeOwner && token.ownerUserId) {
     const ownerSockets = room.userSockets.get(token.ownerUserId);
     if (ownerSockets) for (const sid of ownerSockets) recipients.add(sid);
+  }
+  for (const sid of recipients) io.to(sid).emit(event, payload);
+}
+
+/** NPC-ness for stat privacy. During combat the combatant's `isNPC` is
+ *  authoritative (it folds in the character row's `user_id === 'npc'`);
+ *  outside combat an ownerless token is a creature. */
+function tokenIsNpc(room: RoomState, token: Token): boolean {
+  const combatant = room.combatState?.combatants.find((c) => c.tokenId === token.id);
+  if (combatant) return combatant.isNPC;
+  return !token.ownerUserId;
+}
+
+/** Whether the room's sharing settings let non-owner players see this
+ *  token's exact numbers. Mirrors `canReceiveCombatantStats` for the
+ *  live-event layer: creatures gate on `showCreatureStatsToPlayers`,
+ *  player characters on `showPlayersToPlayers`. */
+export function tokenStatsSharedWithPlayers(room: RoomState, token: Token): boolean {
+  return tokenIsNpc(room, token) ? room.showCreatureStatsToPlayers : room.showPlayersToPlayers;
+}
+
+/**
+ * Emit an EXACT-stat combat payload (precise HP/temp HP, character sheet
+ * HP/death-saves/version, death-save counters, action economy, movement)
+ * only to clients allowed to see those numbers:
+ *   - every DM tab, always;
+ *   - every tab of the token's owning player, wherever they are;
+ *   - other players only if the token is visible to them AND the relevant
+ *     sharing toggle (`showCreatureStatsToPlayers` for creatures,
+ *     `showPlayersToPlayers` for PCs) permits it.
+ *
+ * `emitToTokenViewers` scopes by token VISIBILITY only, which is right for
+ * condition badges and token visuals but still leaks exact numbers the
+ * `/state` snapshot and `combat:state-sync` deliberately redact. Route
+ * numeric payloads through here instead so the socket layer matches the
+ * snapshot privacy. Unresolved token → DM-only (never leak).
+ */
+export function emitToTokenStatViewers(
+  io: Server,
+  room: RoomState,
+  tokenId: string,
+  event: string,
+  payload: unknown,
+): void {
+  const recipients = new Set(dmSocketIds(room));
+  const token = room.tokens.get(tokenId);
+  if (token) {
+    if (token.ownerUserId) {
+      const ownerSockets = room.userSockets.get(token.ownerUserId);
+      if (ownerSockets) for (const sid of ownerSockets) recipients.add(sid);
+    }
+    if (tokenStatsSharedWithPlayers(room, token)) {
+      for (const sid of socketsForToken(room, token.mapId, token)) recipients.add(sid);
+    }
   }
   for (const sid of recipients) io.to(sid).emit(event, payload);
 }
