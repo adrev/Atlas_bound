@@ -94,6 +94,7 @@ describe('applyDamageSideEffects socket scoping', () => {
       affectedTokens: ['hidden-npc'],
       messages: [],
       droppedConcentration: { spellName: 'Hold Person' },
+      characterVersion: 12,
     });
     const emissions: Emission[] = [];
 
@@ -101,6 +102,10 @@ describe('applyDamageSideEffects socket scoping', () => {
 
     expect(channels(emissions, 'map:token-updated')).toEqual(['dm-sock']);
     expect(channels(emissions, 'character:updated')).toEqual(['dm-sock']);
+    expect(emissions.find((entry) => entry.event === 'character:updated')?.payload).toEqual({
+      characterId: 'char-hidden-npc',
+      changes: { concentratingOn: null, version: 12 },
+    });
   });
 
   it('sends visible token condition updates to players, but sheet sync only when creature stats are shared', async () => {

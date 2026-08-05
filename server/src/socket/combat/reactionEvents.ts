@@ -182,6 +182,9 @@ export function registerCombatReactions(io: Server, socket: Socket): void {
             changes: {
               hitPoints: result.characterHpUpdated.hp,
               tempHitPoints: result.characterHpUpdated.tempHp,
+              ...(result.characterHpUpdated.version !== undefined
+                ? { version: result.characterHpUpdated.version }
+                : {}),
             },
           }
         );
