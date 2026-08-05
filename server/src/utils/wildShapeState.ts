@@ -100,3 +100,43 @@ export function readWildShapeColumn(raw: unknown): WildShapeColumn {
 export function serializeWildShapeState(state: WildShapeState | null): string | null {
   return state === null ? null : JSON.stringify(state);
 }
+
+export interface WildShapeDamageRoute {
+  /** Post-damage state; null when the form dropped. */
+  nextState: WildShapeState | null;
+  /** Damage the form soaked before the druid's own pool. */
+  absorbed: number;
+  /** Damage past the form's HP that carries into the druid. */
+  carryover: number;
+  ended: boolean;
+}
+
+/**
+ * The single authoritative routing for damage hitting a wild-shaped
+ * character (2014): the form absorbs first, excess carries into the
+ * druid, and a form at 0 ends. Every damage entry point — combat and
+ * direct chat alike — must apply this, never its own arithmetic, so
+ * the two HP pools cannot diverge between paths.
+ */
+export function routeWildShapeDamage(state: WildShapeState, amount: number): WildShapeDamageRoute {
+  const absorbed = Math.max(0, Math.min(state.formHp, amount));
+  const ended = amount >= state.formHp;
+  return {
+    nextState: ended ? null : { ...state, formHp: state.formHp - absorbed },
+    absorbed,
+    carryover: Math.max(0, amount - absorbed),
+    ended,
+  };
+}
+
+/**
+ * 2014: healing received while wild-shaped restores the beast form's
+ * HP (capped at the form's max), never the druid's own pool.
+ */
+export function routeWildShapeHeal(
+  state: WildShapeState,
+  amount: number
+): { nextState: WildShapeState; healed: number } {
+  const healed = Math.max(0, Math.min(state.formMaxHp - state.formHp, amount));
+  return { nextState: { ...state, formHp: state.formHp + healed }, healed };
+}

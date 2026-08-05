@@ -15,6 +15,7 @@ import {
 } from '../utils/roomState.js';
 import { readWildShapeColumn } from '../utils/wildShapeState.js';
 import '../services/chatCommands/xpAndWildShapeHandler.js';
+import '../services/chatCommands/hpHandlers.js';
 
 interface Emission {
   channelId: string;
@@ -83,6 +84,7 @@ function druidRow(overrides: Record<string, unknown> = {}) {
     class: 'Druid',
     level: 2,
     hit_points: 18,
+    max_hit_points: 18,
     temp_hit_points: 0,
     features: '[]',
     wild_shape: null,
@@ -506,5 +508,289 @@ describe('CombatService Wild Shape integration', () => {
     expect(result.wildShape).toBeUndefined();
     const update = mockQuery.mock.calls.find((c) => String(c[0]).startsWith('UPDATE characters'))!;
     expect(String(update[0])).not.toMatch(/wild_shape/);
+  });
+});
+
+describe('optimistic-lock rollback (side effects only after the guarded write commits)', () => {
+  function seedCombatWithToken(wildShape: string | null, conflict: boolean) {
+    const room = getRoom(SESSION)!;
+    room.tokens.get('druid-token')!.conditions = ['stable'] as never;
+    room.combatState = {
+      sessionId: SESSION,
+      active: true,
+      round: 1,
+      currentTurnIndex: 0,
+      combatants: [
+        {
+          tokenId: 'druid-token',
+          characterId: DRUID,
+          name: 'Mielikki',
+          hp: 18,
+          maxHp: 18,
+          tempHp: 3,
+          isNPC: false,
+          deathSaves: { successes: 1, failures: 2 },
+          conditions: ['stable'],
+        },
+      ],
+    } as never;
+    mockQuery.mockImplementation(async (sql: string) => {
+      if (sql.startsWith('SELECT wild_shape')) {
+        return { rows: [{ wild_shape: wildShape, version: 5 }] };
+      }
+      if (sql.startsWith('UPDATE characters')) return { rows: conflict ? [] : [{ version: 6 }] };
+      return { rows: [] };
+    });
+    return room;
+  }
+
+  it('a conflicted damage write leaves conditions, token rows, and the combatant fully unchanged', async () => {
+    const room = seedCombatWithToken(ACTIVE_WOLF, true);
+    // 40 damage would end the form, drop the druid to 0, remove
+    // stable, apply unconscious, and run concentration/grapple
+    // cleanup — none of that may happen on a version conflict.
+    await expect(CombatService.applyDamage(SESSION, 'druid-token', 40)).rejects.toThrow(
+      /not applied/
+    );
+    const combatant = room.combatState!.combatants[0];
+    expect(combatant.hp).toBe(18);
+    expect(combatant.tempHp).toBe(3);
+    expect(combatant.deathSaves).toEqual({ successes: 1, failures: 2 });
+    expect(room.tokens.get('druid-token')!.conditions).toEqual(['stable']);
+    const sqls = mockQuery.mock.calls.map((c) => String(c[0]));
+    expect(sqls.filter((sql) => sql.startsWith('UPDATE characters'))).toHaveLength(1);
+    expect(sqls.some((sql) => sql.includes('UPDATE tokens'))).toBe(false);
+    expect(sqls.some((sql) => sql.includes('concentrating_on'))).toBe(false);
+  });
+
+  it('on success the character/form write commits BEFORE token side-effect writes', async () => {
+    const room = seedCombatWithToken(ACTIVE_WOLF, false);
+    await CombatService.applyDamage(SESSION, 'druid-token', 40);
+    const sqls = mockQuery.mock.calls.map((c) => String(c[0]));
+    const characterWrite = sqls.findIndex((sql) => sql.startsWith('UPDATE characters'));
+    const tokenWrite = sqls.findIndex((sql) => sql.includes('UPDATE tokens'));
+    expect(characterWrite).toBeGreaterThanOrEqual(0);
+    expect(tokenWrite).toBeGreaterThan(characterWrite);
+    const conditions = room.tokens.get('druid-token')!.conditions as unknown as string[];
+    expect(conditions).toContain('unconscious');
+    expect(conditions).not.toContain('stable');
+  });
+});
+
+describe('out-of-combat direct !damage / !heal / !hp with an active form', () => {
+  function wildShapeEmissions(emissions: Emission[]) {
+    return emissions.filter(
+      (e) =>
+        e.event === 'character:updated' &&
+        (e.payload as { changes?: { wildShape?: unknown } }).changes?.wildShape !== undefined
+    );
+  }
+
+  it('!damage routes through the form in one guarded write; base HP untouched; bystanders see no form HP', async () => {
+    getRoom(SESSION)!.showPlayersToPlayers = true;
+    arrange({ character: druidRow({ wild_shape: ACTIVE_WOLF }) });
+    const emissions: Emission[] = [];
+    await run(emissions, 'druid-1', '!damage 6');
+    const all = updates();
+    expect(all).toHaveLength(1);
+    const [sql, params] = all[0];
+    expect(sql).toMatch(/wild_shape = \$1 WHERE id = \$2 AND version = \$3/);
+    expect(sql).not.toMatch(/hit_points/);
+    expect(readWildShapeColumn(String(params[0]))).toMatchObject({
+      status: 'active',
+      state: { formHp: 5 },
+    });
+    const wsEmits = wildShapeEmissions(emissions);
+    expect(wsEmits.length).toBeGreaterThan(0);
+    for (const e of wsEmits) expect(['dm-1', 'druid-1']).toContain(e.channelId);
+    const bystanderPayloads = JSON.stringify(
+      emissions.filter((e) => e.channelId === 'bystander-1').map((e) => e.payload)
+    );
+    expect(bystanderPayloads).not.toMatch(/formHp/);
+  });
+
+  it('!damage past the form HP ends the form and carries over atomically', async () => {
+    arrange({ character: druidRow({ wild_shape: ACTIVE_WOLF }) });
+    const emissions: Emission[] = [];
+    await run(emissions, 'druid-1', '!damage 15');
+    const all = updates();
+    expect(all).toHaveLength(1);
+    const [sql, params] = all[0];
+    expect(sql).toMatch(/wild_shape = \$1, hit_points = \$2 WHERE id = \$3 AND version = \$4/);
+    expect(params[0]).toBeNull();
+    expect(params[1]).toBe(14); // 18 - (15 - 11)
+  });
+
+  it('!damage consumes temp HP before the form: partial absorption leaves the form untouched', async () => {
+    arrange({ character: druidRow({ wild_shape: ACTIVE_WOLF, temp_hit_points: 8 }) });
+    const emissions: Emission[] = [];
+    await run(emissions, 'druid-1', '!damage 5');
+    const all = updates();
+    expect(all).toHaveLength(1);
+    const [sql, params] = all[0];
+    // One guarded write: form (unchanged) + temp pool; base HP untouched.
+    expect(sql).toMatch(/wild_shape = \$1, temp_hit_points = \$2 WHERE id = \$3 AND version = \$4/);
+    expect(sql).not.toMatch(/(?<!temp_)hit_points/);
+    expect(params[1]).toBe(3); // 8 temp - 5 damage
+    expect(readWildShapeColumn(String(params[0]))).toMatchObject({
+      status: 'active',
+      state: { formHp: 11 },
+    });
+    // The committed temp HP is what fans out.
+    const hpChanged = emissions.find((e) => e.event === 'combat:hp-changed');
+    expect(hpChanged?.payload).toMatchObject({ hp: 18, tempHp: 3 });
+  });
+
+  it('!damage exhausts temp HP, then the form, then carries the excess into the druid — one guarded write', async () => {
+    // 20 damage: 3 temp + 11 form + 6 into the druid (18 → 12).
+    arrange({ character: druidRow({ wild_shape: ACTIVE_WOLF, temp_hit_points: 3 }) });
+    const emissions: Emission[] = [];
+    await run(emissions, 'druid-1', '!damage 20');
+    const all = updates();
+    expect(all).toHaveLength(1);
+    const [sql, params] = all[0];
+    expect(sql).toMatch(
+      /wild_shape = \$1, hit_points = \$2, temp_hit_points = \$3 WHERE id = \$4 AND version = \$5/
+    );
+    expect(params[0]).toBeNull(); // form ended
+    expect(params[1]).toBe(12);
+    expect(params[2]).toBe(0);
+    const hpChanged = emissions.find((e) => e.event === 'combat:hp-changed');
+    expect(hpChanged?.payload).toMatchObject({ hp: 12, tempHp: 0 });
+    // Smaller hit: temp exhausted, remainder dents only the form.
+    mockQuery.mockClear();
+    arrange({ character: druidRow({ wild_shape: ACTIVE_WOLF, temp_hit_points: 3 }) });
+    const emissions2: Emission[] = [];
+    await run(emissions2, 'druid-1', '!damage 9');
+    const [sql2, params2] = updates()[0];
+    expect(sql2).toMatch(
+      /wild_shape = \$1, temp_hit_points = \$2 WHERE id = \$3 AND version = \$4/
+    );
+    expect(sql2).not.toMatch(/(?<!temp_)hit_points/);
+    expect(params2[1]).toBe(0);
+    expect(readWildShapeColumn(String(params2[0]))).toMatchObject({
+      status: 'active',
+      state: { formHp: 5 }, // 11 - (9 - 3)
+    });
+  });
+
+  it('a conflicted temp-consuming !damage fails closed: whispered, no pool changed, no fanout', async () => {
+    arrange({ character: druidRow({ wild_shape: ACTIVE_WOLF, temp_hit_points: 3 }), update: [] });
+    const emissions: Emission[] = [];
+    await run(emissions, 'druid-1', '!damage 20');
+    expect(updates()).toHaveLength(1); // the single guarded attempt, refused
+    expect(whispersTo(emissions, 'druid-1').join(' ')).toMatch(/changed mid-action/);
+    expect(emissions.filter((e) => e.event === 'character:updated')).toHaveLength(0);
+    expect(emissions.filter((e) => e.event === 'combat:hp-changed')).toHaveLength(0);
+  });
+
+  it('!heal leaves temp HP unchanged and restores only the form', async () => {
+    arrange({
+      character: druidRow({
+        wild_shape: JSON.stringify({ ...JSON.parse(ACTIVE_WOLF), formHp: 4 }),
+        temp_hit_points: 6,
+      }),
+    });
+    const emissions: Emission[] = [];
+    await run(emissions, 'druid-1', '!heal 5');
+    const [sql, params] = updates()[0];
+    expect(sql).not.toMatch(/temp_hit_points|hit_points = /);
+    expect(readWildShapeColumn(String(params[0]))).toMatchObject({
+      status: 'active',
+      state: { formHp: 9 },
+    });
+    const hpChanged = emissions.find((e) => e.event === 'combat:hp-changed');
+    expect(hpChanged?.payload).toMatchObject({ hp: 18, tempHp: 6 });
+  });
+
+  it('!heal restores the form (bounded), never the druid pool', async () => {
+    arrange({
+      character: druidRow({
+        wild_shape: JSON.stringify({ ...JSON.parse(ACTIVE_WOLF), formHp: 4 }),
+        hit_points: 10,
+      }),
+    });
+    const emissions: Emission[] = [];
+    await run(emissions, 'druid-1', '!heal 20');
+    const all = updates();
+    expect(all).toHaveLength(1);
+    const [sql, params] = all[0];
+    expect(sql).not.toMatch(/hit_points/);
+    expect(readWildShapeColumn(String(params[0]))).toMatchObject({
+      status: 'active',
+      state: { formHp: 11 },
+    });
+  });
+
+  it('fails closed on a version conflict: whispered, nothing fanned out', async () => {
+    arrange({ character: druidRow({ wild_shape: ACTIVE_WOLF }), update: [] });
+    const emissions: Emission[] = [];
+    await run(emissions, 'druid-1', '!damage 6');
+    expect(whispersTo(emissions, 'druid-1').join(' ')).toMatch(/changed mid-action/);
+    expect(emissions.filter((e) => e.event === 'character:updated')).toHaveLength(0);
+  });
+
+  it('fails closed on unreadable state with the !revert instruction, no writes', async () => {
+    arrange({ character: druidRow({ wild_shape: 'garbage{' }) });
+    const emissions: Emission[] = [];
+    await run(emissions, 'druid-1', '!damage 6');
+    await run(emissions, 'druid-1', '!heal 6');
+    await run(emissions, 'druid-1', '!hp 10');
+    expect(updates()).toHaveLength(0);
+    const text = whispersTo(emissions, 'druid-1').join(' ');
+    expect(text).toMatch(/unreadable.*!revert.*unreadable.*!revert.*unreadable.*!revert/s);
+  });
+
+  it('absolute !hp refuses while wild-shaped instead of clobbering base HP', async () => {
+    arrange({ character: druidRow({ wild_shape: ACTIVE_WOLF }) });
+    const emissions: Emission[] = [];
+    await run(emissions, 'druid-1', '!hp 10');
+    expect(updates()).toHaveLength(0);
+    expect(whispersTo(emissions, 'druid-1').join(' ')).toMatch(/wild-shaped.*!revert/s);
+  });
+
+  it('in-combat chat damage syncs the form privately to DM and owner tabs only', async () => {
+    const room = getRoom(SESSION)!;
+    room.showPlayersToPlayers = true;
+    room.combatState = {
+      sessionId: SESSION,
+      active: true,
+      round: 1,
+      currentTurnIndex: 0,
+      combatants: [
+        {
+          tokenId: 'druid-token',
+          characterId: DRUID,
+          name: 'Mielikki',
+          hp: 18,
+          maxHp: 18,
+          tempHp: 0,
+          isNPC: false,
+          deathSaves: { successes: 0, failures: 0 },
+          conditions: [],
+        },
+      ],
+    } as never;
+    mockQuery.mockImplementation(async (sql: string) => {
+      if (sql.startsWith('SELECT wild_shape')) {
+        return { rows: [{ wild_shape: ACTIVE_WOLF, version: 5 }] };
+      }
+      if (sql.startsWith('UPDATE characters')) return { rows: [{ version: 6 }] };
+      return { rows: [] };
+    });
+    const emissions: Emission[] = [];
+    await run(emissions, 'dm-1', '!damage 6 Mielikki');
+    const wsEmits = wildShapeEmissions(emissions);
+    expect(wsEmits.length).toBeGreaterThan(0);
+    for (const e of wsEmits) {
+      expect(['dm-1', 'druid-1']).toContain(e.channelId);
+      expect(
+        (e.payload as { changes: { wildShape: { formHp: number } } }).changes.wildShape.formHp
+      ).toBe(5);
+    }
+    const bystanderPayloads = JSON.stringify(
+      emissions.filter((e) => e.channelId === 'bystander-1').map((e) => e.payload)
+    );
+    expect(bystanderPayloads).not.toMatch(/formHp/);
   });
 });

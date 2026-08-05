@@ -14,7 +14,9 @@ const { mockQuery, mockApplyDamageSideEffects } = vi.hoisted(() => ({
   mockApplyDamageSideEffects: vi.fn(),
 }));
 vi.mock('../db/connection.js', () => ({ default: { query: mockQuery } }));
-vi.mock('../services/damageEffects.js', () => ({ applyDamageSideEffects: mockApplyDamageSideEffects }));
+vi.mock('../services/damageEffects.js', () => ({
+  applyDamageSideEffects: mockApplyDamageSideEffects,
+}));
 
 import { registerChatCommand, tryHandleChatCommand } from '../services/ChatCommands.js';
 import {
@@ -27,7 +29,11 @@ import {
 } from '../utils/roomState.js';
 import '../services/chatCommands/hpHandlers.js';
 
-interface Emission { channelId: string; event: string; payload: unknown }
+interface Emission {
+  channelId: string;
+  event: string;
+  payload: unknown;
+}
 
 function fakeIo(emissions: Emission[]) {
   return {
@@ -39,18 +45,33 @@ function fakeIo(emissions: Emission[]) {
 
 function tok(id: string, overrides: Partial<Token> = {}): Token {
   return {
-    id, mapId: 'map-1', characterId: null, name: id,
-    x: 0, y: 0, size: 1, imageUrl: null, color: '#000',
-    layer: 'token', visible: true, hasLight: false,
-    lightRadius: 0, lightDimRadius: 0, lightColor: '#fff',
-    conditions: [], ownerUserId: null,
+    id,
+    mapId: 'map-1',
+    characterId: null,
+    name: id,
+    x: 0,
+    y: 0,
+    size: 1,
+    imageUrl: null,
+    color: '#000',
+    layer: 'token',
+    visible: true,
+    hasLight: false,
+    lightRadius: 0,
+    lightDimRadius: 0,
+    lightColor: '#fff',
+    conditions: [],
+    ownerUserId: null,
     createdAt: new Date().toISOString(),
     ...overrides,
   };
 }
 
 function channelsFor(emissions: Emission[], event: string): string[] {
-  return emissions.filter((e) => e.event === event).map((e) => e.channelId).sort();
+  return emissions
+    .filter((e) => e.event === event)
+    .map((e) => e.channelId)
+    .sort();
 }
 
 const SESSION = 's-chat-token-fanout';
@@ -60,9 +81,27 @@ function seedRoom(tokens: Token[]): RoomState {
   room.currentMapId = 'map-1';
   room.playerMapId = 'map-1';
   for (const t of tokens) room.tokens.set(t.id, t);
-  addPlayerToRoom(SESSION, { userId: 'dm-user', displayName: 'DM', socketId: 'dm-sock', role: 'dm', characterId: null });
-  addPlayerToRoom(SESSION, { userId: 'player-user', displayName: 'Pip', socketId: 'player-sock', role: 'player', characterId: null });
-  addPlayerToRoom(SESSION, { userId: 'other-user', displayName: 'Vex', socketId: 'other-sock', role: 'player', characterId: null });
+  addPlayerToRoom(SESSION, {
+    userId: 'dm-user',
+    displayName: 'DM',
+    socketId: 'dm-sock',
+    role: 'dm',
+    characterId: null,
+  });
+  addPlayerToRoom(SESSION, {
+    userId: 'player-user',
+    displayName: 'Pip',
+    socketId: 'player-sock',
+    role: 'player',
+    characterId: null,
+  });
+  addPlayerToRoom(SESSION, {
+    userId: 'other-user',
+    displayName: 'Vex',
+    socketId: 'other-sock',
+    role: 'player',
+    characterId: null,
+  });
   return room;
 }
 
@@ -116,21 +155,33 @@ describe('chat command token fanout wrapper', () => {
   it('keeps legacy room-wide token diffs DM-only for invisible unoutlined NPCs', async () => {
     seedRoom([tok('npc', { conditions: ['invisible'] })]);
     const em: Emission[] = [];
-    await tryHandleChatCommand(fakeIo(em), getPlayerBySocketId('dm-sock')!, '!codex-token-fanout npc');
+    await tryHandleChatCommand(
+      fakeIo(em),
+      getPlayerBySocketId('dm-sock')!,
+      '!codex-token-fanout npc'
+    );
     expect(channelsFor(em, 'map:token-updated')).toEqual(['dm-sock']);
   });
 
   it('still broadcasts visible token diffs to every player on the active map', async () => {
     seedRoom([tok('npc')]);
     const em: Emission[] = [];
-    await tryHandleChatCommand(fakeIo(em), getPlayerBySocketId('dm-sock')!, '!codex-token-fanout npc');
+    await tryHandleChatCommand(
+      fakeIo(em),
+      getPlayerBySocketId('dm-sock')!,
+      '!codex-token-fanout npc'
+    );
     expect(channelsFor(em, 'map:token-updated')).toEqual(['dm-sock', 'other-sock', 'player-sock']);
   });
 
   it('allows an invisible owned token diff to reach its owner and DMs, not bystanders', async () => {
     seedRoom([tok('pc', { ownerUserId: 'player-user', conditions: ['invisible'] })]);
     const em: Emission[] = [];
-    await tryHandleChatCommand(fakeIo(em), getPlayerBySocketId('dm-sock')!, '!codex-token-fanout pc');
+    await tryHandleChatCommand(
+      fakeIo(em),
+      getPlayerBySocketId('dm-sock')!,
+      '!codex-token-fanout pc'
+    );
     expect(channelsFor(em, 'map:token-updated')).toEqual(['dm-sock', 'player-sock']);
   });
 
@@ -144,7 +195,11 @@ describe('chat command token fanout wrapper', () => {
   it('scopes resolvable character updates through the owning token and owner', async () => {
     seedRoom([tok('pc', { characterId: 'char-pc', ownerUserId: 'player-user', visible: false })]);
     const em: Emission[] = [];
-    await tryHandleChatCommand(fakeIo(em), getPlayerBySocketId('dm-sock')!, '!codex-character-fanout char-pc');
+    await tryHandleChatCommand(
+      fakeIo(em),
+      getPlayerBySocketId('dm-sock')!,
+      '!codex-character-fanout char-pc'
+    );
     expect(channelsFor(em, 'character:updated')).toEqual(['dm-sock', 'player-sock']);
   });
 
@@ -152,21 +207,33 @@ describe('chat command token fanout wrapper', () => {
     const room = seedRoom([]);
     room.players.get('player-user')!.characterId = 'unplaced-char';
     const em: Emission[] = [];
-    await tryHandleChatCommand(fakeIo(em), getPlayerBySocketId('dm-sock')!, '!codex-character-fanout unplaced-char');
+    await tryHandleChatCommand(
+      fakeIo(em),
+      getPlayerBySocketId('dm-sock')!,
+      '!codex-character-fanout unplaced-char'
+    );
     expect(channelsFor(em, 'character:updated')).toEqual(['dm-sock', 'player-sock']);
   });
 
   it('fails non-token character updates closed to DM-only when the character has no linked player', async () => {
     seedRoom([]);
     const em: Emission[] = [];
-    await tryHandleChatCommand(fakeIo(em), getPlayerBySocketId('dm-sock')!, '!codex-character-fanout unplaced-char');
+    await tryHandleChatCommand(
+      fakeIo(em),
+      getPlayerBySocketId('dm-sock')!,
+      '!codex-character-fanout unplaced-char'
+    );
     expect(channelsFor(em, 'character:updated')).toEqual(['dm-sock']);
   });
 
   it('scopes legacy room-wide action economy updates for hidden owned tokens', async () => {
     seedRoom([tok('pc', { ownerUserId: 'player-user', visible: false })]);
     const em: Emission[] = [];
-    await tryHandleChatCommand(fakeIo(em), getPlayerBySocketId('dm-sock')!, '!codex-action-fanout pc');
+    await tryHandleChatCommand(
+      fakeIo(em),
+      getPlayerBySocketId('dm-sock')!,
+      '!codex-action-fanout pc'
+    );
     expect(channelsFor(em, 'combat:action-used')).toEqual(['dm-sock', 'player-sock']);
   });
 
@@ -176,8 +243,22 @@ describe('chat command token fanout wrapper', () => {
       if (sql.includes('SELECT hit_points FROM characters WHERE id = $1')) {
         return { rows: [{ hit_points: 10 }] };
       }
-      if (sql.includes('SELECT hit_points, max_hit_points, temp_hit_points FROM characters WHERE id = $1')) {
-        return { rows: [{ hit_points: 10, max_hit_points: 20, temp_hit_points: 0 }] };
+      if (
+        sql.includes(
+          'SELECT hit_points, max_hit_points, temp_hit_points, wild_shape, version FROM characters WHERE id = $1'
+        )
+      ) {
+        return {
+          rows: [
+            {
+              hit_points: 10,
+              max_hit_points: 20,
+              temp_hit_points: 0,
+              wild_shape: null,
+              version: 3,
+            },
+          ],
+        };
       }
       return { rows: [] };
     });
@@ -186,7 +267,7 @@ describe('chat command token fanout wrapper', () => {
     const handled = await tryHandleChatCommand(
       fakeIo(em),
       getPlayerBySocketId('dm-sock')!,
-      '!damage 5 Hidden Goblin',
+      '!damage 5 Hidden Goblin'
     );
 
     expect(handled).toBe(true);

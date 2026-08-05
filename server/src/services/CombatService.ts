@@ -20,6 +20,8 @@ import { getRoom, type RoomState } from '../utils/roomState.js';
 import pool from '../db/connection.js';
 import {
   readWildShapeColumn,
+  routeWildShapeDamage,
+  routeWildShapeHeal,
   serializeWildShapeState,
   type WildShapeState,
 } from '../utils/wildShapeState.js';
@@ -1429,14 +1431,17 @@ export interface HpChangeResult {
    * Populated when the backing character had an active Wild Shape:
    * damage came off the persisted form HP first (excess carried into
    * the character and ended the form atomically), and healing went to
-   * the form. Exact form totals stay out of this result — callers'
-   * fanouts must not leak them beyond stat-scoped channels.
+   * the form. `state` is the committed post-change form state (null
+   * when the form ended) so DM and owner tabs can sync their sheets —
+   * it carries exact form HP and must ONLY be fanned out via
+   * `emitWildShapePrivate`, never a toggle-widened or room channel.
    */
   wildShape?: {
     formName: string;
     absorbed?: number;
     healed?: number;
     ended?: boolean;
+    state: WildShapeState | null;
   };
 }
 
@@ -1663,28 +1668,16 @@ export async function applyDamage(
   let wildShapeEnded = false;
   let nextWildShape: WildShapeState | null = activeWildShape?.state ?? null;
   if (activeWildShape && remaining > 0) {
-    wildShapeAbsorbed = Math.min(activeWildShape.state.formHp, remaining);
-    remaining -= wildShapeAbsorbed;
-    const newFormHp = activeWildShape.state.formHp - wildShapeAbsorbed;
-    if (newFormHp <= 0) {
-      // 2014: the form drops at 0 and the excess carries into the
-      // druid — persisted atomically with the HP write below.
-      wildShapeEnded = true;
-      nextWildShape = null;
-    } else {
-      nextWildShape = { ...activeWildShape.state, formHp: newFormHp };
-    }
+    // 2014: the form absorbs first; the form drops at 0 and the
+    // excess carries into the druid — persisted atomically with the
+    // HP write below.
+    const route = routeWildShapeDamage(activeWildShape.state, remaining);
+    wildShapeAbsorbed = route.absorbed;
+    wildShapeEnded = route.ended;
+    nextWildShape = route.nextState;
+    remaining = route.carryover;
   }
   combatant.hp = Math.max(0, combatant.hp - remaining);
-
-  let autoRemovedConditions: string[] | undefined;
-  if (appliedAmount > 0) {
-    const conditionResult = setTokenConditions(room, tokenId, (conditions) =>
-      conditions.filter((c) => c.toLowerCase() !== 'stable')
-    );
-    if (conditionResult.persistPromise) persistence.push(conditionResult.persistPromise);
-    if (conditionResult.removed.length > 0) autoRemovedConditions = conditionResult.removed;
-  }
 
   let autoDeathSaveFailure: { successes: number; failures: number } | undefined;
   let autoDeathSaveFailuresApplied: number | undefined;
@@ -1695,6 +1688,59 @@ export async function applyDamage(
     combatant.deathSaves.failures = Math.min(3, combatant.deathSaves.failures + failureCount);
     autoDeathSaveFailure = { ...combatant.deathSaves };
     autoDeathSaveFailuresApplied = combatant.deathSaves.failures - failuresBefore;
+  }
+
+  // The guarded character/form write commits BEFORE any irreversible
+  // side effect (stable removal, unconscious, concentration/grapple
+  // cleanup and their DB writes/fanout). A version conflict therefore
+  // only has to restore the in-memory combatant — every side effect
+  // below simply hasn't happened yet, so nothing needs rolling back.
+  let version: number | undefined;
+  if (combatant.characterId) {
+    if (activeWildShape) {
+      // Form HP, carried-over character HP, and the form ending are
+      // one atomic, version-guarded write. A conflict restores the
+      // in-memory combatant and refuses the damage (fail closed) —
+      // nothing was persisted, so a retry sees fresh state.
+      const { rows: versionRows } = await pool.query(
+        'UPDATE characters SET hit_points = $1, temp_hit_points = $2, death_saves = $3, wild_shape = $4 WHERE id = $5 AND version = $6 RETURNING version',
+        [
+          combatant.hp,
+          combatant.tempHp,
+          JSON.stringify(combatant.deathSaves ?? { successes: 0, failures: 0 }),
+          serializeWildShapeState(nextWildShape),
+          combatant.characterId,
+          activeWildShape.version,
+        ]
+      );
+      version = parseCharacterVersion(versionRows[0]);
+      if (version === undefined) {
+        combatant.hp = hpBefore;
+        combatant.tempHp = tempHpBefore;
+        combatant.deathSaves = deathSavesBefore ?? { successes: 0, failures: 0 };
+        throw new Error('Damage was not applied: the Wild Shape state changed mid-action. Retry.');
+      }
+    } else {
+      const { rows: versionRows } = await pool.query(
+        'UPDATE characters SET hit_points = $1, temp_hit_points = $2, death_saves = $3 WHERE id = $4 RETURNING version',
+        [
+          combatant.hp,
+          combatant.tempHp,
+          JSON.stringify(combatant.deathSaves ?? { successes: 0, failures: 0 }),
+          combatant.characterId,
+        ]
+      );
+      version = parseCharacterVersion(versionRows[0]) ?? version;
+    }
+  }
+
+  let autoRemovedConditions: string[] | undefined;
+  if (appliedAmount > 0) {
+    const conditionResult = setTokenConditions(room, tokenId, (conditions) =>
+      conditions.filter((c) => c.toLowerCase() !== 'stable')
+    );
+    if (conditionResult.persistPromise) persistence.push(conditionResult.persistPromise);
+    if (conditionResult.removed.length > 0) autoRemovedConditions = conditionResult.removed;
   }
 
   // 5e: dropping a PC to 0 HP auto-applies the unconscious condition.
@@ -1733,46 +1779,6 @@ export async function applyDamage(
       }
     }
   }
-
-  let version: number | undefined;
-  if (combatant.characterId) {
-    if (activeWildShape) {
-      // Form HP, carried-over character HP, and the form ending are
-      // one atomic, version-guarded write. A conflict restores the
-      // in-memory combatant and refuses the damage (fail closed) —
-      // nothing was persisted, so a retry sees fresh state.
-      const { rows: versionRows } = await pool.query(
-        'UPDATE characters SET hit_points = $1, temp_hit_points = $2, death_saves = $3, wild_shape = $4 WHERE id = $5 AND version = $6 RETURNING version',
-        [
-          combatant.hp,
-          combatant.tempHp,
-          JSON.stringify(combatant.deathSaves ?? { successes: 0, failures: 0 }),
-          serializeWildShapeState(nextWildShape),
-          combatant.characterId,
-          activeWildShape.version,
-        ]
-      );
-      version = parseCharacterVersion(versionRows[0]);
-      if (version === undefined) {
-        combatant.hp = hpBefore;
-        combatant.tempHp = tempHpBefore;
-        combatant.deathSaves = deathSavesBefore ?? { successes: 0, failures: 0 };
-        await Promise.all(persistence);
-        throw new Error('Damage was not applied: the Wild Shape state changed mid-action. Retry.');
-      }
-    } else {
-      const { rows: versionRows } = await pool.query(
-        'UPDATE characters SET hit_points = $1, temp_hit_points = $2, death_saves = $3 WHERE id = $4 RETURNING version',
-        [
-          combatant.hp,
-          combatant.tempHp,
-          JSON.stringify(combatant.deathSaves ?? { successes: 0, failures: 0 }),
-          combatant.characterId,
-        ]
-      );
-      version = parseCharacterVersion(versionRows[0]) ?? version;
-    }
-  }
   await Promise.all(persistence);
   // Concentration cleanup issues its own characters UPDATE (nulling
   // concentrating_on) on a separate connection, which fires the version
@@ -1809,6 +1815,7 @@ export async function applyDamage(
             formName: activeWildShape.state.formName,
             absorbed: wildShapeAbsorbed,
             ended: wildShapeEnded,
+            state: nextWildShape,
           },
         }
       : {}),
@@ -1833,8 +1840,7 @@ export async function applyHeal(
     : null;
   if (activeWildShape) {
     const state = activeWildShape.state;
-    const healed = Math.max(0, Math.min(state.formMaxHp - state.formHp, amount));
-    const nextState: WildShapeState = { ...state, formHp: state.formHp + healed };
+    const { nextState, healed } = routeWildShapeHeal(state, amount);
     const { rows: versionRows } = await pool.query(
       'UPDATE characters SET wild_shape = $1 WHERE id = $2 AND version = $3 RETURNING version',
       [serializeWildShapeState(nextState), combatant.characterId, activeWildShape.version]
@@ -1849,7 +1855,7 @@ export async function applyHeal(
       change: healed,
       characterId: combatant.characterId ?? null,
       version,
-      wildShape: { formName: state.formName, healed, ended: false },
+      wildShape: { formName: state.formName, healed, ended: false, state: nextState },
     };
   }
 

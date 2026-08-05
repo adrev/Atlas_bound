@@ -14,6 +14,7 @@ import {
   serializeWildShapeState,
   type WildShapeState,
 } from '../../utils/wildShapeState.js';
+import { emitWildShapePrivate } from '../../utils/wildShapeSync.js';
 import * as CombatService from '../CombatService.js';
 
 /**
@@ -944,15 +945,13 @@ async function handleWildShape(c: ChatCommandContext): Promise<boolean> {
   }
 
   markEconomy(c, caller.id, gate.economy, cost);
-  // Exact form stats + uses fan out only through the dispatcher's
-  // stat-scoped wrapper (DM + owner tabs).
-  c.io.to(c.ctx.room.sessionId).emit('character:updated', {
-    characterId: caller.characterId,
-    changes: {
-      wildShape: newState,
-      ...(updatedFeatures !== undefined ? { features: updatedFeatures } : {}),
-      version: write.version,
-    },
+  // Exact form stats + the uses pool are owner/DM material. The
+  // dispatcher's stat-scoped wrapper widens under sharing toggles, so
+  // active-form payloads go through the strictly private channel.
+  emitWildShapePrivate(c.io, c.ctx.room, caller.characterId, {
+    wildShape: newState,
+    ...(updatedFeatures !== undefined ? { features: updatedFeatures } : {}),
+    version: write.version,
   });
   const remainingText = unlimited
     ? 'unlimited (Archdruid)'
@@ -1128,9 +1127,9 @@ async function handleBeast(c: ChatCommandContext): Promise<boolean> {
       whisperGuardFailure(c, '!beast heal', write.reason);
       return true;
     }
-    c.io.to(c.ctx.room.sessionId).emit('character:updated', {
-      characterId: caller.characterId,
-      changes: { wildShape: nextState, version: write.version },
+    emitWildShapePrivate(c.io, c.ctx.room, caller.characterId, {
+      wildShape: nextState,
+      version: write.version,
     });
     whisperToCaller(c.io, c.ctx, `🐺 ${state.formName}: form HP ${newFormHp}/${state.formMaxHp}.`);
     broadcastSystem(
@@ -1152,9 +1151,9 @@ async function handleBeast(c: ChatCommandContext): Promise<boolean> {
       whisperGuardFailure(c, '!beast dmg', write.reason);
       return true;
     }
-    c.io.to(c.ctx.room.sessionId).emit('character:updated', {
-      characterId: caller.characterId,
-      changes: { wildShape: nextState, version: write.version },
+    emitWildShapePrivate(c.io, c.ctx.room, caller.characterId, {
+      wildShape: nextState,
+      version: write.version,
     });
     whisperToCaller(
       c.io,
