@@ -29,8 +29,33 @@ import type { PlayerContext } from '../../utils/roomState.js';
  */
 
 const ABILITIES = new Set(['str', 'dex', 'con', 'int', 'wis', 'cha']);
+const DAMAGE_TYPES = new Set([
+  'acid',
+  'bludgeoning',
+  'cold',
+  'fire',
+  'force',
+  'lightning',
+  'necrotic',
+  'piercing',
+  'poison',
+  'psychic',
+  'radiant',
+  'slashing',
+  'thunder',
+]);
+const MAX_DICE_COUNT = 100;
+const MAX_DIE_SIDES = 100;
+const MAX_DAMAGE_TOTAL = 9999;
+const MAX_SAVE_TARGETS = 50;
 
 type Ability = 'str' | 'dex' | 'con' | 'int' | 'wis' | 'cha';
+
+interface DamageRollSpec {
+  count: number;
+  sides: number;
+  modifier: number;
+}
 
 function classLevel(className: string, classToFind: string, totalLevel: number): number | null {
   const escaped = classToFind.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -71,21 +96,38 @@ function resolveTarget(ctx: PlayerContext, name: string): Token | null {
   return matches[0];
 }
 
-function rollDice(notation: string): { total: number; rolls: number[] } {
+function parseDamageRoll(notation: string): DamageRollSpec | null {
   const m = notation.match(/^(\d+)d(\d+)(?:\s*([+-])\s*(\d+))?$/i);
-  if (!m) return { total: 0, rolls: [] };
-  const count = parseInt(m[1], 10);
-  const sides = parseInt(m[2], 10);
+  if (!m) return null;
+  const count = Number(m[1]);
+  const sides = Number(m[2]);
   const sign = m[3] === '-' ? -1 : 1;
-  const mod = m[4] ? parseInt(m[4], 10) * sign : 0;
+  const modifier = m[4] ? Number(m[4]) * sign : 0;
+  if (
+    !Number.isSafeInteger(count) ||
+    !Number.isSafeInteger(sides) ||
+    !Number.isSafeInteger(modifier) ||
+    count < 1 ||
+    count > MAX_DICE_COUNT ||
+    sides < 2 ||
+    sides > MAX_DIE_SIDES ||
+    Math.abs(modifier) > MAX_DAMAGE_TOTAL ||
+    count * sides + Math.max(0, modifier) > MAX_DAMAGE_TOTAL
+  ) {
+    return null;
+  }
+  return { count, sides, modifier };
+}
+
+function rollDice(spec: DamageRollSpec): { total: number; rolls: number[] } {
   const rolls: number[] = [];
   let sum = 0;
-  for (let i = 0; i < count; i++) {
-    const r = Math.floor(Math.random() * sides) + 1;
+  for (let i = 0; i < spec.count; i++) {
+    const r = Math.floor(Math.random() * spec.sides) + 1;
     rolls.push(r);
     sum += r;
   }
-  return { total: Math.max(0, sum + mod), rolls };
+  return { total: Math.max(0, sum + spec.modifier), rolls };
 }
 
 async function loadSaveMod(
@@ -161,8 +203,8 @@ async function handleSave(c: ChatCommandContext): Promise<boolean> {
   const ability = abilityRaw as Ability;
 
   const dcRaw = parts.shift()!;
-  const dc = parseInt(dcRaw, 10);
-  if (!Number.isFinite(dc) || dc < 1 || dc > 40) {
+  const dc = Number(dcRaw);
+  if (!/^\d+$/.test(dcRaw) || !Number.isSafeInteger(dc) || dc < 1 || dc > 40) {
     whisperToCaller(c.io, c.ctx, `!save: DC must be a number 1-40. Got "${dcRaw}".`);
     return true;
   }
@@ -173,8 +215,21 @@ async function handleSave(c: ChatCommandContext): Promise<boolean> {
   const slash = dmgSpec.lastIndexOf('/');
   const dmgNotation = slash >= 0 ? dmgSpec.slice(0, slash) : dmgSpec;
   const dmgType = slash >= 0 ? dmgSpec.slice(slash + 1).toLowerCase() : '';
-  if (!/^\d+d\d+(\s*[+-]\s*\d+)?$/i.test(dmgNotation)) {
-    whisperToCaller(c.io, c.ctx, `!save: damage notation must be NdN[+M], got "${dmgNotation}".`);
+  const damageRoll = parseDamageRoll(dmgNotation);
+  if (!damageRoll) {
+    whisperToCaller(
+      c.io,
+      c.ctx,
+      `!save: damage must be NdN[+M] with 1-${MAX_DICE_COUNT} dice, 2-${MAX_DIE_SIDES} sides, and a maximum possible total of ${MAX_DAMAGE_TOTAL}.`
+    );
+    return true;
+  }
+  if (slash >= 0 && !dmgType) {
+    whisperToCaller(c.io, c.ctx, '!save: a damage type is required after `/`.');
+    return true;
+  }
+  if (dmgType && !DAMAGE_TYPES.has(dmgType)) {
+    whisperToCaller(c.io, c.ctx, `!save: unknown damage type "${dmgType}".`);
     return true;
   }
 
@@ -183,9 +238,18 @@ async function handleSave(c: ChatCommandContext): Promise<boolean> {
     whisperToCaller(c.io, c.ctx, '!save: at least one target name required.');
     return true;
   }
+  if (targetNames.length > MAX_SAVE_TARGETS) {
+    whisperToCaller(c.io, c.ctx, `!save: at most ${MAX_SAVE_TARGETS} targets are allowed.`);
+    return true;
+  }
+  const normalizedTargetNames = targetNames.map((name) => name.toLowerCase());
+  if (new Set(normalizedTargetNames).size !== normalizedTargetNames.length) {
+    whisperToCaller(c.io, c.ctx, '!save: duplicate target names are not allowed.');
+    return true;
+  }
 
   // Roll damage ONCE per 5e RAW (same roll applies to all targets).
-  const { total: fullDmg, rolls: dmgRolls } = rollDice(dmgNotation);
+  const { total: fullDmg, rolls: dmgRolls } = rollDice(damageRoll);
   const halfDmg = Math.floor(fullDmg / 2);
 
   const lines: string[] = [];
