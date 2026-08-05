@@ -134,6 +134,8 @@ export interface RoomState {
    */
   mapGridSizes: Map<string, number>;
   gameMode: 'free-roam' | 'combat';
+  /** Whether players may receive full NPC/creature character payloads. */
+  showCreatureStatsToPlayers: boolean;
   /** Whether players may receive other players' character-sheet payloads. */
   showPlayersToPlayers: boolean;
   /**
@@ -343,6 +345,7 @@ export function createRoom(sessionId: string, roomCode: string, dmUserId: string
     userSockets: new Map(),
     mapGridSizes: new Map(),
     gameMode: 'free-roam',
+    showCreatureStatsToPlayers: false,
     showPlayersToPlayers: false,
     readyCheck: null,
     combatStarting: false,
