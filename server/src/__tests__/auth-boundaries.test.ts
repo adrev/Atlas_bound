@@ -312,6 +312,7 @@ describe('GET /api/sessions/:id/state — character shape', () => {
     mockQuery.mockResolvedValueOnce({ rows: [{ '?column?': 1 }] }); // assertSessionMember
     mockQuery.mockResolvedValueOnce({ rows: [tokenRow()] }); // persisted preview-map tokens
     mockQuery.mockResolvedValueOnce({ rows: [{ settings: '{}' }] });
+    mockQuery.mockResolvedValueOnce({ rows: [] }); // session-linked character ids (DM sees all)
     mockQuery.mockResolvedValueOnce({ rows: [] }); // caller's own character ids
 
     const handler = await getStateHandler();
@@ -331,6 +332,49 @@ describe('GET /api/sessions/:id/state — character shape', () => {
       mapId: 'preview-map',
       characterId: null,
       name: 'Token',
+    });
+
+    removePlayerFromRoom(sessionId, 'dm1');
+  });
+
+  it('includes linked PCs for a DM even when they have no token on the preview map', async () => {
+    const { createRoom, addPlayerToRoom, removePlayerFromRoom } =
+      await import('../utils/roomState.js');
+    const sessionId = 'state-preview-linked-pc-s1';
+    const room = createRoom(sessionId, 'STATE3', 'dm1');
+    room.playerMapId = 'player-map';
+    room.dmViewingMap.set('dm1', 'preview-map');
+    addPlayerToRoom(sessionId, {
+      userId: 'dm1',
+      displayName: 'DM',
+      socketId: 'sock-dm1-linked',
+      role: 'dm',
+      characterId: null,
+    });
+
+    mockQuery.mockResolvedValueOnce({ rows: [{ '?column?': 1 }] }); // assertSessionMember
+    mockQuery.mockResolvedValueOnce({ rows: [] }); // no tokens on preview map
+    mockQuery.mockResolvedValueOnce({ rows: [{ settings: '{}' }] });
+    mockQuery.mockResolvedValueOnce({ rows: [{ character_id: 'char-linked' }] });
+    mockQuery.mockResolvedValueOnce({ rows: [] }); // DM has no personal character
+    mockQuery.mockResolvedValueOnce({
+      rows: [{ id: 'char-linked', user_id: 'player-1', name: 'Off-map Hero' }],
+    });
+
+    const handler = await getStateHandler();
+    const req = {
+      user: { id: 'dm1' },
+      params: { id: sessionId },
+      headers: {},
+    } as unknown as Request;
+    const res = makeRes();
+    await handler(req, res);
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body.characters['char-linked']).toMatchObject({
+      id: 'char-linked',
+      userId: 'player-1',
+      name: 'Off-map Hero',
     });
 
     removePlayerFromRoom(sessionId, 'dm1');
