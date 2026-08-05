@@ -332,7 +332,7 @@ export interface OAExecutionResult {
   success: boolean;
   messages: string[];
   hpChange?: { tokenId: string; hp: number; tempHp: number; change: number };
-  characterHpUpdated?: { characterId: string; hp: number; tempHp: number };
+  characterHpUpdated?: { characterId: string; hp: number; tempHp: number; version?: number };
   deathSaveFailure?: { tokenId: string; deathSaves: { successes: number; failures: number } };
   conditionTokenIds?: string[];
   /**
@@ -518,6 +518,7 @@ export async function executeOpportunityAttack(
           characterId: damageResult.characterId,
           hp: damageResult.hp,
           tempHp: damageResult.tempHp,
+          ...(damageResult.version !== undefined ? { version: damageResult.version } : {}),
         };
       }
       if (damageResult.autoDeathSaveFailure) {

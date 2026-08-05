@@ -53,7 +53,10 @@ export async function applyDamageSideEffects(
       // change above, which stays under plain token visibility.
       emitToTokenStatViewers(io, room, tokenId, 'character:updated', {
         characterId: t.characterId,
-        changes: { concentratingOn: null },
+        changes: {
+          concentratingOn: null,
+          ...(result.characterVersion !== undefined ? { version: result.characterVersion } : {}),
+        },
       });
     }
   }

@@ -285,6 +285,34 @@ describe('OA pending-opportunity gate — valid execution', () => {
     expect(room.pendingOpportunities.has('tEnemy::tMover')).toBe(false);
   });
 
+  it('propagates the authoritative character version returned by OA damage', async () => {
+    const sessionId = 's-oa-version';
+    seedRoom(sessionId);
+    vi.spyOn(Math, 'random').mockReturnValue(0.999);
+    mockApplyDamage.mockResolvedValueOnce({
+      hp: 12,
+      tempHp: 0,
+      change: -8,
+      appliedAmount: 8,
+      characterId: 'char-mover',
+      version: 14,
+    });
+
+    const result = await OAService.executeOpportunityAttack(
+      sessionId,
+      'tEnemy',
+      'tMover',
+      issueOAId(sessionId)
+    );
+
+    expect(result.characterHpUpdated).toEqual({
+      characterId: 'char-mover',
+      hp: 12,
+      tempHp: 0,
+      version: 14,
+    });
+  });
+
   it('rejects a repeat even if a fresh record exists, because the reaction is spent', async () => {
     const sessionId = 's-oa-valid-then-dup';
     const room = seedRoom(sessionId);

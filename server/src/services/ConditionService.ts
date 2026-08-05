@@ -226,6 +226,8 @@ export interface DamageSideEffectsResult {
   affectedTokens: string[];
   messages: string[];
   droppedConcentration?: { spellName: string };
+  /** Final character version after a failed concentration save is persisted. */
+  characterVersion?: number;
   /**
    * Structured save breakdown for the concentration CON save — shipped
    * to chat so the SaveResultCard renders the d20, mods, War Caster
@@ -310,9 +312,14 @@ export async function processDamageSideEffects(
         result.messages.push(
           `\u26A1 ${tokenName} CON save d20=${roll}${modStr}=${total} vs DC ${dc}${advTag} \u2192 FAILED, concentration on ${concentratingOn} dropped!`
         );
-        await pool.query('UPDATE characters SET concentrating_on = NULL WHERE id = $1', [
-          token.characterId,
-        ]);
+        const { rows: versionRows } = await pool.query(
+          'UPDATE characters SET concentrating_on = NULL WHERE id = $1 RETURNING version',
+          [token.characterId]
+        );
+        const characterVersion = Number(versionRows[0]?.version);
+        if (Number.isInteger(characterVersion) && characterVersion >= 1) {
+          result.characterVersion = characterVersion;
+        }
         result.droppedConcentration = { spellName: concentratingOn };
         const cleared = clearConcentrationConditions(sessionId, tokenId, concentratingOn);
         for (const { tokenId: tid } of cleared) {

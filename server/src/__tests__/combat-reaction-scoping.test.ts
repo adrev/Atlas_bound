@@ -255,6 +255,12 @@ describe('combat:oa-execute — result-card scoping', () => {
       success: true,
       messages: [],
       hpChange: { tokenId: 'target', hp: 8, tempHp: 0, change: -12 },
+      characterHpUpdated: {
+        characterId: 'char-target',
+        hp: 8,
+        tempHp: 0,
+        version: 21,
+      },
     });
 
     const io = fakeIo(em);
@@ -267,6 +273,11 @@ describe('combat:oa-execute — result-card scoping', () => {
 
     expect(mockApplyDamageSideEffects).toHaveBeenCalledOnce();
     expect(mockApplyDamageSideEffects).toHaveBeenCalledWith(io, room, 'target', 12);
+    const characterUpdate = em.find((entry) => entry.event === 'character:updated');
+    expect(characterUpdate?.payload).toEqual({
+      characterId: 'char-target',
+      changes: { hitPoints: 8, tempHitPoints: 0, version: 21 },
+    });
   });
 
   it('does not leak hidden attacker OA chat to uninvolved players or history', async () => {

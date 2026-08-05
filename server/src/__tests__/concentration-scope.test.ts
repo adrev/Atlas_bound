@@ -23,6 +23,7 @@ import {
   applyConditionWithMeta,
   clearConcentrationConditions,
   dropConcentrationAndHeldEffects,
+  processDamageSideEffects,
 } from '../services/ConditionService.js';
 import { createRoom, getAllRooms, deleteRoom } from '../utils/roomState.js';
 
@@ -166,5 +167,39 @@ describe('dropConcentrationAndHeldEffects — end to end (caster to 0 HP)', () =
     expect(cleared).toContain('paralyzed'); // concentration ends
     expect(cleared).not.toContain('stunned'); // Stunning Strike persists
     expect(room.conditionMeta.get('ogre')?.has('stunned')).toBe(true);
+  });
+});
+
+describe('processDamageSideEffects — character version', () => {
+  it('returns the authoritative version from a failed concentration save write', async () => {
+    const room = seed();
+    room.tokens.set(CASTER, tok(CASTER, 'char-wizard'));
+    vi.spyOn(Math, 'random').mockReturnValue(0);
+    mockQuery.mockImplementation(async (sql: string) => {
+      if (sql.includes('SELECT concentrating_on')) {
+        return {
+          rows: [
+            {
+              concentrating_on: 'Hold Person',
+              ability_scores: JSON.stringify({ con: 10 }),
+              saving_throws: JSON.stringify([]),
+              proficiency_bonus: 2,
+              features: JSON.stringify([]),
+              name: 'Wizard',
+            },
+          ],
+        };
+      }
+      if (sql.includes('UPDATE characters SET concentrating_on = NULL')) {
+        expect(sql).toContain('RETURNING version');
+        return { rows: [{ version: 19 }] };
+      }
+      return { rows: [] };
+    });
+
+    const result = await processDamageSideEffects(SESSION, CASTER, 8);
+
+    expect(result.droppedConcentration).toEqual({ spellName: 'Hold Person' });
+    expect(result.characterVersion).toBe(19);
   });
 });
