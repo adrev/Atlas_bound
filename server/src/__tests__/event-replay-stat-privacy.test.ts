@@ -32,6 +32,7 @@ const redactedEconomy: ActionEconomy = {
   movementMax: 0,
   reaction: false,
 };
+const exactCharacterChanges = { hitPoints: 20, spellSlots: { 1: { max: 2, used: 0 } }, version: 9 };
 
 function token(): Token {
   return {
@@ -143,6 +144,19 @@ function replayEconomy(body: Record<string, unknown>): ActionEconomy {
   return events[0].payload.actionEconomy;
 }
 
+function appendCharacterEvent(room: RoomState): void {
+  broadcastEvent(
+    mockIo(),
+    room,
+    'character:updated',
+    { characterId: 'character-current', changes: exactCharacterChanges },
+    {
+      statCharacterId: 'character-current',
+      redactedPayload: { characterId: 'character-current', changes: {} },
+    }
+  );
+}
+
 beforeEach(() => {
   getAllRooms().clear();
   seedRoom();
@@ -181,5 +195,49 @@ describe('GET /events exact-stat privacy', () => {
 
     expect(response.status).toBe(200);
     expect(replayEconomy(response.body)).toEqual(exactEconomy);
+  });
+
+  it('redacts tokenless character replay for an unshared tablemate', async () => {
+    const room = getAllRooms().get(SESSION)!;
+    appendCharacterEvent(room);
+
+    const response = await supertest(buildApp())
+      .get(`/api/sessions/${SESSION}/events?since=2`)
+      .set('x-test-user', 'bystander-user');
+
+    expect(response.status).toBe(200);
+    expect(response.body.events[0].payload).toEqual({
+      characterId: 'character-current',
+      changes: {},
+    });
+    expect(response.body.events[0]).not.toHaveProperty('statCharacterId');
+    expect(response.body.events[0]).not.toHaveProperty('redactedPayload');
+  });
+
+  it('returns exact tokenless character replay to the linked owner and DM', async () => {
+    const room = getAllRooms().get(SESSION)!;
+    appendCharacterEvent(room);
+
+    for (const userId of ['owner-user', 'dm-user']) {
+      const response = await supertest(buildApp())
+        .get(`/api/sessions/${SESSION}/events?since=2`)
+        .set('x-test-user', userId);
+
+      expect(response.status).toBe(200);
+      expect(response.body.events[0].payload.changes).toEqual(exactCharacterChanges);
+    }
+  });
+
+  it('returns exact tokenless character replay when party-sheet sharing is enabled', async () => {
+    const room = getAllRooms().get(SESSION)!;
+    appendCharacterEvent(room);
+    room.showPlayersToPlayers = true;
+
+    const response = await supertest(buildApp())
+      .get(`/api/sessions/${SESSION}/events?since=2`)
+      .set('x-test-user', 'bystander-user');
+
+    expect(response.status).toBe(200);
+    expect(response.body.events[0].payload.changes).toEqual(exactCharacterChanges);
   });
 });

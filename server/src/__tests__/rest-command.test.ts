@@ -16,7 +16,12 @@ vi.mock('../db/connection.js', () => ({
 }));
 
 import { tryHandleChatCommand } from '../services/ChatCommands.js';
-import { createRoom, getAllRooms, type PlayerContext, type RoomPlayer } from '../utils/roomState.js';
+import {
+  createRoom,
+  getAllRooms,
+  type PlayerContext,
+  type RoomPlayer,
+} from '../utils/roomState.js';
 
 import '../services/chatCommands/restHandlers.js';
 
@@ -92,30 +97,37 @@ describe('!rest server-owned command', () => {
     mockQuery.mockImplementation(async (sql: string, params?: unknown[]) => {
       if (sql.includes('JOIN session_players')) {
         return {
-          rows: [{
-            id: 'char-1',
-            name: 'Rook',
-            user_id: 'player-1',
-            class: 'Fighter',
-            hit_points: 4,
-            max_hit_points: 20,
-            temp_hit_points: 5,
-            spell_slots: JSON.stringify({ 1: { max: 2, used: 1 } }),
-            features: JSON.stringify([{ name: 'Second Wind', usesTotal: 1, usesRemaining: 0, resetOn: 'short' }]),
-            hit_dice: JSON.stringify([
-              { dieSize: 10, total: 3, used: 3 },
-              { dieSize: 8, total: 2, used: 2 },
-            ]),
-            death_saves: JSON.stringify({ successes: 2, failures: 1 }),
-            concentrating_on: 'Bless',
-            exhaustion_level: 2,
-          }],
+          rows: [
+            {
+              id: 'char-1',
+              name: 'Rook',
+              user_id: 'player-1',
+              class: 'Fighter',
+              hit_points: 4,
+              max_hit_points: 20,
+              temp_hit_points: 5,
+              spell_slots: JSON.stringify({ 1: { max: 2, used: 1 } }),
+              features: JSON.stringify([
+                { name: 'Second Wind', usesTotal: 1, usesRemaining: 0, resetOn: 'short' },
+              ]),
+              hit_dice: JSON.stringify([
+                { dieSize: 10, total: 3, used: 3 },
+                { dieSize: 8, total: 2, used: 2 },
+              ]),
+              death_saves: JSON.stringify({ successes: 2, failures: 1 }),
+              concentrating_on: 'Bless',
+              exhaustion_level: 2,
+            },
+          ],
         };
       }
       return { rows: [] };
     });
     mockClientQuery.mockImplementation(async (sql: string, params?: unknown[]) => {
-      if (sql.startsWith('UPDATE characters')) updateCalls.push(params ?? []);
+      if (sql.startsWith('UPDATE characters')) {
+        updateCalls.push(params ?? []);
+        return { rows: [{ version: 7 }] };
+      }
       return { rows: [] };
     });
     const { io, emissions } = fakeIo();
@@ -131,12 +143,17 @@ describe('!rest server-owned command', () => {
     expect(updateCalls[0].at(-1)).toBe('char-1');
 
     const characterUpdate = emissions.find((e) => e.event === 'character:updated');
-    const payload = characterUpdate?.payload as { characterId?: string; changes?: Record<string, unknown> };
+    const payload = characterUpdate?.payload as {
+      characterId?: string;
+      changes?: Record<string, unknown>;
+    };
     expect(payload.characterId).toBe('char-1');
     expect(payload.changes?.hitPoints).toBe(20);
     expect(payload.changes?.tempHitPoints).toBe(0);
     expect(payload.changes?.spellSlots).toEqual({ 1: { max: 2, used: 0 } });
-    expect(payload.changes?.features).toEqual([{ name: 'Second Wind', usesTotal: 1, usesRemaining: 1, resetOn: 'short' }]);
+    expect(payload.changes?.features).toEqual([
+      { name: 'Second Wind', usesTotal: 1, usesRemaining: 1, resetOn: 'short' },
+    ]);
     expect(payload.changes?.hitDice).toEqual([
       { dieSize: 10, total: 3, used: 0 },
       { dieSize: 8, total: 2, used: 2 },
@@ -144,24 +161,38 @@ describe('!rest server-owned command', () => {
     expect(payload.changes?.deathSaves).toEqual({ successes: 0, failures: 0 });
     expect(payload.changes?.concentratingOn).toBeNull();
     expect(payload.changes?.exhaustionLevel).toBe(1);
+    expect(payload.changes?.version).toBe(7);
+    expect(ctx.room.eventLog[0]).toMatchObject({
+      kind: 'character:updated',
+      statTokenId: null,
+      statCharacterId: 'char-1',
+      redactedPayload: { characterId: 'char-1', changes: {} },
+    });
 
     const chat = emissions.find((e) => e.event === 'chat:new-message');
-    expect(String((chat?.payload as { content?: string })?.content ?? '')).toContain('Rook: HP restored');
+    expect(String((chat?.payload as { content?: string })?.content ?? '')).toContain(
+      'Rook: HP restored'
+    );
   });
 
   it('applies a targeted short rest to the named token character', async () => {
     const ctx = makeContext('dm');
-    ctx.room.tokens.set('t-warlock', makeToken('t-warlock', 'Nyx', { characterId: 'char-warlock' }));
+    ctx.room.tokens.set(
+      't-warlock',
+      makeToken('t-warlock', 'Nyx', { characterId: 'char-warlock' })
+    );
     mockQuery.mockImplementation(async (sql: string) => {
       if (sql.includes('SELECT * FROM characters')) {
         return {
-          rows: [{
-            id: 'char-warlock',
-            name: 'Nyx',
-            class: 'Warlock',
-            spell_slots: { 2: { max: 2, used: 2 } },
-            features: [{ name: 'Fey Step', usesTotal: 1, usesRemaining: 0, resetOn: 'short' }],
-          }],
+          rows: [
+            {
+              id: 'char-warlock',
+              name: 'Nyx',
+              class: 'Warlock',
+              spell_slots: { 2: { max: 2, used: 2 } },
+              features: [{ name: 'Fey Step', usesTotal: 1, usesRemaining: 0, resetOn: 'short' }],
+            },
+          ],
         };
       }
       return { rows: [] };
@@ -177,7 +208,13 @@ describe('!rest server-owned command', () => {
     };
     expect(payload.characterId).toBe('char-warlock');
     expect(payload.changes?.spellSlots).toEqual({ 2: { max: 2, used: 0 } });
-    expect(payload.changes?.features).toEqual([{ name: 'Fey Step', usesTotal: 1, usesRemaining: 1, resetOn: 'short' }]);
+    expect(payload.changes?.features).toEqual([
+      { name: 'Fey Step', usesTotal: 1, usesRemaining: 1, resetOn: 'short' },
+    ]);
+    expect(ctx.room.eventLog[0]).toMatchObject({
+      statTokenId: 't-warlock',
+      statCharacterId: 'char-warlock',
+    });
   });
 
   it('rolls back and emits no character updates if a rest write fails', async () => {
@@ -185,13 +222,15 @@ describe('!rest server-owned command', () => {
     mockQuery.mockImplementation(async (sql: string) => {
       if (sql.includes('JOIN session_players')) {
         return {
-          rows: [{
-            id: 'char-1',
-            name: 'Rook',
-            class: 'Fighter',
-            hit_points: 4,
-            max_hit_points: 20,
-          }],
+          rows: [
+            {
+              id: 'char-1',
+              name: 'Rook',
+              class: 'Fighter',
+              hit_points: 4,
+              max_hit_points: 20,
+            },
+          ],
         };
       }
       return { rows: [] };
@@ -209,7 +248,9 @@ describe('!rest server-owned command', () => {
     expect(mockClientQuery.mock.calls.map((call) => call[0])).toContain('ROLLBACK');
     expect(mockClientQuery.mock.calls.map((call) => call[0])).not.toContain('COMMIT');
     expect(emissions.some((e) => e.event === 'character:updated')).toBe(false);
-    expect(String((emissions[0].payload as { content?: string }).content ?? '')).toContain('write failed');
+    expect(String((emissions[0].payload as { content?: string }).content ?? '')).toContain(
+      'write failed'
+    );
   });
 
   it('keeps the DM-only guard', async () => {
@@ -221,6 +262,8 @@ describe('!rest server-owned command', () => {
     expect(handled).toBe(true);
     expect(emissions).toHaveLength(1);
     expect(emissions[0].channelId).toBe('sock-player');
-    expect(String((emissions[0].payload as { content?: string }).content ?? '')).toContain('DM only');
+    expect(String((emissions[0].payload as { content?: string }).content ?? '')).toContain(
+      'DM only'
+    );
   });
 });

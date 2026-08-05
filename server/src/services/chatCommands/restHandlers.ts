@@ -6,7 +6,12 @@ import {
 } from '../ChatCommands.js';
 import pool from '../../db/connection.js';
 import { broadcastEvent } from '../../utils/eventBroadcast.js';
-import { computeRest, persistRestUpdates, syncRestToCombatants, type RestKind } from '../RestService.js';
+import {
+  computeRest,
+  persistRestUpdates,
+  syncRestToCombatants,
+  type RestKind,
+} from '../RestService.js';
 
 /**
  * !rest <short|long> [target]
@@ -18,7 +23,11 @@ import { computeRest, persistRestUpdates, syncRestToCombatants, type RestKind } 
 
 async function handleRest(c: ChatCommandContext): Promise<boolean> {
   if (c.ctx.player.role !== 'dm') {
-    whisperToCaller(c.io, c.ctx, '!rest: DM only. Players can use the Rest button in the bottom bar.');
+    whisperToCaller(
+      c.io,
+      c.ctx,
+      '!rest: DM only. Players can use the Rest button in the bottom bar.'
+    );
     return true;
   }
   const parts = c.rest.split(/\s+/).filter(Boolean);
@@ -33,7 +42,7 @@ async function handleRest(c: ChatCommandContext): Promise<boolean> {
   let rows: Record<string, unknown>[] = [];
   if (targetName) {
     const matches = Array.from(c.ctx.room.tokens.values()).filter(
-      (t) => t.name.toLowerCase() === targetName.toLowerCase(),
+      (t) => t.name.toLowerCase() === targetName.toLowerCase()
     );
     if (matches.length === 0) {
       whisperToCaller(c.io, c.ctx, `!rest: no token named "${targetName}" on this map.`);
@@ -55,24 +64,30 @@ async function handleRest(c: ChatCommandContext): Promise<boolean> {
         WHERE sp.session_id = $1
           AND c.user_id <> 'npc'
         ORDER BY c.name ASC`,
-      [c.ctx.room.sessionId],
+      [c.ctx.room.sessionId]
     );
     rows = result.rows as Record<string, unknown>[];
   }
 
   if (rows.length === 0) {
-    whisperToCaller(c.io, c.ctx, targetName
-      ? `!rest: no character row found for "${targetName}".`
-      : '!rest: no linked player characters found in this session.');
+    whisperToCaller(
+      c.io,
+      c.ctx,
+      targetName
+        ? `!rest: no character row found for "${targetName}".`
+        : '!rest: no linked player characters found in this session.'
+    );
     return true;
   }
 
   const results = rows.map((row) => computeRest(row, kind));
+  const versions = new Map<string, number>();
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
     for (const result of results) {
-      await persistRestUpdates(client, result.characterId, result.updates);
+      const version = await persistRestUpdates(client, result.characterId, result.updates);
+      if (version !== undefined) versions.set(result.characterId, version);
     }
     await client.query('COMMIT');
   } catch (err) {
@@ -84,10 +99,23 @@ async function handleRest(c: ChatCommandContext): Promise<boolean> {
 
   for (const result of results) {
     if (Object.keys(result.updates).length === 0) continue;
+    const version = versions.get(result.characterId);
+    if (version !== undefined) result.updates.version = version;
     syncRestToCombatants(c.ctx.room, result.characterId, result.updates);
-    broadcastEvent(c.io, c.ctx.room, 'character:updated', {
+    const payload = {
       characterId: result.characterId,
       changes: result.updates,
+    };
+    const token = Array.from(c.ctx.room.tokens.values()).find(
+      (candidate) => candidate.characterId === result.characterId
+    );
+    broadcastEvent(c.io, c.ctx.room, 'character:updated', payload, {
+      statTokenId: token?.id ?? null,
+      statCharacterId: result.characterId,
+      redactedPayload: {
+        characterId: result.characterId,
+        changes: {},
+      },
     });
   }
 
@@ -96,8 +124,9 @@ async function handleRest(c: ChatCommandContext): Promise<boolean> {
     .join('\n');
 
   broadcastSystem(
-    c.io, c.ctx,
-    `🛌 ${c.ctx.player.displayName} completes a ${kind === 'long' ? 'Long' : 'Short'} Rest${targetName ? ` (${targetName} only)` : ' — whole party'}.\n${details}`,
+    c.io,
+    c.ctx,
+    `🛌 ${c.ctx.player.displayName} completes a ${kind === 'long' ? 'Long' : 'Short'} Rest${targetName ? ` (${targetName} only)` : ' — whole party'}.\n${details}`
   );
   return true;
 }
