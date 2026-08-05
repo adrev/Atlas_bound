@@ -117,20 +117,25 @@ function druidRow(overrides: Record<string, unknown> = {}) {
 /**
  * Query router: `row` answers every character SELECT (all paths read
  * the full row once, BEFORE the guarded write — there is no post-write
- * re-read by design), `update` the guarded UPDATE. `failAfterCommit`
- * makes every query AFTER a successful guarded UPDATE reject — the
- * regression condition: a post-commit DB failure must never strand
- * stale combatant stats.
+ * re-read by design), `update` the guarded UPDATE.
+ * `failPostCommitCharacterRead` recreates the old failure mode: a
+ * character re-read after a successful write fails. Correct stat
+ * transitions use the guarded pre-write row and never make that read.
  */
 function arrange(options: {
   row?: Record<string, unknown> | null;
   beast?: Record<string, unknown> | null;
   update?: Array<Record<string, unknown>> | Error;
-  failAfterCommit?: boolean;
+  failPostCommitCharacterRead?: boolean;
 }) {
   let committed = false;
   mockQuery.mockImplementation(async (sql: string) => {
-    if (committed && options.failAfterCommit) {
+    if (
+      committed &&
+      options.failPostCommitCharacterRead &&
+      sql.startsWith('SELECT') &&
+      sql.includes('FROM characters')
+    ) {
       throw new Error('db unavailable after commit');
     }
     if (sql.includes('FROM compendium_monsters')) {
@@ -242,6 +247,7 @@ describe('transforming and reverting during combat', () => {
     arrange({
       row: druidRow(),
       beast: WOLF_ROW,
+      failPostCommitCharacterRead: true,
     });
     const emissions: Emission[] = [];
     await tryHandleChatCommand(
@@ -280,6 +286,7 @@ describe('transforming and reverting during combat', () => {
     });
     arrange({
       row: druidRow({ wild_shape: ACTIVE_WOLF }),
+      failPostCommitCharacterRead: true,
     });
     const emissions: Emission[] = [];
     await tryHandleChatCommand(fakeIo(emissions), getPlayerBySocketId('druid-1')!, '!revert');
@@ -298,6 +305,7 @@ describe('damage-forced revert and fail-closed conflicts', () => {
     const combatant = seedCombat(room, { armorClass: 13, speed: 40 });
     arrange({
       row: druidRow({ wild_shape: ACTIVE_WOLF }),
+      failPostCommitCharacterRead: true,
     });
     const result = await CombatService.applyDamage(SESSION, 'druid-token', 20);
     // 11 absorbed by the form, 9 carried into the druid.

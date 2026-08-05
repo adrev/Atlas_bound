@@ -1586,7 +1586,12 @@ interface ActiveWildShape {
  * rather than applied to the wrong pool; `!revert` clears bad state.
  */
 async function loadActiveWildShape(characterId: string): Promise<ActiveWildShape | null> {
-  const { rows } = await pool.query('SELECT * FROM characters WHERE id = $1', [characterId]);
+  const { rows } = await pool.query(
+    `SELECT wild_shape, version, armor_class, speed, dndbeyond_id,
+            ability_scores, inventory, class, features
+       FROM characters WHERE id = $1`,
+    [characterId]
+  );
   const row = rows[0] as Record<string, unknown> | undefined;
   if (!row) return null;
   const column = readWildShapeColumn(row.wild_shape);

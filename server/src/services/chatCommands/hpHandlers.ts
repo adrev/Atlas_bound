@@ -233,7 +233,10 @@ const UNREADABLE_WILD_SHAPE =
  * state and version conflicts fail closed by throwing; nothing is
  * written.
  */
-async function applyDirectHp(characterId: string, delta: number): Promise<DirectHpChange | null> {
+async function applyDirectHp(
+  characterId: string,
+  delta: number
+): Promise<DirectHpChange | null> {
   const { rows } = await pool.query(
     'SELECT hit_points, max_hit_points, temp_hit_points, wild_shape, version FROM characters WHERE id = $1',
     [characterId]
