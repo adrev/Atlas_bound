@@ -189,7 +189,35 @@ export const useCombatStore = create<CombatState & CombatActions>((set) => ({
       combatStartTime: null,
     })),
 
-  setCombatants: (combatants) => set({ combatants }),
+  // Replaces the sorted list broadcast by combat:all-initiatives-ready
+  // (every mid-combat initiative set/reroll re-sorts server-side). The
+  // numeric currentTurnIndex is position-dependent, so swapping the list
+  // without re-anchoring visibly jumps the turn highlight until the next
+  // /state poll heals it — the client-side mirror of the server's
+  // sortInitiative anchoring.
+  setCombatants: (combatants) =>
+    set((state) => {
+      // Review phase: no live turn yet; the pointer tracks the top of
+      // the freshly sorted order, same as the server's lockInitiative
+      // snapping the opener to index 0.
+      if (state.reviewPhase) {
+        return { combatants, currentTurnIndex: 0 };
+      }
+      // Live combat (including the round-1 opener): keep the turn on the
+      // same creature by stable tokenId — never by index or name, since
+      // duplicate names (Goblin ×3) are the norm. If the anchor is
+      // missing from the new list (e.g. the active combatant is hidden
+      // from this client), leave the pointer untouched rather than
+      // jumping it to an unrelated row.
+      const anchorTokenId = state.combatants[state.currentTurnIndex]?.tokenId;
+      if (anchorTokenId !== undefined) {
+        const newIndex = combatants.findIndex((c) => c.tokenId === anchorTokenId);
+        if (newIndex >= 0) {
+          return { combatants, currentTurnIndex: newIndex };
+        }
+      }
+      return { combatants };
+    }),
 
   nextTurn: (currentTurnIndex, roundNumber, economy) =>
     set({
