@@ -155,6 +155,56 @@ describe('combat:lock-initiative — surprised opener', () => {
   });
 });
 
+describe('combat:lock-initiative — review→live opener', () => {
+  it('starts the first live turn at the highest final initiative after a review edit drifts the pointer', async () => {
+    // Regression: (roundNumber === 1 && currentTurnIndex === 0) is BOTH the
+    // review state and the opener's live turn, so review-vs-live cannot be
+    // inferred from it. sortInitiative now always anchors by tokenId, which
+    // can drift the pointer off the sorted top during review; the
+    // lock-initiative handler must authoritatively snap the opener back to
+    // the highest final initiative.
+    const room = createRoom(SESSION, 'ROOM-SR', 'dm-user');
+    addPlayerToRoom(SESSION, {
+      userId: 'dm-user',
+      displayName: 'DM',
+      socketId: 'dm-sock',
+      role: 'dm',
+      characterId: null,
+    });
+    room.tokens.set('alice', tok('alice'));
+    room.tokens.set('bob', tok('bob'));
+    const alice = combatant('alice', false);
+    const bob = combatant('bob', false);
+    alice.initiative = 20;
+    bob.initiative = 25; // bob was hand-edited UP during review → should open
+    room.combatState = {
+      sessionId: SESSION,
+      active: true,
+      roundNumber: 1,
+      currentTurnIndex: 0,
+      combatants: [alice, bob],
+      startedAt: new Date().toISOString(),
+    } as CombatState;
+
+    // The review edit path re-sorts and anchors to the current combatant
+    // (alice), leaving the pointer off the sorted top — fine while review.
+    CombatService.sortInitiative(SESSION);
+    const drifted = room.combatState!.combatants[room.combatState!.currentTurnIndex];
+    expect(drifted.tokenId).toBe('alice');
+
+    const em: Emission[] = [];
+    const h = driverFor(em, 'dm-sock');
+    await h.get('combat:lock-initiative')!({});
+
+    expect(em.some((e) => e.event === 'combat:review-complete')).toBe(true);
+    // Opener isn't surprised → no advance, but the live opener must be the
+    // highest final initiative (bob), not the drifted alice.
+    expect(em.some((e) => e.event === 'combat:turn-advanced')).toBe(false);
+    expect(room.combatState!.combatants[0].tokenId).toBe('bob');
+    expect(room.combatState!.currentTurnIndex).toBe(0);
+  });
+});
+
 describe('endCombat — per-fight residue', () => {
   it('clears combat caches and round-relative conditionMeta, keeps scene-real meta', async () => {
     const room = seedCombat(false);
