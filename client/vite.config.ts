@@ -35,9 +35,16 @@ export default defineConfig({
           // initial boot chunk free of ~500 KB of 3D runtime until the
           // first roll.
           if (id.includes('/three/') || id.includes('/@react-three/')) return 'vendor-three';
-          // dice-box ships 3+ MB of Ammo.js + Babylon.js wrapper; split
-          // to its own chunk so it loads on first roll only, not at boot.
-          if (id.includes('/@3d-dice/') || id.includes('/ammo')) return 'vendor-dice';
+          // Preserve dice-box's own dynamic renderer imports. Assigning
+          // these modules to one manual chunk collapses its on-screen,
+          // off-screen and fallback renderers into a 4+ MB download.
+          if (
+            id.includes('/@3d-dice/') ||
+            id.includes('/@babylonjs/') ||
+            id.includes('/ammo')
+          ) {
+            return undefined;
+          }
           return 'vendor-misc';
         },
       },

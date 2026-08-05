@@ -1,23 +1,11 @@
-import { useState, useCallback } from 'react';
+import { useSyncExternalStore } from 'react';
 import { X } from 'lucide-react';
 import { theme } from '../../styles/theme';
-
-export interface HandoutPayload {
-  title: string;
-  content: string;
-  imageUrl?: string;
-  fromDM: boolean;
-}
-
-/** Global handout queue — pushed to by the socket listener, read by the modal. */
-let _handoutQueue: HandoutPayload[] = [];
-let _notifyModal: (() => void) | null = null;
-
-/** Called from the socket listener to push a new handout. */
-export function pushHandout(payload: HandoutPayload) {
-  _handoutQueue = [..._handoutQueue, payload];
-  _notifyModal?.();
-}
+import {
+  dismissHandout,
+  getHandoutQueue,
+  subscribeToHandoutQueue,
+} from '../../stores/handoutQueue';
 
 /**
  * Dramatic full-screen handout modal. Renders the top handout in the
@@ -25,26 +13,18 @@ export function pushHandout(payload: HandoutPayload) {
  * first was showing).
  */
 export function HandoutModal() {
-  const [, forceRender] = useState(0);
-
-  // Subscribe so pushHandout triggers a re-render
-  _notifyModal = useCallback(() => {
-    forceRender((n) => n + 1);
-  }, []);
-
-  if (_handoutQueue.length === 0) return null;
-
-  const handout = _handoutQueue[0];
-
-  const dismiss = () => {
-    _handoutQueue = _handoutQueue.slice(1);
-    forceRender((n) => n + 1);
-  };
+  const queue = useSyncExternalStore(
+    subscribeToHandoutQueue,
+    getHandoutQueue,
+    getHandoutQueue
+  );
+  const handout = queue[0];
+  if (!handout) return null;
 
   return (
-    <div style={styles.overlay} onClick={dismiss}>
+    <div style={styles.overlay} onClick={dismissHandout}>
       <div style={styles.card} onClick={(e) => e.stopPropagation()}>
-        <button style={styles.closeBtn} onClick={dismiss}>
+        <button style={styles.closeBtn} onClick={dismissHandout}>
           <X size={16} />
         </button>
 
@@ -62,7 +42,7 @@ export function HandoutModal() {
           <div style={styles.content}>{handout.content}</div>
         )}
 
-        <button style={styles.dismissBtn} onClick={dismiss}>
+        <button style={styles.dismissBtn} onClick={dismissHandout}>
           Close
         </button>
       </div>
