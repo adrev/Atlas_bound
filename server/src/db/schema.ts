@@ -105,6 +105,7 @@ export async function initDatabase(): Promise<void> {
       exhaustion_level INTEGER NOT NULL DEFAULT 0,
       version INTEGER NOT NULL DEFAULT 1,
       experience INTEGER NOT NULL DEFAULT 0 CONSTRAINT characters_experience_nonnegative CHECK (experience >= 0),
+      wild_shape TEXT DEFAULT NULL,
       created_at TEXT NOT NULL DEFAULT (NOW()::text),
       updated_at TEXT NOT NULL DEFAULT (NOW()::text)
     );
@@ -130,6 +131,12 @@ export async function initDatabase(): Promise<void> {
         NULL;
       END;
     END $$;
+    -- Persisted Wild Shape state for authoritative !wildshape
+    -- (2026-08-05): NULL when not transformed, otherwise a JSON blob
+    -- validated by server/src/utils/wildShapeState.ts. Replaces the
+    -- process-local pool map that lost active forms on restart and
+    -- diverged across instances.
+    ALTER TABLE characters ADD COLUMN IF NOT EXISTS wild_shape TEXT DEFAULT NULL;
 
     CREATE TABLE IF NOT EXISTS maps (
       id TEXT PRIMARY KEY,
