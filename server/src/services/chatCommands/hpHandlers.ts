@@ -166,9 +166,26 @@ function canMutateTarget(ctx: PlayerContext, token: Token): boolean {
 }
 
 function parseAmount(raw: string): number | null {
-  const n = parseInt(raw, 10);
-  if (!Number.isFinite(n) || n < 0 || n > 9999) return null;
+  if (!/^\d+$/.test(raw)) return null;
+  const n = Number(raw);
+  if (!Number.isInteger(n) || n < 0 || n > 9999) return null;
   return n;
+}
+
+function requireSelectedVersion(row: Record<string, unknown>): number {
+  const version = parseCharacterVersion(row);
+  if (version === undefined) {
+    throw new Error('could not verify the character state — nothing was changed.');
+  }
+  return version;
+}
+
+function requireCommittedVersion(row: unknown): number {
+  const version = parseCharacterVersion(row);
+  if (version === undefined) {
+    throw new Error('nothing was applied — the character changed mid-action. Retry.');
+  }
+  return version;
 }
 
 function broadcastHpChange(
@@ -233,10 +250,7 @@ const UNREADABLE_WILD_SHAPE =
  * state and version conflicts fail closed by throwing; nothing is
  * written.
  */
-async function applyDirectHp(
-  characterId: string,
-  delta: number
-): Promise<DirectHpChange | null> {
+async function applyDirectHp(characterId: string, delta: number): Promise<DirectHpChange | null> {
   const { rows } = await pool.query(
     'SELECT hit_points, max_hit_points, temp_hit_points, wild_shape, version FROM characters WHERE id = $1',
     [characterId]
@@ -368,11 +382,12 @@ async function setDirectHp(
   value: number
 ): Promise<{ hp: number; tempHp: number; version?: number } | null> {
   const { rows } = await pool.query(
-    'SELECT max_hit_points, temp_hit_points, wild_shape FROM characters WHERE id = $1',
+    'SELECT hit_points, max_hit_points, temp_hit_points, wild_shape, version FROM characters WHERE id = $1',
     [characterId]
   );
   const row = rows[0] as Record<string, unknown> | undefined;
   if (!row) return null;
+  const expectedVersion = requireSelectedVersion(row);
   const column = readWildShapeColumn(row.wild_shape);
   if (column.status === 'invalid') throw new Error(UNREADABLE_WILD_SHAPE);
   if (column.status === 'active') {
@@ -382,14 +397,31 @@ async function setDirectHp(
       `target is wild-shaped (${column.state.formName}) — use \`!damage\`/\`!heal\` (routed through the form) or \`!revert\` first.`
     );
   }
+  const currentHp = Number(row.hit_points);
   const maxHp = Number(row.max_hit_points);
   const tempHp = Number(row.temp_hit_points ?? 0);
+  if (
+    !Number.isInteger(currentHp) ||
+    currentHp < 0 ||
+    !Number.isInteger(maxHp) ||
+    maxHp < 1 ||
+    maxHp > 9999 ||
+    currentHp > maxHp ||
+    !Number.isInteger(tempHp) ||
+    tempHp < 0 ||
+    tempHp > 9999
+  ) {
+    throw new Error('could not verify the character state — nothing was changed.');
+  }
   const nextHp = Math.max(0, Math.min(maxHp, value));
+  if (nextHp === currentHp) {
+    return { hp: currentHp, tempHp, version: expectedVersion };
+  }
   const { rows: versionRows } = await pool.query(
-    'UPDATE characters SET hit_points = $1 WHERE id = $2 RETURNING version',
-    [nextHp, characterId]
+    'UPDATE characters SET hit_points = $1 WHERE id = $2 AND version = $3 RETURNING version',
+    [nextHp, characterId, expectedVersion]
   );
-  return { hp: nextHp, tempHp, version: parseCharacterVersion(versionRows[0]) };
+  return { hp: nextHp, tempHp, version: requireCommittedVersion(versionRows[0]) };
 }
 
 /**
@@ -404,13 +436,24 @@ async function applyDirectTempHp(
   value: number
 ): Promise<{ hp: number; tempHp: number; replaced: boolean; version?: number } | null> {
   const { rows } = await pool.query(
-    'SELECT hit_points, temp_hit_points FROM characters WHERE id = $1',
+    'SELECT hit_points, temp_hit_points, version FROM characters WHERE id = $1',
     [characterId]
   );
   const row = rows[0] as Record<string, unknown> | undefined;
   if (!row) return null;
+  const expectedVersion = requireSelectedVersion(row);
   const hp = Number(row.hit_points);
   const current = Number(row.temp_hit_points ?? 0);
+  if (
+    !Number.isInteger(hp) ||
+    hp < 0 ||
+    hp > 9999 ||
+    !Number.isInteger(current) ||
+    current < 0 ||
+    current > 9999
+  ) {
+    throw new Error('could not verify the character state — nothing was changed.');
+  }
   // 0 always clears; otherwise keep the better value.
   const next = value === 0 ? 0 : Math.max(current, value);
   const replaced = next !== current;
@@ -419,10 +462,10 @@ async function applyDirectTempHp(
   let version: number | undefined;
   if (replaced) {
     const { rows: versionRows } = await pool.query(
-      'UPDATE characters SET temp_hit_points = $1 WHERE id = $2 RETURNING version',
-      [next, characterId]
+      'UPDATE characters SET temp_hit_points = $1 WHERE id = $2 AND version = $3 RETURNING version',
+      [next, characterId, expectedVersion]
     );
-    version = parseCharacterVersion(versionRows[0]);
+    version = requireCommittedVersion(versionRows[0]);
   }
   return { hp, tempHp: next, replaced, version };
 }
@@ -614,11 +657,11 @@ async function handleHp(c: ChatCommandContext): Promise<boolean> {
   }
 
   const signed = /^[+-]/.test(valueRaw);
-  const num = parseInt(valueRaw, 10);
-  if (!Number.isFinite(num)) {
+  if (!/^[+-]?\d+$/.test(valueRaw)) {
     whisperToCaller(c.io, c.ctx, '!hp: value must be a number.');
     return true;
   }
+  const num = Number(valueRaw);
 
   const res = resolveTarget(c.ctx, target);
   if (!res.target) {
@@ -753,6 +796,39 @@ const ATTR_COLUMNS: Record<
   cha: { column: 'ability_scores', min: 1, max: 30, abilityKey: 'cha' },
 };
 
+const DEFAULT_ABILITY_SCORES: Record<string, number> = {
+  str: 10,
+  dex: 10,
+  con: 10,
+  int: 10,
+  wis: 10,
+  cha: 10,
+};
+
+function readAbilityScores(raw: unknown): Record<string, number> {
+  if (raw === null || raw === undefined || raw === '') return { ...DEFAULT_ABILITY_SCORES };
+  let parsed: unknown = raw;
+  if (typeof raw === 'string') {
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      throw new Error('stored ability scores are unreadable — nothing was changed.');
+    }
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error('stored ability scores are unreadable — nothing was changed.');
+  }
+  const scores = { ...DEFAULT_ABILITY_SCORES, ...(parsed as Record<string, number>) };
+  for (const ability of Object.keys(DEFAULT_ABILITY_SCORES)) {
+    const score = Number(scores[ability]);
+    if (!Number.isInteger(score) || score < 1 || score > 30) {
+      throw new Error('stored ability scores are unreadable — nothing was changed.');
+    }
+    scores[ability] = score;
+  }
+  return scores;
+}
+
 async function handleSetattr(c: ChatCommandContext): Promise<boolean> {
   if (!isDM(c.ctx)) {
     whisperToCaller(c.io, c.ctx, '!setattr: DM only.');
@@ -779,8 +855,8 @@ async function handleSetattr(c: ChatCommandContext): Promise<boolean> {
     );
     return true;
   }
-  const value = parseInt(valueRaw, 10);
-  if (!Number.isFinite(value) || value < spec.min || value > spec.max) {
+  const value = /^\d+$/.test(valueRaw) ? Number(valueRaw) : Number.NaN;
+  if (!Number.isInteger(value) || value < spec.min || value > spec.max) {
     whisperToCaller(c.io, c.ctx, `!setattr: value out of range [${spec.min}, ${spec.max}]`);
     return true;
   }
@@ -796,53 +872,106 @@ async function handleSetattr(c: ChatCommandContext): Promise<boolean> {
   }
 
   try {
-    if (spec.abilityKey) {
-      const { rows } = await pool.query('SELECT ability_scores FROM characters WHERE id = $1', [
-        res.target.characterId,
-      ]);
-      const raw = rows[0]?.ability_scores as string | undefined;
-      let scores: Record<string, number> = { str: 10, dex: 10, con: 10, int: 10, wis: 10, cha: 10 };
-      if (raw) {
-        try {
-          scores = { ...scores, ...JSON.parse(raw) };
-        } catch {
-          /* keep defaults */
-        }
-      }
-      scores[spec.abilityKey] = value;
-      const { rows: versionRows } = await pool.query(
-        'UPDATE characters SET ability_scores = $1 WHERE id = $2 RETURNING version',
-        [JSON.stringify(scores), res.target.characterId]
-      );
-      const changes: Record<string, unknown> = { abilityScores: scores };
-      const version = parseCharacterVersion(versionRows[0]);
-      if (version !== undefined) {
-        changes.version = version;
-      }
-      // Exact sheet numbers: scope by the target token through the
-      // sharing toggles instead of the room-wide channel.
-      emitToTokenStatViewers(c.io, c.ctx.room, res.target.token.id, 'character:updated', {
-        characterId: res.target.characterId,
-        changes,
-      });
-    } else {
-      const { rows: versionRows } = await pool.query(
-        `UPDATE characters SET ${spec.column} = $1 WHERE id = $2 RETURNING version`,
-        [value, res.target.characterId]
-      );
-      const changes: Record<string, unknown> = {};
-      if (spec.column === 'hit_points') changes.hitPoints = value;
-      else if (spec.column === 'max_hit_points') changes.maxHitPoints = value;
-      else if (spec.column === 'armor_class') changes.armorClass = value;
-      const version = parseCharacterVersion(versionRows[0]);
-      if (version !== undefined) {
-        changes.version = version;
-      }
-      emitToTokenStatViewers(c.io, c.ctx.room, res.target.token.id, 'character:updated', {
-        characterId: res.target.characterId,
-        changes,
-      });
+    const { rows } = await pool.query(
+      `SELECT ability_scores, hit_points, max_hit_points, armor_class,
+              wild_shape, version
+         FROM characters WHERE id = $1`,
+      [res.target.characterId]
+    );
+    const row = rows[0] as Record<string, unknown> | undefined;
+    if (!row) {
+      whisperToCaller(c.io, c.ctx, '!setattr: character not found.');
+      return true;
     }
+    const expectedVersion = requireSelectedVersion(row);
+    const changes: Record<string, unknown> = {};
+    let version = expectedVersion;
+
+    if (spec.abilityKey) {
+      const scores = readAbilityScores(row.ability_scores);
+      if (scores[spec.abilityKey] !== value) {
+        scores[spec.abilityKey] = value;
+        const { rows: versionRows } = await pool.query(
+          'UPDATE characters SET ability_scores = $1 WHERE id = $2 AND version = $3 RETURNING version',
+          [JSON.stringify(scores), res.target.characterId, expectedVersion]
+        );
+        version = requireCommittedVersion(versionRows[0]);
+      }
+      changes.abilityScores = scores;
+    } else {
+      if (spec.column === 'hit_points' || spec.column === 'max_hit_points') {
+        const currentHp = Number(row.hit_points);
+        const currentMaxHp = Number(row.max_hit_points);
+        if (
+          !Number.isInteger(currentHp) ||
+          currentHp < 0 ||
+          !Number.isInteger(currentMaxHp) ||
+          currentMaxHp < 1 ||
+          currentMaxHp > 9999 ||
+          currentHp > currentMaxHp
+        ) {
+          throw new Error('could not verify the character state — nothing was changed.');
+        }
+        if (spec.column === 'hit_points') {
+          const wildShape = readWildShapeColumn(row.wild_shape);
+          if (wildShape.status === 'invalid') throw new Error(UNREADABLE_WILD_SHAPE);
+          if (wildShape.status === 'active') {
+            throw new Error(
+              `target is wild-shaped (${wildShape.state.formName}) — use \`!damage\`/\`!heal\` or \`!revert\` first.`
+            );
+          }
+          const nextHp = Math.min(currentMaxHp, value);
+          if (nextHp !== currentHp) {
+            const { rows: versionRows } = await pool.query(
+              'UPDATE characters SET hit_points = $1 WHERE id = $2 AND version = $3 RETURNING version',
+              [nextHp, res.target.characterId, expectedVersion]
+            );
+            version = requireCommittedVersion(versionRows[0]);
+          }
+          changes.hitPoints = nextHp;
+        } else {
+          const nextHp = Math.min(currentHp, value);
+          if (value !== currentMaxHp) {
+            const { rows: versionRows } = await pool.query(
+              `UPDATE characters
+                  SET max_hit_points = $1, hit_points = LEAST(hit_points, $1)
+                WHERE id = $2 AND version = $3
+                RETURNING version, hit_points`,
+              [value, res.target.characterId, expectedVersion]
+            );
+            version = requireCommittedVersion(versionRows[0]);
+            const committedHp = Number(versionRows[0]?.hit_points);
+            if (!Number.isInteger(committedHp) || committedHp < 0 || committedHp > value) {
+              throw new Error('the character update returned invalid HP — refresh before editing.');
+            }
+            changes.hitPoints = committedHp;
+          } else {
+            changes.hitPoints = nextHp;
+          }
+          changes.maxHitPoints = value;
+        }
+      } else {
+        const currentAc = Number(row.armor_class);
+        if (!Number.isInteger(currentAc) || currentAc < 0 || currentAc > 99) {
+          throw new Error('could not verify the character state — nothing was changed.');
+        }
+        if (currentAc !== value) {
+          const { rows: versionRows } = await pool.query(
+            'UPDATE characters SET armor_class = $1 WHERE id = $2 AND version = $3 RETURNING version',
+            [value, res.target.characterId, expectedVersion]
+          );
+          version = requireCommittedVersion(versionRows[0]);
+        }
+        changes.armorClass = value;
+      }
+    }
+    changes.version = version;
+    // Exact sheet numbers: scope by the target token through the
+    // sharing toggles instead of the room-wide channel.
+    emitToTokenStatViewers(c.io, c.ctx.room, res.target.token.id, 'character:updated', {
+      characterId: res.target.characterId,
+      changes,
+    });
     whisperToCaller(c.io, c.ctx, `!setattr: ${res.target.token.name} ${attr} = ${value}`);
   } catch (err) {
     whisperToCaller(c.io, c.ctx, `!setattr: ${err instanceof Error ? err.message : 'failed'}`);
@@ -879,17 +1008,23 @@ async function handleThp(c: ChatCommandContext): Promise<boolean> {
       const combatant = combatState.combatants.find((cm) => cm.tokenId === res.target!.token.id);
       if (combatant) {
         const prior = combatant.tempHp;
-        // RAW: 0 clears; otherwise keep the higher value.
-        combatant.tempHp = amount === 0 ? 0 : Math.max(prior, amount);
+        const next = amount === 0 ? 0 : Math.max(prior, amount);
         let version: number | undefined;
-        // A no-op (same temp HP) must not touch the row — a same-value
-        // UPDATE still fires the version trigger and would desync owners.
-        if (res.target.characterId && combatant.tempHp !== prior) {
-          const { rows: versionRows } = await pool.query(
-            'UPDATE characters SET temp_hit_points = $1 WHERE id = $2 RETURNING version',
-            [combatant.tempHp, res.target.characterId]
-          );
-          version = parseCharacterVersion(versionRows[0]);
+        if (res.target.characterId) {
+          // Commit the optimistic-locking character write before changing
+          // live combat state. A conflict must leave memory and clients alone.
+          const result = await applyDirectTempHp(res.target.characterId, amount);
+          if (!result) {
+            whisperToCaller(c.io, c.ctx, '!thp: character not found');
+            return true;
+          }
+          combatant.tempHp = result.tempHp;
+          version = result.version;
+        } else {
+          combatant.tempHp = next;
+        }
+        if (combatant.tempHp !== prior) {
+          CombatService.persistSessionCombatState(c.ctx.room.sessionId);
         }
         broadcastHpChange(
           c.io,
