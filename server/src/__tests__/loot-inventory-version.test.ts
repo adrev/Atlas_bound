@@ -339,3 +339,142 @@ describe('POST /characters/:id/loot/drop version + fanout', () => {
     expect(characterUpdates().map((entry) => entry.socketId)).toEqual(['dm-socket']);
   });
 });
+
+describe('POST /characters/:id/loot/drop image URL sanitization', () => {
+  function arrangeDropWithItem(item: Record<string, unknown>) {
+    poolQuery.mockImplementation(async (sql: string) => {
+      if (sql.includes('FROM maps WHERE id')) {
+        return { rows: [{ session_id: 'loot-session' }] };
+      }
+      if (sql.includes('SELECT role FROM session_players')) {
+        return { rows: [{ role: 'dm' }] };
+      }
+      if (sql.includes('character_sessions')) {
+        return { rows: [{ session_id: 'loot-session' }] };
+      }
+      return { rows: [] };
+    });
+    clientQuery.mockImplementation(async (sql: string) => {
+      if (sql.includes('FOR UPDATE')) {
+        return {
+          rows: [
+            { id: 'char-1', inventory: JSON.stringify([item]), user_id: 'owner-user' },
+          ],
+        };
+      }
+      if (sql.includes('RETURNING version')) {
+        return { rows: [{ version: 9 }] };
+      }
+      return { rows: [] };
+    });
+  }
+
+  async function dropLoot() {
+    const handler = await routeHandler('/characters/:id/loot/drop');
+    const req = {
+      params: { id: 'char-1' },
+      body: { itemIndex: 0, mapId: 'map-1', x: 1, y: 2 },
+      user: { id: 'owner-user' },
+    } as unknown as Request;
+    const res = makeResponse();
+    await handler(req, res);
+    return res;
+  }
+
+  // image_url is the 8th value in the token INSERT parameter list.
+  function tokenInsertImageUrl(): string {
+    const call = clientQuery.mock.calls.find(([sql]) =>
+      String(sql).includes('INSERT INTO tokens')
+    );
+    expect(call).toBeTruthy();
+    return (call![1] as unknown[])[7] as string;
+  }
+
+  it('never copies a javascript: imageUrl into the token insert or response', async () => {
+    seedRoom(false);
+    arrangeDropWithItem({ name: 'Cursed Icon', quantity: 1, imageUrl: 'javascript:alert(1)' });
+
+    const res = await dropLoot();
+
+    expect(res.statusCode).toBe(200);
+    expect(tokenInsertImageUrl()).toBe('/uploads/items/default-item.svg');
+    expect((res.body?.token as Record<string, unknown>).imageUrl).toBe(
+      '/uploads/items/default-item.svg'
+    );
+    const allInsertParams = clientQuery.mock.calls.flatMap(([, params]) =>
+      Array.isArray(params) ? params : []
+    );
+    expect(allInsertParams.some((p) => String(p).includes('javascript:'))).toBe(false);
+  });
+
+  it('rejects a disallowed HTTPS tracking host and falls back to the slug-derived path', async () => {
+    seedRoom(false);
+    arrangeDropWithItem({
+      name: 'Longsword',
+      quantity: 1,
+      slug: 'longsword',
+      imageUrl: 'https://tracker.evil-analytics.example/pixel.png',
+    });
+
+    const res = await dropLoot();
+
+    expect(tokenInsertImageUrl()).toBe('/uploads/items/longsword.png');
+    expect((res.body?.token as Record<string, unknown>).imageUrl).toBe(
+      '/uploads/items/longsword.png'
+    );
+    const allInsertParams = clientQuery.mock.calls.flatMap(([, params]) =>
+      Array.isArray(params) ? params : []
+    );
+    expect(allInsertParams.some((p) => String(p).includes('evil-analytics'))).toBe(false);
+  });
+
+  it('refuses to build a path from a traversal slug and uses the default icon', async () => {
+    seedRoom(false);
+    arrangeDropWithItem({
+      name: 'Sneaky Item',
+      quantity: 1,
+      slug: '../../etc/passwd',
+      imageUrl: 'https://tracker.evil-analytics.example/pixel.png',
+    });
+
+    const res = await dropLoot();
+
+    expect(tokenInsertImageUrl()).toBe('/uploads/items/default-item.svg');
+    expect((res.body?.token as Record<string, unknown>).imageUrl).toBe(
+      '/uploads/items/default-item.svg'
+    );
+  });
+
+  it('refuses to build a path from a malformed (non-lowercase-slug) slug', async () => {
+    seedRoom(false);
+    arrangeDropWithItem({
+      name: 'Odd Item',
+      quantity: 1,
+      slug: 'Long Sword!.png',
+      imageUrl: 'not a url',
+    });
+
+    const res = await dropLoot();
+
+    expect(tokenInsertImageUrl()).toBe('/uploads/items/default-item.svg');
+    expect((res.body?.token as Record<string, unknown>).imageUrl).toBe(
+      '/uploads/items/default-item.svg'
+    );
+  });
+
+  it('keeps an approved relative /uploads imageUrl as-is', async () => {
+    seedRoom(false);
+    arrangeDropWithItem({
+      name: 'Silver Key',
+      quantity: 1,
+      imageUrl: '/uploads/items/silver-key.png',
+    });
+
+    const res = await dropLoot();
+
+    expect(tokenInsertImageUrl()).toBe('/uploads/items/silver-key.png');
+    expect((res.body?.token as Record<string, unknown>).imageUrl).toBe(
+      '/uploads/items/silver-key.png'
+    );
+  });
+});

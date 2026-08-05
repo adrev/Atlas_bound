@@ -4,6 +4,7 @@ import { z } from 'zod';
 import pool from '../db/connection.js';
 import { getAuthUserId, assertCharacterOwnerOrDM } from '../utils/authorization.js';
 import { createLootSchema } from '../utils/validation.js';
+import { safeImageUrlSchema } from '../utils/imageUrlValidator.js';
 import { getIO } from '../socket/ioInstance.js';
 import { getRoom, socketsOnMap } from '../utils/roomState.js';
 import type { Token } from '@dnd-vtt/shared';
@@ -18,6 +19,12 @@ const lootDropSchema = z.object({
   x: z.number().finite().min(-10000).max(10000).optional(),
   y: z.number().finite().min(-10000).max(10000).optional(),
 });
+
+// Inventory JSON is stored unvalidated (z.array(z.any()) at the
+// character write boundary), so item.slug is attacker-controlled too.
+// Only slugs of this conservative shape may be interpolated into an
+// /uploads/items/<slug>.png path.
+const SAFE_ITEM_SLUG_RE = /^[a-z0-9][a-z0-9-]{0,127}$/;
 
 const updateLootSchema = z.object({
   quantity: z.number().int().min(0).max(9999).optional(),
@@ -812,8 +819,20 @@ router.post('/characters/:id/loot/drop', async (req: Request, res: Response) => 
     if (Number.isInteger(version) && version >= 1) responseVersion = version;
     updatedInventory = inventory;
 
-    // Create the loot-bag token on the target map.
-    const imgUrl: string = item.imageUrl || (item.slug ? `/uploads/items/${item.slug}.png` : '/uploads/items/default-item.svg');
+    // Create the loot-bag token on the target map. item.imageUrl comes
+    // straight from the unvalidated inventory JSON — copying it into
+    // tokens.image_url verbatim would let javascript:/data:text URIs or
+    // arbitrary external hosts reach every client that renders the
+    // token. Accept it only when it passes the shared image allowlist;
+    // otherwise derive the path from a conservatively-shaped slug, or
+    // fall back to the default icon.
+    const rawImageUrl = typeof item.imageUrl === 'string' ? item.imageUrl : '';
+    let imgUrl = '/uploads/items/default-item.svg';
+    if (rawImageUrl && safeImageUrlSchema.safeParse(rawImageUrl).success) {
+      imgUrl = rawImageUrl;
+    } else if (typeof item.slug === 'string' && SAFE_ITEM_SLUG_RE.test(item.slug)) {
+      imgUrl = `/uploads/items/${item.slug}.png`;
+    }
     const tokenId = uuidv4();
     const now = new Date().toISOString();
     const dropX = typeof x === 'number' ? x : 0;
