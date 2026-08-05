@@ -220,6 +220,21 @@ function wildShapeFormStats(
 }
 
 /**
+ * Effective combat AC/speed from an already-validated character row
+ * plus an explicit form state (null = untransformed). Exported so the
+ * Wild Shape command path can compute the post-commit stats from the
+ * SAME row it version-guarded the write against — deterministic, no
+ * second DB read that could fail and strand the old numbers.
+ */
+export function computeEffectiveAcSpeed(
+  charRow: Record<string, unknown>,
+  formState: WildShapeState | null
+): { ac: number; speed: number } {
+  const baseline = deriveBaselineAcSpeed(charRow);
+  return formState ? wildShapeFormStats(formState, baseline) : baseline;
+}
+
+/**
  * Effective combat AC/speed for a character row: the sheet baseline,
  * overridden by the active Wild Shape form. An unreadable wild_shape
  * column contributes NOTHING — the tampered/corrupt blob is never
@@ -227,9 +242,8 @@ function wildShapeFormStats(
  * the character presents their own baseline until `!revert` clears it.
  */
 function effectiveAcSpeed(charRow: Record<string, unknown>): { ac: number; speed: number } {
-  const baseline = deriveBaselineAcSpeed(charRow);
   const column = readWildShapeColumn(charRow.wild_shape);
-  return column.status === 'active' ? wildShapeFormStats(column.state, baseline) : baseline;
+  return computeEffectiveAcSpeed(charRow, column.status === 'active' ? column.state : null);
 }
 
 /**
@@ -243,9 +257,8 @@ function effectiveAcSpeed(charRow: Record<string, unknown>): { ac: number; speed
 function applyEffectiveFormStats(
   room: RoomState,
   combatant: Combatant,
-  charRow: Record<string, unknown>
+  effective: { ac: number; speed: number }
 ): boolean {
-  const effective = effectiveAcSpeed(charRow);
   if (combatant.armorClass === effective.ac && combatant.speed === effective.speed) return false;
   const current = room.combatState?.combatants[room.combatState.currentTurnIndex];
   const economy = room.actionEconomies.get(combatant.tokenId);
@@ -265,32 +278,27 @@ function applyEffectiveFormStats(
 /**
  * Authoritative Wild Shape stat sync for a live fight. Called AFTER a
  * successful version-guarded wild_shape write (transform, revert, or
- * form-drop) so the DB is already the source of truth; this re-reads
- * the row, updates the combatant's AC/speed and the current turn's
- * movement budget, and persists the tracker. Returns the new values
- * for fanout (via the redacting combat:state-sync, never raw), or
- * null when nothing needed to change. Never throws — the guarded
- * write already committed, so a sync hiccup must not be reported as
- * a failure of the action itself.
+ * form-drop) with the effective AC/speed the caller computed from the
+ * same validated row/form data it guarded the write against. Purely
+ * in-memory and deterministic — the write has already committed, so
+ * no DB read sits between commit and the stat transition that could
+ * fail and strand the combatant on stale numbers. The tracker persist
+ * is fire-and-forget: the live room state is the combat source of
+ * truth and the next persist rewrites the full row anyway. Returns
+ * the new values for fanout (via the redacting combat:state-sync,
+ * never raw), or null when nothing needed to change.
  */
-export async function syncWildShapeCombatStats(
+export function syncWildShapeCombatStats(
   sessionId: string,
-  characterId: string
-): Promise<{ tokenId: string; armorClass: number; speed: number } | null> {
+  characterId: string,
+  effective: { ac: number; speed: number }
+): { tokenId: string; armorClass: number; speed: number } | null {
   const room = getRoom(sessionId);
   if (!room?.combatState?.active) return null;
   const combatant = room.combatState.combatants.find((c) => c.characterId === characterId);
   if (!combatant) return null;
-  try {
-    const { rows } = await pool.query('SELECT * FROM characters WHERE id = $1', [characterId]);
-    const charRow = rows[0] as Record<string, unknown> | undefined;
-    if (!charRow) return null;
-    if (!applyEffectiveFormStats(room, combatant, charRow)) return null;
-    await persistCombatStateAsync(room.combatState);
-  } catch (error) {
-    console.warn('[CombatService] wild shape stat sync failed:', error);
-    return null;
-  }
+  if (!applyEffectiveFormStats(room, combatant, effective)) return null;
+  persistCombatState(room.combatState);
   return { tokenId: combatant.tokenId, armorClass: combatant.armorClass, speed: combatant.speed };
 }
 
@@ -1561,6 +1569,13 @@ export interface HpChangeResult {
 interface ActiveWildShape {
   state: WildShapeState;
   version: number;
+  /**
+   * The full character row the state/version were read from. When the
+   * version-guarded write later succeeds, this row is proven to be the
+   * exact pre-write committed state, so baseline AC/speed restoration
+   * derives from it without a post-commit re-read that could fail.
+   */
+  row: Record<string, unknown>;
 }
 
 /**
@@ -1571,9 +1586,7 @@ interface ActiveWildShape {
  * rather than applied to the wrong pool; `!revert` clears bad state.
  */
 async function loadActiveWildShape(characterId: string): Promise<ActiveWildShape | null> {
-  const { rows } = await pool.query('SELECT wild_shape, version FROM characters WHERE id = $1', [
-    characterId,
-  ]);
+  const { rows } = await pool.query('SELECT * FROM characters WHERE id = $1', [characterId]);
   const row = rows[0] as Record<string, unknown> | undefined;
   if (!row) return null;
   const column = readWildShapeColumn(row.wild_shape);
@@ -1584,7 +1597,7 @@ async function loadActiveWildShape(characterId: string): Promise<ActiveWildShape
       'Wild Shape state is unreadable — the druid must `!revert` before HP changes can apply.'
     );
   }
-  return { state: column.state, version };
+  return { state: column.state, version, row };
 }
 
 /**
@@ -1835,18 +1848,13 @@ export async function applyDamage(
       }
       // The form just dropped: restore the druid's own AC/speed on the
       // live combatant so movement caps and the tracker stop using the
-      // beast's numbers. The guarded write above already committed, so
-      // a hiccup here must not fail the damage — the next sync heals it.
+      // beast's numbers. Derived from the row the version guard just
+      // proved untouched (the write only changed HP/death-save/wild
+      // -shape columns, none of which feed the baseline), so this is
+      // pure computation — no post-commit read can fail and strand
+      // the beast's stats.
       if (wildShapeEnded) {
-        try {
-          const { rows: charRows } = await pool.query('SELECT * FROM characters WHERE id = $1', [
-            combatant.characterId,
-          ]);
-          const charRow = charRows[0] as Record<string, unknown> | undefined;
-          if (charRow) applyEffectiveFormStats(room, combatant, charRow);
-        } catch (error) {
-          console.warn('[CombatService] post-revert stat restore failed:', error);
-        }
+        applyEffectiveFormStats(room, combatant, deriveBaselineAcSpeed(activeWildShape.row));
       }
     } else {
       const { rows: versionRows } = await pool.query(

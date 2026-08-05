@@ -115,28 +115,33 @@ function druidRow(overrides: Record<string, unknown> = {}) {
 }
 
 /**
- * Query router: `preRow` answers the narrow pre-write SELECTs
- * (loadDruidRow / loadActiveWildShape), `postRow` answers the
- * post-write `SELECT *` hydration read, `update` the guarded UPDATE.
+ * Query router: `row` answers every character SELECT (all paths read
+ * the full row once, BEFORE the guarded write — there is no post-write
+ * re-read by design), `update` the guarded UPDATE. `failAfterCommit`
+ * makes every query AFTER a successful guarded UPDATE reject — the
+ * regression condition: a post-commit DB failure must never strand
+ * stale combatant stats.
  */
 function arrange(options: {
-  preRow?: Record<string, unknown> | null;
-  postRow?: Record<string, unknown> | null;
+  row?: Record<string, unknown> | null;
   beast?: Record<string, unknown> | null;
   update?: Array<Record<string, unknown>> | Error;
+  failAfterCommit?: boolean;
 }) {
+  let committed = false;
   mockQuery.mockImplementation(async (sql: string) => {
+    if (committed && options.failAfterCommit) {
+      throw new Error('db unavailable after commit');
+    }
     if (sql.includes('FROM compendium_monsters')) {
       return { rows: options.beast ? [options.beast] : [] };
     }
-    if (sql.startsWith('SELECT * FROM characters')) {
-      return { rows: options.postRow ? [options.postRow] : [] };
-    }
     if (sql.startsWith('SELECT') && sql.includes('FROM characters')) {
-      return { rows: options.preRow ? [options.preRow] : [] };
+      return { rows: options.row ? [options.row] : [] };
     }
     if (sql.startsWith('UPDATE characters')) {
       if (options.update instanceof Error) throw options.update;
+      committed = true;
       return { rows: options.update ?? [{ version: 6 }] };
     }
     return { rows: [] };
@@ -184,7 +189,7 @@ beforeEach(() => {
 
 describe('combat hydration of active Wild Shape forms', () => {
   it('starting combat while transformed uses the form AC and walking speed', async () => {
-    arrange({ postRow: druidRow({ wild_shape: ACTIVE_WOLF }) });
+    arrange({ row: druidRow({ wild_shape: ACTIVE_WOLF }) });
     const state = await CombatService.startCombatAsync(SESSION, ['druid-token']);
     const druid = state.combatants.find((c) => c.characterId === DRUID)!;
     expect(druid.armorClass).toBe(13);
@@ -194,7 +199,7 @@ describe('combat hydration of active Wild Shape forms', () => {
   });
 
   it('an unreadable wild_shape column contributes nothing: baseline stats are used', async () => {
-    arrange({ postRow: druidRow({ wild_shape: '{"formAc":99,' }) });
+    arrange({ row: druidRow({ wild_shape: '{"formAc":99,' }) });
     const state = await CombatService.startCombatAsync(SESSION, ['druid-token']);
     const druid = state.combatants.find((c) => c.characterId === DRUID)!;
     expect(druid.armorClass).toBe(16);
@@ -208,7 +213,7 @@ describe('combat hydration of active Wild Shape forms', () => {
       'druid-2',
       token('druid-2', { characterId: DRUID, ownerUserId: 'druid-user', name: 'Mielikki' })
     );
-    arrange({ postRow: druidRow({ wild_shape: ACTIVE_WOLF }) });
+    arrange({ row: druidRow({ wild_shape: ACTIVE_WOLF }) });
     const added = await CombatService.addCombatantAsync(SESSION, 'druid-2');
     expect(added?.armorClass).toBe(13);
     expect(added?.speed).toBe(40);
@@ -217,7 +222,7 @@ describe('combat hydration of active Wild Shape forms', () => {
   it('a form without a walking speed moves 0 ft on the grid', async () => {
     const shark = JSON.parse(ACTIVE_WOLF);
     shark.formSpeed = { swim: 40 };
-    arrange({ postRow: druidRow({ wild_shape: JSON.stringify(shark) }) });
+    arrange({ row: druidRow({ wild_shape: JSON.stringify(shark) }) });
     const state = await CombatService.startCombatAsync(SESSION, ['druid-token']);
     expect(state.combatants.find((c) => c.characterId === DRUID)!.speed).toBe(0);
   });
@@ -235,8 +240,7 @@ describe('transforming and reverting during combat', () => {
       reaction: false,
     });
     arrange({
-      preRow: druidRow(),
-      postRow: druidRow({ wild_shape: ACTIVE_WOLF, version: 6 }),
+      row: druidRow(),
       beast: WOLF_ROW,
     });
     const emissions: Emission[] = [];
@@ -275,8 +279,7 @@ describe('transforming and reverting during combat', () => {
       reaction: false,
     });
     arrange({
-      preRow: druidRow({ wild_shape: ACTIVE_WOLF }),
-      postRow: druidRow({ version: 6 }),
+      row: druidRow({ wild_shape: ACTIVE_WOLF }),
     });
     const emissions: Emission[] = [];
     await tryHandleChatCommand(fakeIo(emissions), getPlayerBySocketId('druid-1')!, '!revert');
@@ -294,8 +297,7 @@ describe('damage-forced revert and fail-closed conflicts', () => {
     const room = getRoom(SESSION)!;
     const combatant = seedCombat(room, { armorClass: 13, speed: 40 });
     arrange({
-      preRow: druidRow({ wild_shape: ACTIVE_WOLF }),
-      postRow: druidRow({ version: 6 }),
+      row: druidRow({ wild_shape: ACTIVE_WOLF }),
     });
     const result = await CombatService.applyDamage(SESSION, 'druid-token', 20);
     // 11 absorbed by the form, 9 carried into the druid.
@@ -308,7 +310,7 @@ describe('damage-forced revert and fail-closed conflicts', () => {
   it('a version conflict refuses the damage and leaves form stats untouched', async () => {
     const room = getRoom(SESSION)!;
     const combatant = seedCombat(room, { armorClass: 13, speed: 40 });
-    arrange({ preRow: druidRow({ wild_shape: ACTIVE_WOLF }), update: [] });
+    arrange({ row: druidRow({ wild_shape: ACTIVE_WOLF }), update: [] });
     await expect(CombatService.applyDamage(SESSION, 'druid-token', 20)).rejects.toThrow(
       /changed mid-action/
     );
