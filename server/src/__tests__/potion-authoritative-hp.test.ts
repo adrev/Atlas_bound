@@ -515,6 +515,40 @@ describe('target authorization (viewing map + visibility)', () => {
     expectFailedClosed(em);
   });
 
+  it('self-default picks the viewing-map owned token even when a newer owned token sits on another map', async () => {
+    const room = getAllRooms().get(SESSION)!;
+    // Newer createdAt would win under the old room-wide caller resolver.
+    room.tokens.set(
+      'far-hero',
+      tok('far-hero', {
+        mapId: 'map-2',
+        characterId: 'char-8',
+        ownerUserId: 'owner-user',
+        name: 'Hero Prime',
+        createdAt: new Date(Date.now() + 60_000).toISOString(),
+      })
+    );
+    mockCharacter(hpRow(7), [{ version: 8 }]);
+    const em: Emission[] = [];
+    await run(em, '!potion 2d4+2');
+    const { characterId } = characterUpdatePayload(em);
+    expect(characterId).toBe('char-1');
+    const [[, params]] = updateCalls();
+    expect(params[1]).toBe('char-1');
+  });
+
+  it('self-default refuses privately with zero DB traffic when the only owned token is off-map', async () => {
+    const room = getAllRooms().get(SESSION)!;
+    room.tokens.get('hero')!.mapId = 'map-2';
+    mockCharacter(hpRow(7), [{ version: 8 }]);
+    const em: Emission[] = [];
+    await run(em, '!potion 2d4+2');
+    expect(characterSelects()).toEqual([]);
+    expect(updateCalls()).toEqual([]);
+    expectFailedClosed(em);
+    expect(whispers(em)[0].content).toContain('no owned token with a character sheet on this map');
+  });
+
   it("the caller's own invisible token remains a valid target", async () => {
     const room = getAllRooms().get(SESSION)!;
     room.tokens.get('hero')!.conditions = ['invisible'];

@@ -51,13 +51,26 @@ function resolveTargetByName(ctx: PlayerContext, name: string): Token | null {
  * utility commands.
  */
 function resolvePotionTarget(ctx: PlayerContext, name: string): Token | null {
+  return resolvePotionToken(ctx, (t) => t.name.toLowerCase() === name.toLowerCase());
+}
+
+/**
+ * Self-default (`!potion` with no target name): the caller's own token,
+ * under the same viewing-map and visibility authorization as a named
+ * target. Without the map filter, "newest owned token in the room"
+ * could silently mutate a caller-owned character on another map.
+ */
+function resolvePotionCallerToken(ctx: PlayerContext): Token | null {
+  return resolvePotionToken(ctx, (t) => t.ownerUserId === ctx.player.userId);
+}
+
+function resolvePotionToken(ctx: PlayerContext, match: (t: Token) => boolean): Token | null {
   const viewingMapId = resolveViewingMapId(ctx.room, ctx.player.userId, ctx.player.role);
   if (!viewingMapId) return null;
-  const needle = name.toLowerCase();
   const matches = Array.from(ctx.room.tokens.values()).filter(
     (t) =>
       t.mapId === viewingMapId &&
-      t.name.toLowerCase() === needle &&
+      match(t) &&
       (ctx.player.role === 'dm' || tokenVisibleToPlayer(t, ctx.player.userId))
   );
   if (matches.length === 0) return null;
@@ -95,8 +108,9 @@ function formatSaveNotes(notes: string[]): string {
  * travels only through the dispatcher's stat-scoped wrapper (all DM
  * tabs + owner tabs, widened only by the sharing toggles); the public
  * flavor line states the potion formula and rolled healing without
- * any sheet totals. Named targets resolve only on the caller's
- * viewing map and (for non-DMs) only if visible to the caller; after
+ * any sheet totals. Both named targets and the no-name self-default
+ * resolve only on the caller's viewing map and (for non-DMs) only if
+ * visible to the caller — never an owned token on another map; after
  * a committed write, a matching active combatant's HP is synced and
  * the combat state persisted. Inventory consumption is out of scope — the
  * command never claims a potion was removed from anyone's pack.
@@ -141,7 +155,9 @@ async function handlePotion(c: ChatCommandContext): Promise<boolean> {
     parts.pop();
   }
   const targetName = parts.join(' ');
-  const target = targetName ? resolvePotionTarget(c.ctx, targetName) : resolveCallerToken(c.ctx);
+  const target = targetName
+    ? resolvePotionTarget(c.ctx, targetName)
+    : resolvePotionCallerToken(c.ctx);
   if (!target?.characterId) {
     whisperToCaller(
       c.io,
