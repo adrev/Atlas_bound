@@ -36,13 +36,16 @@ import {
 export function registerCombatReactions(io: Server, socket: Socket): void {
   // ----------------------------------------------------------------------
   // combat:oa-execute \u2014 the player/DM clicked "Attack" on an
-  // Opportunity Attack prompt. Server rolls the attack, applies
-  // damage, consumes the attacker's reaction, and broadcasts the
-  // result to everyone.
+  // Opportunity Attack prompt. Server claims the server-issued pending
+  // opportunity, rolls the attack, applies damage, consumes the
+  // attacker's reaction, and broadcasts the result to everyone. A
+  // rejected execute (fabricated/stale/duplicate/declined) is NOT
+  // persisted or broadcast \u2014 the failure goes only to the requesting
+  // socket.
   //
-  // combat:oa-decline \u2014 player dismissed the prompt; we just swallow
-  // it silently. (Present for symmetry \u2014 the client can emit it so
-  // the server can audit-log in the future.)
+  // combat:oa-decline \u2014 the attacker's owner or the DM dismissed the
+  // prompt. Removes the matching server-issued pending opportunity so a
+  // later oa-execute for that exact opportunity is rejected.
   // ----------------------------------------------------------------------
   socket.on(
     'combat:oa-execute',
@@ -64,18 +67,33 @@ export function registerCombatReactions(io: Server, socket: Socket): void {
 
       // The mover must exist and be hostile to the attacker. Without
       // this, a player could manufacture a free attack against any
-      // token in the room by crafting an oa-execute payload.
+      // token in the room by crafting an oa-execute payload. Use the same
+      // hostility predicate as the detector/executor (PC-vs-NPC fallback
+      // for faction-less tokens) so this pre-gate can't reject a
+      // legitimately-issued opportunity between two faction-less tokens.
       const mover = ctx.room.tokens.get(parsed.data.moverTokenId);
       if (!mover) return;
-      const attackerFaction = attacker.faction ?? 'neutral';
-      const moverFaction = mover.faction ?? 'neutral';
-      if (attackerFaction === moverFaction) return; // same faction, no OA
+      if (!OpportunityAttackService.isHostileTo(attacker, mover)) return;
 
       const result = await OpportunityAttackService.executeOpportunityAttack(
         ctx.room.sessionId,
         parsed.data.attackerTokenId,
-        parsed.data.moverTokenId
+        parsed.data.moverTokenId,
+        parsed.data.opportunityId
       );
+
+      // A rejected execute (fabricated/stale/duplicate/declined pair, or a
+      // reaction already spent) must NOT be persisted or room-broadcast —
+      // otherwise an owner could spam fabricated attempts into chat_messages
+      // and the combat log. Report the failure only to the requesting socket
+      // via the established single-socket error channel, and emit nothing
+      // else (no chat, no HP change, no action-used).
+      if (!result.success) {
+        socket.emit('session:error', {
+          message: result.messages[0] ?? 'Opportunity attack could not be resolved.',
+        });
+        return;
+      }
 
       // Broadcast every result line as a single system chat message
       // so the combat log shows the attack on one contiguous card.
@@ -226,7 +244,8 @@ export function registerCombatReactions(io: Server, socket: Socket): void {
       OpportunityAttackService.declinePendingOpportunity(
         ctx.room,
         parsed.data.attackerTokenId,
-        parsed.data.moverTokenId
+        parsed.data.moverTokenId,
+        parsed.data.opportunityId
       );
     })
   );

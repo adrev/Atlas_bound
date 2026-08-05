@@ -7,10 +7,13 @@ import * as CombatService from './CombatService.js';
 export interface OAOpportunity {
   /**
    * Server-issued id for this specific detected opportunity. Echoed to
-   * the client in the prompt so it can be surfaced/logged; the server
-   * matches executions by attacker/mover pair (see
-   * {@link claimPendingOpportunity}), so the client is never trusted to
-   * return the id.
+   * the client in the prompt and returned on execute/decline so the
+   * server can bind the action to this exact opportunity (see
+   * {@link claimPendingOpportunity}). Because a re-detection for the same
+   * attacker/mover pair issues a fresh id and overwrites the record, a
+   * stale prompt carrying an old id can never resolve or cancel a newer
+   * opportunity — the id is validated against the stored record, never
+   * blindly trusted.
    */
   opportunityId: string;
   attackerTokenId: string;
@@ -60,22 +63,31 @@ function registerOpportunities(
 
 /**
  * Atomically look up and consume the pending opportunity for this exact
- * attacker/mover pair. Returns the record on success (and removes it so
- * it can never be replayed), or null when there is no live opportunity —
- * i.e. the pair was fabricated, the prompt was already executed or
- * declined, or it has aged past the TTL. Runs entirely synchronously with
- * no `await` between the lookup and the delete, so two execute events
- * that race can never both claim the same opportunity.
+ * attacker/mover pair AND opportunity id. Returns the record on success
+ * (and removes it so it can never be replayed), or null when there is no
+ * live matching opportunity — i.e. the pair was fabricated, the prompt was
+ * already executed or declined, it has aged past the TTL, or a NEWER
+ * opportunity has since replaced it (stale id). Runs entirely
+ * synchronously with no `await` between the lookup and the delete, so two
+ * execute events that race can never both claim the same opportunity.
+ *
+ * When the stored record belongs to a newer opportunity (its id differs
+ * from the one presented), the record is left intact — a stale execute
+ * must never consume the fresher opportunity's claim.
  */
 export function claimPendingOpportunity(
   room: RoomState,
   attackerTokenId: string,
   moverTokenId: string,
+  opportunityId: string,
   nowMs: number = Date.now()
 ): PendingOpportunity | null {
   const key = opportunityKey(attackerTokenId, moverTokenId);
   const pending = room.pendingOpportunities.get(key);
   if (!pending) return null;
+  // A newer detection has replaced this pair's opportunity — the presented
+  // id is stale. Leave the fresh record so it can still be executed.
+  if (pending.opportunityId !== opportunityId) return null;
   // Consume unconditionally: a stale entry is still spent so a later
   // (equally stale) retry can't find it either.
   room.pendingOpportunities.delete(key);
@@ -86,14 +98,21 @@ export function claimPendingOpportunity(
 /**
  * Drop the pending opportunity for a pair without resolving it — used
  * when the attacker's owner (or the DM) declines the prompt, so a later
- * execute for the same pair is correctly rejected.
+ * execute for the same pair is correctly rejected. Bound to the exact
+ * opportunity id so a stale decline can't cancel a newer opportunity that
+ * has since replaced it for the same pair.
  */
 export function declinePendingOpportunity(
   room: RoomState,
   attackerTokenId: string,
-  moverTokenId: string
+  moverTokenId: string,
+  opportunityId: string
 ): void {
-  room.pendingOpportunities.delete(opportunityKey(attackerTokenId, moverTokenId));
+  const key = opportunityKey(attackerTokenId, moverTokenId);
+  const pending = room.pendingOpportunities.get(key);
+  if (pending && pending.opportunityId === opportunityId) {
+    room.pendingOpportunities.delete(key);
+  }
 }
 
 const CONDITIONS_THAT_PREVENT_OA = new Set([
@@ -329,7 +348,8 @@ export interface OAExecutionResult {
 export async function executeOpportunityAttack(
   sessionId: string,
   attackerTokenId: string,
-  moverTokenId: string
+  moverTokenId: string,
+  opportunityId: string
 ): Promise<OAExecutionResult> {
   const room = getRoom(sessionId);
   if (!room) return { success: false, messages: ['No room'] };
@@ -347,7 +367,7 @@ export async function executeOpportunityAttack(
   // The reach geometry that provoked the OA is no longer true here (the
   // mover has moved away), so this record \u2014 not a re-check \u2014 is the
   // proof the OA is legitimate.
-  const pending = claimPendingOpportunity(room, attackerTokenId, moverTokenId);
+  const pending = claimPendingOpportunity(room, attackerTokenId, moverTokenId, opportunityId);
   if (!pending) {
     return {
       success: false,
@@ -373,16 +393,41 @@ export async function executeOpportunityAttack(
     };
   }
 
-  const economy = room.actionEconomies.get(attacker.id);
-  if (economy?.reaction)
+  // \u2500\u2500 Atomic reaction reservation \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+  // Consume the attacker's reaction NOW, synchronously, before the first
+  // await below. One attacker can have two live pending opportunities
+  // against two different movers (two separate pair keys, both claimable);
+  // without reserving here, two concurrent execute events would each read
+  // reaction=false before either `await` returned and both resolve \u2014 one
+  // reaction, two attacks. Reserving before yielding to the event loop
+  // means the second concurrent execute sees reaction=true and bails, so
+  // exactly one of them lands.
+  let eco = room.actionEconomies.get(attacker.id);
+  if (eco?.reaction)
     return {
       success: false,
       messages: [`\u26A0 ${attacker.name} has already spent their reaction.`],
     };
+  if (!eco) {
+    eco = {
+      action: false,
+      bonusAction: false,
+      movementRemaining: 30,
+      movementMax: 30,
+      reaction: false,
+    };
+    room.actionEconomies.set(attacker.id, eco);
+  }
+  eco.reaction = true;
 
   const attack = await findBestMeleeAttack(attacker);
-  if (!attack)
+  if (!attack) {
+    // The attacker can't actually make the attack \u2014 hand the reaction back
+    // so a rejected OA never burns it (and a later legitimate reaction can
+    // still fire this round).
+    eco.reaction = false;
     return { success: false, messages: [`\u26A0 ${attacker.name} has no melee attack available.`] };
+  }
 
   // Cache the reach for the next sync detector pass. Keeps the map
   // warm when a token picks up / swaps weapons mid-combat, without
@@ -437,19 +482,8 @@ export async function executeOpportunityAttack(
     `   d20=${rollStr}${advTag}${modStr}=${total} vs AC ${moverAC} \u2192 ${isCrit ? '\uD83D\uDCA5 CRIT' : hit ? '\u2713 HIT' : isFumble ? '\u2717 FUMBLE' : '\u2717 MISS'}`
   );
 
-  let eco = room.actionEconomies.get(attacker.id);
-  if (!eco) {
-    eco = {
-      action: false,
-      bonusAction: false,
-      movementRemaining: 30,
-      movementMax: 30,
-      reaction: false,
-    };
-    room.actionEconomies.set(attacker.id, eco);
-  }
-  eco.reaction = true;
-
+  // Reaction was already reserved synchronously above (before the first
+  // await) so concurrent executes can't double-resolve.
   const result: OAExecutionResult = { success: true, messages };
 
   // Hoist the hp-delta so the breakdown can reference both
@@ -652,7 +686,7 @@ function getGridSize(sessionId: string): number | null {
  * that were never migrated), we fall back to the old PC-vs-NPC
  * two-team check so existing sessions keep working.
  */
-function isHostileTo(attacker: Token, target: Token): boolean {
+export function isHostileTo(attacker: Token, target: Token): boolean {
   const a = attacker.faction;
   const t = target.faction;
   if (a && t) {
