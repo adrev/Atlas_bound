@@ -264,8 +264,10 @@ async function handleStabilize(c: ChatCommandContext): Promise<boolean> {
   lines.push(`🩹 ${caller.name} tries to Stabilize ${target.name}`);
   lines.push(`   Medicine (WIS${hasProf ? ' + prof' : ''}): d20=${d20}${sign}${bonus}=${total} vs DC ${dc} → ${success ? 'SUCCESS' : 'FAIL'}`);
   if (success) {
+    let characterVersion: number | undefined;
     if (targetCombatant) {
-      CombatService.markStable(c.ctx.room.sessionId, target.id);
+      const stableResult = await CombatService.markStable(c.ctx.room.sessionId, target.id);
+      characterVersion = stableResult.version;
     } else {
       ConditionService.applyConditionWithMeta(c.ctx.room.sessionId, target.id, {
         name: 'unconscious',
@@ -277,19 +279,25 @@ async function handleStabilize(c: ChatCommandContext): Promise<boolean> {
         source: `${caller.name} (!stabilize)`,
         appliedRound: c.ctx.room.combatState?.roundNumber ?? 0,
       });
+      const { rows: versionRows } = await pool.query(
+        'UPDATE characters SET hit_points = 0, death_saves = $1 WHERE id = $2 RETURNING version',
+        [JSON.stringify({ successes: 0, failures: 0 }), target.characterId]
+      );
+      const version = Number(versionRows[0]?.version);
+      if (Number.isInteger(version) && version >= 1) characterVersion = version;
     }
-    // Reset death saves on the target if present.
-    await pool.query(
-      'UPDATE characters SET hit_points = 0, death_saves = $1 WHERE id = $2',
-      [JSON.stringify({ successes: 0, failures: 0 }), target.characterId],
-    ).catch((e) => console.warn('[!stabilize] death-save reset failed:', e));
     c.io.to(c.ctx.room.sessionId).emit('map:token-updated', {
       tokenId: target.id,
       changes: tokenConditionChanges(c.ctx.room, target.id),
     });
+    const characterChanges: Record<string, unknown> = {
+      hitPoints: 0,
+      deathSaves: { successes: 0, failures: 0 },
+    };
+    if (characterVersion !== undefined) characterChanges.version = characterVersion;
     c.io.to(c.ctx.room.sessionId).emit('character:updated', {
       characterId: target.characterId,
-      changes: { deathSaves: { successes: 0, failures: 0 } },
+      changes: characterChanges,
     });
     lines.push(`   → ${target.name} is STABLE (no more death saves; HP stays at 0).`);
   }

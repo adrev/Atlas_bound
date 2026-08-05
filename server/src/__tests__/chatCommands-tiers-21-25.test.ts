@@ -1026,6 +1026,64 @@ describe('Utility — !turnundead', () => {
   });
 });
 
+describe('Utility — !stabilize', () => {
+  it('persists once and includes the stable write version in the sheet update', async () => {
+    const target = makeToken('tTarget', 'Target', {
+      characterId: 'char-target',
+      ownerUserId: 'player-1',
+      conditions: ['unconscious'] as never,
+    });
+    const targetCombatant = makeCombatant(target.id, {
+      characterId: 'char-target',
+      hp: 0,
+      isNPC: false,
+      deathSaves: { successes: 2, failures: 1 },
+    });
+    const s = makeScenario({
+      inCombat: true,
+      otherTokens: [target],
+      otherCombatants: [targetCombatant],
+    });
+    s.room.userSockets.set('player-1', new Set(['sock-1']));
+    mockQuery.mockImplementation(async (sql: string) => {
+      if (sql.includes('SELECT ability_scores, skills')) {
+        return {
+          rows: [
+            {
+              ability_scores: { wis: 14 },
+              skills: { medicine: 'proficient' },
+              proficiency_bonus: 3,
+            },
+          ],
+        };
+      }
+      if (sql.includes('UPDATE characters SET hit_points = 0')) {
+        expect(sql).toContain('RETURNING version');
+        return { rows: [{ version: 17 }] };
+      }
+      return { rows: [] };
+    });
+    const { io, emissions } = makeFakeIo();
+
+    await withRandomSeed([0.99], async () => {
+      await tryHandleChatCommand(io, s.ctx, '!stabilize Target');
+    });
+
+    const characterUpdate = emissions.find((entry) => entry.event === 'character:updated')
+      ?.payload as { changes?: Record<string, unknown> } | undefined;
+    expect(characterUpdate?.changes).toMatchObject({
+      hitPoints: 0,
+      deathSaves: { successes: 0, failures: 0 },
+      version: 17,
+    });
+    expect(
+      mockQuery.mock.calls.filter(([sql]) =>
+        String(sql).includes('UPDATE characters SET hit_points = 0')
+      )
+    ).toHaveLength(1);
+  });
+});
+
 // ═══════════════════════════════════════════════════════════════════
 // Racial innate spells + !throw
 // ═══════════════════════════════════════════════════════════════════

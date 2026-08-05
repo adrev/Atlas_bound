@@ -266,12 +266,25 @@ export function registerCombatHp(io: Server, socket: Socket): void {
 
     const result = DiceService.rollDeathSave();
     combatant.deathSaveRolledRound = combatState.roundNumber;
+    const characterChanges: Record<string, unknown> = {};
+    let characterVersion: number | undefined;
 
     // Apply death save result
     if (result.isCritSuccess) {
       // Nat 20: regain 1 HP
       const healResult = await CombatService.applyHeal(ctx.room.sessionId, tokenId, 1);
       combatant.deathSaves = { successes: 0, failures: 0 };
+      characterVersion = healResult.version;
+      characterChanges.hitPoints = healResult.hp;
+      characterChanges.tempHitPoints = healResult.tempHp;
+      characterChanges.deathSaves = combatant.deathSaves;
+      emitToTokenStatViewers(io, ctx.room, tokenId, 'combat:hp-changed', {
+        tokenId,
+        hp: healResult.hp,
+        tempHp: healResult.tempHp,
+        change: healResult.change,
+        type: 'heal',
+      });
       if (healResult.autoRemovedConditions && healResult.autoRemovedConditions.length > 0) {
         emitToTokenViewers(io, ctx.room, tokenId, 'map:token-updated', {
           tokenId,
@@ -290,10 +303,27 @@ export function registerCombatHp(io: Server, socket: Socket): void {
     // Stabilize on 3 successes. Core 5e leaves the creature at 0 HP
     // and unconscious; it only stops future death-save rolls.
     if (combatant.deathSaves.successes >= 3) {
-      CombatService.markStable(ctx.room.sessionId, tokenId);
+      const stableResult = await CombatService.markStable(ctx.room.sessionId, tokenId);
+      characterVersion = stableResult.version;
+      characterChanges.deathSaves = combatant.deathSaves;
       emitToTokenViewers(io, ctx.room, tokenId, 'map:token-updated', {
         tokenId,
         changes: tokenConditionChanges(ctx.room, tokenId),
+      });
+    } else if (!result.isCritSuccess && combatant.characterId) {
+      const { rows: versionRows } = await pool.query(
+        'UPDATE characters SET death_saves = $1 WHERE id = $2 RETURNING version',
+        [JSON.stringify(combatant.deathSaves), combatant.characterId]
+      );
+      const version = Number(versionRows[0]?.version);
+      if (Number.isInteger(version) && version >= 1) characterVersion = version;
+      characterChanges.deathSaves = combatant.deathSaves;
+    }
+    if (combatant.characterId && Object.keys(characterChanges).length > 0) {
+      if (characterVersion !== undefined) characterChanges.version = characterVersion;
+      emitToTokenStatViewers(io, ctx.room, tokenId, 'character:updated', {
+        characterId: combatant.characterId,
+        changes: characterChanges,
       });
     }
     CombatService.persistSessionCombatState(ctx.room.sessionId);
