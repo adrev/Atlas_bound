@@ -163,6 +163,20 @@ describe('combat state action-economy privacy', () => {
     expect(actionEconomyVisibleTo(room, combatant('own-pc', false), economy, player)).toBe(economy);
   });
 
+  it('keeps a hidden creature budget private even when creature stats are shared', () => {
+    const room = seedRoom();
+    const player = room.players.get('player-user')!;
+    room.showCreatureStatsToPlayers = true;
+
+    expect(actionEconomyVisibleTo(room, combatant('hidden-npc', true), economy, player)).toEqual({
+      action: false,
+      bonusAction: false,
+      movementRemaining: 0,
+      movementMax: 0,
+      reaction: false,
+    });
+  });
+
   it('emits redacted state to every player tab and full state to the DM', () => {
     const room = seedRoom();
     addPlayerToRoom(room.sessionId, {

@@ -11,7 +11,6 @@ import {
 import * as CombatService from '../../services/CombatService.js';
 import * as DiceService from '../../services/DiceService.js';
 import * as ConditionService from '../../services/ConditionService.js';
-import { broadcastEvent } from '../../utils/eventBroadcast.js';
 import { combatRollInitiativeSchema, combatSetInitiativeSchema } from '../../utils/validation.js';
 import { safeHandler } from '../../utils/socketHelpers.js';
 import { tokenConditionChanges } from '../../utils/conditionSources.js';
@@ -22,6 +21,7 @@ import {
   combatantsVisibleTo,
 } from '../../utils/combatStateVisibility.js';
 import type { Combatant } from '@dnd-vtt/shared';
+import { broadcastTurnAdvanced } from './turnBroadcast.js';
 
 function liveSocketIdsForPlayer(room: RoomState, player: RoomPlayer): string[] {
   const liveSockets = room.userSockets.get(player.userId);
@@ -216,17 +216,10 @@ export function registerCombatInitiative(io: Server, socket: Socket): void {
         // their socket was zombied ("DM ended the turn but I never saw
         // it advance on my end"). Replay on reconnect brings us back.
         const result = CombatService.nextTurn(ctx.room.sessionId);
-        broadcastEvent(io, ctx.room, 'combat:turn-advanced', {
-          currentTurnIndex: result.currentTurnIndex,
-          // Clients receive visibility-FILTERED combatant lists, so the
-          // raw index points at the wrong row whenever hidden combatants
-          // precede it (wrong highlight, camera panning to the wrong
-          // token). The tokenId is position-independent — clients resolve
-          // it against their own list. Index kept for back-compat.
-          currentTokenId: result.currentCombatant?.tokenId ?? null,
-          roundNumber: result.roundNumber,
-          actionEconomy: result.actionEconomy,
-        });
+        // Clients receive visibility-filtered combatant lists, so the
+        // shared helper includes token identity for stable turn resolution
+        // while redacting exact action economy per recipient.
+        broadcastTurnAdvanced(io, ctx.room, result);
 
         // \u2500\u2500 Phase 3: START-of-turn tick on the NEW combatant. Expires
         // any of their conditions whose duration has run out (Bless

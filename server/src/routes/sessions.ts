@@ -33,6 +33,7 @@ import { privateNoStoreCache } from '../utils/cacheHeaders.js';
 import { rowToToken } from '../utils/tokenMapper.js';
 import { withConditionSources } from '../utils/conditionSources.js';
 import { combatantsVisibleTo } from '../utils/combatStateVisibility.js';
+import { eventPayloadForPlayer } from '../utils/eventBroadcast.js';
 
 const router = Router();
 
@@ -1314,7 +1315,15 @@ router.get('/:id/events', async (req: Request, res: Response) => {
       const tok = room.tokens.get(e.tokenId);
       if (tok && !tokenVisibleToPlayer(tok, userId)) continue;
     }
-    delta.push(e);
+    const recipient = player ?? { userId, role: 'player' as const };
+    delta.push({
+      id: e.id,
+      kind: e.kind,
+      payload: eventPayloadForPlayer(room, e, recipient),
+      ts: e.ts,
+      mapId: e.mapId ?? null,
+      tokenId: e.tokenId ?? null,
+    });
   }
 
   res.json({ events: delta, latestEventId: room.nextEventId });

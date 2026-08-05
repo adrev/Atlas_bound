@@ -14,6 +14,22 @@ export function canReceiveCombatantStats(
   return combatant.isNPC ? room.showCreatureStatsToPlayers : room.showPlayersToPlayers;
 }
 
+/** Exact live/snapshot stats also require the combatant's token to be
+ * visible. DMs and the token owner retain access even when it is hidden. */
+export function canReceiveVisibleCombatantStats(
+  room: RoomState,
+  combatant: Combatant,
+  recipient: Pick<RoomPlayer, 'userId' | 'role'>
+): boolean {
+  if (recipient.role === 'dm') return true;
+  const token = room.tokens.get(combatant.tokenId);
+  if (!token) return false;
+  if (token.ownerUserId === recipient.userId) return true;
+  return tokenVisibleToPlayer(token, recipient.userId)
+    ? canReceiveCombatantStats(room, combatant, recipient)
+    : false;
+}
+
 /** Preserve only the coarse health narration shown by the player tracker. */
 function redactedHealth(hp: number, maxHp: number): { hp: number; maxHp: number } {
   if (hp <= 0) return { hp: 0, maxHp: 4 };
@@ -67,7 +83,7 @@ export function actionEconomyVisibleTo(
   actionEconomy: ActionEconomy,
   recipient: Pick<RoomPlayer, 'userId' | 'role'>
 ): ActionEconomy {
-  if (currentCombatant && canReceiveCombatantStats(room, currentCombatant, recipient)) {
+  if (currentCombatant && canReceiveVisibleCombatantStats(room, currentCombatant, recipient)) {
     return actionEconomy;
   }
   return {
