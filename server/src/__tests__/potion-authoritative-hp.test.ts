@@ -451,6 +451,166 @@ describe('no-op paths never write, fan out, or announce', () => {
   });
 });
 
+describe('target authorization (viewing map + visibility)', () => {
+  it('a duplicate name on another map never shadows the viewing-map target', async () => {
+    const room = getAllRooms().get(SESSION)!;
+    // Newer createdAt would win under a room-wide resolver.
+    room.tokens.set(
+      'far-mira',
+      tok('far-mira', {
+        mapId: 'map-2',
+        characterId: 'char-3',
+        ownerUserId: 'bystander-user',
+        name: 'Mira',
+        createdAt: new Date(Date.now() + 60_000).toISOString(),
+      })
+    );
+    mockCharacter(hpRow(7, { name: 'Mira' }), [{ version: 8 }]);
+    const em: Emission[] = [];
+    await run(em, '!potion Mira');
+    const { characterId } = characterUpdatePayload(em);
+    expect(characterId).toBe('char-2');
+    const [[, params]] = updateCalls();
+    expect(params[1]).toBe('char-2');
+  });
+
+  it('a target that exists only on another map is refused with zero DB traffic', async () => {
+    const room = getAllRooms().get(SESSION)!;
+    room.tokens.set(
+      'ghost',
+      tok('ghost', { mapId: 'map-2', characterId: 'char-9', name: 'Ghost' })
+    );
+    mockCharacter(hpRow(7), [{ version: 8 }]);
+    const em: Emission[] = [];
+    await run(em, '!potion Ghost');
+    expect(characterSelects()).toEqual([]);
+    expect(updateCalls()).toEqual([]);
+    expectFailedClosed(em);
+    expect(whispers(em)[0].content).toContain('no target with a character sheet named "Ghost"');
+  });
+
+  it('a hidden token is refused for a player exactly like a nonexistent name — no reveal', async () => {
+    const room = getAllRooms().get(SESSION)!;
+    room.tokens.set(
+      'shade',
+      tok('shade', { mapId: 'map-1', characterId: 'char-9', name: 'Shade', visible: false })
+    );
+    mockCharacter(hpRow(7), [{ version: 8 }]);
+    const em: Emission[] = [];
+    await run(em, '!potion Shade');
+    expect(characterSelects()).toEqual([]);
+    expect(updateCalls()).toEqual([]);
+    expectFailedClosed(em);
+    expect(whispers(em)[0].content).toContain('no target with a character sheet named "Shade"');
+  });
+
+  it("an invisible token someone else owns can't be guessed by name", async () => {
+    const room = getAllRooms().get(SESSION)!;
+    room.tokens.get('ally')!.conditions = ['invisible'];
+    mockCharacter(hpRow(7, { name: 'Mira' }), [{ version: 8 }]);
+    const em: Emission[] = [];
+    await run(em, '!potion Mira');
+    expect(characterSelects()).toEqual([]);
+    expect(updateCalls()).toEqual([]);
+    expectFailedClosed(em);
+  });
+
+  it("the caller's own invisible token remains a valid target", async () => {
+    const room = getAllRooms().get(SESSION)!;
+    room.tokens.get('hero')!.conditions = ['invisible'];
+    mockCharacter(hpRow(7), [{ version: 8 }]);
+    const em: Emission[] = [];
+    await run(em, '!potion Hero');
+    const { characterId } = characterUpdatePayload(em);
+    expect(characterId).toBe('char-1');
+    expect(systemBroadcasts(em)).toHaveLength(1);
+  });
+});
+
+describe('active-combat combatant sync', () => {
+  function seedCombat(hp = 19) {
+    const room = getAllRooms().get(SESSION)!;
+    room.combatState = {
+      sessionId: SESSION,
+      active: true,
+      roundNumber: 1,
+      currentTurnIndex: 0,
+      startedAt: new Date().toISOString(),
+      combatants: [
+        {
+          tokenId: 'hero',
+          characterId: 'char-1',
+          name: 'Hero',
+          initiative: 12,
+          initiativeBonus: 0,
+          hp,
+          maxHp: 37,
+          tempHp: 0,
+          armorClass: 15,
+          speed: 30,
+          isNPC: false,
+          conditions: [],
+          deathSaves: { successes: 0, failures: 0 },
+          portraitUrl: null,
+        },
+      ],
+    };
+    return room.combatState;
+  }
+
+  function combatPersistCalls(): unknown[][] {
+    return mockQuery.mock.calls.filter((call) =>
+      (call[0] as string).startsWith('UPDATE combat_state')
+    );
+  }
+
+  it('a committed, version-valid write syncs the combatant HP and persists combat state', async () => {
+    const combat = seedCombat();
+    mockCharacter(hpRow(7), [{ version: 8 }]);
+    const em: Emission[] = [];
+    await run(em, '!potion Hero');
+    expect(combat.combatants[0].hp).toBe(27);
+    expect(combatPersistCalls()).toHaveLength(1);
+  });
+
+  it('a zero-row version conflict leaves the combatant untouched and unpersisted', async () => {
+    const combat = seedCombat();
+    mockCharacter(hpRow(7), []);
+    const em: Emission[] = [];
+    await run(em, '!potion Hero');
+    expect(combat.combatants[0].hp).toBe(19);
+    expect(combatPersistCalls()).toEqual([]);
+  });
+
+  it('a DB write failure leaves the combatant untouched and unpersisted', async () => {
+    const combat = seedCombat();
+    mockCharacter(hpRow(7), new Error('db down'));
+    const em: Emission[] = [];
+    await run(em, '!potion Hero');
+    expect(combat.combatants[0].hp).toBe(19);
+    expect(combatPersistCalls()).toEqual([]);
+  });
+
+  it('an unusable RETURNING version after commit never syncs or persists combat', async () => {
+    const combat = seedCombat();
+    mockCharacter(hpRow(7), [{ version: null }]);
+    const em: Emission[] = [];
+    await run(em, '!potion Hero');
+    expect(combat.combatants[0].hp).toBe(19);
+    expect(combatPersistCalls()).toEqual([]);
+  });
+
+  it('a target not in the initiative order heals without touching combat state', async () => {
+    const combat = seedCombat();
+    mockCharacter(hpRow(7, { name: 'Mira' }), [{ version: 8 }]);
+    const em: Emission[] = [];
+    await run(em, '!potion Mira');
+    expect(combat.combatants[0].hp).toBe(19);
+    expect(combatPersistCalls()).toEqual([]);
+    expect(systemBroadcasts(em)).toHaveLength(1);
+  });
+});
+
 describe('bounded dice parsing', () => {
   it.each([
     '3d6',

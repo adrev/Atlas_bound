@@ -8,7 +8,8 @@ import * as ConditionService from '../ConditionService.js';
 import * as CombatService from '../CombatService.js';
 import pool from '../../db/connection.js';
 import type { Token } from '@dnd-vtt/shared';
-import type { PlayerContext } from '../../utils/roomState.js';
+import { resolveViewingMapId, type PlayerContext } from '../../utils/roomState.js';
+import { tokenVisibleToPlayer } from '../../utils/tokenVisibility.js';
 import { tokenConditionChanges } from '../../utils/conditionSources.js';
 import { formatSaveTotal, rollTargetSave } from './saveRoll.js';
 
@@ -33,6 +34,31 @@ function resolveTargetByName(ctx: PlayerContext, name: string): Token | null {
   const needle = name.toLowerCase();
   const matches = Array.from(ctx.room.tokens.values()).filter(
     (t) => t.name.toLowerCase() === needle
+  );
+  if (matches.length === 0) return null;
+  matches.sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
+  return matches[0];
+}
+
+/**
+ * Potion-specific target authorization. Only a token on the map the
+ * caller is currently viewing can be resolved, and non-DM callers can
+ * only resolve tokens they can actually see under the token-visibility
+ * rules (an owned-but-invisible token stays valid for its owner). A
+ * hidden or cross-map token gets the same "no target" refusal as a
+ * nonexistent name, so the command never confirms it exists. The
+ * generic room-wide resolver above is left untouched for the other
+ * utility commands.
+ */
+function resolvePotionTarget(ctx: PlayerContext, name: string): Token | null {
+  const viewingMapId = resolveViewingMapId(ctx.room, ctx.player.userId, ctx.player.role);
+  if (!viewingMapId) return null;
+  const needle = name.toLowerCase();
+  const matches = Array.from(ctx.room.tokens.values()).filter(
+    (t) =>
+      t.mapId === viewingMapId &&
+      t.name.toLowerCase() === needle &&
+      (ctx.player.role === 'dm' || tokenVisibleToPlayer(t, ctx.player.userId))
   );
   if (matches.length === 0) return null;
   matches.sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
@@ -69,7 +95,10 @@ function formatSaveNotes(notes: string[]): string {
  * travels only through the dispatcher's stat-scoped wrapper (all DM
  * tabs + owner tabs, widened only by the sharing toggles); the public
  * flavor line states the potion formula and rolled healing without
- * any sheet totals. Inventory consumption is out of scope — the
+ * any sheet totals. Named targets resolve only on the caller's
+ * viewing map and (for non-DMs) only if visible to the caller; after
+ * a committed write, a matching active combatant's HP is synced and
+ * the combat state persisted. Inventory consumption is out of scope — the
  * command never claims a potion was removed from anyone's pack.
  */
 const POTION_FORMULAS: Record<string, { label: string; count: number; mod: number }> = {
@@ -112,7 +141,7 @@ async function handlePotion(c: ChatCommandContext): Promise<boolean> {
     parts.pop();
   }
   const targetName = parts.join(' ');
-  const target = targetName ? resolveTargetByName(c.ctx, targetName) : resolveCallerToken(c.ctx);
+  const target = targetName ? resolvePotionTarget(c.ctx, targetName) : resolveCallerToken(c.ctx);
   if (!target?.characterId) {
     whisperToCaller(
       c.io,
@@ -208,6 +237,17 @@ async function handlePotion(c: ChatCommandContext): Promise<boolean> {
       '!potion: the healing was applied but synchronization failed — refresh the character sheet before retrying.'
     );
     return true;
+  }
+
+  // Keep an active combat authoritative too: mirror the committed HP
+  // into the matching combatant and persist, so a later combat
+  // mutation can't reapply or display the stale value. Only reached
+  // after the version-guarded write returned a usable version — every
+  // failed, conflicted, or unusable path above stops before this.
+  const combatant = c.ctx.room.combatState?.combatants.find((cb) => cb.tokenId === target.id);
+  if (combatant) {
+    combatant.hp = newHp;
+    CombatService.persistSessionCombatState(c.ctx.room.sessionId);
   }
 
   // Exact HP goes only through the dispatcher's stat-scoped wrapper
