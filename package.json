@@ -11,7 +11,7 @@
     "dev": "concurrently \"npm run dev --workspace=server\" \"npm run dev --workspace=client\"",
     "build": "npm run build --workspace=shared && npm run build --workspace=client && npm run build --workspace=server",
     "start": "npm run start --workspace=server",
-    "lint": "eslint \"server/src/**/*.ts\" \"client/src/**/*.ts\" \"shared/src/**/*.ts\" --max-warnings 0",
+    "lint": "eslint \"server/src/**/*.{ts,tsx}\" \"client/src/**/*.{ts,tsx}\" \"shared/src/**/*.{ts,tsx}\" --max-warnings 0",
     "format": "prettier --write \"**/*.{ts,tsx,js,jsx,json,css}\"",
     "assets:audit-public-urls": "npm run public-assets:audit-urls --workspace=server --",
     "assets:migrate-public-urls": "npm run public-assets:migrate-urls --workspace=server --",
