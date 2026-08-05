@@ -267,12 +267,12 @@ describe('authoritative Lucky spend', () => {
     });
   });
 
-  it('normalizes a wrong resetOn and out-of-range remaining on the feat entry only', async () => {
+  it('normalizes a wrong total, resetOn, and out-of-range remaining on the feat entry only', async () => {
     mockCharacter(
       characterRow({
         features: JSON.stringify([
           { ...RACIAL_LUCKY, resetOn: 'short' },
-          { ...LUCKY_FEAT, usesRemaining: 99, resetOn: 'short' },
+          { ...LUCKY_FEAT, usesTotal: 99, usesRemaining: 99, resetOn: 'short' },
         ]),
       }),
       [{ version: 8 }]

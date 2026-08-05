@@ -343,9 +343,10 @@ function parseLuckyFeatures(value: unknown): Feature[] | null {
 }
 
 function normalizeLuckyPool(feature: Feature): { total: number; remaining: number } {
-  const total = Number.isFinite(Number(feature.usesTotal))
-    ? Math.max(1, Math.floor(Number(feature.usesTotal)))
-    : LUCKY_POINTS;
+  // The 2014 Lucky feat always grants exactly three points. Treat
+  // imported resource metadata as state to repair, not permission to
+  // increase the rules-defined maximum.
+  const total = LUCKY_POINTS;
   const remaining = Number.isFinite(Number(feature.usesRemaining))
     ? Math.min(total, Math.max(0, Math.floor(Number(feature.usesRemaining))))
     : total;
