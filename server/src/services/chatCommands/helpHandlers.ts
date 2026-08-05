@@ -96,13 +96,13 @@ const GROUPS: Array<{ title: string; entries: Entry[] }> = [
       },
       {
         name: 'uncanny',
-        usage: '!uncanny <dmg>',
-        desc: 'Rogue Uncanny Dodge reaction — halves incoming damage.',
+        usage: '!uncanny <dmg> [type]',
+        desc: 'Rogue Uncanny Dodge reaction — applies half of incoming damage. Use before damage is applied.',
       },
       {
         name: 'evasion',
-        usage: '!evasion <pass|fail> <dmg>',
-        desc: 'Rogue/Monk Evasion — no damage on save, half on fail (refund applied dmg).',
+        usage: '!evasion [status]',
+        desc: 'Rogue/Monk Evasion status. The DM !save resolver applies its DEX-save damage automatically.',
       },
       {
         name: 'cuttingwords',

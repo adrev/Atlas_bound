@@ -7,10 +7,16 @@ import {
 import pool from '../../db/connection.js';
 import type { Token, ActionBreakdown, Feature } from '@dnd-vtt/shared';
 import type { PoolClient } from 'pg';
-import { resolveViewingMapId, type PlayerContext } from '../../utils/roomState.js';
+import {
+  isTokenActionable,
+  resolveViewingMapId,
+  type PlayerContext,
+} from '../../utils/roomState.js';
 import * as CombatService from '../CombatService.js';
+import { applyDamageSideEffects } from '../damageEffects.js';
 import { tokenConditionChanges } from '../../utils/conditionSources.js';
 import { tokenVisibleToPlayer } from '../../utils/tokenVisibility.js';
+import { emitToTokenStatViewers } from '../../utils/combatBroadcast.js';
 
 /**
  * Per-class bonus-action and feature commands that are common enough
@@ -1283,47 +1289,181 @@ async function handlePolearmButt(c: ChatCommandContext): Promise<boolean> {
   return true;
 }
 
-// ───── !uncanny <damage> — Rogue Uncanny Dodge reaction ─────
+const DAMAGE_TYPES = new Set([
+  'acid',
+  'bludgeoning',
+  'cold',
+  'fire',
+  'force',
+  'lightning',
+  'necrotic',
+  'piercing',
+  'poison',
+  'psychic',
+  'radiant',
+  'slashing',
+  'thunder',
+]);
+
+interface IncomingDamageInput {
+  amount: number;
+  damageType: string | null;
+}
+
+function parseIncomingDamage(parts: string[]): IncomingDamageInput | null {
+  if (parts.length < 1 || parts.length > 2 || !/^\d+$/.test(parts[0])) return null;
+  const amount = Number(parts[0]);
+  if (!Number.isSafeInteger(amount) || amount < 1 || amount > 9999) return null;
+  const damageType = parts[1]?.toLowerCase() ?? null;
+  if (damageType !== null && !DAMAGE_TYPES.has(damageType)) return null;
+  return { amount, damageType };
+}
+
+function verifiedClassLevel(
+  row: Record<string, unknown>,
+  className: string
+): { valid: boolean; level: number | null } {
+  const totalLevel = Number(row.level);
+  if (!Number.isInteger(totalLevel) || totalLevel < 1 || totalLevel > 20) {
+    return { valid: false, level: null };
+  }
+  const level = classLevel(String(row.class || ''), className, totalLevel);
+  if (level !== null && level > totalLevel) return { valid: false, level: null };
+  return { valid: true, level };
+}
+
+async function applyClassFeatureDamage(
+  c: ChatCommandContext,
+  token: Token,
+  amount: number,
+  damageType: string | null
+): Promise<CombatService.HpChangeResult> {
+  const result = await CombatService.applyDamage(c.ctx.room.sessionId, token.id, amount, {
+    damageType,
+  });
+  c.io.to(c.ctx.room.sessionId).emit('combat:hp-changed', {
+    tokenId: token.id,
+    hp: result.hp,
+    tempHp: result.tempHp,
+    change: result.change,
+    type: 'damage',
+  });
+  if (result.characterId) {
+    const changes: Record<string, unknown> = {
+      hitPoints: result.hp,
+      tempHitPoints: result.tempHp,
+    };
+    if (result.concentrationDropped) changes.concentratingOn = null;
+    if (result.autoDeathSaveFailure) changes.deathSaves = result.autoDeathSaveFailure;
+    if (result.version !== undefined) changes.version = result.version;
+    c.io.to(c.ctx.room.sessionId).emit('character:updated', {
+      characterId: result.characterId,
+      changes,
+    });
+  }
+  if (result.autoDeathSaveFailure) {
+    emitToTokenStatViewers(c.io, c.ctx.room, token.id, 'combat:death-save-updated', {
+      tokenId: token.id,
+      deathSaves: result.autoDeathSaveFailure,
+      roll: 0,
+    });
+  }
+  if (
+    result.autoAppliedConditions ||
+    (result.autoRemovedConditions && result.autoRemovedConditions.length > 0)
+  ) {
+    c.io.to(c.ctx.room.sessionId).emit('map:token-updated', {
+      tokenId: token.id,
+      changes: tokenConditionChanges(c.ctx.room, token.id),
+    });
+  }
+  for (const affectedTokenId of [
+    ...(result.releasedGrappleTokenIds ?? []),
+    ...(result.concentrationClearedTokenIds ?? []),
+  ]) {
+    c.io.to(c.ctx.room.sessionId).emit('map:token-updated', {
+      tokenId: affectedTokenId,
+      changes: tokenConditionChanges(c.ctx.room, affectedTokenId),
+    });
+  }
+  try {
+    await applyDamageSideEffects(c.io, c.ctx.room, token.id, result.appliedAmount ?? amount);
+  } catch (error) {
+    console.warn('[class feature damage] post-damage effects failed:', error);
+  }
+  return result;
+}
+
+// ───── !uncanny <damage> [type] — Rogue Uncanny Dodge reaction ─────
 /**
  * Rogue's Uncanny Dodge (L5): when an attacker you can see hits you
- * with an attack, you can use your reaction to halve the attack's
- * damage against you. Since damage has already been rolled + applied
- * by the time the player realises they want to use it, the simplest
- * model is a "heal back the half" chat command that also burns the
- * reaction slot.
+ * with an attack, use your reaction to halve that attack's damage.
+ * This command applies the reduced damage directly; callers must use
+ * it instead of applying the original damage separately.
  *
- *   !uncanny <damage-amount>
- *     Example: took 18 damage → `!uncanny 18` heals 9 back and
- *     marks reaction spent.
+ *   !uncanny <incoming-damage> [damage-type]
  */
 async function handleUncanny(c: ChatCommandContext): Promise<boolean> {
-  const arg = c.rest.trim();
-  const dmg = parseInt(arg, 10);
-  if (!Number.isFinite(dmg) || dmg < 1) {
-    whisperToCaller(c.io, c.ctx, '!uncanny: usage `!uncanny <incoming-damage-amount>`');
-    return true;
-  }
-  const caller = resolveCallerToken(c.ctx);
-  if (!caller?.characterId) {
-    whisperToCaller(c.io, c.ctx, '!uncanny: no owned PC token.');
-    return true;
-  }
-  const row = await loadCharacter(caller.characterId);
-  const classLower = String(row?.class || '').toLowerCase();
-  if (!classLower.includes('rogue')) {
-    whisperToCaller(c.io, c.ctx, `!uncanny: ${caller.name} isn't a Rogue.`);
-    return true;
-  }
-  const level = Number(row?.level) || 1;
-  if (level < 5) {
+  const incoming = parseIncomingDamage(c.rest.split(/\s+/).filter(Boolean));
+  if (!incoming) {
     whisperToCaller(
       c.io,
       c.ctx,
-      `!uncanny: Uncanny Dodge requires Rogue level 5 (${caller.name} is ${level}).`
+      '!uncanny: usage `!uncanny <incoming-damage> [damage-type]` before damage is applied.'
     );
     return true;
   }
+  const caller = resolveCurrentMapToken(
+    c.ctx,
+    (token) => token.ownerUserId === c.ctx.player.userId
+  );
+  if (!caller?.characterId) {
+    whisperToCaller(c.io, c.ctx, '!uncanny: no owned PC token on this map.');
+    return true;
+  }
+  const row = await loadCharacter(caller.characterId);
+  if (!row) {
+    whisperToCaller(c.io, c.ctx, '!uncanny: character not found.');
+    return true;
+  }
+  const rogue = verifiedClassLevel(row, 'Rogue');
+  if (!rogue.valid) {
+    whisperToCaller(
+      c.io,
+      c.ctx,
+      '!uncanny: could not verify Rogue class levels. No damage was applied; refresh or re-sync the character sheet.'
+    );
+    return true;
+  }
+  if (rogue.level === null) {
+    whisperToCaller(c.io, c.ctx, `!uncanny: ${caller.name} isn't a Rogue.`);
+    return true;
+  }
+  if (rogue.level < 5) {
+    whisperToCaller(
+      c.io,
+      c.ctx,
+      `!uncanny: Uncanny Dodge requires Rogue level 5 (${caller.name} is Rogue level ${rogue.level}).`
+    );
+    return true;
+  }
+  if (!c.ctx.room.combatState?.active) {
+    whisperToCaller(c.io, c.ctx, '!uncanny: Uncanny Dodge can be resolved only during combat.');
+    return true;
+  }
+  if (!isTokenActionable(c.ctx, caller.id)) {
+    whisperToCaller(c.io, c.ctx, `!uncanny: ${caller.name} cannot take reactions right now.`);
+    return true;
+  }
   const economy = c.ctx.room.actionEconomies.get(caller.id);
+  if (!economy) {
+    whisperToCaller(
+      c.io,
+      c.ctx,
+      '!uncanny: combat reaction state is unavailable. No damage was applied; refresh and try again.'
+    );
+    return true;
+  }
   if (economy?.reaction) {
     whisperToCaller(
       c.io,
@@ -1332,176 +1472,114 @@ async function handleUncanny(c: ChatCommandContext): Promise<boolean> {
     );
     return true;
   }
-  if (economy) {
-    economy.reaction = true;
-    c.io.to(c.ctx.room.sessionId).emit('combat:action-used', {
-      tokenId: caller.id,
-      actionType: 'reaction',
-      economy,
-    });
+  const reducedDamage = Math.floor(incoming.amount / 2);
+  economy.reaction = true;
+  let result: CombatService.HpChangeResult;
+  try {
+    result = await applyClassFeatureDamage(c, caller, reducedDamage, incoming.damageType);
+  } catch (error) {
+    economy.reaction = false;
+    console.warn('[!uncanny] damage application failed:', error);
+    whisperToCaller(
+      c.io,
+      c.ctx,
+      '!uncanny: damage could not be applied. The reaction was not spent; refresh and try again.'
+    );
+    return true;
   }
-
-  // Heal back half the damage. Route through CombatService in combat
-  // so the tracker + auto-conditions stay in sync.
-  const healback = Math.floor(dmg / 2);
-  let hpBefore: number | undefined;
-  let hpAfter: number | undefined;
-  if (c.ctx.room.combatState?.active) {
-    const r = await CombatService.applyHeal(c.ctx.room.sessionId, caller.id, healback);
-    hpAfter = r.hp;
-    hpBefore = r.hp - healback;
-    c.io.to(c.ctx.room.sessionId).emit('combat:hp-changed', {
-      tokenId: caller.id,
-      hp: r.hp,
-      tempHp: r.tempHp,
-      change: healback,
-      type: 'heal',
-    });
-    if (r.characterId) {
-      c.io.to(c.ctx.room.sessionId).emit('character:updated', {
-        characterId: r.characterId,
-        changes: { hitPoints: r.hp, tempHitPoints: r.tempHp },
-      });
-    }
-  }
+  c.io.to(c.ctx.room.sessionId).emit('combat:action-used', {
+    tokenId: caller.id,
+    actionType: 'reaction',
+    economy,
+  });
+  const appliedDamage = result.appliedAmount ?? reducedDamage;
+  const typeLabel = incoming.damageType ? ` ${incoming.damageType}` : '';
   const udBreakdown: ActionBreakdown = {
     actor: { name: caller.name, tokenId: caller.id },
     action: {
-      name: `Uncanny Dodge (-${healback} damage)`,
+      name: `Uncanny Dodge (${appliedDamage} damage)`,
       category: 'class-feature',
       icon: '🗡',
       cost: 'Reaction',
     },
-    effect: `Halves incoming damage: ${dmg} → ${dmg - healback} (heal back ${healback}).`,
+    effect: `Halves incoming damage: ${incoming.amount} → ${reducedDamage}${incoming.damageType ? ` ${incoming.damageType}` : ''}.`,
     targets: [
       {
         name: caller.name,
         tokenId: caller.id,
-        effect: `Damage ${dmg} → ${dmg - healback} (reduced by ${healback})`,
-        ...(hpBefore !== undefined && hpAfter !== undefined
-          ? { healing: { amount: healback, hpBefore, hpAfter } }
-          : {}),
+        effect: `Takes ${appliedDamage}${typeLabel} damage after Uncanny Dodge and defenses`,
+        damage: { amount: appliedDamage, damageType: incoming.damageType ?? 'untyped' },
       },
     ],
     notes: [
-      `Rogue L${level}`,
-      `Incoming damage: ${dmg}`,
-      `Reduction: floor(${dmg} / 2) = ${healback}`,
-      `Net damage taken: ${dmg - healback}`,
+      `Rogue L${rogue.level}`,
+      `Incoming damage: ${incoming.amount}`,
+      `Uncanny Dodge: floor(${incoming.amount} / 2) = ${reducedDamage}`,
+      `Applied after defenses: ${appliedDamage}`,
     ],
   };
   broadcastSystem(
     c.io,
     c.ctx,
-    `🗡 ${caller.name} uses Uncanny Dodge (reaction) — halves the incoming damage: ${dmg} → ${dmg - healback} (heal back ${healback}).`,
+    `🗡 ${caller.name} uses Uncanny Dodge (reaction) — ${incoming.amount}${typeLabel} incoming becomes **${appliedDamage}${typeLabel} damage** after halving and defenses.`,
     { actionResult: udBreakdown }
   );
   return true;
 }
 
-// ───── !evasion <damage> — Rogue Evasion (L7) ───────────────
+// ───── !evasion — Rogue/Monk Evasion status ─────────────────
 /**
- * Rogue's Evasion (L7): when subjected to an effect that allows a
+ * Rogue/Monk Evasion (L7): when subjected to an effect that allows a
  * DEX save for half damage, you take no damage on success + half on
- * fail. Because the DM is already routing saves through !save, this
- * helper heals back the full or half depending on what the DM
- * passes — but in practice this is just a "half the damage again"
- * or "take zero" wrapper.
- *
- *   !evasion pass <damage>   — saved; heal back ALL applied damage
- *   !evasion fail <damage>   — failed; heal back HALF applied damage
+ * failure. Damage is resolved automatically by the DM's !save path;
+ * this command only verifies that the character has the passive.
  */
 async function handleEvasion(c: ChatCommandContext): Promise<boolean> {
-  const parts = c.rest.split(/\s+/).filter(Boolean);
-  if (parts.length < 2) {
-    whisperToCaller(c.io, c.ctx, '!evasion: usage `!evasion <pass|fail> <damage-applied>`');
+  const argument = c.rest.trim().toLowerCase();
+  if (argument && argument !== 'status') {
+    whisperToCaller(c.io, c.ctx, '!evasion: usage `!evasion` or `!evasion status`.');
     return true;
   }
-  const outcome = parts[0].toLowerCase();
-  const dmg = parseInt(parts[1], 10);
-  if ((outcome !== 'pass' && outcome !== 'fail') || !Number.isFinite(dmg) || dmg < 1) {
-    whisperToCaller(c.io, c.ctx, '!evasion: usage `!evasion <pass|fail> <damage-applied>`');
-    return true;
-  }
-  const caller = resolveCallerToken(c.ctx);
+  const caller = resolveCurrentMapToken(
+    c.ctx,
+    (token) => token.ownerUserId === c.ctx.player.userId
+  );
   if (!caller?.characterId) {
-    whisperToCaller(c.io, c.ctx, '!evasion: no owned PC token.');
+    whisperToCaller(c.io, c.ctx, '!evasion: no owned PC token on this map.');
     return true;
   }
   const row = await loadCharacter(caller.characterId);
-  const classLower = String(row?.class || '').toLowerCase();
-  if (!classLower.includes('rogue') && !classLower.includes('monk')) {
-    whisperToCaller(c.io, c.ctx, `!evasion: ${caller.name} isn't a Rogue or Monk.`);
+  if (!row) {
+    whisperToCaller(c.io, c.ctx, '!evasion: character not found.');
     return true;
   }
-  const level = Number(row?.level) || 1;
-  if (level < 7) {
+  const rogue = verifiedClassLevel(row, 'Rogue');
+  const monk = verifiedClassLevel(row, 'Monk');
+  if (!rogue.valid || !monk.valid) {
     whisperToCaller(
       c.io,
       c.ctx,
-      `!evasion: Evasion requires Rogue/Monk level 7 (${caller.name} is ${level}).`
+      '!evasion: could not verify Rogue/Monk class levels. No damage was applied; refresh or re-sync the character sheet.'
     );
     return true;
   }
-  // pass = full save means ZERO damage, but the DM already applied
-  //         full/half. Refund everything.
-  // fail = half-damage means take half, but the DM may have applied
-  //         full. Refund half.
-  const refund = outcome === 'pass' ? dmg : Math.floor(dmg / 2);
-  let hpBefore: number | undefined;
-  let hpAfter: number | undefined;
-  if (c.ctx.room.combatState?.active) {
-    const r = await CombatService.applyHeal(c.ctx.room.sessionId, caller.id, refund);
-    hpAfter = r.hp;
-    hpBefore = r.hp - refund;
-    c.io.to(c.ctx.room.sessionId).emit('combat:hp-changed', {
-      tokenId: caller.id,
-      hp: r.hp,
-      tempHp: r.tempHp,
-      change: refund,
-      type: 'heal',
-    });
-    if (r.characterId) {
-      c.io.to(c.ctx.room.sessionId).emit('character:updated', {
-        characterId: r.characterId,
-        changes: { hitPoints: r.hp, tempHitPoints: r.tempHp },
-      });
-    }
+  if (rogue.level === null && monk.level === null) {
+    whisperToCaller(c.io, c.ctx, `!evasion: ${caller.name} isn't a Rogue or Monk.`);
+    return true;
   }
-  const evBreakdown: ActionBreakdown = {
-    actor: { name: caller.name, tokenId: caller.id },
-    action: {
-      name: `Evasion (${outcome.toUpperCase()}) — refund ${refund} HP`,
-      category: 'class-feature',
-      icon: '💨',
-      cost: 'Passive (DEX save effect)',
-    },
-    effect:
-      outcome === 'pass'
-        ? `Saved: takes 0 damage. Refund full ${refund} HP.`
-        : `Failed: takes half. Refund other half (${refund} HP).`,
-    targets: [
-      {
-        name: caller.name,
-        tokenId: caller.id,
-        effect: `Refund ${refund} HP`,
-        ...(hpBefore !== undefined && hpAfter !== undefined
-          ? { healing: { amount: refund, hpBefore, hpAfter } }
-          : {}),
-      },
-    ],
-    notes: [
-      `Rogue/Monk L${level}`,
-      `Outcome: ${outcome}`,
-      `Damage applied: ${dmg}`,
-      `Refund: ${outcome === 'pass' ? 'full' : 'half'} = ${refund}`,
-    ],
-  };
-  broadcastSystem(
+  const qualifyingLevel = Math.max(rogue.level ?? 0, monk.level ?? 0);
+  if (qualifyingLevel < 7) {
+    whisperToCaller(
+      c.io,
+      c.ctx,
+      `!evasion: Evasion requires Rogue or Monk level 7 (${caller.name}'s highest qualifying class is level ${qualifyingLevel}).`
+    );
+    return true;
+  }
+  whisperToCaller(
     c.io,
     c.ctx,
-    `💨 ${caller.name} uses Evasion (${outcome}) — ${outcome === 'pass' ? 'takes 0 damage (refund full)' : 'takes half (refund other half)'}: +${refund} HP.`,
-    { actionResult: evBreakdown }
+    `!evasion: ${caller.name} has Evasion from a level-${qualifyingLevel} qualifying class. It is applied automatically to DEX save-for-half damage resolved with the DM \`!save\` command.`
   );
   return true;
 }
