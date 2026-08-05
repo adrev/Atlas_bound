@@ -5,8 +5,9 @@ import {
   type ChatCommandContext,
 } from '../ChatCommands.js';
 import pool from '../../db/connection.js';
-import type { Token, ActionBreakdown, SpellCastBreakdown } from '@dnd-vtt/shared';
+import type { Token, ActionBreakdown } from '@dnd-vtt/shared';
 import type { PlayerContext } from '../../utils/roomState.js';
+import { emitToTokenStatViewers } from '../../utils/combatBroadcast.js';
 
 /**
  * Encounter difficulty calculator + Hit Dice spending + a few
@@ -25,15 +26,43 @@ function resolveCallerToken(ctx: PlayerContext): Token | null {
 // ────── !encounter — PHB encounter-difficulty calculator ────
 // PHB p.82 XP-by-CR table.
 const CR_TO_XP: Record<string, number> = {
-  '0': 10, '1/8': 25, '0.125': 25,
-  '1/4': 50, '0.25': 50,
-  '1/2': 100, '0.5': 100,
-  '1': 200, '2': 450, '3': 700, '4': 1100, '5': 1800, '6': 2300,
-  '7': 2900, '8': 3900, '9': 5000, '10': 5900, '11': 7200, '12': 8400,
-  '13': 10000, '14': 11500, '15': 13000, '16': 15000, '17': 18000,
-  '18': 20000, '19': 22000, '20': 25000, '21': 33000, '22': 41000,
-  '23': 50000, '24': 62000, '25': 75000, '26': 90000, '27': 105000,
-  '28': 120000, '29': 135000, '30': 155000,
+  '0': 10,
+  '1/8': 25,
+  '0.125': 25,
+  '1/4': 50,
+  '0.25': 50,
+  '1/2': 100,
+  '0.5': 100,
+  '1': 200,
+  '2': 450,
+  '3': 700,
+  '4': 1100,
+  '5': 1800,
+  '6': 2300,
+  '7': 2900,
+  '8': 3900,
+  '9': 5000,
+  '10': 5900,
+  '11': 7200,
+  '12': 8400,
+  '13': 10000,
+  '14': 11500,
+  '15': 13000,
+  '16': 15000,
+  '17': 18000,
+  '18': 20000,
+  '19': 22000,
+  '20': 25000,
+  '21': 33000,
+  '22': 41000,
+  '23': 50000,
+  '24': 62000,
+  '25': 75000,
+  '26': 90000,
+  '27': 105000,
+  '28': 120000,
+  '29': 135000,
+  '30': 155000,
 };
 
 // PHB p.82 daily XP-budget thresholds per character level (easy /
@@ -75,8 +104,9 @@ async function handleEncounter(c: ChatCommandContext): Promise<boolean> {
   const parts = c.rest.split(/\s+/).filter(Boolean);
   if (parts.length === 0) {
     whisperToCaller(
-      c.io, c.ctx,
-      '!encounter: usage `!encounter <cr1> [cr2] [cr3] …`\n  e.g. `!encounter 2 2 1/2 1/2`  (two CR 2 + two CR 1/2)',
+      c.io,
+      c.ctx,
+      '!encounter: usage `!encounter <cr1> [cr2] [cr3] …`\n  e.g. `!encounter 2 2 1/2 1/2`  (two CR 2 + two CR 1/2)'
     );
     return true;
   }
@@ -97,19 +127,25 @@ async function handleEncounter(c: ChatCommandContext): Promise<boolean> {
   const adjusted = Math.round(rawXp * mul);
 
   // Sum party XP thresholds. Walk PC tokens on the current map.
-  const pcs = Array.from(c.ctx.room.tokens.values()).filter(
-    (t) => t.characterId && t.ownerUserId,
-  );
-  let easy = 0, medium = 0, hard = 0, deadly = 0;
+  const pcs = Array.from(c.ctx.room.tokens.values()).filter((t) => t.characterId && t.ownerUserId);
+  let easy = 0,
+    medium = 0,
+    hard = 0,
+    deadly = 0;
   const partyDesc: string[] = [];
   for (const pc of pcs) {
-    const { rows } = await pool.query('SELECT level, name FROM characters WHERE id = $1', [pc.characterId]);
+    const { rows } = await pool.query('SELECT level, name FROM characters WHERE id = $1', [
+      pc.characterId,
+    ]);
     const row = rows[0] as Record<string, unknown> | undefined;
     if (!row) continue;
     const lvl = Math.max(1, Math.min(20, Number(row.level) || 1));
     const th = XP_THRESHOLDS[lvl];
     if (!th) continue;
-    easy += th[0]; medium += th[1]; hard += th[2]; deadly += th[3];
+    easy += th[0];
+    medium += th[1];
+    hard += th[2];
+    deadly += th[3];
     partyDesc.push(`${row.name} L${lvl}`);
   }
 
@@ -123,7 +159,9 @@ async function handleEncounter(c: ChatCommandContext): Promise<boolean> {
 
   const lines: string[] = [];
   lines.push(`⚖ Encounter: ${crDisplay.join(', ')}`);
-  lines.push(`   Raw XP: ${rawXp}, ×${mul} multiplier (${parts.length} monsters) → **adjusted ${adjusted} XP**`);
+  lines.push(
+    `   Raw XP: ${rawXp}, ×${mul} multiplier (${parts.length} monsters) → **adjusted ${adjusted} XP**`
+  );
   if (pcs.length > 0) {
     lines.push(`   Party: ${partyDesc.join(', ')}`);
     lines.push(`   Thresholds — easy ${easy} / medium ${medium} / hard ${hard} / deadly ${deadly}`);
@@ -135,16 +173,39 @@ async function handleEncounter(c: ChatCommandContext): Promise<boolean> {
 }
 
 // ────── !hd <n> [dieSize] — spend Hit Dice on short rest ──
+function parseCharacterVersion(row: unknown): number | null {
+  const version = Number((row as { version?: unknown } | undefined)?.version);
+  return Number.isInteger(version) && version >= 1 ? version : null;
+}
+
+function emitHitDiceUpdate(
+  c: ChatCommandContext,
+  caller: Token,
+  hitPoints: number,
+  version: number,
+  hitDice?: Array<{ dieSize: number; total: number; used: number }>
+): void {
+  emitToTokenStatViewers(c.io, c.ctx.room, caller.id, 'character:updated', {
+    characterId: caller.characterId,
+    changes: {
+      hitPoints,
+      ...(hitDice ? { hitDice } : {}),
+      version,
+    },
+  });
+}
+
 async function handleHitDice(c: ChatCommandContext): Promise<boolean> {
   const parts = c.rest.split(/\s+/).filter(Boolean);
   if (parts.length === 0) {
     whisperToCaller(
-      c.io, c.ctx,
-      '!hd: usage `!hd <n>` — roll n Hit Dice, heal ∑rolls + CON-mod × n. Takes from your HD pool on the character sheet.',
+      c.io,
+      c.ctx,
+      '!hd: usage `!hd <n>` — roll n Hit Dice and add CON to each die (minimum 0 per die). Takes from your character-sheet pool.'
     );
     return true;
   }
-  const n = parseInt(parts[0], 10);
+  const n = /^\d+$/.test(parts[0]) ? Number(parts[0]) : Number.NaN;
   if (!Number.isFinite(n) || n < 1 || n > 20) {
     whisperToCaller(c.io, c.ctx, '!hd: <n> must be 1-20.');
     return true;
@@ -154,9 +215,17 @@ async function handleHitDice(c: ChatCommandContext): Promise<boolean> {
     whisperToCaller(c.io, c.ctx, '!hd: no owned PC token.');
     return true;
   }
+  if (c.ctx.room.combatState?.active) {
+    whisperToCaller(
+      c.io,
+      c.ctx,
+      '!hd: Hit Dice cannot be spent during active combat; finish combat and take a short rest first.'
+    );
+    return true;
+  }
   const { rows } = await pool.query(
-    'SELECT hit_points, max_hit_points, ability_scores, hit_dice, name FROM characters WHERE id = $1',
-    [caller.characterId],
+    'SELECT hit_points, max_hit_points, ability_scores, hit_dice, name, version FROM characters WHERE id = $1',
+    [caller.characterId]
   );
   const row = rows[0] as Record<string, unknown> | undefined;
   if (!row) {
@@ -165,73 +234,56 @@ async function handleHitDice(c: ChatCommandContext): Promise<boolean> {
   }
   const hp = Number(row.hit_points) || 0;
   const maxHp = Number(row.max_hit_points) || 0;
-  const scores = typeof row.ability_scores === 'string' ? JSON.parse(row.ability_scores as string) : (row.ability_scores ?? {});
+  if (hp >= maxHp) {
+    whisperToCaller(c.io, c.ctx, '!hd: already at maximum HP; no Hit Die was spent.');
+    return true;
+  }
+  const expectedVersion = parseCharacterVersion(row);
+  if (expectedVersion === null) {
+    whisperToCaller(c.io, c.ctx, '!hd: character version unavailable; refresh and try again.');
+    return true;
+  }
+  const scores =
+    typeof row.ability_scores === 'string'
+      ? JSON.parse(row.ability_scores as string)
+      : (row.ability_scores ?? {});
   const conMod = Math.floor((((scores as Record<string, number>).con ?? 10) - 10) / 2);
   const charName = (row.name as string) || caller.name;
 
   // Hit dice: array of pools like [{ dieSize: 10, total: 5, used: 2 }]
   const hdRaw = row.hit_dice;
-  const hdPools: Array<{ dieSize: number; total: number; used: number }> = typeof hdRaw === 'string'
-    ? JSON.parse(hdRaw as string) : (hdRaw ?? []);
+  const hdPools: Array<{ dieSize: number; total: number; used: number }> =
+    typeof hdRaw === 'string' ? JSON.parse(hdRaw as string) : (hdRaw ?? []);
   if (!Array.isArray(hdPools) || hdPools.length === 0) {
-    // Fallback: if the sheet doesn't track HD, just ask the player for
-    // a die size and roll.
-    const dieArg = parts[1] || 'd8';
-    const match = dieArg.match(/d?(\d+)/i);
-    const die = match ? parseInt(match[1], 10) : 8;
-    const rolls: number[] = [];
-    let total = 0;
-    for (let i = 0; i < n; i++) {
-      const r = Math.floor(Math.random() * die) + 1;
-      rolls.push(r); total += r;
-    }
-    const heal = total + (conMod * n);
-    const newHp = Math.min(maxHp, hp + heal);
-    await pool.query('UPDATE characters SET hit_points = $1 WHERE id = $2', [newHp, caller.characterId])
-      .catch((e) => console.warn('[!hd] hp write failed:', e));
-    c.io.to(c.ctx.room.sessionId).emit('character:updated', {
-      characterId: caller.characterId,
-      changes: { hitPoints: newHp },
-    });
-    const hdFallback: SpellCastBreakdown = {
-      caster: { name: charName, tokenId: caller.id },
-      spell: {
-        name: `Hit Dice — ${n}d${die}+CON`,
-        level: 0,
-        kind: 'heal',
-      },
-      notes: [
-        `Short-rest healing`,
-        `HD pool not tracked on sheet (using fallback)`,
-        `Dice: ${n}d${die} + ${n}×CON(${conMod})`,
-      ],
-      targets: [{
-        name: charName,
-        tokenId: caller.id,
-        kind: 'heal',
-        healing: {
-          dice: `${n}d${die}+${n * conMod}`,
-          diceRolls: rolls,
-          mainRoll: heal,
-          targetHpBefore: hp,
-          targetHpAfter: newHp,
-        },
-      }],
-    };
-    broadcastSystem(
-      c.io, c.ctx,
-      `💤 ${charName} spends ${n}d${die} HD — ${n}d${die}(${rolls.join('+')}) + ${n}×CON(${conMod}) = **${heal}** → ${newHp}/${maxHp} HP. (HD tracked manually — no pool on sheet.)`,
-      { spellResult: hdFallback },
+    whisperToCaller(
+      c.io,
+      c.ctx,
+      '!hd: this character has no tracked Hit Dice. Re-sync or update the character sheet first.'
     );
     return true;
   }
 
-  // Spend from the largest-die pool first.
-  hdPools.sort((a, b) => b.dieSize - a.dieSize);
+  const requestedDieArg = parts[1];
+  const requestedDieMatch = requestedDieArg?.match(/^d?(4|6|8|10|12)$/i);
+  if (requestedDieArg && !requestedDieMatch) {
+    whisperToCaller(c.io, c.ctx, '!hd: optional die must be d4, d6, d8, d10, or d12.');
+    return true;
+  }
+  const requestedDie = requestedDieMatch ? Number(requestedDieMatch[1]) : null;
+  const spendPools = [...hdPools]
+    .filter((pool) => requestedDie === null || pool.dieSize === requestedDie)
+    .sort((a, b) => b.dieSize - a.dieSize);
+  if (spendPools.length === 0) {
+    whisperToCaller(c.io, c.ctx, `!hd: no d${requestedDie} Hit Dice pool exists.`);
+    return true;
+  }
+
+  // Multiclass characters default to their largest available die. A
+  // specific optional dN limits spending to that pool.
   let remaining = n;
   const rollsDetail: string[] = [];
-  let totalRolled = 0;
-  for (const pool of hdPools) {
+  let heal = 0;
+  for (const pool of spendPools) {
     if (remaining === 0) break;
     const available = pool.total - pool.used;
     const take = Math.min(available, remaining);
@@ -239,62 +291,51 @@ async function handleHitDice(c: ChatCommandContext): Promise<boolean> {
     const rolls: number[] = [];
     for (let i = 0; i < take; i++) {
       const r = Math.floor(Math.random() * pool.dieSize) + 1;
-      rolls.push(r); totalRolled += r;
+      rolls.push(r);
+      heal += Math.max(0, r + conMod);
     }
     pool.used += take;
     rollsDetail.push(`${take}d${pool.dieSize}(${rolls.join('+')})`);
     remaining -= take;
   }
   if (remaining > 0) {
-    whisperToCaller(c.io, c.ctx, `!hd: only had ${n - remaining} HD left to spend (requested ${n}).`);
+    whisperToCaller(
+      c.io,
+      c.ctx,
+      `!hd: only had ${n - remaining} HD left to spend (requested ${n}).`
+    );
   }
   const spent = n - remaining;
-  const heal = totalRolled + (conMod * spent);
-  const newHp = Math.min(maxHp, hp + heal);
-  await pool.query(
-    'UPDATE characters SET hit_points = $1, hit_dice = $2 WHERE id = $3',
-    [newHp, JSON.stringify(hdPools), caller.characterId],
-  ).catch((e) => console.warn('[!hd] write failed:', e));
-  c.io.to(c.ctx.room.sessionId).emit('character:updated', {
-    characterId: caller.characterId,
-    changes: { hitPoints: newHp, hitDice: hdPools },
-  });
-  // Gather all rolled dice across pools for the breakdown.
-  const allRolls: number[] = [];
-  for (const detail of rollsDetail) {
-    const m = detail.match(/\(([^)]+)\)/);
-    if (m) for (const v of m[1].split('+')) allRolls.push(parseInt(v, 10));
+  if (spent === 0) {
+    whisperToCaller(c.io, c.ctx, '!hd: no Hit Dice remain to spend.');
+    return true;
   }
-  const hdBreakdown: SpellCastBreakdown = {
-    caster: { name: charName, tokenId: caller.id },
-    spell: {
-      name: `Hit Dice (${spent} spent)`,
-      level: 0,
-      kind: 'heal',
-    },
-    notes: [
-      `Short-rest healing`,
-      `Dice spent: ${rollsDetail.join(' + ')}`,
-      `CON bonus: ${spent}×${conMod} = ${spent * conMod}`,
-      ...(remaining > 0 ? [`Requested ${n} but only had ${spent}`] : []),
-    ],
-    targets: [{
-      name: charName,
-      tokenId: caller.id,
-      kind: 'heal',
-      healing: {
-        dice: rollsDetail.join(' + '),
-        diceRolls: allRolls,
-        mainRoll: heal,
-        targetHpBefore: hp,
-        targetHpAfter: newHp,
-      },
-    }],
-  };
+  const newHp = Math.min(maxHp, hp + heal);
+  let version: number | null = null;
+  try {
+    const result = await pool.query(
+      'UPDATE characters SET hit_points = $1, hit_dice = $2 WHERE id = $3 AND version = $4 RETURNING version',
+      [newHp, JSON.stringify(hdPools), caller.characterId, expectedVersion]
+    );
+    version = parseCharacterVersion(result.rows[0]);
+  } catch (error) {
+    console.warn('[!hd] write failed:', error);
+    whisperToCaller(c.io, c.ctx, '!hd: could not save the Hit Dice result; no dice were spent.');
+    return true;
+  }
+  if (version === null) {
+    whisperToCaller(
+      c.io,
+      c.ctx,
+      '!hd: your character changed in another tab; refresh and try again.'
+    );
+    return true;
+  }
+  emitHitDiceUpdate(c, caller, newHp, version, hdPools);
   broadcastSystem(
-    c.io, c.ctx,
-    `💤 ${charName} spends ${spent} HD — ${rollsDetail.join(' + ')} + ${spent}×CON(${conMod}) = **${heal}** → ${newHp}/${maxHp} HP.`,
-    { spellResult: hdBreakdown },
+    c.io,
+    c.ctx,
+    `💤 ${charName} spends ${spent} HD — ${rollsDetail.join(' + ')} with CON ${conMod >= 0 ? '+' : ''}${conMod} per die = **${heal}** HP restored.`
   );
   return true;
 }
@@ -308,10 +349,9 @@ async function handleIndomitable(c: ChatCommandContext): Promise<boolean> {
     whisperToCaller(c.io, c.ctx, '!indomitable: no owned PC token.');
     return true;
   }
-  const { rows } = await pool.query(
-    'SELECT class, level, name FROM characters WHERE id = $1',
-    [caller.characterId],
-  );
+  const { rows } = await pool.query('SELECT class, level, name FROM characters WHERE id = $1', [
+    caller.characterId,
+  ]);
   const row = rows[0] as Record<string, unknown> | undefined;
   const classLower = String(row?.class || '').toLowerCase();
   if (!classLower.includes('fighter')) {
@@ -349,9 +389,10 @@ async function handleIndomitable(c: ChatCommandContext): Promise<boolean> {
     ],
   };
   broadcastSystem(
-    c.io, c.ctx,
+    c.io,
+    c.ctx,
     `🛡 **${charName} uses Indomitable** — rerolls the failed save, new d20 = **${d20}** (+ save mod). (${used + 1}/${maxUses} used; long rest to refresh.)`,
-    { actionResult: indomBreakdown },
+    { actionResult: indomBreakdown }
   );
   return true;
 }
@@ -368,7 +409,9 @@ async function handleReliable(c: ChatCommandContext): Promise<boolean> {
     whisperToCaller(c.io, c.ctx, '!reliable: no owned PC token.');
     return true;
   }
-  const { rows } = await pool.query('SELECT class, level, name FROM characters WHERE id = $1', [caller.characterId]);
+  const { rows } = await pool.query('SELECT class, level, name FROM characters WHERE id = $1', [
+    caller.characterId,
+  ]);
   const row = rows[0] as Record<string, unknown> | undefined;
   const classLower = String(row?.class || '').toLowerCase();
   if (!classLower.includes('rogue')) {
@@ -382,12 +425,17 @@ async function handleReliable(c: ChatCommandContext): Promise<boolean> {
   }
   const charName = (row?.name as string) || caller.name;
   if (rollRaw >= 10) {
-    whisperToCaller(c.io, c.ctx, `!reliable: d20=${rollRaw} already ≥ 10, no benefit. Keep the roll.`);
+    whisperToCaller(
+      c.io,
+      c.ctx,
+      `!reliable: d20=${rollRaw} already ≥ 10, no benefit. Keep the roll.`
+    );
     return true;
   }
   broadcastSystem(
-    c.io, c.ctx,
-    `🎲 **Reliable Talent** — ${charName} treats their d20=${rollRaw} as **10** on proficient check (automatic floor).`,
+    c.io,
+    c.ctx,
+    `🎲 **Reliable Talent** — ${charName} treats their d20=${rollRaw} as **10** on proficient check (automatic floor).`
   );
   return true;
 }
@@ -412,11 +460,17 @@ async function handleHalflingLucky(c: ChatCommandContext): Promise<boolean> {
     whisperToCaller(c.io, c.ctx, '!lucky1: no owned PC token.');
     return true;
   }
-  const { rows } = await pool.query('SELECT race, name FROM characters WHERE id = $1', [caller.characterId]);
+  const { rows } = await pool.query('SELECT race, name FROM characters WHERE id = $1', [
+    caller.characterId,
+  ]);
   const row = rows[0] as Record<string, unknown> | undefined;
   const raceLower = String(row?.race || '').toLowerCase();
   if (!raceLower.includes('halfling')) {
-    whisperToCaller(c.io, c.ctx, `!lucky1: only halflings have the racial Lucky (unrelated to the Lucky feat).`);
+    whisperToCaller(
+      c.io,
+      c.ctx,
+      `!lucky1: only halflings have the racial Lucky (unrelated to the Lucky feat).`
+    );
     return true;
   }
   if (rollRaw !== 1) {
@@ -442,9 +496,10 @@ async function handleHalflingLucky(c: ChatCommandContext): Promise<boolean> {
     ],
   };
   broadcastSystem(
-    c.io, c.ctx,
+    c.io,
+    c.ctx,
     `🍀 **Halfling Lucky** — ${charName} rerolls the natural 1, new d20 = **${newRoll}** (must use, no choice).`,
-    { actionResult: luckyBreakdown },
+    { actionResult: luckyBreakdown }
   );
   return true;
 }
@@ -456,19 +511,29 @@ async function handleDivineSense(c: ChatCommandContext): Promise<boolean> {
     whisperToCaller(c.io, c.ctx, '!divinesense: no owned PC token.');
     return true;
   }
-  const { rows } = await pool.query('SELECT class, ability_scores, name FROM characters WHERE id = $1', [caller.characterId]);
+  const { rows } = await pool.query(
+    'SELECT class, ability_scores, name FROM characters WHERE id = $1',
+    [caller.characterId]
+  );
   const row = rows[0] as Record<string, unknown> | undefined;
   const classLower = String(row?.class || '').toLowerCase();
   if (!classLower.includes('paladin')) {
     whisperToCaller(c.io, c.ctx, `!divinesense: ${caller.name} isn't a Paladin.`);
     return true;
   }
-  const scores = typeof row?.ability_scores === 'string' ? JSON.parse(row.ability_scores as string) : (row?.ability_scores ?? {});
-  const chaMod = Math.max(1, Math.floor((((scores as Record<string, number>).cha ?? 10) - 10) / 2) + 1);
+  const scores =
+    typeof row?.ability_scores === 'string'
+      ? JSON.parse(row.ability_scores as string)
+      : (row?.ability_scores ?? {});
+  const chaMod = Math.max(
+    1,
+    Math.floor((((scores as Record<string, number>).cha ?? 10) - 10) / 2) + 1
+  );
   const charName = (row?.name as string) || caller.name;
   broadcastSystem(
-    c.io, c.ctx,
-    `✨ ${charName} uses Divine Sense (action) — detects celestials / fiends / undead within 60 ft (not behind total cover) + consecrated / desecrated places. Uses/long rest: ${chaMod}.`,
+    c.io,
+    c.ctx,
+    `✨ ${charName} uses Divine Sense (action) — detects celestials / fiends / undead within 60 ft (not behind total cover) + consecrated / desecrated places. Uses/long rest: ${chaMod}.`
   );
   return true;
 }
