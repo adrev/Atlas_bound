@@ -31,6 +31,7 @@ interface Emission {
 const SESSION = 'xp-session';
 const ALICE = 'alice-character';
 const BOB = 'bob-character';
+const SIR_ALDRIC = 'sir-aldric-character';
 
 function fakeIo(emissions: Emission[]) {
   return {
@@ -309,6 +310,59 @@ describe('!xp award — authoritative persisted XP', () => {
     expect(guardedUpdates()[0][1]).toEqual([1000, ALICE, 7]);
   });
 
+  it('supports a single character name containing spaces', async () => {
+    const room = getAllRooms().get(SESSION)!;
+    room.tokens.set(
+      'sir-aldric-token',
+      token('sir-aldric-token', {
+        characterId: SIR_ALDRIC,
+        ownerUserId: 'alice-user',
+        name: 'Sir Aldric',
+      })
+    );
+    arrange({
+      rows: {
+        [SIR_ALDRIC]: {
+          name: 'Sir Aldric',
+          level: 3,
+          experience: 900,
+          version: 4,
+        },
+      },
+    });
+    const emissions: Emission[] = [];
+    await runAs('dm-1', '!xp Sir Aldric 100', emissions);
+
+    expect(guardedUpdates()).toHaveLength(1);
+    expect(guardedUpdates()[0][1]).toEqual([1000, SIR_ALDRIC, 4]);
+  });
+
+  it('supports comma-separated character names containing spaces', async () => {
+    const room = getAllRooms().get(SESSION)!;
+    room.tokens.set(
+      'sir-aldric-token',
+      token('sir-aldric-token', {
+        characterId: SIR_ALDRIC,
+        ownerUserId: 'alice-user',
+        name: 'Sir Aldric',
+      })
+    );
+    arrange({
+      rows: {
+        [SIR_ALDRIC]: {
+          name: 'Sir Aldric',
+          level: 3,
+          experience: 900,
+          version: 4,
+        },
+      },
+    });
+    const emissions: Emission[] = [];
+    await runAs('dm-1', '!xp Sir Aldric, Bob 100', emissions);
+
+    expect(guardedUpdates().map(([, params]) => params[1])).toEqual([SIR_ALDRIC, BOB]);
+  });
+
   it('caps eligibility at level 20 and reports max level safely', async () => {
     arrange({ rows: { [ALICE]: aliceRow({ level: 20, experience: 400000 }) } });
     const emissions: Emission[] = [];
@@ -511,17 +565,16 @@ describe('characters.experience schema migration', () => {
     );
   });
 
-  it('migrates existing databases idempotently and re-establishes the nonnegative invariant', async () => {
+  it('migrates existing databases idempotently without dropping the live constraint', async () => {
     const ddl = await capturedDdl();
     expect(ddl).toContain(
       'ALTER TABLE characters ADD COLUMN IF NOT EXISTS experience INTEGER NOT NULL DEFAULT 0;'
     );
     expect(ddl).toContain('UPDATE characters SET experience = 0 WHERE experience < 0;');
-    expect(ddl).toContain(
-      'ALTER TABLE characters DROP CONSTRAINT IF EXISTS characters_experience_nonnegative;'
+    expect(ddl).not.toContain('DROP CONSTRAINT IF EXISTS characters_experience_nonnegative');
+    expect(ddl).toMatch(
+      /ALTER TABLE characters\s+ADD CONSTRAINT characters_experience_nonnegative CHECK \(experience >= 0\);/
     );
-    expect(ddl).toContain(
-      'ALTER TABLE characters ADD CONSTRAINT characters_experience_nonnegative CHECK (experience >= 0);'
-    );
+    expect(ddl).toContain('EXCEPTION WHEN duplicate_object THEN');
   });
 });

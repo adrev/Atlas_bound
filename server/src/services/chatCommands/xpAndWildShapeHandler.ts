@@ -15,7 +15,7 @@ import { tokenVisibleToPlayer } from '../../utils/tokenVisibility.js';
  *
  *   XP — DMs award XP; characters become *eligible* to level when
  *   thresholds are crossed.
- *     !xp <target1> [target2 …] <amount>   — DM only
+ *     !xp <target1> [target2 …] <amount>   — DM only; commas support names with spaces
  *     !xp report                           — DM only, whispered party XP
  *     !xp threshold                        — caller's own linked character
  *
@@ -246,7 +246,19 @@ async function handleXpAward(c: ChatCommandContext, parts: string[]): Promise<bo
     whisperToCaller(c.io, c.ctx, `!xp: amount must be a whole number from 1 to ${MAX_AWARD}.`);
     return true;
   }
-  const targetNames = parts.slice(0, -1);
+  const amountText = parts[parts.length - 1];
+  const targetText = c.rest.trim().slice(0, -amountText.length).trim();
+  const wholeTarget = targetText.includes(',')
+    ? null
+    : resolveXpToken(c.ctx, (t) => t.name.toLowerCase() === targetText.toLowerCase());
+  const targetNames = wholeTarget
+    ? [targetText]
+    : targetText.includes(',')
+      ? targetText
+          .split(',')
+          .map((name) => name.trim())
+          .filter(Boolean)
+      : parts.slice(0, -1);
   if (targetNames.length === 0) {
     whisperToCaller(c.io, c.ctx, '!xp: at least one target name required.');
     return true;
@@ -379,7 +391,7 @@ async function handleXP(c: ChatCommandContext): Promise<boolean> {
     whisperToCaller(
       c.io,
       c.ctx,
-      '!xp: usage `!xp <target1> [target2 …] <amount>` | `!xp report` | `!xp threshold`'
+      '!xp: usage `!xp <target1> [target2 …] <amount>` (comma-separate names containing spaces) | `!xp report` | `!xp threshold`'
     );
     return true;
   }

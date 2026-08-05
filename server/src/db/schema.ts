@@ -117,12 +117,19 @@ export async function initDatabase(): Promise<void> {
     -- Persisted XP for authoritative !xp (2026-08-05); the previous
     -- in-memory tracker lost totals on restart and diverged across
     -- instances. Existing DBs get the column bolted on at 0. The clamp
-    -- plus drop/re-add keeps the nonnegative CHECK enforceable even on
-    -- databases where the column predates the constraint.
+    -- plus duplicate-safe ADD keeps the CHECK enforceable even when
+    -- multiple Cloud Run instances initialize concurrently.
     ALTER TABLE characters ADD COLUMN IF NOT EXISTS experience INTEGER NOT NULL DEFAULT 0;
     UPDATE characters SET experience = 0 WHERE experience < 0;
-    ALTER TABLE characters DROP CONSTRAINT IF EXISTS characters_experience_nonnegative;
-    ALTER TABLE characters ADD CONSTRAINT characters_experience_nonnegative CHECK (experience >= 0);
+    DO $$
+    BEGIN
+      BEGIN
+        ALTER TABLE characters
+          ADD CONSTRAINT characters_experience_nonnegative CHECK (experience >= 0);
+      EXCEPTION WHEN duplicate_object THEN
+        NULL;
+      END;
+    END $$;
 
     CREATE TABLE IF NOT EXISTS maps (
       id TEXT PRIMARY KEY,
