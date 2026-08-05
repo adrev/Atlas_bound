@@ -19,6 +19,7 @@ import {
   serializeWildShapeState,
 } from '../../utils/wildShapeState.js';
 import { emitWildShapePrivate } from '../../utils/wildShapeSync.js';
+import { emitCombatStateSync } from '../../utils/combatStateVisibility.js';
 
 type WildShapeChange = NonNullable<CombatService.HpChangeResult['wildShape']>;
 
@@ -212,6 +213,10 @@ function broadcastHpChange(
         wildShape: wildShape.state,
         ...(version !== undefined ? { version } : {}),
       });
+      // A form dropped by combat-path damage already had its AC/speed
+      // restored on the combatant inside CombatService — re-fan the
+      // tracker (redacted per viewer) so clients pick that up.
+      if (wildShape.ended && ctx.room.combatState?.active) emitCombatStateSync(io, ctx.room);
     }
   }
 }
@@ -228,10 +233,7 @@ const UNREADABLE_WILD_SHAPE =
  * state and version conflicts fail closed by throwing; nothing is
  * written.
  */
-async function applyDirectHp(
-  characterId: string,
-  delta: number
-): Promise<DirectHpChange | null> {
+async function applyDirectHp(characterId: string, delta: number): Promise<DirectHpChange | null> {
   const { rows } = await pool.query(
     'SELECT hit_points, max_hit_points, temp_hit_points, wild_shape, version FROM characters WHERE id = $1',
     [characterId]

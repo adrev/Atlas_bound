@@ -15,6 +15,7 @@ import {
   type WildShapeState,
 } from '../../utils/wildShapeState.js';
 import { emitWildShapePrivate } from '../../utils/wildShapeSync.js';
+import { emitCombatStateSync } from '../../utils/combatStateVisibility.js';
 import * as CombatService from '../CombatService.js';
 
 /**
@@ -749,6 +750,19 @@ function wildShapeCombatGate(
   return { economy };
 }
 
+/**
+ * After a committed transform/revert/form-drop, re-point the live
+ * combatant at the authoritative post-write AC/speed (CombatService
+ * re-reads the row, so only trusted persisted state flows) and fan the
+ * tracker out through the redacting combat:state-sync — bystanders
+ * without stat access still receive zeroed AC/speed. No-op out of
+ * combat or for non-combatants.
+ */
+async function syncCombatFormStats(c: ChatCommandContext, characterId: string): Promise<void> {
+  const changed = await CombatService.syncWildShapeCombatStats(c.ctx.room.sessionId, characterId);
+  if (changed) emitCombatStateSync(c.io, c.ctx.room);
+}
+
 function markEconomy(
   c: ChatCommandContext,
   tokenId: string,
@@ -945,6 +959,9 @@ async function handleWildShape(c: ChatCommandContext): Promise<boolean> {
   }
 
   markEconomy(c, caller.id, gate.economy, cost);
+  // Transforming mid-fight immediately swaps the combatant to the
+  // form's AC and walking speed (movement already spent stays spent).
+  await syncCombatFormStats(c, caller.characterId);
   // Exact form stats + the uses pool are owner/DM material. The
   // dispatcher's stat-scoped wrapper widens under sharing toggles, so
   // active-form payloads go through the strictly private channel.
@@ -1013,6 +1030,9 @@ async function handleRevert(c: ChatCommandContext): Promise<boolean> {
     return true;
   }
   if (column.status === 'active') markEconomy(c, caller.id, economy, 'bonusAction');
+  // Reverting (including clearing an unreadable state) restores the
+  // character's own AC/speed on the live combatant immediately.
+  await syncCombatFormStats(c, caller.characterId);
   c.io.to(c.ctx.room.sessionId).emit('character:updated', {
     characterId: caller.characterId,
     changes: { wildShape: null, version: write.version },
@@ -1194,6 +1214,8 @@ async function handleBeast(c: ChatCommandContext): Promise<boolean> {
   if (combatant) {
     combatant.hp = newDruidHp;
     CombatService.persistSessionCombatState(c.ctx.room.sessionId);
+    // The form dropped from damage — restore the druid's own AC/speed.
+    await syncCombatFormStats(c, caller.characterId);
     c.io.to(c.ctx.room.sessionId).emit('combat:hp-changed', {
       tokenId: combatant.tokenId,
       hp: newDruidHp,
