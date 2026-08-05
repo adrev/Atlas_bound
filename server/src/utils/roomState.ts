@@ -77,6 +77,33 @@ export interface RoomEvent {
 /** Circular buffer size — ~15 minutes of active play at ~30 events/min. */
 export const MAX_EVENT_LOG = 500;
 
+/**
+ * A server-issued, unconsumed opportunity attack. The server records one
+ * of these for every OA it actually detects (movement- or spell-triggered)
+ * before prompting the attacker's owner / the DM. `combat:oa-execute` may
+ * only resolve an attack that matches a live entry, and claiming one
+ * deletes it. That makes OAs one-shot and immune to fabricated
+ * attacker/mover pairs, stale or declined prompts, and duplicate or
+ * concurrently-repeated execute events — the reach geometry that provoked
+ * the OA is no longer true by execution time (the mover has moved away),
+ * so this record is the only authoritative proof the OA was legitimate.
+ *
+ * Lives in memory only; keyed in `RoomState.pendingOpportunities` by
+ * `${attackerTokenId}::${moverTokenId}`.
+ */
+export interface PendingOpportunity {
+  /** Server-generated unique id for this specific detected opportunity. */
+  opportunityId: string;
+  attackerTokenId: string;
+  /** Owner of the attacker token at detection time (null for NPCs). */
+  attackerOwnerUserId: string | null;
+  moverTokenId: string;
+  /** What provoked it — a move out of reach, or a spell cast while adjacent. */
+  trigger: 'movement' | 'spell';
+  /** Wall-clock ms when the server issued it; used for the staleness TTL. */
+  issuedAtMs: number;
+}
+
 export interface RoomState {
   sessionId: string;
   roomCode: string;
@@ -220,6 +247,15 @@ export interface RoomState {
    */
   mobileMeleeTargets: Map<string, Set<string>>;
   /**
+   * Server-authoritative registry of opportunity attacks the server has
+   * actually detected and prompted for. Keyed by
+   * `${attackerTokenId}::${moverTokenId}`. See {@link PendingOpportunity}
+   * — the execute path claims (and deletes) a matching entry before
+   * resolving, which is what makes OAs one-shot and rejects fabricated,
+   * stale, declined, duplicate, or concurrent executions. In memory only.
+   */
+  pendingOpportunities: Map<string, PendingOpportunity>;
+  /**
    * Legendary actions budget. tokenId → { max, remaining }. Populated
    * on-demand by the DM via !legendary set. Remaining is reset to max
    * at the start of that token's own turn (5e RAW — you regain your
@@ -320,6 +356,7 @@ export function createRoom(sessionId: string, roomCode: string, dmUserId: string
     roundHooks: [],
     tokenMeleeReach: new Map(),
     mobileMeleeTargets: new Map(),
+    pendingOpportunities: new Map(),
     legendaryActions: new Map(),
     legendaryResistance: new Map(),
     lairActionTokens: new Set(),

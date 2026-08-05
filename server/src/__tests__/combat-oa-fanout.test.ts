@@ -162,6 +162,7 @@ function seedRoom(): void {
 
 function oppFrom(attackerOwnerUserId: string | null): OAOpportunity {
   return {
+    opportunityId: 'opp-fanout',
     attackerTokenId: 'attacker-token',
     attackerName: 'Attacker',
     attackerOwnerUserId,

@@ -488,6 +488,14 @@ export const combatOaExecuteSchema = z.object({
   moverTokenId: z.string().min(1),
 });
 
+// Player/DM dismissed an OA prompt. Carries the same pair as execute so
+// the server can drop the matching pending opportunity, ensuring a
+// declined prompt can't later be executed.
+export const combatOaDeclineSchema = z.object({
+  attackerTokenId: z.string().min(1),
+  moverTokenId: z.string().min(1),
+});
+
 export const combatSpellCastAttemptSchema = z.object({
   castId: z.string().min(1),
   casterTokenId: z.string().min(1).optional(),

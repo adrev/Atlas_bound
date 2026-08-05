@@ -1,14 +1,99 @@
+import { v4 as uuidv4 } from 'uuid';
 import type { Token, WeaponMaterial } from '@dnd-vtt/shared';
-import { getRoom } from '../utils/roomState.js';
+import { getRoom, type PendingOpportunity, type RoomState } from '../utils/roomState.js';
 import pool from '../db/connection.js';
 import * as CombatService from './CombatService.js';
 
 export interface OAOpportunity {
+  /**
+   * Server-issued id for this specific detected opportunity. Echoed to
+   * the client in the prompt so it can be surfaced/logged; the server
+   * matches executions by attacker/mover pair (see
+   * {@link claimPendingOpportunity}), so the client is never trusted to
+   * return the id.
+   */
+  opportunityId: string;
   attackerTokenId: string;
   attackerName: string;
   attackerOwnerUserId: string | null;
   moverTokenId: string;
   moverName: string;
+}
+
+/**
+ * How long a detected-but-unexecuted opportunity stays claimable. An OA
+ * is resolved within a couple of seconds of the prompt in practice; this
+ * TTL is a backstop so a prompt that was never acted on can't be
+ * resurrected turns later (e.g. after the attacker's reaction would have
+ * refreshed). Comfortably longer than the client's prompt lifetime.
+ */
+const PENDING_OA_TTL_MS = 90_000;
+
+function opportunityKey(attackerTokenId: string, moverTokenId: string): string {
+  return `${attackerTokenId}::${moverTokenId}`;
+}
+
+/**
+ * Record a batch of freshly detected opportunities into the room's
+ * authoritative registry. Called from the detectors so an OA prompt can
+ * never be emitted without a matching claimable record, and vice versa.
+ * The latest detection for a given attacker/mover pair wins (re-detecting
+ * on a further move just refreshes the timestamp).
+ */
+function registerOpportunities(
+  room: RoomState,
+  opportunities: OAOpportunity[],
+  trigger: PendingOpportunity['trigger'],
+  nowMs: number
+): void {
+  for (const opp of opportunities) {
+    room.pendingOpportunities.set(opportunityKey(opp.attackerTokenId, opp.moverTokenId), {
+      opportunityId: opp.opportunityId,
+      attackerTokenId: opp.attackerTokenId,
+      attackerOwnerUserId: opp.attackerOwnerUserId,
+      moverTokenId: opp.moverTokenId,
+      trigger,
+      issuedAtMs: nowMs,
+    });
+  }
+}
+
+/**
+ * Atomically look up and consume the pending opportunity for this exact
+ * attacker/mover pair. Returns the record on success (and removes it so
+ * it can never be replayed), or null when there is no live opportunity —
+ * i.e. the pair was fabricated, the prompt was already executed or
+ * declined, or it has aged past the TTL. Runs entirely synchronously with
+ * no `await` between the lookup and the delete, so two execute events
+ * that race can never both claim the same opportunity.
+ */
+export function claimPendingOpportunity(
+  room: RoomState,
+  attackerTokenId: string,
+  moverTokenId: string,
+  nowMs: number = Date.now()
+): PendingOpportunity | null {
+  const key = opportunityKey(attackerTokenId, moverTokenId);
+  const pending = room.pendingOpportunities.get(key);
+  if (!pending) return null;
+  // Consume unconditionally: a stale entry is still spent so a later
+  // (equally stale) retry can't find it either.
+  room.pendingOpportunities.delete(key);
+  if (nowMs - pending.issuedAtMs > PENDING_OA_TTL_MS) return null;
+  return pending;
+}
+
+/**
+ * Drop the pending opportunity for a pair without resolving it — used
+ * when the attacker's owner (or the DM) declines the prompt, so a later
+ * execute for the same pair is correctly rejected.
+ */
+export function declinePendingOpportunity(
+  room: RoomState,
+  attackerTokenId: string,
+  moverTokenId: string
+): void {
+  room.pendingOpportunities.delete(opportunityKey(attackerTokenId, moverTokenId));
 }
 
 const CONDITIONS_THAT_PREVENT_OA = new Set([
@@ -111,6 +196,7 @@ export function detectOpportunityAttacks(
 
     if (wasInReach && !isInReach) {
       opportunities.push({
+        opportunityId: uuidv4(),
         attackerTokenId: enemy.id,
         attackerName: enemy.name,
         attackerOwnerUserId: enemy.ownerUserId,
@@ -122,6 +208,7 @@ export function detectOpportunityAttacks(
       // pike, quarterstaff, or spear, other creatures provoke an
       // opportunity attack from you when they enter your reach."
       opportunities.push({
+        opportunityId: uuidv4(),
         attackerTokenId: enemy.id,
         attackerName: enemy.name,
         attackerOwnerUserId: enemy.ownerUserId,
@@ -130,6 +217,12 @@ export function detectOpportunityAttacks(
       });
     }
   }
+
+  // Record every detected OA as a claimable, one-shot pending record
+  // BEFORE the caller prompts anyone. Execution matches against these,
+  // so a prompt can never be emitted without a matching authoritative
+  // record (and a fabricated pair can never be executed).
+  registerOpportunities(room, opportunities, 'movement', Date.now());
 
   return opportunities;
 }
@@ -199,6 +292,7 @@ export function detectSpellCastingOA(sessionId: string, casterTokenId: string): 
     );
     if (dist <= reachPx + 0.5) {
       opportunities.push({
+        opportunityId: uuidv4(),
         attackerTokenId: enemy.id,
         attackerName: enemy.name,
         attackerOwnerUserId: enemy.ownerUserId,
@@ -207,6 +301,10 @@ export function detectSpellCastingOA(sessionId: string, casterTokenId: string): 
       });
     }
   }
+
+  // Same authoritative registration as movement OAs, tagged 'spell' so a
+  // spell-cast-provoked OA is equally bound to a server-issued record.
+  registerOpportunities(room, opportunities, 'spell', Date.now());
 
   return opportunities;
 }
@@ -235,9 +333,45 @@ export async function executeOpportunityAttack(
 ): Promise<OAExecutionResult> {
   const room = getRoom(sessionId);
   if (!room) return { success: false, messages: ['No room'] };
+
+  // \u2500\u2500 Authoritative gate \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+  // Claim the server-issued pending opportunity for this exact pair
+  // FIRST, and do it synchronously (no await before the delete inside
+  // claimPendingOpportunity). This is the one-shot consume that makes
+  // the OA:
+  //   \u2022 bound to a real server-detected opportunity (fabricated
+  //     attacker/mover pairs have no record \u2192 rejected),
+  //   \u2022 immune to duplicate / concurrently-repeated execute events
+  //     (the first claim deletes it; the racing second finds nothing),
+  //   \u2022 immune to stale or already-declined prompts (consumed / TTL'd).
+  // The reach geometry that provoked the OA is no longer true here (the
+  // mover has moved away), so this record \u2014 not a re-check \u2014 is the
+  // proof the OA is legitimate.
+  const pending = claimPendingOpportunity(room, attackerTokenId, moverTokenId);
+  if (!pending) {
+    return {
+      success: false,
+      messages: ['\u26A0 No pending opportunity attack for this target.'],
+    };
+  }
+
+  // Revalidate the volatile state the pending record can't vouch for:
+  // combat may have ended and tokens may have been removed since the
+  // opportunity was issued.
+  if (!room.combatState?.active) return { success: false, messages: ['Combat is not active.'] };
   const attacker = room.tokens.get(attackerTokenId);
   const mover = room.tokens.get(moverTokenId);
   if (!attacker || !mover) return { success: false, messages: ['Missing token'] };
+
+  // Re-check hostility at execution time \u2014 factions can flip (charm,
+  // control) between the prompt and the click, and an OA only lands on
+  // an enemy. (The record was issued against a then-hostile mover.)
+  if (!isHostileTo(attacker, mover)) {
+    return {
+      success: false,
+      messages: [`\u26A0 ${mover.name} is no longer a valid opportunity-attack target.`],
+    };
+  }
 
   const economy = room.actionEconomies.get(attacker.id);
   if (economy?.reaction)
