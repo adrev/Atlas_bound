@@ -7,7 +7,7 @@ import {
 import * as ConditionService from '../ConditionService.js';
 import * as CombatService from '../CombatService.js';
 import pool from '../../db/connection.js';
-import type { Token } from '@dnd-vtt/shared';
+import type { Feature, Token } from '@dnd-vtt/shared';
 import { resolveViewingMapId, type PlayerContext } from '../../utils/roomState.js';
 import { tokenVisibleToPlayer } from '../../utils/tokenVisibility.js';
 import { tokenConditionChanges } from '../../utils/conditionSources.js';
@@ -289,78 +289,208 @@ async function handlePotion(c: ChatCommandContext): Promise<boolean> {
   return true;
 }
 
-// ────── !lucky (Lucky feat reroll) ────────────────────────────
+// ────── !lucky (Lucky feat resource) ──────────────────────────
 /**
- * Lucky feat: 3 luck points per long rest. When you make an attack
- * roll, ability check, or saving throw, you can spend 1 luck point
- * to roll an additional d20 and choose which of the two to use.
- * (If an attacker rolls with advantage against you, you can also
- * spend a point to force them to use the lower — omitted here; DM
- * adjudicates that variant.)
+ * Lucky feat: 3 luck points, all restored by a long rest. Spending a
+ * point rolls one extra d20 the player may swap in for an attack
+ * roll, ability check, or saving throw. (The advantage-flip variant
+ * against attackers is DM-adjudicated and out of scope.)
  *
- * We track points as a session-level counter keyed on the character
- * id so it survives across individual rolls. Reset on long rest via
- * a dedicated flag — for now, the DM runs !lucky reset after any
- * long rest.
+ * The points are authoritative character state, never module memory:
+ * the caller's sheet must carry the actual Lucky *feat* feature
+ * (`sourceType: 'feat'`). The Halfling racial trait of the same name
+ * rerolls natural 1s and has no point pool, so a racial entry never
+ * qualifies, and the feat is never invented for an ineligible sheet.
+ * Points persist in that feat entry's `usesTotal`/`usesRemaining`
+ * with `resetOn: 'long'` — metadata RestService's long rest already
+ * restores (and a short rest correctly does not); missing or
+ * malformed resource fields on a real feat entry are normalized on
+ * the next spend, only ever inside that entry.
+ *
+ * `use` fails closed around a version-guarded write: the selected
+ * `characters.version` guards the UPDATE (`WHERE version = <selected>
+ * RETURNING version`), and a DB error, zero-row conflict, unusable
+ * selected/returned version, missing feat, exhausted pool, malformed
+ * feature data, off-map token, or bad subcommand produces only a
+ * private whisper — no write, no roll, no fanout, no public line.
+ * The d20 is rolled and announced only after the commit; the public
+ * line reveals the extra d20 but never the remaining pool, which
+ * travels only through the dispatcher's stat-scoped wrapper (DM +
+ * owner tabs, widened only by the sharing toggles). `status` is a
+ * private whisper. The caller's token resolves only on the map they
+ * are viewing — no off-map newest-token fallback. The old DM-only
+ * `!lucky reset` is removed: `!rest long` is the reset.
  */
-const luckPoints = new Map<string, number>();
-const LUCKY_MAX = 3;
+const LUCKY_POINTS = 3;
+
+function isLuckyFeat(feature: Feature): boolean {
+  return feature?.sourceType === 'feat' && /^lucky$/i.test(String(feature.name ?? '').trim());
+}
+
+/** Same viewing-map + visibility authorization as the potion
+ *  self-default — never an owned token on another map. */
+function resolveLuckyCallerToken(ctx: PlayerContext): Token | null {
+  return resolvePotionToken(ctx, (t) => t.ownerUserId === ctx.player.userId);
+}
+
+function parseLuckyFeatures(value: unknown): Feature[] | null {
+  try {
+    const parsed = typeof value === 'string' ? JSON.parse(value) : value;
+    return Array.isArray(parsed) ? (parsed as Feature[]) : null;
+  } catch {
+    return null;
+  }
+}
+
+function normalizeLuckyPool(feature: Feature): { total: number; remaining: number } {
+  const total = Number.isFinite(Number(feature.usesTotal))
+    ? Math.max(1, Math.floor(Number(feature.usesTotal)))
+    : LUCKY_POINTS;
+  const remaining = Number.isFinite(Number(feature.usesRemaining))
+    ? Math.min(total, Math.max(0, Math.floor(Number(feature.usesRemaining))))
+    : total;
+  return { total, remaining };
+}
 
 async function handleLucky(c: ChatCommandContext): Promise<boolean> {
-  const arg = c.rest.trim().toLowerCase();
-  const caller = resolveCallerToken(c.ctx);
+  const args = c.rest.split(/\s+/).filter(Boolean);
+  const sub = args.length === 0 ? 'status' : args[0].toLowerCase();
+  if (args.length > 1 || !['use', 'spend', 'status', 'reset'].includes(sub)) {
+    whisperToCaller(
+      c.io,
+      c.ctx,
+      '!lucky: usage `!lucky use` | `!lucky status` — luck points refresh on a long rest.'
+    );
+    return true;
+  }
+  if (sub === 'reset') {
+    whisperToCaller(
+      c.io,
+      c.ctx,
+      '!lucky reset was removed — luck points are restored by a long rest (`!rest long`).'
+    );
+    return true;
+  }
+
+  const caller = resolveLuckyCallerToken(c.ctx);
   if (!caller?.characterId) {
-    whisperToCaller(c.io, c.ctx, '!lucky: no owned PC token on this map.');
+    whisperToCaller(c.io, c.ctx, '!lucky: no owned token with a character sheet on this map.');
     return true;
   }
 
-  // Optional feat check — don't hard-block so Halfling racial Lucky
-  // also works (Halfling Lucky auto-rerolls 1s; the feat is
-  // different, but either way the rerolling intent is the same).
-  let available = luckPoints.get(caller.characterId);
-  if (available === undefined) {
-    available = LUCKY_MAX;
-    luckPoints.set(caller.characterId, available);
+  const { rows } = await pool.query('SELECT features, version FROM characters WHERE id = $1', [
+    caller.characterId,
+  ]);
+  const row = rows[0] as Record<string, unknown> | undefined;
+  if (!row) {
+    whisperToCaller(c.io, c.ctx, '!lucky: character not found.');
+    return true;
   }
-
-  if (arg === 'reset') {
-    if (c.ctx.player.role !== 'dm') {
-      whisperToCaller(c.io, c.ctx, '!lucky reset: DM only (fires on long rest).');
-      return true;
-    }
-    luckPoints.set(caller.characterId, LUCKY_MAX);
-    broadcastSystem(
+  const features = parseLuckyFeatures(row.features);
+  if (!features) {
+    whisperToCaller(
       c.io,
       c.ctx,
-      `🍀 ${caller.name} — Lucky points refreshed (${LUCKY_MAX}/${LUCKY_MAX}).`
+      '!lucky: the character feature data is invalid — no luck point was spent. Refresh or re-sync the character sheet.'
+    );
+    return true;
+  }
+  const featIndex = features.findIndex(isLuckyFeat);
+  if (featIndex < 0) {
+    whisperToCaller(
+      c.io,
+      c.ctx,
+      `!lucky: ${caller.name} doesn't have the Lucky feat. (The Halfling racial trait rerolls natural 1s on its own and has no luck points.)`
+    );
+    return true;
+  }
+  const { total, remaining } = normalizeLuckyPool(features[featIndex]);
+
+  if (sub === 'status') {
+    whisperToCaller(
+      c.io,
+      c.ctx,
+      `🍀 Lucky (feat): ${remaining}/${total} luck points. Refreshes on a long rest.`
     );
     return true;
   }
 
-  if (arg === 'status' || !arg) {
-    whisperToCaller(c.io, c.ctx, `🍀 Lucky points: ${available}/${LUCKY_MAX}.`);
-    return true;
-  }
-
-  if (arg === 'use' || arg === 'spend') {
-    if (available <= 0) {
-      whisperToCaller(c.io, c.ctx, '!lucky: no points remaining. Long rest to refresh.');
-      return true;
-    }
-    luckPoints.set(caller.characterId, available - 1);
-    const d20 = Math.floor(Math.random() * 20) + 1;
-    broadcastSystem(
+  // use / spend
+  if (remaining <= 0) {
+    whisperToCaller(
       c.io,
       c.ctx,
-      `🍀 ${caller.name} spends Lucky — extra d20 = **${d20}**. Use either this or the original. (${available - 1}/${LUCKY_MAX} left)`
+      '!lucky: no luck points remaining. Take a long rest to refresh them.'
+    );
+    return true;
+  }
+  const expectedVersion = asAuthoritativeVersion(row.version);
+  if (expectedVersion === null) {
+    whisperToCaller(
+      c.io,
+      c.ctx,
+      '!lucky: could not verify the character sheet state — no luck point was spent. Try again.'
+    );
+    return true;
+  }
+  const updatedFeatures = features.map((feature, index) =>
+    index === featIndex
+      ? { ...feature, usesTotal: total, usesRemaining: remaining - 1, resetOn: 'long' as const }
+      : feature
+  );
+
+  let updated: unknown[];
+  try {
+    ({ rows: updated } = await pool.query(
+      'UPDATE characters SET features = $1 WHERE id = $2 AND version = $3 RETURNING version',
+      [JSON.stringify(updatedFeatures), caller.characterId, expectedVersion]
+    ));
+  } catch (e) {
+    console.warn('[!lucky] feature write failed:', e);
+    whisperToCaller(
+      c.io,
+      c.ctx,
+      '!lucky: saving the spend failed — no luck point was spent. Try again.'
+    );
+    return true;
+  }
+  if (updated.length === 0) {
+    whisperToCaller(
+      c.io,
+      c.ctx,
+      '!lucky: the character sheet changed while processing — no luck point was spent. Try again.'
+    );
+    return true;
+  }
+  const authoritativeVersion = asAuthoritativeVersion(
+    (updated[0] as Record<string, unknown>).version
+  );
+  if (authoritativeVersion === null) {
+    // The write committed but RETURNING gave no usable version, so no
+    // authoritative payload can be fanned out. Fail closed post-commit:
+    // tell the caller the truth and stop — no roll, no announcement.
+    whisperToCaller(
+      c.io,
+      c.ctx,
+      '!lucky: the luck point was spent, but synchronization failed — refresh the character sheet before retrying.'
     );
     return true;
   }
 
-  whisperToCaller(
+  // Exact remaining pool goes only through the dispatcher's
+  // stat-scoped wrapper (DM + owner tabs, widened by sharing
+  // toggles), with the authoritative post-write version.
+  c.io.to(c.ctx.room.sessionId).emit('character:updated', {
+    characterId: caller.characterId,
+    changes: { features: updatedFeatures, version: authoritativeVersion },
+  });
+  // Rolled only after the commit; the public line reveals the extra
+  // d20 but never the remaining pool.
+  const d20 = Math.floor(Math.random() * 20) + 1;
+  broadcastSystem(
     c.io,
     c.ctx,
-    '!lucky: usage `!lucky use` | `!lucky status` | `!lucky reset` (DM)'
+    `🍀 ${caller.name} spends a luck point (Lucky feat) — extra d20 = **${d20}**. Use either this roll or the original.`
   );
   return true;
 }
