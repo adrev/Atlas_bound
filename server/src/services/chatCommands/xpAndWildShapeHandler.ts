@@ -6,9 +6,16 @@ import {
 } from '../ChatCommands.js';
 import pool from '../../db/connection.js';
 import type { PoolClient } from 'pg';
-import type { Token } from '@dnd-vtt/shared';
+import type { Token, ActionEconomy } from '@dnd-vtt/shared';
 import { resolveViewingMapId, type PlayerContext } from '../../utils/roomState.js';
 import { tokenVisibleToPlayer } from '../../utils/tokenVisibility.js';
+import {
+  readWildShapeColumn,
+  serializeWildShapeState,
+  type WildShapeState,
+} from '../../utils/wildShapeState.js';
+import { emitWildShapePrivate } from '../../utils/wildShapeSync.js';
+import * as CombatService from '../CombatService.js';
 
 /**
  * Two kinda-orthogonal helpers bundled here:
@@ -38,12 +45,10 @@ import { tokenVisibleToPlayer } from '../../utils/tokenVisibility.js';
  *   sharing toggles) and DM-facing whispers; the public line carries
  *   the award amount and eligibility, never exact totals.
  *
- *   Wild Shape (Druid) — announce + HP swap. Full token-replacement
- *   is out of scope; this tracks the beast HP alongside the Druid's
- *   own HP so damage comes off the beast pool first, then the Druid
- *   when it reverts.
- *     !wildshape <beast-name> <hp> [ac] [speed]
- *     !revert
+ *   Wild Shape (Druid) — server-authoritative form tracking persisted
+ *   on `characters.wild_shape`. See the section comment below.
+ *     !wildshape <beast name>
+ *     !revert | !beast dmg|heal|status
  */
 
 // XP thresholds per character level (PHB p.15).
@@ -55,14 +60,6 @@ const MAX_LEVEL = 20;
 const MAX_AWARD = 999999;
 // Stored totals stay comfortably inside INT4 even after many max awards.
 const MAX_TOTAL_XP = 2_000_000_000;
-
-function resolveCallerToken(ctx: PlayerContext): Token | null {
-  const all = Array.from(ctx.room.tokens.values());
-  const own = all
-    .filter((t) => (t as Token).ownerUserId === ctx.player.userId)
-    .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
-  return own[0] ?? null;
-}
 
 // ────── !xp ──────────────────────────────────────────────────
 
@@ -109,8 +106,8 @@ function eligibleLevelForXp(xp: number): number {
  * XP-specific token resolution: only tokens on the map the caller is
  * currently viewing, and (for non-DM callers) only tokens visible to
  * them. A cross-map or hidden token gets the same "not found" as a
- * nonexistent name. Mirrors the potion resolver; the room-wide
- * resolveCallerToken above stays untouched for Wild Shape.
+ * nonexistent name. Mirrors the potion resolver; Wild Shape reuses it
+ * via resolveWildShapeCaller below.
  */
 function resolveXpToken(ctx: PlayerContext, match: (t: Token) => boolean): Token | null {
   const viewingMapId = resolveViewingMapId(ctx.room, ctx.player.userId, ctx.player.role);
@@ -425,162 +422,800 @@ async function handleXP(c: ChatCommandContext): Promise<boolean> {
   return handleXpAward(c, parts);
 }
 
-// ────── !wildshape <beast> <hp> [ac] [speed] ────────────────
+// ────── !wildshape <beast name> ──────────────────────────────
 /**
- * Druid Wild Shape. We don't swap the token; instead we track the
- * beast's HP pool in memory and apply damage to it first, falling
- * through to the Druid when the beast drops to 0. On !revert we
- * restore the Druid's state and drop the beast tracking.
+ * Druid Wild Shape — server-authoritative. The old implementation kept
+ * a process-local pool keyed by characterId and trusted the client for
+ * the beast's HP/AC/speed; both are gone. Form statistics come only
+ * from trusted `compendium_monsters` rows (server-cached SRD/Open5e
+ * data — session-created `custom_monsters` are deliberately excluded
+ * because players can author those), and the active form persists in
+ * `characters.wild_shape` guarded by `characters.version`, so
+ * restarts, reconnects, and multiple instances all agree.
  *
- * Keep in room state — wildShapes: Map<characterId, { beastName, beastHp, beastMax, beastAc, beastSpeed, druidHpAtShift }>.
- * When damage is applied, !wildshape-aware handler subtracts from
- * beastHp first. Full pipe wiring is complex so this is announce +
- * HP pool mostly for the player to reference; the DM can apply
- * damage to the beast pool via a normal HP adjustment flow.
+ *   !wildshape <beast name>   transform (stats looked up server-side)
+ *   !revert                   voluntarily end the form
+ *   !beast dmg|heal|status    bookkeeping against the persisted form
+ *
+ * 2014 rules enforced:
+ *   - Owned current-map Druid token, Druid level 2+, 2 uses per short
+ *     rest (level 20 Archdruid: unlimited).
+ *   - CR gate: L2 max CR 1/4, L4 max 1/2, L8 max 1. Circle of the
+ *     Moon: CR 1 at L2, floor(level/3) from L6.
+ *   - Movement gate (both circles — Moon's Circle Forms lifts only
+ *     the CR column): no swim speed before L4, no fly speed before L8.
+ *   - In combat: only on the druid's turn; costs the action (bonus
+ *     action with Combat Wild Shape). Reverting costs a bonus action.
+ *   - Excess damage past the form's HP carries into the druid and
+ *     ends the form atomically (one guarded UPDATE).
+ *
+ * Privacy: exact form HP and remaining uses travel only via whispers
+ * to the caller and the dispatcher's stat-scoped `character:updated`
+ * wrapper (DM + owner tabs). Public lines carry the form name/CR and
+ * typed amounts, never pool totals.
  */
-const wildShapePools = new Map<
-  string,
-  {
-    beastName: string;
-    beastHp: number;
-    beastMax: number;
-    beastAc: number | null;
-    beastSpeed: number | null;
+
+const WILD_SHAPE_USES = 2;
+const ARCHDRUID_LEVEL = 20;
+const MAX_BEAST_DMG = 999;
+
+interface Feature {
+  name?: unknown;
+  usesTotal?: unknown;
+  usesRemaining?: unknown;
+  resetOn?: unknown;
+  [key: string]: unknown;
+}
+
+/** Owned token with a character sheet on the caller's current viewing
+ *  map — never an off-map or invisible token. */
+function resolveWildShapeCaller(ctx: PlayerContext): Token | null {
+  return resolveXpToken(ctx, (t) => t.ownerUserId === ctx.player.userId && Boolean(t.characterId));
+}
+
+function parseFeatureList(value: unknown): Feature[] | null {
+  try {
+    const parsed = typeof value === 'string' ? JSON.parse(value) : value;
+    if (!Array.isArray(parsed)) return null;
+    return parsed.every((entry) => entry !== null && typeof entry === 'object')
+      ? (parsed as Feature[])
+      : null;
+  } catch {
+    return null;
   }
->();
+}
+
+/** Druid level from the class string: "Druid" alone = total level,
+ *  "Druid 5/Fighter 2" = 5. Unparseable multiclass fails closed. */
+function druidLevel(className: string, totalLevel: number): number | null {
+  const match = className.match(/(?:^|\/)\s*druid(?:\s*\([^)]*\))?\s+(\d+)/i);
+  if (match) return parseInt(match[1], 10);
+  if (/^\s*druid(?:\s*\([^)]*\))?\s*$/i.test(className)) return totalLevel;
+  return null;
+}
+
+function isMoonDruid(className: string, features: Feature[]): boolean {
+  if (/moon/i.test(className)) return true;
+  return features.some((feature) =>
+    /combat\s+wild\s+shape|circle\s+of\s+the\s+moon/i.test(String(feature?.name ?? ''))
+  );
+}
+
+function wildShapeCrCap(level: number, moon: boolean): number {
+  if (moon) return level >= 6 ? Math.floor(level / 3) : 1;
+  if (level >= 8) return 1;
+  if (level >= 4) return 0.5;
+  return 0.25;
+}
+
+function formatCr(cr: number): string {
+  if (cr === 0.125) return '1/8';
+  if (cr === 0.25) return '1/4';
+  if (cr === 0.5) return '1/2';
+  return String(cr);
+}
+
+/** Uses pool from the Wild Shape feature entry. The 2014 feature is
+ *  always exactly two uses — imported metadata can't raise the cap. */
+function wildShapeUses(features: Feature[]): { index: number; remaining: number } {
+  const index = features.findIndex((feature) =>
+    /^wild\s*shape$/i.test(String(feature?.name ?? '').trim())
+  );
+  if (index < 0) return { index, remaining: WILD_SHAPE_USES };
+  const raw = Number(features[index].usesRemaining);
+  const remaining = Number.isFinite(raw)
+    ? Math.max(0, Math.min(WILD_SHAPE_USES, Math.floor(raw)))
+    : WILD_SHAPE_USES;
+  return { index, remaining };
+}
+
+/** Spend one use; seeds the feature (resetOn short so RestService
+ *  restores it) when the sheet doesn't carry it yet. */
+function spendWildShapeUse(features: Feature[], index: number, remaining: number): Feature[] {
+  const nextRemaining = remaining - 1;
+  if (index < 0) {
+    return [
+      ...features,
+      {
+        name: 'Wild Shape',
+        description: 'Magically assume the shape of a beast you have seen before.',
+        source: 'Druid',
+        sourceType: 'class',
+        usesTotal: WILD_SHAPE_USES,
+        usesRemaining: nextRemaining,
+        resetOn: 'short',
+      },
+    ];
+  }
+  return features.map((feature, i) =>
+    i === index
+      ? {
+          ...feature,
+          usesTotal: WILD_SHAPE_USES,
+          usesRemaining: nextRemaining,
+          resetOn: 'short',
+        }
+      : feature
+  );
+}
+
+interface TrustedBeast {
+  slug: string;
+  name: string;
+  hp: number;
+  ac: number | null;
+  speed: Record<string, number>;
+  cr: number;
+}
+
+/**
+ * Trusted-source lookup: only server-cached `compendium_monsters`
+ * rows, and only rows whose type is exactly Beast. Every numeric
+ * field is bounds-checked — a cache row that fails validation is
+ * treated as not found rather than partially trusted.
+ */
+async function lookupTrustedBeast(input: string): Promise<TrustedBeast | 'not-beast' | null> {
+  const lower = input.toLowerCase();
+  const slug = lower.replace(/\s+/g, '-');
+  const { rows } = await pool.query(
+    `SELECT slug, name, type, armor_class, hit_points, speed, cr_numeric
+       FROM compendium_monsters
+      WHERE slug = $1 OR LOWER(name) = $2
+      ORDER BY CASE WHEN slug = $1 THEN 0 ELSE 1 END, slug
+      LIMIT 1`,
+    [slug, lower]
+  );
+  const row = rows[0] as Record<string, unknown> | undefined;
+  if (!row) return null;
+  if (
+    String(row.type ?? '')
+      .trim()
+      .toLowerCase() !== 'beast'
+  )
+    return 'not-beast';
+  const hp = Number(row.hit_points);
+  const cr = Number(row.cr_numeric);
+  if (!Number.isInteger(hp) || hp < 1 || hp > 999) return null;
+  if (!Number.isFinite(cr) || cr < 0 || cr > 30) return null;
+  const acRaw = row.armor_class;
+  const ac =
+    acRaw === null || acRaw === undefined
+      ? null
+      : Number.isInteger(Number(acRaw)) && Number(acRaw) >= 1 && Number(acRaw) <= 30
+        ? Number(acRaw)
+        : null;
+  const speed: Record<string, number> = {};
+  try {
+    const parsed = typeof row.speed === 'string' ? JSON.parse(row.speed) : (row.speed ?? {});
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      for (const [key, value] of Object.entries(parsed as Record<string, unknown>)) {
+        const feet = Number(value);
+        if (Number.isInteger(feet) && feet >= 0 && feet <= 500) speed[key] = feet;
+      }
+    }
+  } catch {
+    /* unreadable speed = no movement claims; gates below stay safe */
+  }
+  return {
+    slug: String(row.slug),
+    name: String(row.name || input),
+    hp,
+    ac,
+    speed,
+    cr,
+  };
+}
+
+function describeSpeed(speed: Record<string, number>): string {
+  const parts = Object.entries(speed)
+    .filter(([, feet]) => feet > 0)
+    .map(([kind, feet]) => `${kind} ${feet} ft`);
+  return parts.length > 0 ? parts.join(', ') : 'walk —';
+}
+
+interface DruidRow {
+  row: Record<string, unknown>;
+  name: string;
+  version: number;
+}
+
+async function loadDruidRow(characterId: string): Promise<DruidRow | null> {
+  const { rows } = await pool.query(
+    'SELECT name, class, level, hit_points, temp_hit_points, features, wild_shape, version FROM characters WHERE id = $1',
+    [characterId]
+  );
+  const row = rows[0] as Record<string, unknown> | undefined;
+  if (!row) return null;
+  const version = asAuthoritativeVersion(row.version);
+  if (version === null) return null;
+  return { row, name: String(row.name || 'Druid'), version };
+}
+
+type GuardedWrite =
+  | { ok: true; version: number }
+  | { ok: false; reason: 'error' | 'conflict' | 'version' };
+
+/**
+ * The single write path for every Wild Shape mutation: one UPDATE,
+ * optimistically guarded on the version selected in the same command,
+ * so form HP, the uses pool, and any carried-over druid HP commit
+ * atomically or not at all.
+ */
+async function commitWildShape(
+  characterId: string,
+  expectedVersion: number,
+  sets: { wildShape: WildShapeState | null; features?: Feature[]; hitPoints?: number }
+): Promise<GuardedWrite> {
+  const clauses = ['wild_shape = $1'];
+  const params: unknown[] = [serializeWildShapeState(sets.wildShape)];
+  let idx = 2;
+  if (sets.features !== undefined) {
+    clauses.push(`features = $${idx++}`);
+    params.push(JSON.stringify(sets.features));
+  }
+  if (sets.hitPoints !== undefined) {
+    clauses.push(`hit_points = $${idx++}`);
+    params.push(sets.hitPoints);
+  }
+  params.push(characterId, expectedVersion);
+  let rows: unknown[];
+  try {
+    ({ rows } = await pool.query(
+      `UPDATE characters SET ${clauses.join(', ')} WHERE id = $${idx} AND version = $${idx + 1} RETURNING version`,
+      params
+    ));
+  } catch (error) {
+    console.warn('[!wildshape] guarded write failed:', error);
+    return { ok: false, reason: 'error' };
+  }
+  if (rows.length === 0) return { ok: false, reason: 'conflict' };
+  const version = asAuthoritativeVersion((rows[0] as Record<string, unknown>).version);
+  if (version === null) return { ok: false, reason: 'version' };
+  return { ok: true, version };
+}
+
+function whisperGuardFailure(
+  c: ChatCommandContext,
+  command: string,
+  reason: 'error' | 'conflict' | 'version'
+): void {
+  if (reason === 'version') {
+    whisperToCaller(
+      c.io,
+      c.ctx,
+      `${command}: the change was saved but synchronization failed — refresh the character sheet before retrying.`
+    );
+    return;
+  }
+  whisperToCaller(
+    c.io,
+    c.ctx,
+    `${command}: nothing was changed — ${
+      reason === 'conflict' ? 'the character sheet changed while processing' : 'the save failed'
+    }. Refresh and try again.`
+  );
+}
+
+/**
+ * Combat gate: when combat is live and the caller's token is a
+ * combatant, Wild Shape actions are legal only on their own turn and
+ * cost the appropriate action. Returns the economy to mark AFTER the
+ * DB write commits, or an error string. Out of combat (or a token
+ * that isn't fighting) passes freely.
+ */
+function wildShapeCombatGate(
+  c: ChatCommandContext,
+  tokenId: string,
+  cost: 'action' | 'bonusAction'
+): { economy: ActionEconomy | null } | { error: string } {
+  const combatState = c.ctx.room.combatState;
+  if (!combatState?.active) return { economy: null };
+  const combatant = combatState.combatants.find((entry) => entry.tokenId === tokenId);
+  if (!combatant) return { economy: null };
+  const current = combatState.combatants[combatState.currentTurnIndex];
+  if (current?.tokenId !== tokenId) {
+    return { error: 'only on your own turn while in combat.' };
+  }
+  const economy = c.ctx.room.actionEconomies.get(tokenId);
+  if (!economy) {
+    return { error: 'combat action state is unavailable — nothing was spent; refresh and retry.' };
+  }
+  if (cost === 'action' && economy.action) {
+    return { error: 'your action is already spent this turn.' };
+  }
+  if (cost === 'bonusAction' && economy.bonusAction) {
+    return { error: 'your bonus action is already spent this turn.' };
+  }
+  return { economy };
+}
+
+function markEconomy(
+  c: ChatCommandContext,
+  tokenId: string,
+  economy: ActionEconomy | null,
+  cost: 'action' | 'bonusAction'
+): void {
+  if (!economy) return;
+  if (cost === 'action') economy.action = true;
+  else economy.bonusAction = true;
+  c.io.to(c.ctx.room.sessionId).emit('combat:action-used', {
+    tokenId,
+    actionType: cost,
+    economy,
+  });
+}
 
 async function handleWildShape(c: ChatCommandContext): Promise<boolean> {
-  const parts = c.rest.split(/\s+/).filter(Boolean);
-  if (parts.length < 2) {
-    whisperToCaller(c.io, c.ctx, '!wildshape: usage `!wildshape <beast-name> <hp> [ac] [speed]`');
+  const input = c.rest.trim();
+  const parts = input.split(/\s+/).filter(Boolean);
+  if (parts.length === 0) {
+    whisperToCaller(
+      c.io,
+      c.ctx,
+      '!wildshape: usage `!wildshape <beast name>` — form statistics come from the compendium.'
+    );
     return true;
   }
-  const caller = resolveCallerToken(c.ctx);
+  // The old syntax let the caller declare HP/AC/speed. Those numbers
+  // are no longer accepted from the client, full stop.
+  if (parts.some((part) => /^\d+$/.test(part))) {
+    whisperToCaller(
+      c.io,
+      c.ctx,
+      '!wildshape: form statistics are no longer typed in — usage `!wildshape <beast name>` and the server looks the beast up in the compendium.'
+    );
+    return true;
+  }
+  const caller = resolveWildShapeCaller(c.ctx);
   if (!caller?.characterId) {
-    whisperToCaller(c.io, c.ctx, '!wildshape: no owned PC token.');
+    whisperToCaller(
+      c.io,
+      c.ctx,
+      '!wildshape: no owned token with a character sheet on your current map.'
+    );
     return true;
   }
-  const { rows } = await pool.query('SELECT class, level, name FROM characters WHERE id = $1', [
-    caller.characterId,
-  ]);
-  const row = rows[0] as Record<string, unknown> | undefined;
-  const classLower = String(row?.class || '').toLowerCase();
-  if (!classLower.includes('druid')) {
-    whisperToCaller(c.io, c.ctx, `!wildshape: ${caller.name} isn't a Druid.`);
+  const loaded = await loadDruidRow(caller.characterId);
+  if (!loaded) {
+    whisperToCaller(
+      c.io,
+      c.ctx,
+      '!wildshape: could not verify the character state. Nothing was changed.'
+    );
     return true;
   }
-  const druidName = (row?.name as string) || caller.name;
+  const { row, name: druidName, version } = loaded;
+  const className = String(row.class || '');
+  if (!className.toLowerCase().includes('druid')) {
+    whisperToCaller(c.io, c.ctx, `!wildshape: ${druidName} isn't a Druid.`);
+    return true;
+  }
+  const level = druidLevel(className, Number(row.level) || 1);
+  if (level === null) {
+    whisperToCaller(
+      c.io,
+      c.ctx,
+      '!wildshape: could not determine the Druid class level from the sheet (use e.g. "Druid 5/Fighter 2" for multiclass).'
+    );
+    return true;
+  }
+  if (level < 2) {
+    whisperToCaller(
+      c.io,
+      c.ctx,
+      `!wildshape: Wild Shape requires Druid level 2 (${druidName} is Druid level ${level}).`
+    );
+    return true;
+  }
+  const hp = Number(row.hit_points);
+  if (!Number.isFinite(hp) || hp <= 0) {
+    whisperToCaller(c.io, c.ctx, `!wildshape: ${druidName} is at 0 HP and cannot use Wild Shape.`);
+    return true;
+  }
+  const column = readWildShapeColumn(row.wild_shape);
+  if (column.status === 'active') {
+    whisperToCaller(
+      c.io,
+      c.ctx,
+      `!wildshape: already transformed into ${column.state.formName} — \`!revert\` first.`
+    );
+    return true;
+  }
+  if (column.status === 'invalid') {
+    whisperToCaller(
+      c.io,
+      c.ctx,
+      '!wildshape: the stored Wild Shape state is unreadable — run `!revert` to clear it first.'
+    );
+    return true;
+  }
+  const features = parseFeatureList(row.features);
+  if (!features) {
+    whisperToCaller(
+      c.io,
+      c.ctx,
+      '!wildshape: the character feature data is invalid — nothing was spent. Refresh or re-sync the sheet.'
+    );
+    return true;
+  }
+  const moon = isMoonDruid(className, features);
+  const unlimited = level >= ARCHDRUID_LEVEL;
+  const uses = wildShapeUses(features);
+  if (!unlimited && uses.remaining <= 0) {
+    whisperToCaller(
+      c.io,
+      c.ctx,
+      '!wildshape: no uses remaining — Wild Shape refreshes on a short or long rest.'
+    );
+    return true;
+  }
 
-  // Beast name can have spaces; hp is the last numeric token, ac is
-  // the penultimate number, speed is the antepenultimate. Parse from
-  // the right.
-  const nums: number[] = [];
-  let nameParts = [...parts];
-  while (nameParts.length > 0 && /^\d+$/.test(nameParts[nameParts.length - 1])) {
-    nums.unshift(parseInt(nameParts.pop()!, 10));
-    if (nums.length >= 3) break;
-  }
-  if (nums.length < 1) {
-    whisperToCaller(c.io, c.ctx, '!wildshape: beast HP required.');
+  const beast = await lookupTrustedBeast(input);
+  if (beast === 'not-beast') {
+    whisperToCaller(
+      c.io,
+      c.ctx,
+      `!wildshape: "${input}" isn't a beast — Wild Shape only allows beast forms.`
+    );
     return true;
   }
-  const beastName = nameParts.join(' ');
-  const beastHp = nums[0];
-  const beastAc = nums.length > 1 ? nums[1] : null;
-  const beastSpeed = nums.length > 2 ? nums[2] : null;
+  if (!beast) {
+    whisperToCaller(
+      c.io,
+      c.ctx,
+      `!wildshape: "${input}" isn't in the trusted compendium cache. Look the beast up in the compendium browser first, then retry.`
+    );
+    return true;
+  }
+  const crCap = wildShapeCrCap(level, moon);
+  if (beast.cr > crCap) {
+    whisperToCaller(
+      c.io,
+      c.ctx,
+      `!wildshape: ${beast.name} is CR ${formatCr(beast.cr)} — your maximum is CR ${formatCr(crCap)}${moon ? ' (Circle of the Moon)' : ''} at Druid level ${level}.`
+    );
+    return true;
+  }
+  if ((beast.speed.fly ?? 0) > 0 && level < 8) {
+    whisperToCaller(
+      c.io,
+      c.ctx,
+      `!wildshape: ${beast.name} has a flying speed — that requires Druid level 8.`
+    );
+    return true;
+  }
+  if ((beast.speed.swim ?? 0) > 0 && level < 4) {
+    whisperToCaller(
+      c.io,
+      c.ctx,
+      `!wildshape: ${beast.name} has a swimming speed — that requires Druid level 4.`
+    );
+    return true;
+  }
 
-  wildShapePools.set(caller.characterId, {
-    beastName,
-    beastHp,
-    beastMax: beastHp,
-    beastAc,
-    beastSpeed,
+  // Moon druids transform as a bonus action (Combat Wild Shape);
+  // everyone else spends their action.
+  const cost: 'action' | 'bonusAction' = moon ? 'bonusAction' : 'action';
+  const gate = wildShapeCombatGate(c, caller.id, cost);
+  if ('error' in gate) {
+    whisperToCaller(c.io, c.ctx, `!wildshape: ${gate.error}`);
+    return true;
+  }
+
+  const newState: WildShapeState = {
+    formSlug: beast.slug,
+    formName: beast.name,
+    formHp: beast.hp,
+    formMaxHp: beast.hp,
+    formAc: beast.ac,
+    formSpeed: beast.speed,
+    formCr: beast.cr,
+    moon,
+  };
+  const updatedFeatures = unlimited
+    ? undefined
+    : spendWildShapeUse(features, uses.index, uses.remaining);
+  const write = await commitWildShape(caller.characterId, version, {
+    wildShape: newState,
+    ...(updatedFeatures !== undefined ? { features: updatedFeatures } : {}),
   });
-  const extras: string[] = [];
-  if (beastAc !== null) extras.push(`AC ${beastAc}`);
-  if (beastSpeed !== null) extras.push(`${beastSpeed} ft speed`);
+  if (!write.ok) {
+    whisperGuardFailure(c, '!wildshape', write.reason);
+    return true;
+  }
+
+  markEconomy(c, caller.id, gate.economy, cost);
+  // Exact form stats + the uses pool are owner/DM material. The
+  // dispatcher's stat-scoped wrapper widens under sharing toggles, so
+  // active-form payloads go through the strictly private channel.
+  emitWildShapePrivate(c.io, c.ctx.room, caller.characterId, {
+    wildShape: newState,
+    ...(updatedFeatures !== undefined ? { features: updatedFeatures } : {}),
+    version: write.version,
+  });
+  const remainingText = unlimited
+    ? 'unlimited (Archdruid)'
+    : `${uses.remaining - 1}/${WILD_SHAPE_USES}`;
+  whisperToCaller(
+    c.io,
+    c.ctx,
+    `🐺 ${beast.name}: form HP ${beast.hp}/${beast.hp}${beast.ac !== null ? `, AC ${beast.ac}` : ''}, speed ${describeSpeed(beast.speed)}. Wild Shape uses left: ${remainingText} (short rest).`
+  );
   broadcastSystem(
     c.io,
     c.ctx,
-    `🐺 ${druidName} Wild Shapes into a **${beastName}** — HP ${beastHp}/${beastHp}${extras.length > 0 ? `, ${extras.join(', ')}` : ''}. Revert with !revert (Druid's own HP unchanged).`
+    `🐺 ${druidName} Wild Shapes into a **${beast.name}** (CR ${formatCr(beast.cr)})${gate.economy ? ` — ${cost === 'bonusAction' ? 'bonus action' : 'action'} spent` : ''}. Revert with \`!revert\`.`
   );
   return true;
 }
 
 async function handleRevert(c: ChatCommandContext): Promise<boolean> {
-  const caller = resolveCallerToken(c.ctx);
+  const caller = resolveWildShapeCaller(c.ctx);
   if (!caller?.characterId) {
-    whisperToCaller(c.io, c.ctx, '!revert: no owned PC token.');
+    whisperToCaller(
+      c.io,
+      c.ctx,
+      '!revert: no owned token with a character sheet on your current map.'
+    );
     return true;
   }
-  const pool = wildShapePools.get(caller.characterId);
-  if (!pool) {
+  const loaded = await loadDruidRow(caller.characterId);
+  if (!loaded) {
+    whisperToCaller(
+      c.io,
+      c.ctx,
+      '!revert: could not verify the character state. Nothing was changed.'
+    );
+    return true;
+  }
+  const column = readWildShapeColumn(loaded.row.wild_shape);
+  if (column.status === 'none') {
     whisperToCaller(c.io, c.ctx, '!revert: not currently wild-shaped.');
     return true;
   }
-  wildShapePools.delete(caller.characterId);
+
+  // A readable active form follows the rules: reverting in combat is a
+  // bonus action on your own turn. Clearing an unreadable state is the
+  // recovery path and skips the gate — it can't be replayed for value.
+  let economy: ActionEconomy | null = null;
+  if (column.status === 'active') {
+    const gate = wildShapeCombatGate(c, caller.id, 'bonusAction');
+    if ('error' in gate) {
+      whisperToCaller(c.io, c.ctx, `!revert: ${gate.error}`);
+      return true;
+    }
+    economy = gate.economy;
+  }
+
+  const write = await commitWildShape(caller.characterId, loaded.version, { wildShape: null });
+  if (!write.ok) {
+    whisperGuardFailure(c, '!revert', write.reason);
+    return true;
+  }
+  if (column.status === 'active') markEconomy(c, caller.id, economy, 'bonusAction');
+  c.io.to(c.ctx.room.sessionId).emit('character:updated', {
+    characterId: caller.characterId,
+    changes: { wildShape: null, version: write.version },
+  });
+  if (column.status === 'invalid') {
+    whisperToCaller(c.io, c.ctx, '!revert: cleared an unreadable Wild Shape state.');
+    return true;
+  }
   broadcastSystem(
     c.io,
     c.ctx,
-    `🐺 ${caller.name} reverts from ${pool.beastName} back to Druid form.${pool.beastHp <= 0 ? ' (beast form dropped to 0 HP.)' : ''}`
+    `🐺 ${loaded.name} reverts from **${column.state.formName}** to their normal form.${economy ? ' (bonus action)' : ''}`
   );
   return true;
 }
 
-// ────── !beast hp <amount> ─────────────────────────────────
+// ────── !beast dmg|heal|status ─────────────────────────────
 /**
- * Apply damage / healing to the beast HP pool of the caller's active
- * Wild Shape. Used like !damage on the Druid but against the beast
- * pool instead of the Druid's own HP.
- *
- *   !beast dmg <amount>
- *   !beast heal <amount>
- *   !beast status
+ * Bookkeeping against the persisted form. `dmg` is bounded and
+ * authoritative: damage past the form's remaining HP carries into the
+ * druid's own HP and ends the form in the same guarded UPDATE. Temp
+ * HP is not consumed here — the in-combat pipeline (CombatService
+ * damage, which is Wild-Shape-aware) owns that interaction.
  */
 async function handleBeast(c: ChatCommandContext): Promise<boolean> {
   const parts = c.rest.split(/\s+/).filter(Boolean);
   const sub = parts[0]?.toLowerCase() || 'status';
-  const caller = resolveCallerToken(c.ctx);
+  const caller = resolveWildShapeCaller(c.ctx);
   if (!caller?.characterId) {
-    whisperToCaller(c.io, c.ctx, '!beast: no owned PC token.');
+    whisperToCaller(
+      c.io,
+      c.ctx,
+      '!beast: no owned token with a character sheet on your current map.'
+    );
     return true;
   }
-  const bp = wildShapePools.get(caller.characterId);
-  if (!bp) {
-    whisperToCaller(c.io, c.ctx, '!beast: not currently wild-shaped. Run !wildshape first.');
+  const loaded = await loadDruidRow(caller.characterId);
+  if (!loaded) {
+    whisperToCaller(
+      c.io,
+      c.ctx,
+      '!beast: could not verify the character state. Nothing was changed.'
+    );
     return true;
   }
+  const column = readWildShapeColumn(loaded.row.wild_shape);
+  if (column.status === 'invalid') {
+    whisperToCaller(
+      c.io,
+      c.ctx,
+      '!beast: the stored Wild Shape state is unreadable — run `!revert` to clear it.'
+    );
+    return true;
+  }
+  if (column.status === 'none') {
+    whisperToCaller(
+      c.io,
+      c.ctx,
+      '!beast: not currently wild-shaped. Use `!wildshape <beast name>` first.'
+    );
+    return true;
+  }
+  const state = column.state;
+
   if (sub === 'status') {
-    whisperToCaller(c.io, c.ctx, `🐺 ${bp.beastName}: ${bp.beastHp}/${bp.beastMax} HP.`);
-    return true;
-  }
-  const amount = parseInt(parts[1], 10);
-  if (!Number.isFinite(amount) || amount < 0) {
-    whisperToCaller(c.io, c.ctx, '!beast: amount must be a non-negative integer.');
-    return true;
-  }
-  if (sub === 'dmg' || sub === 'damage') {
-    bp.beastHp = Math.max(0, bp.beastHp - amount);
-    broadcastSystem(
+    const features = parseFeatureList(loaded.row.features);
+    const level = druidLevel(String(loaded.row.class || ''), Number(loaded.row.level) || 1);
+    const usesText =
+      level !== null && level >= ARCHDRUID_LEVEL
+        ? 'unlimited (Archdruid)'
+        : features
+          ? `${wildShapeUses(features).remaining}/${WILD_SHAPE_USES}`
+          : 'unreadable';
+    whisperToCaller(
       c.io,
       c.ctx,
-      `🐺 ${bp.beastName} takes ${amount} damage → ${bp.beastHp}/${bp.beastMax}${bp.beastHp <= 0 ? ' — BEAST DROPS, Druid reverts on excess.' : ''}`
+      `🐺 ${state.formName}: form HP ${state.formHp}/${state.formMaxHp}${state.formAc !== null ? `, AC ${state.formAc}` : ''}, speed ${describeSpeed(state.formSpeed)}. Uses left: ${usesText}.`
     );
-    if (bp.beastHp <= 0) {
-      wildShapePools.delete(caller.characterId);
-    }
     return true;
   }
+
+  if (sub !== 'dmg' && sub !== 'damage' && sub !== 'heal') {
+    whisperToCaller(c.io, c.ctx, `!beast: unknown subcommand "${sub}". Use status / dmg / heal.`);
+    return true;
+  }
+  const amountRaw = parts[1] ?? '';
+  if (!/^\d+$/.test(amountRaw)) {
+    whisperToCaller(
+      c.io,
+      c.ctx,
+      `!beast ${sub}: amount must be a whole number from 1 to ${MAX_BEAST_DMG}.`
+    );
+    return true;
+  }
+  const amount = Number(amountRaw);
+  if (amount < 1 || amount > MAX_BEAST_DMG) {
+    whisperToCaller(
+      c.io,
+      c.ctx,
+      `!beast ${sub}: amount must be a whole number from 1 to ${MAX_BEAST_DMG}.`
+    );
+    return true;
+  }
+
   if (sub === 'heal') {
-    bp.beastHp = Math.min(bp.beastMax, bp.beastHp + amount);
+    const newFormHp = Math.min(state.formMaxHp, state.formHp + amount);
+    const nextState: WildShapeState = { ...state, formHp: newFormHp };
+    const write = await commitWildShape(caller.characterId, loaded.version, {
+      wildShape: nextState,
+    });
+    if (!write.ok) {
+      whisperGuardFailure(c, '!beast heal', write.reason);
+      return true;
+    }
+    emitWildShapePrivate(c.io, c.ctx.room, caller.characterId, {
+      wildShape: nextState,
+      version: write.version,
+    });
+    whisperToCaller(c.io, c.ctx, `🐺 ${state.formName}: form HP ${newFormHp}/${state.formMaxHp}.`);
     broadcastSystem(
       c.io,
       c.ctx,
-      `🐺 ${bp.beastName} heals ${amount} → ${bp.beastHp}/${bp.beastMax}.`
+      `🐺 ${loaded.name}'s ${state.formName} form regains ${newFormHp - state.formHp} HP.`
     );
     return true;
   }
-  whisperToCaller(c.io, c.ctx, `!beast: unknown subcommand "${sub}". Use status / dmg / heal.`);
+
+  // Damage. Bounded by the persisted form HP; the excess (if any)
+  // carries into the druid and ends the form in the same UPDATE.
+  if (amount < state.formHp) {
+    const nextState: WildShapeState = { ...state, formHp: state.formHp - amount };
+    const write = await commitWildShape(caller.characterId, loaded.version, {
+      wildShape: nextState,
+    });
+    if (!write.ok) {
+      whisperGuardFailure(c, '!beast dmg', write.reason);
+      return true;
+    }
+    emitWildShapePrivate(c.io, c.ctx.room, caller.characterId, {
+      wildShape: nextState,
+      version: write.version,
+    });
+    whisperToCaller(
+      c.io,
+      c.ctx,
+      `🐺 ${state.formName}: form HP ${nextState.formHp}/${state.formMaxHp}.`
+    );
+    broadcastSystem(
+      c.io,
+      c.ctx,
+      `🐺 ${loaded.name}'s ${state.formName} form takes ${amount} damage.`
+    );
+    return true;
+  }
+
+  const excess = amount - state.formHp;
+  const druidHp = Number(loaded.row.hit_points);
+  if (!Number.isInteger(druidHp) || druidHp < 0) {
+    whisperToCaller(
+      c.io,
+      c.ctx,
+      '!beast dmg: the stored character HP is unreadable — nothing was changed. Refresh the sheet.'
+    );
+    return true;
+  }
+  const newDruidHp = Math.max(0, druidHp - excess);
+  const write = await commitWildShape(caller.characterId, loaded.version, {
+    wildShape: null,
+    hitPoints: newDruidHp,
+  });
+  if (!write.ok) {
+    whisperGuardFailure(c, '!beast dmg', write.reason);
+    return true;
+  }
+  // Keep a live combat tracker in sync with the committed HP.
+  const combatant = c.ctx.room.combatState?.active
+    ? c.ctx.room.combatState.combatants.find((entry) => entry.characterId === caller.characterId)
+    : undefined;
+  if (combatant) {
+    combatant.hp = newDruidHp;
+    CombatService.persistSessionCombatState(c.ctx.room.sessionId);
+    c.io.to(c.ctx.room.sessionId).emit('combat:hp-changed', {
+      tokenId: combatant.tokenId,
+      hp: newDruidHp,
+      tempHp: combatant.tempHp,
+      change: newDruidHp - druidHp,
+      type: 'damage',
+    });
+  }
+  c.io.to(c.ctx.room.sessionId).emit('character:updated', {
+    characterId: caller.characterId,
+    changes: { wildShape: null, hitPoints: newDruidHp, version: write.version },
+  });
+  whisperToCaller(
+    c.io,
+    c.ctx,
+    `🐺 ${state.formName} form drops (${excess} excess damage carried over). ${loaded.name}: ${newDruidHp} HP.${newDruidHp <= 0 ? ' You are at 0 HP.' : ''}`
+  );
+  broadcastSystem(
+    c.io,
+    c.ctx,
+    `🐺 ${loaded.name}'s ${state.formName} form takes ${amount} damage and drops — ${loaded.name} reverts${excess > 0 ? ' with damage carrying over' : ''}.${newDruidHp <= 0 ? ` ${loaded.name} falls to 0 HP!` : ''}`
+  );
   return true;
 }
 

@@ -176,8 +176,8 @@ describe('chat command token fanout wrapper', () => {
       if (sql.includes('SELECT hit_points FROM characters WHERE id = $1')) {
         return { rows: [{ hit_points: 10 }] };
       }
-      if (sql.includes('SELECT hit_points, max_hit_points, temp_hit_points FROM characters WHERE id = $1')) {
-        return { rows: [{ hit_points: 10, max_hit_points: 20, temp_hit_points: 0 }] };
+      if (sql.includes('SELECT hit_points, max_hit_points, temp_hit_points, wild_shape, version FROM characters WHERE id = $1')) {
+        return { rows: [{ hit_points: 10, max_hit_points: 20, temp_hit_points: 0, wild_shape: null, version: 3 }] };
       }
       return { rows: [] };
     });
