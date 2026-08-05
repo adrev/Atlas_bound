@@ -484,8 +484,6 @@ export function registerTokenEvents(io: Server, socket: Socket): void {
         createdAt: now,
       };
 
-      if (targetMapId === ctx.room.playerMapId) ctx.room.tokens.set(tokenId, token);
-
       await pool.query(
         `
       INSERT INTO tokens (
@@ -516,6 +514,11 @@ export function registerTokenEvents(io: Server, socket: Socket): void {
         ]
       );
 
+      // PostgreSQL is authoritative. Do not expose an in-memory token until
+      // the insert succeeds, otherwise a transient DB failure leaves a ghost
+      // token that clients can move or target until the room is rehydrated.
+      if (targetMapId === ctx.room.playerMapId) ctx.room.tokens.set(tokenId, token);
+
       const addRecipients = socketsForToken(ctx.room, targetMapId, token);
       broadcastEventToSockets(
         io,
@@ -537,37 +540,30 @@ export function registerTokenEvents(io: Server, socket: Socket): void {
       if (!ctx) return;
       const { tokenId } = parsed.data;
 
-      // Authorization: DMs can remove anything; players can only remove
-      // tokens they own (e.g. a Light spell marker they cast). Previously
-      // only DMs were allowed, which meant a player who cast Light had
-      // to ask the DM to click away their own utility token. The
-      // ownerUserId check scopes the escape hatch narrowly — PC tokens
-      // are still DM-only to remove, because PC ownerUserId is typically
-      // the player, and the UI doesn't expose delete to them anyway.
-      let tokenMapId: string | null = null;
-      let tokenOwnerUserId: string | null = null;
       const inMem = ctx.room.tokens.get(tokenId);
-      if (inMem) {
-        tokenMapId = inMem.mapId;
-        tokenOwnerUserId = inMem.ownerUserId ?? null;
-      } else {
-        const { rows } = await pool.query(
-          'SELECT t.map_id, t.owner_user_id FROM tokens t JOIN maps m ON t.map_id = m.id WHERE t.id = $1 AND m.session_id = $2',
-          [tokenId, ctx.room.sessionId]
-        );
-        if (rows[0]) {
-          tokenMapId = rows[0].map_id as string;
-          tokenOwnerUserId = (rows[0].owner_user_id as string | null) ?? null;
-        } else {
-          return;
-        }
-      }
+      const isDM = ctx.player.role === 'dm';
 
-      if (ctx.player.role !== 'dm' && tokenOwnerUserId !== ctx.player.userId) {
-        // Player trying to remove a token they don't own — silently drop.
-        return;
-      }
+      // Delete and authorize in one statement so ownership cannot change
+      // between a SELECT check and the mutation. Players may remove only
+      // their own unbacked utility markers (Light, spell templates, etc.);
+      // character-backed PC tokens remain DM-managed.
+      const { rows: removedRows } = await pool.query(
+        `DELETE FROM tokens AS t
+         USING maps AS m
+         WHERE t.id = $1
+           AND t.map_id = m.id
+           AND m.session_id = $2
+           AND ($3::boolean OR (t.owner_user_id = $4 AND t.character_id IS NULL))
+         RETURNING t.map_id, t.owner_user_id`,
+        [tokenId, ctx.room.sessionId, isDM, ctx.player.userId]
+      );
+      const removedRow = removedRows[0] as Record<string, unknown> | undefined;
+      if (!removedRow) return;
+      const tokenMapId = removedRow.map_id as string;
 
+      // Only clean up live combat/room state after the authoritative delete
+      // succeeds. A failed DB write must leave the token and its effects
+      // untouched so clients remain aligned with rehydration.
       const cleanup = CombatService.cleanupRemovedTokenFromCombat(ctx.room.sessionId, tokenId);
       for (const affectedTokenId of [
         ...cleanup.releasedGrappleTokenIds,
@@ -581,7 +577,6 @@ export function registerTokenEvents(io: Server, socket: Socket): void {
       }
 
       if (inMem) ctx.room.tokens.delete(tokenId);
-      await pool.query('DELETE FROM tokens WHERE id = $1', [tokenId]);
 
       if (cleanup.combatStateChanged) {
         emitCombatStateSync(io, ctx.room);
@@ -590,14 +585,12 @@ export function registerTokenEvents(io: Server, socket: Socket): void {
       // Broadcast removal only to sockets rendering this map. The
       // `mapId` in the payload lets map-scoped UI decide whether to
       // animate the removal or silently drop it.
-      const removeRecipients = tokenMapId
-        ? socketsOnMap(ctx.room, tokenMapId)
-        : Array.from(ctx.room.userSockets.values()).flatMap((sids) => Array.from(sids));
+      const removeRecipients = socketsOnMap(ctx.room, tokenMapId);
       broadcastEventToSockets(
         io,
         ctx.room,
         'map:token-removed',
-        { tokenId, ...(tokenMapId ? { mapId: tokenMapId } : {}) },
+        { tokenId, mapId: tokenMapId },
         removeRecipients,
         { tokenId, mapId: tokenMapId }
       );
