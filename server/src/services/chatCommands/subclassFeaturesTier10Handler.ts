@@ -13,6 +13,7 @@ import type {
 } from '@dnd-vtt/shared';
 import type { PlayerContext } from '../../utils/roomState.js';
 import { tokenConditionChanges } from '../../utils/conditionSources.js';
+import { spendPersistedSorceryPoints } from './sorcererHandler.js';
 
 /**
  * Tier 10 subclass features:
@@ -616,7 +617,7 @@ async function handleDraconicResilience(c: ChatCommandContext): Promise<boolean>
     return true;
   }
   const { rows } = await pool.query(
-    'SELECT class, level, name, features, ability_scores FROM characters WHERE id = $1',
+    'SELECT class, level, name, features, ability_scores, version FROM characters WHERE id = $1',
     [caller.characterId],
   );
   const row = rows[0] as Record<string, unknown> | undefined;
@@ -663,7 +664,7 @@ async function handleElementalAffinity(c: ChatCommandContext): Promise<boolean> 
     return true;
   }
   const { rows } = await pool.query(
-    'SELECT class, level, name, features, ability_scores FROM characters WHERE id = $1',
+    'SELECT class, level, name, features, ability_scores, version, user_id FROM characters WHERE id = $1',
     [caller.characterId],
   );
   const row = rows[0] as Record<string, unknown> | undefined;
@@ -699,21 +700,10 @@ async function handleElementalAffinity(c: ChatCommandContext): Promise<boolean> 
   else if (/\b(white|silver)\b/.test(feats) || /cold/.test(feats)) elementType = 'cold';
 
   if (sub === 'resist') {
-    // Spend 1 SP.
-    let pools = c.ctx.room.pointPools.get(caller.characterId);
-    if (!pools) {
-      pools = new Map();
-      c.ctx.room.pointPools.set(caller.characterId, pools);
-    }
-    const sp = pools.get('sp');
-    if (!sp || sp.remaining < 1) {
-      whisperToCaller(c.io, c.ctx, '!elemental resist: no SP available.');
-      return true;
-    }
-    sp.remaining -= 1;
+    if (!(await spendPersistedSorceryPoints(c, caller, 'elemental resist', 1, row))) return true;
     broadcastSystem(
       c.io, c.ctx,
-      `🐉 **Elemental Affinity (Resist)** — ${callerName} spends 1 SP, gains **resistance to ${elementType}** for 1 hour. SP ${sp.remaining}/${sp.max}.`,
+      `🐉 **Elemental Affinity (Resist)** — ${callerName} spends 1 SP, gains **resistance to ${elementType}** for 1 hour.`,
     );
     return true;
   }

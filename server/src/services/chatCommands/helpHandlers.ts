@@ -136,8 +136,8 @@ const GROUPS: Array<{ title: string; entries: Entry[] }> = [
       },
       {
         name: 'sp',
-        usage: '!sp status | use <n> | reset | set <n>',
-        desc: 'Sorcerer Sorcery Point pool.',
+        usage: '!sp status | use <n> | reset',
+        desc: 'Persisted Sorcery Point pool; refresh through the normal long-rest flow.',
       },
       {
         name: 'meta',
@@ -148,7 +148,7 @@ const GROUPS: Array<{ title: string; entries: Entry[] }> = [
       {
         name: 'flexible',
         usage: '!flexible slot2sp <lvl> | sp2slot <lvl>',
-        desc: 'Sorcerer Flexible Casting — convert slots ↔ sorcery points.',
+        desc: 'Sorcerer Flexible Casting — convert slots and points as a bonus action.',
       },
       {
         name: 'xp',
