@@ -4,6 +4,7 @@ import { v4 as uuidv4 } from 'uuid';
 import pool from '../db/connection.js';
 import { createCharacterSchema, updateCharacterSchema } from '../utils/validation.js';
 import { proficiencyBonusForLevel } from '@dnd-vtt/shared';
+import { preserveServerManagedFeatureResources } from '../utils/featureResourceAuthority.js';
 import { parseCharacterJSON } from '../services/DndBeyondService.js';
 import { buildMergeUpdate } from '../services/ddbMerge.js';
 import {
@@ -214,6 +215,20 @@ router.put('/:id', async (req: Request, res: Response) => {
   await assertCharacterOwnerOrDM(String(req.params.id), userId);
 
   const { expectedVersion, ...updates } = parsed.data;
+  let protectedFeatures = updates.features;
+  if (updates.features !== undefined) {
+    const { rows } = await pool.query('SELECT features FROM characters WHERE id = $1', [
+      String(req.params.id),
+    ]);
+    protectedFeatures = preserveServerManagedFeatureResources(
+      rows[0]?.features,
+      updates.features
+    ) ?? undefined;
+    if (!protectedFeatures) {
+      res.status(400).json({ error: 'Invalid feature resource state' });
+      return;
+    }
+  }
   const setClauses: string[] = [];
   const params: unknown[] = [];
   let paramIdx = 1;
@@ -332,7 +347,7 @@ router.put('/:id', async (req: Request, res: Response) => {
   }
   if (updates.features !== undefined) {
     setClauses.push(`features = $${paramIdx++}`);
-    params.push(JSON.stringify(updates.features));
+    params.push(JSON.stringify(protectedFeatures));
   }
   if (updates.inventory !== undefined) {
     setClauses.push(`inventory = $${paramIdx++}`);

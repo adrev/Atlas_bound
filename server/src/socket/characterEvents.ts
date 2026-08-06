@@ -22,6 +22,7 @@ import {
   emitCharacterUpdate,
   fanoutCharacterUpdateAcrossRooms,
 } from '../services/CharacterUpdateService.js';
+import { preserveServerManagedFeatureResources } from '../utils/featureResourceAuthority.js';
 
 const characterUpdateSchema = z.object({
   characterId: z.string().min(1),
@@ -233,11 +234,28 @@ export function registerCharacterEvents(io: Server, socket: Socket): void {
         return;
       }
 
+      const acceptedChanges = { ...changes };
+      if (changes.features !== undefined) {
+        const { rows: featureRows } = await pool.query(
+          'SELECT features FROM characters WHERE id = $1',
+          [characterId]
+        );
+        const protectedFeatures = preserveServerManagedFeatureResources(
+          featureRows[0]?.features,
+          changes.features
+        );
+        if (!protectedFeatures) {
+          await emitCharacterConflict(io, socket.id, characterId);
+          return;
+        }
+        acceptedChanges.features = protectedFeatures;
+      }
+
       const setClauses: string[] = [];
       const params: unknown[] = [];
       let paramIdx = 1;
 
-      for (const [key, value] of Object.entries(changes)) {
+      for (const [key, value] of Object.entries(acceptedChanges)) {
         const mapping = FIELD_TO_COLUMN[key];
         if (!mapping) continue;
         setClauses.push(`${mapping.col} = $${paramIdx++}`);
@@ -254,13 +272,13 @@ export function registerCharacterEvents(io: Server, socket: Socket): void {
         await emitCharacterConflict(io, socket.id, characterId);
         return;
       }
-      changes.version = Number(updatedRows[0].version);
+      acceptedChanges.version = Number(updatedRows[0].version);
 
       fanoutCharacterUpdateAcrossRooms(
         io,
         characterId,
         charUserId,
-        changes,
+        acceptedChanges,
         existing.wild_shape,
         ctx.room
       );

@@ -41,7 +41,7 @@ The target architecture is server-authoritative mechanics with client preview:
 | Grapple and shove | `core-5e` | partial | P2 | Opposed checks, reach, size limit, caller incapacitation, grapple free-hand checks, and Action cost are enforced; push movement still needs richer automation. |
 | Hide and stealth | `manual-helper` | partial | P2 | Useful helper and now applies armor-imposed Stealth disadvantage, but not rules-complete until it uses line of sight, lighting, cover, and active searching. |
 | Equipment and armor | `core-5e` | partial | P2 | AC, manual heavy armor speed penalties, and Stealth disadvantage data are covered; broader feature/resource interactions still need cleanup. |
-| Rests and resources | `core-5e` | partial | P2 | DM `!rest`, player rest buttons, manual Hit Dice, Monk Ki, Sorcery Points, and normal spell-slot conversions are server-owned. Flexible Casting cannot yet represent temporary slots above the normal maximum. |
+| Rests and resources | `core-5e` | partial | P2 | DM `!rest`, player rest buttons, manual Hit Dice, Monk Ki, Sorcery Points, innate racial spell charges, and normal spell-slot conversions are server-owned. Flexible Casting cannot yet represent temporary slots above the normal maximum. |
 | Race, class, feat features | mixed | partial | P2 | Many are notes or chat macros. Each needs automation or explicit manual-helper labeling. |
 | Monsters and compendium actions | `core-5e` | partial | P3 | Raw stat-block prose is useful for browsing but not enough for automated combat. |
 

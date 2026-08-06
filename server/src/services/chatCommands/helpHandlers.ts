@@ -1521,8 +1521,8 @@ const GROUPS: Array<{ title: string; entries: Entry[] }> = [
     entries: [
       {
         name: 'racial',
-        usage: '!racial [cast] <spell> | list | reset | resetshort',
-        desc: 'Innate race spells (Tiefling Thaumaturgy/Hellish Rebuke/Darkness, Drow Faerie Fire, Aasimar Light, etc.) with per-rest charges.',
+        usage: '!racial [cast] <spell> | list',
+        desc: 'Innate race spells with persisted charges that refresh through the normal short/long-rest flow.',
       },
       {
         name: 'throw',

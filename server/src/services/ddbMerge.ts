@@ -32,6 +32,8 @@
  *                          when DDB lowered a cap).
  */
 
+import { serverManagedFeatureResourceKey } from '../utils/featureResourceAuthority.js';
+
 export interface MergeInputs {
   /** Row currently in the DB (raw postgres result). */
   existing: Record<string, unknown>;
@@ -177,8 +179,16 @@ export function mergeFeatures(
   // Case-insensitive name match for preservation — class features
   // don't usually get renamed between levels.
   const oldByName = new Map(old.map((f) => [f.name.toLowerCase(), f]));
-  return incoming.map((f) => {
-    const prev = oldByName.get(f.name.toLowerCase());
+  const oldByResourceKey = new Map(
+    old.flatMap((feature) => {
+      const key = serverManagedFeatureResourceKey(feature.name);
+      return key ? [[key, feature] as const] : [];
+    })
+  );
+  const merged = incoming.map((f) => {
+    const resourceKey = serverManagedFeatureResourceKey(f.name);
+    const prev = oldByName.get(f.name.toLowerCase()) ??
+      (resourceKey ? oldByResourceKey.get(resourceKey) : undefined);
     if (!prev) return f;
     // Take the incoming feature shape (new `usesTotal`, updated `desc`,
     // etc.) but preserve the usesRemaining count clamped to the new max.
@@ -189,4 +199,17 @@ export function mergeFeatures(
       : prev.usesRemaining;
     return { ...f, usesRemaining };
   });
+  const incomingResourceKeys = new Set(
+    incoming.flatMap((feature) => {
+      const key = serverManagedFeatureResourceKey(feature.name);
+      return key ? [key] : [];
+    })
+  );
+  const persistedServerResources = old.filter(
+    (feature) => {
+      const key = serverManagedFeatureResourceKey(feature.name);
+      return key !== null && !incomingResourceKeys.has(key);
+    }
+  );
+  return [...merged, ...persistedServerResources];
 }
