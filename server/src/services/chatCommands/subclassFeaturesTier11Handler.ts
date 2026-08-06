@@ -6,10 +6,16 @@ import {
 } from '../ChatCommands.js';
 import * as ConditionService from '../ConditionService.js';
 import pool from '../../db/connection.js';
-import type { Token, ActionBreakdown } from '@dnd-vtt/shared';
-import type { PlayerContext } from '../../utils/roomState.js';
+import type { ActionEconomy, Token, ActionBreakdown } from '@dnd-vtt/shared';
+import {
+  isTokenActionable,
+  resolveViewingMapId,
+  type PlayerContext,
+} from '../../utils/roomState.js';
 import { tokenConditionChanges } from '../../utils/conditionSources.js';
+import { tokenVisibleToPlayer } from '../../utils/tokenVisibility.js';
 import { formatSaveTotal, rollTargetSave, type RolledSave, type SaveAbility } from './saveRoll.js';
+import { sorcererLevel, spendPersistedSorceryPoints } from './sorcererHandler.js';
 
 /**
  * Tier 11 subclass features:
@@ -526,7 +532,7 @@ async function handleDivineFury(c: ChatCommandContext): Promise<boolean> {
     return true;
   }
   const { rows } = await pool.query(
-    'SELECT class, level, name, features FROM characters WHERE id = $1',
+    'SELECT class, level, name, features, version FROM characters WHERE id = $1',
     [caller.characterId],
   );
   const row = rows[0] as Record<string, unknown> | undefined;
@@ -820,18 +826,21 @@ async function handleHound(c: ChatCommandContext): Promise<boolean> {
     whisperToCaller(c.io, c.ctx, '!hound: usage `!hound <target>` (3 SP)');
     return true;
   }
-  const target = resolveTargetByName(c.ctx, targetName);
-  if (!target) {
-    whisperToCaller(c.io, c.ctx, `!hound: no token named "${targetName}".`);
-    return true;
-  }
-  const caller = resolveCallerToken(c.ctx);
+  const mapId = resolveViewingMapId(c.ctx.room, c.ctx.player.userId, c.ctx.player.role);
+  const caller = Array.from(c.ctx.room.tokens.values())
+    .filter(
+      (token) =>
+        token.mapId === mapId &&
+        token.ownerUserId === c.ctx.player.userId &&
+        (c.ctx.player.role === 'dm' || tokenVisibleToPlayer(token, c.ctx.player.userId))
+    )
+    .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1))[0];
   if (!caller?.characterId) {
-    whisperToCaller(c.io, c.ctx, '!hound: no owned PC token.');
+    whisperToCaller(c.io, c.ctx, '!hound: no owned PC token on this map.');
     return true;
   }
   const { rows } = await pool.query(
-    'SELECT class, name, features FROM characters WHERE id = $1',
+    'SELECT class, level, name, features FROM characters WHERE id = $1',
     [caller.characterId],
   );
   const row = rows[0] as Record<string, unknown> | undefined;
@@ -844,25 +853,49 @@ async function handleHound(c: ChatCommandContext): Promise<boolean> {
     whisperToCaller(c.io, c.ctx, `!hound: ${caller.name} isn't a Shadow Sorcerer.`);
     return true;
   }
-  // Spend 3 SP.
-  let pools = c.ctx.room.pointPools.get(caller.characterId);
-  if (!pools) {
-    pools = new Map();
-    c.ctx.room.pointPools.set(caller.characterId, pools);
-  }
-  const sp = pools.get('sp');
-  if (!sp || sp.remaining < 3) {
-    whisperToCaller(c.io, c.ctx, `!hound: requires 3 SP (have ${sp?.remaining ?? 0}).`);
+  const level = sorcererLevel(String(row?.class || ''), Number(row?.level) || 1);
+  if (level === null || level < 6) {
+    whisperToCaller(c.io, c.ctx, '!hound: requires Sorcerer level 6.');
     return true;
   }
-  sp.remaining -= 3;
-  // Burn bonus action.
-  const economy = c.ctx.room.actionEconomies.get(caller.id);
-  if (economy?.bonusAction) {
-    whisperToCaller(c.io, c.ctx, '!hound: bonus action already spent.');
-    sp.remaining += 3; // refund
+
+  const target = Array.from(c.ctx.room.tokens.values())
+    .filter(
+      (token) =>
+        token.mapId === mapId &&
+        token.name.toLowerCase() === targetName.toLowerCase() &&
+        (c.ctx.player.role === 'dm' || tokenVisibleToPlayer(token, c.ctx.player.userId))
+    )
+    .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1))[0];
+  if (!target) {
+    whisperToCaller(c.io, c.ctx, `!hound: no visible token named "${targetName}" on this map.`);
     return true;
   }
+
+  let economy: ActionEconomy | null = null;
+  const combat = c.ctx.room.combatState;
+  if (combat?.active) {
+    const current = combat.combatants[combat.currentTurnIndex];
+    if (current?.tokenId !== caller.id) {
+      whisperToCaller(c.io, c.ctx, '!hound: can be summoned only on your turn.');
+      return true;
+    }
+    if (!isTokenActionable(c.ctx, caller.id)) {
+      whisperToCaller(c.io, c.ctx, `!hound: ${caller.name} cannot act right now.`);
+      return true;
+    }
+    economy = c.ctx.room.actionEconomies.get(caller.id) ?? null;
+    if (!economy) {
+      whisperToCaller(c.io, c.ctx, '!hound: combat action state is unavailable. No points were spent.');
+      return true;
+    }
+    if (economy.bonusAction) {
+      whisperToCaller(c.io, c.ctx, '!hound: bonus action already spent.');
+      return true;
+    }
+  }
+
+  if (!(await spendPersistedSorceryPoints(c, caller, 'hound', 3, row))) return true;
   if (economy) {
     economy.bonusAction = true;
     c.io.to(c.ctx.room.sessionId).emit('combat:action-used', {
@@ -874,7 +907,7 @@ async function handleHound(c: ChatCommandContext): Promise<boolean> {
   const callerName = (row?.name as string) || caller.name;
   broadcastSystem(
     c.io, c.ctx,
-    `🐺 **Hound of Ill Omen** — ${callerName} summons a spectral dire wolf to hunt ${target.name}. 5 min, 40 ft speed, ignores difficult terrain. ${target.name} has **disadvantage on saves** vs ${callerName}'s spells while hound is within 5 ft. SP ${sp.remaining}/${sp.max}.`,
+    `🐺 **Hound of Ill Omen** — ${callerName} summons a spectral dire wolf to hunt ${target.name}. 5 min, 40 ft speed, ignores difficult terrain. ${target.name} has **disadvantage on saves** vs ${callerName}'s spells while hound is within 5 ft.`,
   );
   return true;
 }

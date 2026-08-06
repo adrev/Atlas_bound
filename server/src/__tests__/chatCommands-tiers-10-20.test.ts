@@ -1458,22 +1458,30 @@ describe('Tier 10 — Draconic Resilience', () => {
 describe('Tier 10 — Elemental Affinity (resist)', () => {
   it('spends 1 SP for resistance', async () => {
     const s = makeScenario();
-    const pools = new Map<string, { max: number; remaining: number }>();
-    pools.set('sp', { max: 5, remaining: 5 });
-    s.room.pointPools.set(s.caller.characterId!, pools);
     routeCharacterQueries({
       'char-caller': {
         class: 'Sorcerer (Draconic)',
         level: 6,
         name: 'Zal',
-        features: [{ name: 'Elemental Affinity' }, { name: 'Red Dragon Ancestor' }],
+        features: [
+          { name: 'Elemental Affinity' },
+          { name: 'Red Dragon Ancestor' },
+          { name: 'Font of Magic', usesTotal: 6, usesRemaining: 5, resetOn: 'long' },
+        ],
         ability_scores: { cha: 16 },
       },
     });
     const { io, emissions } = makeFakeIo();
     await tryHandleChatCommand(io, s.ctx, '!elemental resist');
-    expect(pools.get('sp')!.remaining).toBe(4);
+    const update = mockQuery.mock.calls.find((call) =>
+      String(call[0]).includes('SET features = $1')
+    );
+    const features = JSON.parse(update?.[1]?.[0] as string) as Array<Record<string, unknown>>;
+    expect(features.find((feature) => feature.name === 'Font of Magic')).toMatchObject({
+      usesRemaining: 4,
+    });
     expect(lastBroadcast(emissions)).toMatch(/resistance to fire/);
+    expect(lastBroadcast(emissions)).not.toMatch(/SP \d+\/\d+/);
   });
 });
 
@@ -1657,31 +1665,50 @@ describe('Tier 11 — Hound of Ill Omen', () => {
   it('requires 3 SP', async () => {
     const enemy = makeToken('tE', 'Enemy');
     const s = makeScenario({ inCombat: true, otherTokens: [enemy] });
-    const pools = new Map<string, { max: number; remaining: number }>();
-    pools.set('sp', { max: 5, remaining: 2 });
-    s.room.pointPools.set(s.caller.characterId!, pools);
     routeCharacterQueries({
-      'char-caller': { class: 'Sorcerer (Shadow)', level: 3, name: 'Nyx', features: [{ name: 'Hound of Ill Omen' }] },
+      'char-caller': {
+        class: 'Sorcerer (Shadow)',
+        level: 6,
+        name: 'Nyx',
+        features: [
+          { name: 'Hound of Ill Omen' },
+          { name: 'Font of Magic', usesTotal: 6, usesRemaining: 2, resetOn: 'long' },
+        ],
+      },
     });
     const { io, emissions } = makeFakeIo();
     await tryHandleChatCommand(io, s.ctx, '!hound Enemy');
     const w = emissions.find((e) => (e.payload as { type?: string }).type === 'whisper');
-    expect(String((w?.payload as { content?: string })?.content ?? '')).toMatch(/requires 3 SP/);
+    expect(String((w?.payload as { content?: string })?.content ?? '')).toMatch(
+      /requires 3 Sorcery Points/
+    );
   });
 
   it('spends 3 SP on success', async () => {
     const enemy = makeToken('tE', 'Enemy');
     const s = makeScenario({ inCombat: true, otherTokens: [enemy] });
-    const pools = new Map<string, { max: number; remaining: number }>();
-    pools.set('sp', { max: 5, remaining: 5 });
-    s.room.pointPools.set(s.caller.characterId!, pools);
     routeCharacterQueries({
-      'char-caller': { class: 'Sorcerer (Shadow)', level: 3, name: 'Nyx', features: [{ name: 'Hound of Ill Omen' }] },
+      'char-caller': {
+        class: 'Sorcerer (Shadow)',
+        level: 6,
+        name: 'Nyx',
+        features: [
+          { name: 'Hound of Ill Omen' },
+          { name: 'Font of Magic', usesTotal: 6, usesRemaining: 5, resetOn: 'long' },
+        ],
+      },
     });
     const { io, emissions } = makeFakeIo();
     await tryHandleChatCommand(io, s.ctx, '!hound Enemy');
-    expect(pools.get('sp')!.remaining).toBe(2);
+    const update = mockQuery.mock.calls.find((call) =>
+      String(call[0]).includes('SET features = $1')
+    );
+    const features = JSON.parse(update?.[1]?.[0] as string) as Array<Record<string, unknown>>;
+    expect(features.find((feature) => feature.name === 'Font of Magic')).toMatchObject({
+      usesRemaining: 2,
+    });
     expect(s.callerEconomy.bonusAction).toBe(true);
+    expect(lastBroadcast(emissions)).not.toMatch(/SP \d+\/\d+/);
   });
 });
 
