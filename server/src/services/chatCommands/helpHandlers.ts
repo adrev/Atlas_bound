@@ -111,8 +111,8 @@ const GROUPS: Array<{ title: string; entries: Entry[] }> = [
       },
       {
         name: 'ki',
-        usage: '!ki status | use <n> | reset | set <n>',
-        desc: 'Monk Ki pool (defaults to level).',
+        usage: '!ki status | use <n> | reset',
+        desc: 'Monk Ki pool — persisted spend; refresh through the normal rest flow.',
       },
       {
         name: 'flurry',
@@ -131,8 +131,8 @@ const GROUPS: Array<{ title: string; entries: Entry[] }> = [
       },
       {
         name: 'stunstrike',
-        usage: '!stunstrike <target> <dc>',
-        desc: 'Monk Stunning Strike (L5, 1 ki) — CON save vs stunned.',
+        usage: '!stunstrike <target>',
+        desc: 'Monk Stunning Strike (L5, 1 ki) — server-derived CON save DC or stunned.',
       },
       {
         name: 'sp',

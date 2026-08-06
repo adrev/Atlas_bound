@@ -224,6 +224,9 @@ function routeCharacterQueries(charRows: Record<string, Record<string, unknown>>
     if (sql.startsWith('UPDATE characters SET hit_points')) {
       return { rows: [{ version: 2 }] };
     }
+    if (sql.includes('UPDATE characters') && sql.includes('SET features')) {
+      return { rows: [{ version: 2 }] };
+    }
     const id = params?.[0] as string | undefined;
     if (id && charRows[id]) {
       return { rows: [{ wild_shape: null, version: 1, ...charRows[id] }] };
@@ -323,20 +326,23 @@ describe('Monk — Stunning Strike', () => {
       otherCombatants: [makeCombatant('tE', { characterId: 'char-foe' })],
     });
     routeCharacterQueries({
-      'char-caller': { class: 'Monk', level: 5, name: 'Kai' },
+      'char-caller': {
+        class: 'Monk', level: 5, name: 'Kai', features: [],
+        ability_scores: { wis: 16 }, proficiency_bonus: 2,
+      },
       'char-foe': { ability_scores: { con: 10 }, saving_throws: [], proficiency_bonus: 2, name: 'Foe' },
     });
     const { io, emissions } = makeFakeIo();
 
     await withRandomSeed([0.01, 0.99], async () => {
-      await tryHandleChatCommand(io, s.ctx, '!stunstrike Foe 13');
+      await tryHandleChatCommand(io, s.ctx, '!stunstrike Foe');
     });
 
     expect(enemy.conditions).not.toContain('stunned');
     const content = lastBroadcast(emissions) ?? '';
     expect(content).toContain('SAVED');
     expect(content).toContain('inspired: advantage on CON save');
-    expect(content).toContain('Ki 4/5');
+    expect(content).toContain('CON DC 13');
   });
 
   it('applies shared exhaustion disadvantage before stunning', async () => {
@@ -347,13 +353,16 @@ describe('Monk — Stunning Strike', () => {
       otherCombatants: [makeCombatant('tE', { characterId: 'char-foe', exhaustionLevel: 3 })],
     });
     routeCharacterQueries({
-      'char-caller': { class: 'Monk', level: 5, name: 'Kai' },
+      'char-caller': {
+        class: 'Monk', level: 5, name: 'Kai', features: [],
+        ability_scores: { wis: 16 }, proficiency_bonus: 2,
+      },
       'char-foe': { ability_scores: { con: 10 }, saving_throws: [], proficiency_bonus: 2, name: 'Foe' },
     });
     const { io, emissions } = makeFakeIo();
 
     await withRandomSeed([0.99, 0.01], async () => {
-      await tryHandleChatCommand(io, s.ctx, '!stunstrike Foe 13');
+      await tryHandleChatCommand(io, s.ctx, '!stunstrike Foe');
     });
 
     expect(enemy.conditions).toContain('stunned');
