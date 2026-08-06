@@ -9,9 +9,7 @@ import { tokenVisibleToPlayer } from '../utils/tokenVisibility.js';
 import {
   canReceiveFullCharacter,
   fullCharacterRecipientSocketIds,
-  npcCharacterRecipientSocketIds,
 } from '../utils/characterVisibility.js';
-import type { RoomState } from '../utils/roomState.js';
 import { broadcastSystem } from '../services/ChatCommands.js';
 import {
   computeAdjustSpellSlot,
@@ -20,6 +18,10 @@ import {
   persistRestUpdates,
   syncRestToCombatants,
 } from '../services/RestService.js';
+import {
+  emitCharacterUpdate,
+  fanoutCharacterUpdateAcrossRooms,
+} from '../services/CharacterUpdateService.js';
 
 const characterUpdateSchema = z.object({
   characterId: z.string().min(1),
@@ -119,41 +121,6 @@ async function characterIsInSession(characterId: string, sessionId: string): Pro
   return tokenCheck.rows.length > 0;
 }
 
-function emitCharacterUpdate(
-  io: Server,
-  room: RoomState,
-  characterId: string,
-  characterOwnerUserId: string,
-  changes: Record<string, unknown>
-): void {
-  const payload = { characterId, changes };
-
-  // NPC sheets follow the creature-sharing toggle and token visibility.
-  // Never send a hidden/prep-map creature payload merely because the caller
-  // knows its character id.
-  if (characterOwnerUserId === 'npc') {
-    for (const socketId of npcCharacterRecipientSocketIds(
-      room,
-      characterId,
-      room.showCreatureStatsToPlayers
-    )) {
-      io.to(socketId).emit('character:updated', payload);
-    }
-    return;
-  }
-
-  // PC updates can contain private notes, inventory, and spell choices.
-  // Do not put them in the room-wide event log: reconnecting allowed users
-  // self-heal from the privacy-filtered /state snapshot every five seconds.
-  for (const socketId of fullCharacterRecipientSocketIds(
-    room,
-    characterOwnerUserId,
-    room.showPlayersToPlayers
-  )) {
-    io.to(socketId).emit('character:updated', payload);
-  }
-}
-
 async function emitCharacterConflict(
   io: Server,
   socketId: string,
@@ -180,7 +147,7 @@ export function registerCharacterEvents(io: Server, socket: Socket): void {
       const { expectedVersion } = parsed.data;
 
       const { rows: existingRows } = await pool.query(
-        'SELECT id, user_id, version FROM characters WHERE id = $1',
+        'SELECT id, user_id, version, wild_shape FROM characters WHERE id = $1',
         [characterId]
       );
       if (existingRows.length === 0) return;
@@ -289,7 +256,14 @@ export function registerCharacterEvents(io: Server, socket: Socket): void {
       }
       changes.version = Number(updatedRows[0].version);
 
-      emitCharacterUpdate(io, ctx.room, characterId, charUserId, changes);
+      fanoutCharacterUpdateAcrossRooms(
+        io,
+        characterId,
+        charUserId,
+        changes,
+        existing.wild_shape,
+        ctx.room
+      );
     })
   );
 

@@ -13,6 +13,8 @@ import {
 } from '../utils/authorization.js';
 import { dbRowToCharacter } from '../utils/characterMapper.js';
 import { privateNoStoreCache } from '../utils/cacheHeaders.js';
+import { getIO } from '../socket/ioInstance.js';
+import { fanoutCharacterUpdateAcrossRooms } from '../services/CharacterUpdateService.js';
 
 const router = Router();
 
@@ -393,7 +395,23 @@ router.put('/:id', async (req: Request, res: Response) => {
     });
     return;
   }
-  res.json(dbRowToCharacter(rows[0]));
+  const character = dbRowToCharacter(rows[0]);
+  const io = getIO();
+  if (io) {
+    const committed = character as unknown as Record<string, unknown>;
+    const fanoutChanges = Object.fromEntries(
+      Object.keys(updates).map((field) => [field, committed[field]])
+    );
+    fanoutChanges.version = committed.version;
+    fanoutCharacterUpdateAcrossRooms(
+      io,
+      String(req.params.id),
+      String(rows[0].user_id),
+      fanoutChanges,
+      rows[0].wild_shape
+    );
+  }
+  res.json(character);
 });
 
 // DELETE /api/characters/:id
