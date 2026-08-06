@@ -460,9 +460,10 @@ describe('CombatService death-save state helpers', () => {
     );
   });
 
-  it('rejects applyDamage when token-condition persistence fails', async () => {
+  it('reconciles token conditions after committed damage persistence fails once', async () => {
     const sessionId = 's-damage-condition-persist-fail';
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    let conditionWrites = 0;
     const token = makeToken('tPC', {
       ownerUserId: 'player-1',
       characterId: 'char-1',
@@ -480,14 +481,170 @@ describe('CombatService death-save state helpers', () => {
     mockQuery.mockImplementation(async (sql: string) => {
       const characterResult = characterHpQueryResult(sql);
       if (characterResult) return characterResult;
-      if (sql.startsWith('UPDATE tokens SET conditions')) throw new Error('conditions failed');
+      if (sql.startsWith('UPDATE tokens SET conditions')) {
+        conditionWrites += 1;
+        if (conditionWrites === 1) throw new Error('conditions failed');
+      }
       return { rows: [] };
     });
 
     try {
-      await expect(CombatService.applyDamage(sessionId, 'tPC', 3)).rejects.toThrow(
-        'conditions failed'
+      const result = await CombatService.applyDamage(sessionId, 'tPC', 3);
+      expect(result.version).toBe(5);
+      expect(result.autoRemovedConditions).toEqual(['stable']);
+      expect(conditionWrites).toBe(2);
+      expect(token.conditions).toEqual(['unconscious']);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it('returns committed damage and reports when auxiliary reconciliation still fails', async () => {
+    const sessionId = 's-damage-condition-reconcile-fail';
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    let conditionWrites = 0;
+    const token = makeToken('tPC', {
+      ownerUserId: 'player-1',
+      characterId: 'char-1',
+      conditions: ['unconscious', 'stable'],
+    });
+    const combatant = makeCombatant('tPC', {
+      characterId: 'char-1',
+      hp: 0,
+      isNPC: false,
+      conditions: ['unconscious', 'stable'],
+    });
+    seedRoom(sessionId, [token], [combatant]);
+    mockQuery.mockImplementation(async (sql: string) => {
+      const characterResult = characterHpQueryResult(sql);
+      if (characterResult) return characterResult;
+      if (sql.startsWith('UPDATE tokens SET conditions')) {
+        conditionWrites += 1;
+        throw new Error('conditions unavailable');
+      }
+      return { rows: [] };
+    });
+
+    try {
+      const result = await CombatService.applyDamage(sessionId, 'tPC', 3);
+      expect(result.version).toBe(5);
+      expect(result.autoRemovedConditions).toEqual(['stable']);
+      expect(conditionWrites).toBe(2);
+      expect(error).toHaveBeenCalledWith(
+        '[CombatService] damage auxiliary reconciliation failed:',
+        expect.any(Array)
       );
+    } finally {
+      warn.mockRestore();
+      error.mockRestore();
+    }
+  });
+
+  it('reconciles token conditions after committed healing persistence fails once', async () => {
+    const sessionId = 's-heal-condition-reconcile';
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    let conditionWrites = 0;
+    const token = makeToken('tPC', {
+      ownerUserId: 'player-1',
+      characterId: 'char-1',
+      conditions: ['unconscious', 'stable'],
+    });
+    const combatant = makeCombatant('tPC', {
+      characterId: 'char-1',
+      hp: 0,
+      isNPC: false,
+      conditions: ['unconscious', 'stable'],
+    });
+    seedRoom(sessionId, [token], [combatant]);
+    mockQuery.mockImplementation(async (sql: string) => {
+      const characterResult = characterHpQueryResult(sql);
+      if (characterResult) return characterResult;
+      if (sql.startsWith('UPDATE tokens SET conditions')) {
+        conditionWrites += 1;
+        if (conditionWrites === 1) throw new Error('conditions failed');
+      }
+      return { rows: [] };
+    });
+
+    try {
+      const result = await CombatService.applyHeal(sessionId, 'tPC', 5);
+      expect(result.version).toBe(5);
+      expect(result.autoRemovedConditions).toEqual(['unconscious', 'stable']);
+      expect(conditionWrites).toBe(2);
+      expect(token.conditions).toEqual([]);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it('reconciles token conditions after committed stabilization persistence fails once', async () => {
+    const sessionId = 's-stable-condition-reconcile';
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    let conditionWrites = 0;
+    const token = makeToken('tPC', {
+      ownerUserId: 'player-1',
+      characterId: 'char-1',
+      conditions: ['unconscious'],
+    });
+    const combatant = makeCombatant('tPC', {
+      characterId: 'char-1',
+      hp: 0,
+      isNPC: false,
+      conditions: ['unconscious'],
+      deathSaves: { successes: 2, failures: 0 },
+    });
+    seedRoom(sessionId, [token], [combatant]);
+    mockQuery.mockImplementation(async (sql: string) => {
+      const characterResult = characterHpQueryResult(sql);
+      if (characterResult) return characterResult;
+      if (sql.startsWith('UPDATE tokens SET conditions')) {
+        conditionWrites += 1;
+        if (conditionWrites === 1) throw new Error('conditions failed');
+      }
+      return { rows: [] };
+    });
+
+    try {
+      const result = await CombatService.markStable(sessionId, 'tPC');
+      expect(result.version).toBe(5);
+      expect(result.added).toEqual(['stable']);
+      expect(conditionWrites).toBe(2);
+      expect(token.conditions).toEqual(['unconscious', 'stable']);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it('reconciles combat state after committed character damage persistence fails once', async () => {
+    const sessionId = 's-damage-combat-state-reconcile';
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    let combatStateWrites = 0;
+    const token = makeToken('tPC', {
+      ownerUserId: 'player-1',
+      characterId: 'char-1',
+    });
+    const combatant = makeCombatant('tPC', {
+      characterId: 'char-1',
+      hp: 20,
+      isNPC: false,
+    });
+    seedRoom(sessionId, [token], [combatant]);
+    mockQuery.mockImplementation(async (sql: string) => {
+      const characterResult = characterHpQueryResult(sql);
+      if (characterResult) return characterResult;
+      if (sql.startsWith('UPDATE combat_state')) {
+        combatStateWrites += 1;
+        if (combatStateWrites === 1) throw new Error('combat state failed');
+      }
+      return { rows: [] };
+    });
+
+    try {
+      const result = await CombatService.applyDamage(sessionId, 'tPC', 3);
+      expect(result.hp).toBe(17);
+      expect(result.version).toBe(5);
+      expect(combatStateWrites).toBe(2);
     } finally {
       warn.mockRestore();
     }
