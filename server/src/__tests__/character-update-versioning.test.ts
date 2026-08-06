@@ -136,6 +136,54 @@ beforeEach(() => {
 });
 
 describe('character:update version conflict handling', () => {
+  it('preserves spent server-managed resources during socket feature edits', async () => {
+    seedRoom();
+    const existingFeatures = [
+      {
+        name: 'Racial Spell: Hellish Rebuke',
+        usesTotal: 1,
+        usesRemaining: 0,
+        resetOn: 'long',
+      },
+    ];
+    mockQuery.mockImplementation(async (sql: string) => {
+      if (sql.includes('SELECT id, user_id, version, wild_shape FROM characters')) {
+        return { rows: [{ id: 'char-1', user_id: 'player-1', version: 3 }] };
+      }
+      if (sql.includes('SELECT features FROM characters')) {
+        return { rows: [{ features: JSON.stringify(existingFeatures) }] };
+      }
+      if (sql.trim().startsWith('UPDATE characters SET')) return { rows: [{ version: 4 }] };
+      return { rows: [] };
+    });
+    const { io, emissions } = fakeIo();
+    const { socket, handlers } = fakeSocket();
+    registerCharacterEvents(io, socket);
+
+    await handlers.get('character:update')?.({
+      characterId: 'char-1',
+      changes: {
+        features: [
+          { name: 'Editable Feature', description: 'Still editable' },
+          { name: 'Ki Points', usesTotal: 99, usesRemaining: 99 },
+        ],
+      },
+      expectedVersion: 3,
+    });
+
+    const update = mockQuery.mock.calls.find(([sql]) =>
+      String(sql).trim().startsWith('UPDATE characters SET')
+    );
+    const persisted = JSON.parse(update?.[1]?.[0] as string) as Array<Record<string, unknown>>;
+    expect(persisted).toEqual([
+      { name: 'Editable Feature', description: 'Still editable' },
+      existingFeatures[0],
+    ]);
+    const updatePayload = emissions.find((entry) => entry.event === 'character:updated')
+      ?.payload as { changes?: { features?: unknown[] } } | undefined;
+    expect(updatePayload?.changes?.features).toEqual(persisted);
+  });
+
   it('runs live combat synchronization from the committed REST fallback route', async () => {
     const room = seedActiveCombat();
     const { io, emissions } = fakeIo();

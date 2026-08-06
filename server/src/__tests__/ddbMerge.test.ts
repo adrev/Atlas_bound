@@ -85,6 +85,35 @@ describe('mergeFeatures', () => {
     );
     expect(out[0].usesRemaining).toBe(3);
   });
+
+  it('retains server-managed resources that DDB does not return', () => {
+    const racialCharge = {
+      name: 'Racial Spell: Hellish Rebuke',
+      usesTotal: 1,
+      usesRemaining: 0,
+      resetOn: 'long',
+    };
+    const ki = { name: 'Ki Points', usesTotal: 5, usesRemaining: 2, resetOn: 'short' };
+    const out = mergeFeatures(
+      [racialCharge, ki, { name: 'Legacy Feature', usesTotal: 1, usesRemaining: 0 }],
+      [{ name: 'Infernal Legacy', usesTotal: 1, usesRemaining: 1 }],
+    );
+    expect(out).toEqual([
+      { name: 'Infernal Legacy', usesTotal: 1, usesRemaining: 1 },
+      racialCharge,
+      ki,
+    ]);
+  });
+
+  it('preserves a Sorcery Point spend when DDB changes the resource alias', () => {
+    const out = mergeFeatures(
+      [{ name: 'Sorcery Points', usesTotal: 5, usesRemaining: 0, resetOn: 'long' }],
+      [{ name: 'Font of Magic', usesTotal: 5, usesRemaining: 5, resetOn: 'long' }],
+    );
+    expect(out).toEqual([
+      { name: 'Font of Magic', usesTotal: 5, usesRemaining: 0, resetOn: 'long' },
+    ]);
+  });
 });
 
 describe('buildMergeUpdate (happy path)', () => {

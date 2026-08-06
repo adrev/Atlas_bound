@@ -133,6 +133,47 @@ describe('PUT /api/characters/:id — version authority', () => {
     expect(res.statusCode).toBe(409);
     expect(res.body.character).toMatchObject({ id: 'char-1', hitPoints: 12, version: 4 });
   });
+
+  it('preserves spent server-managed resources during REST feature edits', async () => {
+    const spentResource = {
+      name: 'Racial Spell: Darkness',
+      usesTotal: 1,
+      usesRemaining: 0,
+      resetOn: 'long',
+    };
+    mockQuery
+      .mockResolvedValueOnce({ rows: [characterAuthRow()] })
+      .mockResolvedValueOnce({ rows: [{ features: JSON.stringify([spentResource]) }] })
+      .mockResolvedValueOnce({
+        rows: [
+          characterRow({
+            features: JSON.stringify([{ name: 'Editable Feature' }, spentResource]),
+            version: 4,
+          }),
+        ],
+      });
+    const handler = await getUpdateCharacterHandler();
+    const req = {
+      user: { id: 'caller' },
+      params: { id: 'char-1' },
+      body: {
+        features: [
+          { name: 'Editable Feature' },
+          { name: 'Sorcery Points', usesTotal: 99, usesRemaining: 99 },
+        ],
+        expectedVersion: 3,
+      },
+    } as unknown as Request;
+    const res = makeRes();
+    await handler(req, res);
+
+    expect(res.statusCode).toBe(200);
+    const update = mockQuery.mock.calls[2];
+    expect(JSON.parse(update[1][0] as string)).toEqual([
+      { name: 'Editable Feature' },
+      spentResource,
+    ]);
+  });
 });
 
 // ---------------------------------------------------------------------------
