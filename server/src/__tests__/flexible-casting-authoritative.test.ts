@@ -158,6 +158,7 @@ function characterRow(overrides: Record<string, unknown> = {}) {
       1: { max: 3, used: 0 },
       2: { max: 2, used: 2 },
     }),
+    user_id: 'sorcerer-user',
     version: 7,
     ...overrides,
   };
@@ -554,6 +555,13 @@ describe('persisted Sorcery Point subclass consumers', () => {
     const emissions: Emission[] = [];
     await run(emissions, '!elemental resist');
 
+    const selectSql = String(
+      mockQuery.mock.calls.find((call) =>
+        String(call[0]).includes('SELECT class, level, name, features, ability_scores')
+      )?.[0]
+    );
+    expect(selectSql).toContain('version');
+    expect(selectSql).toContain('user_id');
     expect(publicMessages(emissions)).toEqual([]);
     expect(channelsFor(emissions, 'character:updated')).toEqual([]);
   });
@@ -623,6 +631,13 @@ describe('persisted Sorcery Point subclass consumers', () => {
     mockQuery.mockClear();
     const allowed: Emission[] = [];
     await run(allowed, '!hound Enemy');
+    const selectSql = String(
+      mockQuery.mock.calls.find((call) =>
+        String(call[0]).includes('SELECT class, level, name, features')
+      )?.[0]
+    );
+    expect(selectSql).toContain('version');
+    expect(selectSql).toContain('user_id');
     expect(featureFromUpdate()).toMatchObject({ usesRemaining: 2 });
     expect(room.actionEconomies.get('sorcerer-token')?.bonusAction).toBe(true);
     expect(publicMessages(allowed)[0].content).not.toMatch(/SP \d+\/\d+/);

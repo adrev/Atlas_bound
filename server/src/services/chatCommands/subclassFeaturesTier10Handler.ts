@@ -664,7 +664,7 @@ async function handleElementalAffinity(c: ChatCommandContext): Promise<boolean> 
     return true;
   }
   const { rows } = await pool.query(
-    'SELECT class, level, name, features, ability_scores FROM characters WHERE id = $1',
+    'SELECT class, level, name, features, ability_scores, version, user_id FROM characters WHERE id = $1',
     [caller.characterId],
   );
   const row = rows[0] as Record<string, unknown> | undefined;

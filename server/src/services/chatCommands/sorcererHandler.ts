@@ -12,6 +12,7 @@ import {
   type PlayerContext,
 } from '../../utils/roomState.js';
 import { tokenVisibleToPlayer } from '../../utils/tokenVisibility.js';
+import { emitCharacterUpdate } from '../CharacterUpdateService.js';
 
 /**
  * Sorcerer features -- Sorcery Points, Flexible Casting, and Metamagic.
@@ -67,6 +68,7 @@ interface SorcererState {
   caller: Token;
   level: number;
   charId: string;
+  characterOwnerUserId: string;
   sorcName: string;
   version: number;
   points: SorceryPointPool;
@@ -205,7 +207,7 @@ async function requireSorcerer(
   let row: Record<string, unknown> | undefined;
   try {
     const result = await pool.query(
-      `SELECT class, level, name, features, spell_slots, version
+      `SELECT class, level, name, features, spell_slots, version, user_id
          FROM characters WHERE id = $1`,
       [caller.characterId]
     );
@@ -249,6 +251,7 @@ async function requireSorcerer(
     caller,
     level,
     charId: caller.characterId,
+    characterOwnerUserId: String(row.user_id || caller.ownerUserId),
     sorcName: (row.name as string) || caller.name,
     version,
     points: sorceryPointPool(features, level),
@@ -314,14 +317,17 @@ async function commitSorcererResources(
   }
 
   sorcerer.version = version;
-  c.io.to(c.ctx.room.sessionId).emit('character:updated', {
-    characterId: sorcerer.charId,
-    changes: {
+  emitCharacterUpdate(
+    c.io,
+    c.ctx.room,
+    sorcerer.charId,
+    sorcerer.characterOwnerUserId,
+    {
       features,
       ...(slots ? { spellSlots: slots } : {}),
       version,
-    },
-  });
+    }
+  );
   return true;
 }
 
@@ -340,7 +346,7 @@ export async function spendPersistedSorceryPoints(
   if (!row) {
     try {
       const result = await pool.query(
-        'SELECT class, level, name, features, version FROM characters WHERE id = $1',
+        'SELECT class, level, name, features, version, user_id FROM characters WHERE id = $1',
         [caller.characterId]
       );
       row = result.rows[0] as Record<string, unknown> | undefined;
@@ -380,6 +386,7 @@ export async function spendPersistedSorceryPoints(
       caller,
       level,
       charId: caller.characterId,
+      characterOwnerUserId: String(row.user_id || caller.ownerUserId),
       sorcName: (row.name as string) || caller.name,
       version,
       points,

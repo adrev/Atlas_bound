@@ -840,7 +840,7 @@ async function handleHound(c: ChatCommandContext): Promise<boolean> {
     return true;
   }
   const { rows } = await pool.query(
-    'SELECT class, level, name, features FROM characters WHERE id = $1',
+    'SELECT class, level, name, features, version, user_id FROM characters WHERE id = $1',
     [caller.characterId],
   );
   const row = rows[0] as Record<string, unknown> | undefined;
