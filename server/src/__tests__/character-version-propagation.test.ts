@@ -134,12 +134,35 @@ function characterUpdatePayload(emissions: Emission[]) {
     | undefined;
 }
 
+function characterHpAuthorityResult(sql: string, version: number) {
+  if (!sql.includes('SELECT wild_shape, version') || !sql.includes('FROM characters')) {
+    return undefined;
+  }
+  return {
+    rows: [
+      {
+        wild_shape: null,
+        version,
+        armor_class: 12,
+        speed: 30,
+        dndbeyond_id: null,
+        ability_scores: {},
+        inventory: [],
+        class: 'Fighter',
+        features: [],
+      },
+    ],
+  };
+}
+
 beforeEach(() => {
   mockQuery.mockReset();
   mockClientQuery.mockReset();
   mockConnect.mockReset();
   mockRelease.mockReset();
-  mockQuery.mockResolvedValue({ rows: [] });
+  mockQuery.mockImplementation(
+    async (sql: string) => characterHpAuthorityResult(sql, 4) ?? { rows: [] }
+  );
   mockClientQuery.mockResolvedValue({ rows: [] });
   mockConnect.mockResolvedValue({ query: mockClientQuery, release: mockRelease });
   for (const id of Array.from(getAllRooms().keys())) getAllRooms().delete(id);
@@ -153,8 +176,11 @@ describe('combat HP version propagation', () => {
   it('includes the RETURNING version in the damage character:updated fanout', async () => {
     seedCombatRoom('vers-damage-session');
     mockQuery.mockImplementation(async (sql: string) => {
+      const authority = characterHpAuthorityResult(sql, 6);
+      if (authority) return authority;
       if (String(sql).includes('UPDATE characters SET hit_points')) {
         expect(String(sql)).toContain('RETURNING version');
+        expect(String(sql)).toContain('AND version = $5');
         return { rows: [{ version: 7 }] };
       }
       return { rows: [] };
@@ -180,6 +206,8 @@ describe('combat HP version propagation', () => {
     seedCombatRoom('vers-conc-session', { hp: 3 });
     mockQuery.mockImplementation(async (sql: string) => {
       const text = String(sql);
+      const authority = characterHpAuthorityResult(text, 6);
+      if (authority) return authority;
       if (text.includes('UPDATE characters SET hit_points')) {
         // HP persist bumps the trigger to 7...
         return { rows: [{ version: 7 }] };
@@ -215,8 +243,11 @@ describe('combat HP version propagation', () => {
   it('includes the RETURNING version in the heal character:updated fanout', async () => {
     seedCombatRoom('vers-heal-session', { hp: 2 });
     mockQuery.mockImplementation(async (sql: string) => {
+      const authority = characterHpAuthorityResult(sql, 4);
+      if (authority) return authority;
       if (String(sql).includes('UPDATE characters SET hit_points')) {
         expect(String(sql)).toContain('RETURNING version');
+        expect(String(sql)).toContain('AND version = $4');
         return { rows: [{ version: 5 }] };
       }
       return { rows: [] };
@@ -234,27 +265,31 @@ describe('combat HP version propagation', () => {
     expect(update?.changes?.version).toBe(5);
   });
 
-  it('omits version from the fanout when the HP write returns no version row', async () => {
-    seedCombatRoom('vers-missing-session', { hp: 8 });
-    // Default mock: every query resolves rows: [] — simulates an older
-    // DB shape. The fanout still goes out, just without a version field
-    // (client keeps its current one rather than storing NaN/undefined).
+  it('fails closed before damage when the authoritative character row is missing', async () => {
+    const { room } = seedCombatRoom('vers-missing-session', { hp: 8 });
+    mockQuery.mockResolvedValue({ rows: [] });
     const emissions: Emission[] = [];
-    const { socket, handlers } = fakeSocket('dm-sock');
+    const { socket, handlers, socketEmissions } = fakeSocket('dm-sock');
     registerCombatHp(fakeIo(emissions), socket);
 
     await handlers.get('combat:damage')?.({ tokenId: 'pc-token', amount: 2 });
 
-    const update = characterUpdatePayload(emissions);
-    expect(update?.characterId).toBe('char-1');
-    expect(update?.changes).not.toHaveProperty('version');
+    expect(characterUpdatePayload(emissions)).toBeUndefined();
+    expect(emissions.some((entry) => entry.event === 'combat:hp-changed')).toBe(false);
+    expect(room.combatState?.combatants[0].hp).toBe(8);
+    expect(socketEmissions).toContainEqual({
+      event: 'session:error',
+      payload: {
+        message: 'Character state is unavailable — nothing was changed. Refresh and retry.',
+      },
+    });
   });
 
-  it('never propagates a null version row as version 0', async () => {
-    seedCombatRoom('vers-null-session', { hp: 8 });
-    // Number(null) is 0 — a null/mocked version cell must not survive
-    // the integer >= 1 guard and reach the fanout as version 0.
+  it('rolls back live damage state when the guarded write returns no valid version', async () => {
+    const { room } = seedCombatRoom('vers-null-session', { hp: 8 });
     mockQuery.mockImplementation(async (sql: string) => {
+      const authority = characterHpAuthorityResult(sql, 4);
+      if (authority) return authority;
       if (String(sql).includes('UPDATE characters SET hit_points')) {
         return { rows: [{ version: null }] };
       }
@@ -262,14 +297,18 @@ describe('combat HP version propagation', () => {
     });
 
     const emissions: Emission[] = [];
-    const { socket, handlers } = fakeSocket('dm-sock');
+    const { socket, handlers, socketEmissions } = fakeSocket('dm-sock');
     registerCombatHp(fakeIo(emissions), socket);
 
     await handlers.get('combat:damage')?.({ tokenId: 'pc-token', amount: 2 });
 
-    const update = characterUpdatePayload(emissions);
-    expect(update?.characterId).toBe('char-1');
-    expect(update?.changes).not.toHaveProperty('version');
+    expect(characterUpdatePayload(emissions)).toBeUndefined();
+    expect(emissions.some((entry) => entry.event === 'combat:hp-changed')).toBe(false);
+    expect(room.combatState?.combatants[0].hp).toBe(8);
+    expect(socketEmissions).toContainEqual({
+      event: 'session:error',
+      payload: { message: 'Damage was not applied: the character changed mid-action. Retry.' },
+    });
   });
 });
 
@@ -317,6 +356,8 @@ describe('death-save version propagation', () => {
     });
     vi.spyOn(DiscordService, 'notifySession').mockResolvedValue(undefined);
     mockQuery.mockImplementation(async (sql: string) => {
+      const authority = characterHpAuthorityResult(sql, 9);
+      if (authority) return authority;
       if (String(sql).includes('UPDATE characters SET hit_points')) {
         return { rows: [{ version: 10 }] };
       }
@@ -355,6 +396,8 @@ describe('death-save version propagation', () => {
       isCritFail: false,
     });
     mockQuery.mockImplementation(async (sql: string) => {
+      const authority = characterHpAuthorityResult(sql, 10);
+      if (authority) return authority;
       if (String(sql).includes('UPDATE characters SET hit_points = 0')) {
         expect(String(sql)).toContain('RETURNING version');
         return { rows: [{ version: 11 }] };

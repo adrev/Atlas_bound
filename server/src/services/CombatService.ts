@@ -1566,8 +1566,8 @@ export interface HpChangeResult {
   };
 }
 
-interface ActiveWildShape {
-  state: WildShapeState;
+interface CharacterHpAuthority {
+  wildShape: WildShapeState | null;
   version: number;
   /**
    * The full character row the state/version were read from. When the
@@ -1579,13 +1579,11 @@ interface ActiveWildShape {
 }
 
 /**
- * Active Wild Shape for a combat HP change, or null when the
- * character isn't transformed (missing row/column included, so legacy
- * data and mocks take the normal path). An unreadable non-null state
- * or an unusable version fails CLOSED — the HP change is refused
- * rather than applied to the wrong pool; `!revert` clears bad state.
+ * Load the character row and optimistic-lock version used by every
+ * combat HP mutation. Missing rows, unreadable versions, and malformed
+ * Wild Shape state all fail closed before live combat state changes.
  */
-async function loadActiveWildShape(characterId: string): Promise<ActiveWildShape | null> {
+async function loadCharacterHpAuthority(characterId: string): Promise<CharacterHpAuthority> {
   const { rows } = await pool.query(
     `SELECT wild_shape, version, armor_class, speed, dndbeyond_id,
             ability_scores, inventory, class, features
@@ -1593,16 +1591,23 @@ async function loadActiveWildShape(characterId: string): Promise<ActiveWildShape
     [characterId]
   );
   const row = rows[0] as Record<string, unknown> | undefined;
-  if (!row) return null;
+  if (!row) {
+    throw new Error('Character state is unavailable — nothing was changed. Refresh and retry.');
+  }
   const column = readWildShapeColumn(row.wild_shape);
-  if (column.status === 'none') return null;
   const version = parseCharacterVersion(row);
   if (column.status === 'invalid' || version === undefined) {
     throw new Error(
-      'Wild Shape state is unreadable — the druid must `!revert` before HP changes can apply.'
+      column.status === 'invalid'
+        ? 'Wild Shape state is unreadable — the druid must `!revert` before HP changes can apply.'
+        : 'Character version is unreadable — nothing was changed. Refresh and retry.'
     );
   }
-  return { state: column.state, version, row };
+  return {
+    wildShape: column.status === 'active' ? column.state : null,
+    version,
+    row,
+  };
 }
 
 /**
@@ -1677,23 +1682,32 @@ export async function markStable(
   const combatant = room.combatState.combatants.find((c) => c.tokenId === tokenId);
   if (!combatant) throw new Error('Combatant not found');
 
+  const characterAuthority = combatant.characterId
+    ? await loadCharacterHpAuthority(combatant.characterId)
+    : null;
+  const nextDeathSaves = { successes: 0, failures: 0 };
+  let version: number | undefined;
+  if (combatant.characterId && characterAuthority) {
+    const { rows } = await pool.query(
+      'UPDATE characters SET hit_points = 0, death_saves = $1 WHERE id = $2 AND version = $3 RETURNING version',
+      [JSON.stringify(nextDeathSaves), combatant.characterId, characterAuthority.version]
+    );
+    version = parseCharacterVersion(rows[0]);
+    if (version === undefined) {
+      throw new Error('Stabilization was not applied: the character changed mid-action. Retry.');
+    }
+  }
+
   combatant.hp = 0;
-  combatant.deathSaves = { successes: 0, failures: 0 };
+  combatant.deathSaves = nextDeathSaves;
   const result = setTokenConditions(room, tokenId, (conditions) => {
     const next = conditions.filter((c) => c.toLowerCase() !== 'dead');
     if (!next.some((c) => c.toLowerCase() === 'unconscious')) next.push('unconscious');
     if (!next.some((c) => c.toLowerCase() === 'stable')) next.push('stable');
     return next;
   });
-  let version: number | undefined;
-  if (combatant.characterId) {
-    const { rows } = await pool.query(
-      'UPDATE characters SET hit_points = 0, death_saves = $1 WHERE id = $2 RETURNING version',
-      [JSON.stringify(combatant.deathSaves), combatant.characterId]
-    );
-    version = parseCharacterVersion(rows[0]);
-  }
-  persistCombatState(room.combatState);
+  if (result.persistPromise) await result.persistPromise;
+  await persistCombatStateAsync(room.combatState);
 
   return {
     conditions: result.conditions,
@@ -1773,14 +1787,26 @@ export async function applyDamage(
   if (!combatant) throw new Error('Combatant not found');
   const resolvedDamage = await resolveIncomingDamage(room, combatant, tokenId, amount, options);
   const appliedAmount = resolvedDamage.amount;
-  // Wild Shape: damage routes to the persisted form HP first. Loaded
-  // (and fail-closed validated) BEFORE any in-memory mutation.
-  const activeWildShape = combatant.characterId
-    ? await loadActiveWildShape(combatant.characterId)
+  // Every character-backed HP mutation needs a valid optimistic-lock
+  // version, whether transformed or not. Load it before touching memory.
+  const characterAuthority = combatant.characterId
+    ? await loadCharacterHpAuthority(combatant.characterId)
+    : null;
+  const activeWildShape = characterAuthority?.wildShape
+    ? {
+        state: characterAuthority.wildShape,
+        version: characterAuthority.version,
+        row: characterAuthority.row,
+      }
     : null;
   const hpBefore = combatant.hp;
   const tempHpBefore = combatant.tempHp;
   const deathSavesBefore = combatant.deathSaves ? { ...combatant.deathSaves } : undefined;
+  const restoreCombatant = () => {
+    combatant.hp = hpBefore;
+    combatant.tempHp = tempHpBefore;
+    combatant.deathSaves = deathSavesBefore ?? { successes: 0, failures: 0 };
+  };
 
   // 5e: "If you take any damage while you have 0 HP, you suffer a
   // death saving throw failure." Track this BEFORE mutating hp so
@@ -1828,50 +1854,50 @@ export async function applyDamage(
   // below simply hasn't happened yet, so nothing needs rolling back.
   let version: number | undefined;
   if (combatant.characterId) {
-    if (activeWildShape) {
-      // Form HP, carried-over character HP, and the form ending are
-      // one atomic, version-guarded write. A conflict restores the
-      // in-memory combatant and refuses the damage (fail closed) —
-      // nothing was persisted, so a retry sees fresh state.
-      const { rows: versionRows } = await pool.query(
-        'UPDATE characters SET hit_points = $1, temp_hit_points = $2, death_saves = $3, wild_shape = $4 WHERE id = $5 AND version = $6 RETURNING version',
-        [
-          combatant.hp,
-          combatant.tempHp,
-          JSON.stringify(combatant.deathSaves ?? { successes: 0, failures: 0 }),
-          serializeWildShapeState(nextWildShape),
-          combatant.characterId,
-          activeWildShape.version,
-        ]
-      );
-      version = parseCharacterVersion(versionRows[0]);
-      if (version === undefined) {
-        combatant.hp = hpBefore;
-        combatant.tempHp = tempHpBefore;
-        combatant.deathSaves = deathSavesBefore ?? { successes: 0, failures: 0 };
-        throw new Error('Damage was not applied: the Wild Shape state changed mid-action. Retry.');
+    try {
+      if (activeWildShape) {
+        const { rows: versionRows } = await pool.query(
+          'UPDATE characters SET hit_points = $1, temp_hit_points = $2, death_saves = $3, wild_shape = $4 WHERE id = $5 AND version = $6 RETURNING version',
+          [
+            combatant.hp,
+            combatant.tempHp,
+            JSON.stringify(combatant.deathSaves ?? { successes: 0, failures: 0 }),
+            serializeWildShapeState(nextWildShape),
+            combatant.characterId,
+            activeWildShape.version,
+          ]
+        );
+        version = parseCharacterVersion(versionRows[0]);
+        if (version === undefined) {
+          throw new Error(
+            'Damage was not applied: the Wild Shape state changed mid-action. Retry.'
+          );
+        }
+      } else {
+        const { rows: versionRows } = await pool.query(
+          'UPDATE characters SET hit_points = $1, temp_hit_points = $2, death_saves = $3 WHERE id = $4 AND version = $5 RETURNING version',
+          [
+            combatant.hp,
+            combatant.tempHp,
+            JSON.stringify(combatant.deathSaves ?? { successes: 0, failures: 0 }),
+            combatant.characterId,
+            characterAuthority!.version,
+          ]
+        );
+        version = parseCharacterVersion(versionRows[0]);
+        if (version === undefined) {
+          throw new Error('Damage was not applied: the character changed mid-action. Retry.');
+        }
       }
-      // The form just dropped: restore the druid's own AC/speed on the
-      // live combatant so movement caps and the tracker stop using the
-      // beast's numbers. Derived from the row the version guard just
-      // proved untouched (the write only changed HP/death-save/wild
-      // -shape columns, none of which feed the baseline), so this is
-      // pure computation — no post-commit read can fail and strand
-      // the beast's stats.
-      if (wildShapeEnded) {
-        applyEffectiveFormStats(room, combatant, deriveBaselineAcSpeed(activeWildShape.row));
-      }
-    } else {
-      const { rows: versionRows } = await pool.query(
-        'UPDATE characters SET hit_points = $1, temp_hit_points = $2, death_saves = $3 WHERE id = $4 RETURNING version',
-        [
-          combatant.hp,
-          combatant.tempHp,
-          JSON.stringify(combatant.deathSaves ?? { successes: 0, failures: 0 }),
-          combatant.characterId,
-        ]
-      );
-      version = parseCharacterVersion(versionRows[0]) ?? version;
+    } catch (error) {
+      restoreCombatant();
+      throw error;
+    }
+
+    // The form just dropped: restore the druid's own AC/speed on the
+    // live combatant from the same pre-write row the version guard proved.
+    if (activeWildShape && wildShapeEnded) {
+      applyEffectiveFormStats(room, combatant, deriveBaselineAcSpeed(activeWildShape.row));
     }
   }
 
@@ -1973,11 +1999,14 @@ export async function applyHeal(
   const combatant = room.combatState.combatants.find((c) => c.tokenId === tokenId);
   if (!combatant) throw new Error('Combatant not found');
 
-  // 2014: healing received while wild-shaped restores the beast
-  // form's HP, not the druid's own pool. Version-guarded and
-  // fail-closed like the damage path; combatant HP is untouched.
-  const activeWildShape = combatant.characterId
-    ? await loadActiveWildShape(combatant.characterId)
+  const characterAuthority = combatant.characterId
+    ? await loadCharacterHpAuthority(combatant.characterId)
+    : null;
+  const activeWildShape = characterAuthority?.wildShape
+    ? {
+        state: characterAuthority.wildShape,
+        version: characterAuthority.version,
+      }
     : null;
   if (activeWildShape) {
     const state = activeWildShape.state;
@@ -2001,35 +2030,50 @@ export async function applyHeal(
   }
 
   const persistence: Promise<unknown>[] = [];
+  const hpBefore = combatant.hp;
+  const deathSavesBefore = combatant.deathSaves ? { ...combatant.deathSaves } : undefined;
   combatant.hp = Math.min(combatant.maxHp, combatant.hp + amount);
-  let autoRemovedConditions: string[] | undefined;
   if (combatant.hp > 0) {
     combatant.deathSaves = { successes: 0, failures: 0 };
+  }
+
+  let version: number | undefined;
+  if (combatant.characterId && characterAuthority) {
+    try {
+      const { rows: versionRows } = await pool.query(
+        'UPDATE characters SET hit_points = $1, death_saves = $2 WHERE id = $3 AND version = $4 RETURNING version',
+        [
+          combatant.hp,
+          JSON.stringify(combatant.deathSaves ?? { successes: 0, failures: 0 }),
+          combatant.characterId,
+          characterAuthority.version,
+        ]
+      );
+      version = parseCharacterVersion(versionRows[0]);
+      if (version === undefined) {
+        throw new Error('Healing was not applied: the character changed mid-action. Retry.');
+      }
+    } catch (error) {
+      combatant.hp = hpBefore;
+      combatant.deathSaves = deathSavesBefore ?? { successes: 0, failures: 0 };
+      throw error;
+    }
+  }
+
+  let autoRemovedConditions: string[] | undefined;
+  if (combatant.hp > 0) {
     const conditionResult = setTokenConditions(room, tokenId, (conditions) =>
       conditions.filter((c) => !['unconscious', 'stable'].includes(c.toLowerCase()))
     );
     if (conditionResult.persistPromise) persistence.push(conditionResult.persistPromise);
     if (conditionResult.removed.length > 0) autoRemovedConditions = conditionResult.removed;
   }
-
-  let version: number | undefined;
-  if (combatant.characterId) {
-    const { rows: versionRows } = await pool.query(
-      'UPDATE characters SET hit_points = $1, death_saves = $2 WHERE id = $3 RETURNING version',
-      [
-        combatant.hp,
-        JSON.stringify(combatant.deathSaves ?? { successes: 0, failures: 0 }),
-        combatant.characterId,
-      ]
-    );
-    version = parseCharacterVersion(versionRows[0]) ?? version;
-  }
   await Promise.all(persistence);
   await persistCombatStateAsync(room.combatState);
   return {
     hp: combatant.hp,
     tempHp: combatant.tempHp,
-    change: amount,
+    change: combatant.hp - hpBefore,
     characterId: combatant.characterId ?? null,
     autoRemovedConditions,
     version,

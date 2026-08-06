@@ -1066,6 +1066,9 @@ describe('Utility — !stabilize', () => {
     });
     s.room.userSockets.set('player-1', new Set(['sock-1']));
     mockQuery.mockImplementation(async (sql: string) => {
+      if (sql.includes('SELECT wild_shape, version')) {
+        return { rows: [{ wild_shape: null, version: 16 }] };
+      }
       if (sql.includes('SELECT ability_scores, skills')) {
         return {
           rows: [
