@@ -1790,6 +1790,71 @@ export async function markStable(
   };
 }
 
+export async function recordDeathSaveCounters(
+  sessionId: string,
+  tokenId: string,
+  deathSaves: { successes: number; failures: number },
+  roundNumber: number
+): Promise<{ deathSaves: { successes: number; failures: number }; version?: number }> {
+  const room = getRoom(sessionId);
+  if (!room?.combatState) throw new Error('No active combat');
+  const combatant = room.combatState.combatants.find((candidate) => candidate.tokenId === tokenId);
+  if (!combatant) throw new Error('Combatant not found');
+
+  const nextDeathSaves = {
+    successes: Math.min(3, Math.max(0, Math.trunc(deathSaves.successes))),
+    failures: Math.min(3, Math.max(0, Math.trunc(deathSaves.failures))),
+  };
+  const characterAuthority = combatant.characterId
+    ? await loadCharacterHpAuthority(combatant.characterId)
+    : null;
+  let version: number | undefined;
+  if (combatant.characterId && characterAuthority) {
+    let rows: Array<Record<string, unknown>>;
+    try {
+      ({ rows } = await pool.query(
+        'UPDATE characters SET death_saves = $1 WHERE id = $2 AND version = $3 RETURNING version',
+        [JSON.stringify(nextDeathSaves), combatant.characterId, characterAuthority.version]
+      ));
+    } catch (error) {
+      console.warn('[CombatService] Death-save character write failed:', error);
+      throw new Error('Death save could not be confirmed. Nothing was changed. Retry.');
+    }
+    version = parseCharacterVersion(rows[0]);
+    if (version === undefined) {
+      throw new Error('Death save was not recorded: the character changed mid-action. Retry.');
+    }
+  }
+
+  // Publish the result to live combat only after the guarded character write
+  // confirms it. Failed/conflicting writes therefore leave the once-per-round
+  // marker clear and allow a truthful retry.
+  const previousDeathSaves = combatant.deathSaves;
+  const previousRolledRound = combatant.deathSaveRolledRound;
+  combatant.deathSaves = nextDeathSaves;
+  combatant.deathSaveRolledRound = roundNumber;
+  try {
+    await persistHpSideEffects({
+      operation: 'death save',
+      room,
+      initialPromises: [],
+      affectedTokenIds: [],
+      characterCommitted: version !== undefined,
+    });
+  } catch (error) {
+    // Characterless combatants have no committed character row anchoring the
+    // result, so a combat-state persistence failure must restore live state.
+    combatant.deathSaves = previousDeathSaves;
+    combatant.deathSaveRolledRound = previousRolledRound;
+    throw error;
+  }
+
+  return {
+    deathSaves: nextDeathSaves,
+    ...(version !== undefined ? { version } : {}),
+  };
+}
+
 export function persistSessionCombatState(sessionId: string): void {
   const room = getRoom(sessionId);
   if (room?.combatState) persistCombatState(room.combatState);

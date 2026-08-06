@@ -95,7 +95,9 @@ describe('combat HP socket events', () => {
     const room = createRoom(sessionId, 'HEAL', 'dm-user');
     room.currentMapId = 'map-1';
     room.playerMapId = 'map-1';
-    const downedToken = token('pc-token', { conditions: ['unconscious', 'stable'] as Token['conditions'] });
+    const downedToken = token('pc-token', {
+      conditions: ['unconscious', 'stable'] as Token['conditions'],
+    });
     room.tokens.set(downedToken.id, downedToken);
     const state: CombatState = {
       sessionId,
@@ -103,7 +105,9 @@ describe('combat HP socket events', () => {
       roundNumber: 1,
       currentTurnIndex: 0,
       combatants: [
-        combatant(downedToken.id, { conditions: ['unconscious', 'stable'] as Combatant['conditions'] }),
+        combatant(downedToken.id, {
+          conditions: ['unconscious', 'stable'] as Combatant['conditions'],
+        }),
       ],
       startedAt: new Date().toISOString(),
     };
@@ -201,6 +205,17 @@ describe('combat HP socket events', () => {
       role: 'player',
       characterId: 'char-1',
     });
+    mockQuery.mockImplementation(async (sql: string, params?: unknown[]) => {
+      if (sql.includes('SELECT wild_shape, version')) {
+        return { rows: [{ wild_shape: null, version: 6 }] };
+      }
+      if (sql.includes('UPDATE characters SET death_saves')) {
+        expect(sql).toContain('AND version = $3');
+        expect(params?.[2]).toBe(6);
+        return { rows: [{ version: 7 }] };
+      }
+      return { rows: [] };
+    });
 
     const emissions: Emission[] = [];
     const { socket, handlers } = fakeSocket('dm-sock');
@@ -220,7 +235,9 @@ describe('combat HP socket events', () => {
       .sort();
     expect(deathSaveChannels).toEqual(['dm-sock']);
 
-    const chatInsert = mockQuery.mock.calls.find(([sql]) => String(sql).includes('INSERT INTO chat_messages'));
+    const chatInsert = mockQuery.mock.calls.find(([sql]) =>
+      String(sql).includes('INSERT INTO chat_messages')
+    );
     const params = chatInsert?.[1] as unknown[];
     expect(params[8]).toBe(1);
     expect(notifySpy).not.toHaveBeenCalled();

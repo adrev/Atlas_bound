@@ -287,59 +287,65 @@ export function registerCombatHp(io: Server, socket: Socket): void {
     if (tokenConditions.includes('stable')) return;
 
     const result = DiceService.rollDeathSave();
-    combatant.deathSaveRolledRound = combatState.roundNumber;
     const characterChanges: Record<string, unknown> = {};
     let characterVersion: number | undefined;
+    const nextDeathSaves = { ...combatant.deathSaves };
 
-    // Apply death save result
-    if (result.isCritSuccess) {
-      // Nat 20: regain 1 HP
-      const healResult = await CombatService.applyHeal(ctx.room.sessionId, tokenId, 1);
-      combatant.deathSaves = { successes: 0, failures: 0 };
-      characterVersion = healResult.version;
-      characterChanges.hitPoints = healResult.hp;
-      characterChanges.tempHitPoints = healResult.tempHp;
-      characterChanges.deathSaves = combatant.deathSaves;
-      emitToTokenStatViewers(io, ctx.room, tokenId, 'combat:hp-changed', {
-        tokenId,
-        hp: healResult.hp,
-        tempHp: healResult.tempHp,
-        change: healResult.change,
-        type: 'heal',
-      });
-      if (healResult.autoRemovedConditions && healResult.autoRemovedConditions.length > 0) {
+    if (result.isCritFail) {
+      nextDeathSaves.failures = Math.min(3, nextDeathSaves.failures + 2);
+    } else if (result.isSuccess && !result.isCritSuccess) {
+      nextDeathSaves.successes = Math.min(3, nextDeathSaves.successes + 1);
+    } else if (!result.isCritSuccess) {
+      nextDeathSaves.failures = Math.min(3, nextDeathSaves.failures + 1);
+    }
+
+    try {
+      if (result.isCritSuccess) {
+        // Nat 20: regain 1 HP. applyHeal owns the guarded HP/death-save write.
+        const healResult = await CombatService.applyHeal(ctx.room.sessionId, tokenId, 1);
+        combatant.deathSaveRolledRound = combatState.roundNumber;
+        characterVersion = healResult.version;
+        characterChanges.hitPoints = healResult.hp;
+        characterChanges.tempHitPoints = healResult.tempHp;
+        characterChanges.deathSaves = combatant.deathSaves;
+        emitToTokenStatViewers(io, ctx.room, tokenId, 'combat:hp-changed', {
+          tokenId,
+          hp: healResult.hp,
+          tempHp: healResult.tempHp,
+          change: healResult.change,
+          type: 'heal',
+        });
+        if (healResult.autoRemovedConditions && healResult.autoRemovedConditions.length > 0) {
+          emitToTokenViewers(io, ctx.room, tokenId, 'map:token-updated', {
+            tokenId,
+            changes: tokenConditionChanges(ctx.room, tokenId),
+          });
+        }
+      } else if (nextDeathSaves.successes >= 3) {
+        // Core 5e leaves a stabilized creature at 0 HP and unconscious.
+        const stableResult = await CombatService.markStable(ctx.room.sessionId, tokenId);
+        combatant.deathSaveRolledRound = combatState.roundNumber;
+        characterVersion = stableResult.version;
+        characterChanges.deathSaves = combatant.deathSaves;
         emitToTokenViewers(io, ctx.room, tokenId, 'map:token-updated', {
           tokenId,
           changes: tokenConditionChanges(ctx.room, tokenId),
         });
+      } else {
+        const saved = await CombatService.recordDeathSaveCounters(
+          ctx.room.sessionId,
+          tokenId,
+          nextDeathSaves,
+          combatState.roundNumber
+        );
+        characterVersion = saved.version;
+        characterChanges.deathSaves = saved.deathSaves;
       }
-    } else if (result.isCritFail) {
-      // Nat 1: two failures
-      combatant.deathSaves.failures = Math.min(3, combatant.deathSaves.failures + 2);
-    } else if (result.isSuccess) {
-      combatant.deathSaves.successes = Math.min(3, combatant.deathSaves.successes + 1);
-    } else {
-      combatant.deathSaves.failures = Math.min(3, combatant.deathSaves.failures + 1);
-    }
-
-    // Stabilize on 3 successes. Core 5e leaves the creature at 0 HP
-    // and unconscious; it only stops future death-save rolls.
-    if (combatant.deathSaves.successes >= 3) {
-      const stableResult = await CombatService.markStable(ctx.room.sessionId, tokenId);
-      characterVersion = stableResult.version;
-      characterChanges.deathSaves = combatant.deathSaves;
-      emitToTokenViewers(io, ctx.room, tokenId, 'map:token-updated', {
-        tokenId,
-        changes: tokenConditionChanges(ctx.room, tokenId),
+    } catch (error) {
+      socket.emit('session:error', {
+        message: error instanceof Error ? error.message : 'Death save was not recorded. Retry.',
       });
-    } else if (!result.isCritSuccess && combatant.characterId) {
-      const { rows: versionRows } = await pool.query(
-        'UPDATE characters SET death_saves = $1 WHERE id = $2 RETURNING version',
-        [JSON.stringify(combatant.deathSaves), combatant.characterId]
-      );
-      const version = Number(versionRows[0]?.version);
-      if (Number.isInteger(version) && version >= 1) characterVersion = version;
-      characterChanges.deathSaves = combatant.deathSaves;
+      return;
     }
     if (combatant.characterId && Object.keys(characterChanges).length > 0) {
       if (characterVersion !== undefined) characterChanges.version = characterVersion;
