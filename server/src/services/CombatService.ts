@@ -1668,9 +1668,78 @@ function setTokenConditions(
     JSON.stringify(after),
     tokenId,
   ]);
-  persistPromise.catch((e) => console.warn('[CombatService] token conditions persist failed:', e));
 
   return { changed: true, conditions: after, removed, added, persistPromise };
+}
+
+interface HpSideEffectPersistenceOptions {
+  operation: string;
+  room: RoomState;
+  initialPromises: Promise<unknown>[];
+  affectedTokenIds: string[];
+  characterCommitted: boolean;
+  concentrationCharacterId?: string;
+}
+
+function rejectedReasons(results: PromiseSettledResult<unknown>[]): unknown[] {
+  return results
+    .filter((result): result is PromiseRejectedResult => result.status === 'rejected')
+    .map((result) => result.reason);
+}
+
+/**
+ * A guarded character write is the authoritative commit point for a
+ * character-backed HP action. If a later token/combat-state write fails,
+ * rejecting the socket action would be dishonest: the HP already changed in
+ * PostgreSQL and suppressing fanout leaves every client stale. Retry those
+ * derived rows once from current room state, then log without hiding the
+ * committed action. NPC-only actions have no character commit to anchor them,
+ * so their persistence failures still reject normally.
+ */
+async function persistHpSideEffects(options: HpSideEffectPersistenceOptions): Promise<void> {
+  const initialResults = await Promise.allSettled([
+    ...options.initialPromises,
+    persistCombatStateAsync(options.room.combatState!),
+  ]);
+  const initialFailures = rejectedReasons(initialResults);
+  if (initialFailures.length === 0) return;
+
+  if (!options.characterCommitted) {
+    throw initialFailures[0];
+  }
+
+  console.warn(
+    `[CombatService] ${options.operation} committed; retrying auxiliary persistence:`,
+    initialFailures
+  );
+  const retryPromises: Promise<unknown>[] = [];
+  for (const tokenId of new Set(options.affectedTokenIds)) {
+    const token = options.room.tokens.get(tokenId);
+    if (!token) continue;
+    retryPromises.push(
+      pool.query('UPDATE tokens SET conditions = $1 WHERE id = $2', [
+        JSON.stringify(token.conditions ?? []),
+        tokenId,
+      ])
+    );
+  }
+  if (options.concentrationCharacterId) {
+    retryPromises.push(
+      pool.query(
+        'UPDATE characters SET concentrating_on = NULL WHERE id = $1 AND concentrating_on IS NOT NULL',
+        [options.concentrationCharacterId]
+      )
+    );
+  }
+  retryPromises.push(persistCombatStateAsync(options.room.combatState!));
+
+  const retryFailures = rejectedReasons(await Promise.allSettled(retryPromises));
+  if (retryFailures.length > 0) {
+    console.error(
+      `[CombatService] ${options.operation} auxiliary reconciliation failed:`,
+      retryFailures
+    );
+  }
 }
 
 export async function markStable(
@@ -1706,8 +1775,13 @@ export async function markStable(
     if (!next.some((c) => c.toLowerCase() === 'stable')) next.push('stable');
     return next;
   });
-  if (result.persistPromise) await result.persistPromise;
-  await persistCombatStateAsync(room.combatState);
+  await persistHpSideEffects({
+    operation: 'stabilization',
+    room,
+    initialPromises: result.persistPromise ? [result.persistPromise] : [],
+    affectedTokenIds: [tokenId],
+    characterCommitted: version !== undefined,
+  });
 
   return {
     conditions: result.conditions,
@@ -1946,7 +2020,34 @@ export async function applyDamage(
       }
     }
   }
-  await Promise.all(persistence);
+  const affectedTokenIds = [
+    tokenId,
+    ...(releasedGrappleTokenIds ?? []),
+    ...(concentrationClearedTokenIds ?? []),
+  ];
+  // ConditionService performs best-effort writes while clearing held
+  // effects. Add one consolidated, awaited write per secondary token so
+  // this action can detect and reconcile failures in those legacy paths.
+  for (const affectedTokenId of new Set(affectedTokenIds.slice(1))) {
+    const affectedToken = room.tokens.get(affectedTokenId);
+    if (!affectedToken) continue;
+    persistence.push(
+      pool.query('UPDATE tokens SET conditions = $1 WHERE id = $2', [
+        JSON.stringify(affectedToken.conditions ?? []),
+        affectedTokenId,
+      ])
+    );
+  }
+  await persistHpSideEffects({
+    operation: 'damage',
+    room,
+    initialPromises: persistence,
+    affectedTokenIds,
+    characterCommitted: version !== undefined,
+    ...(concentrationDropped && combatant.characterId
+      ? { concentrationCharacterId: combatant.characterId }
+      : {}),
+  });
   // Concentration cleanup issues its own characters UPDATE (nulling
   // concentrating_on) on a separate connection, which fires the version
   // trigger again. Re-read only after every write above has settled so
@@ -1957,7 +2058,6 @@ export async function applyDamage(
     ]);
     version = parseCharacterVersion(finalRows[0]) ?? version;
   }
-  await persistCombatStateAsync(room.combatState);
   return {
     hp: combatant.hp,
     tempHp: combatant.tempHp,
@@ -2068,8 +2168,13 @@ export async function applyHeal(
     if (conditionResult.persistPromise) persistence.push(conditionResult.persistPromise);
     if (conditionResult.removed.length > 0) autoRemovedConditions = conditionResult.removed;
   }
-  await Promise.all(persistence);
-  await persistCombatStateAsync(room.combatState);
+  await persistHpSideEffects({
+    operation: 'healing',
+    room,
+    initialPromises: persistence,
+    affectedTokenIds: [tokenId],
+    characterCommitted: version !== undefined,
+  });
   return {
     hp: combatant.hp,
     tempHp: combatant.tempHp,
