@@ -325,8 +325,12 @@ describe('death-save version propagation', () => {
       isCritFail: false,
     });
     mockQuery.mockImplementation(async (sql: string) => {
+      const authority = characterHpAuthorityResult(sql, 8);
+      if (authority) return authority;
       if (String(sql).includes('UPDATE characters SET death_saves')) {
         expect(String(sql)).toContain('RETURNING version');
+        expect(String(sql)).toContain('AND version = $3');
+        expect(mockQuery.mock.calls.at(-1)?.[1]?.[2]).toBe(8);
         return { rows: [{ version: 9 }] };
       }
       return { rows: [] };
@@ -341,6 +345,9 @@ describe('death-save version propagation', () => {
     const update = characterUpdatePayload(emissions);
     expect(update?.changes?.deathSaves).toEqual({ successes: 0, failures: 1 });
     expect(update?.changes?.version).toBe(9);
+    expect(
+      getAllRooms().get('vers-death-failure')?.combatState?.combatants[0].deathSaveRolledRound
+    ).toBe(1);
   });
 
   it('broadcasts the HP and version returned by a natural-20 death-save heal', async () => {
@@ -417,8 +424,71 @@ describe('death-save version propagation', () => {
     expect(pcToken.conditions).toContain('stable');
   });
 
-  it('omits an invalid version while still syncing death-save counters', async () => {
-    seedCombatRoom('vers-death-invalid', {
+  it('does not consume a natural-20 roll when the guarded heal conflicts', async () => {
+    const { room } = seedCombatRoom('vers-death-nat20-conflict', {
+      hp: 0,
+      deathSaves: { successes: 1, failures: 1 },
+    });
+    vi.spyOn(DiceService, 'rollDeathSave').mockReturnValue({
+      roll: 20,
+      isSuccess: true,
+      isCritSuccess: true,
+      isCritFail: false,
+    });
+
+    const emissions: Emission[] = [];
+    const { socket, handlers, socketEmissions } = fakeSocket('dm-sock');
+    registerCombatHp(fakeIo(emissions), socket);
+
+    await handlers.get('combat:death-save')?.({ tokenId: 'pc-token' });
+
+    expect(emissions.some((entry) => entry.event === 'combat:hp-changed')).toBe(false);
+    expect(emissions.some((entry) => entry.event === 'combat:death-save-updated')).toBe(false);
+    expect(room.combatState?.combatants[0]).toMatchObject({
+      hp: 0,
+      deathSaves: { successes: 1, failures: 1 },
+    });
+    expect(room.combatState?.combatants[0].deathSaveRolledRound).toBeUndefined();
+    expect(socketEmissions).toContainEqual({
+      event: 'session:error',
+      payload: { message: 'Healing was not applied: the character changed mid-action. Retry.' },
+    });
+  });
+
+  it('does not consume a third-success roll when stabilization conflicts', async () => {
+    const { room, pcToken } = seedCombatRoom('vers-death-stable-conflict', {
+      hp: 0,
+      deathSaves: { successes: 2, failures: 0 },
+    });
+    pcToken.conditions = ['unconscious'] as never;
+    vi.spyOn(DiceService, 'rollDeathSave').mockReturnValue({
+      roll: 12,
+      isSuccess: true,
+      isCritSuccess: false,
+      isCritFail: false,
+    });
+
+    const emissions: Emission[] = [];
+    const { socket, handlers, socketEmissions } = fakeSocket('dm-sock');
+    registerCombatHp(fakeIo(emissions), socket);
+
+    await handlers.get('combat:death-save')?.({ tokenId: 'pc-token' });
+
+    expect(emissions.some((entry) => entry.event === 'map:token-updated')).toBe(false);
+    expect(emissions.some((entry) => entry.event === 'combat:death-save-updated')).toBe(false);
+    expect(room.combatState?.combatants[0].deathSaves).toEqual({ successes: 2, failures: 0 });
+    expect(room.combatState?.combatants[0].deathSaveRolledRound).toBeUndefined();
+    expect(pcToken.conditions).toEqual(['unconscious']);
+    expect(socketEmissions).toContainEqual({
+      event: 'session:error',
+      payload: {
+        message: 'Stabilization was not applied: the character changed mid-action. Retry.',
+      },
+    });
+  });
+
+  it('fails closed on a death-save version conflict without consuming the round roll', async () => {
+    const { room } = seedCombatRoom('vers-death-conflict', {
       hp: 0,
       deathSaves: { successes: 0, failures: 0 },
     });
@@ -430,14 +500,58 @@ describe('death-save version propagation', () => {
     });
 
     const emissions: Emission[] = [];
-    const { socket, handlers } = fakeSocket('dm-sock');
+    const { socket, handlers, socketEmissions } = fakeSocket('dm-sock');
     registerCombatHp(fakeIo(emissions), socket);
 
     await handlers.get('combat:death-save')?.({ tokenId: 'pc-token' });
 
-    const update = characterUpdatePayload(emissions);
-    expect(update?.changes?.deathSaves).toEqual({ successes: 1, failures: 0 });
-    expect(update?.changes).not.toHaveProperty('version');
+    expect(characterUpdatePayload(emissions)).toBeUndefined();
+    expect(emissions.some((entry) => entry.event === 'combat:death-save-updated')).toBe(false);
+    expect(room.combatState?.combatants[0].deathSaves).toEqual({ successes: 0, failures: 0 });
+    expect(room.combatState?.combatants[0].deathSaveRolledRound).toBeUndefined();
+    expect(socketEmissions).toContainEqual({
+      event: 'session:error',
+      payload: {
+        message: 'Death save was not recorded: the character changed mid-action. Retry.',
+      },
+    });
+  });
+
+  it('does not consume the round roll when ordinary death-save persistence rejects', async () => {
+    const { room } = seedCombatRoom('vers-death-error', {
+      hp: 0,
+      deathSaves: { successes: 0, failures: 0 },
+    });
+    vi.spyOn(DiceService, 'rollDeathSave').mockReturnValue({
+      roll: 6,
+      isSuccess: false,
+      isCritSuccess: false,
+      isCritFail: false,
+    });
+    mockQuery.mockImplementation(async (sql: string) => {
+      const authority = characterHpAuthorityResult(sql, 4);
+      if (authority) return authority;
+      if (String(sql).includes('UPDATE characters SET death_saves')) {
+        throw new Error('database unavailable');
+      }
+      return { rows: [] };
+    });
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+    const emissions: Emission[] = [];
+    const { socket, handlers, socketEmissions } = fakeSocket('dm-sock');
+    registerCombatHp(fakeIo(emissions), socket);
+
+    await handlers.get('combat:death-save')?.({ tokenId: 'pc-token' });
+
+    expect(characterUpdatePayload(emissions)).toBeUndefined();
+    expect(emissions.some((entry) => entry.event === 'combat:death-save-updated')).toBe(false);
+    expect(room.combatState?.combatants[0].deathSaves).toEqual({ successes: 0, failures: 0 });
+    expect(room.combatState?.combatants[0].deathSaveRolledRound).toBeUndefined();
+    expect(socketEmissions).toContainEqual({
+      event: 'session:error',
+      payload: { message: 'Death save could not be confirmed. Nothing was changed. Retry.' },
+    });
   });
 });
 
@@ -653,21 +767,23 @@ describe('rest-resource version propagation', () => {
     mockQuery.mockImplementation(async (sql: string) => {
       if (String(sql).includes('SELECT * FROM characters')) {
         return {
-          rows: [{
-            id: 'char-1',
-            name: 'Rook',
-            user_id: 'player-1',
-            class: 'Fighter',
-            hit_points: 4,
-            max_hit_points: 20,
-            temp_hit_points: 0,
-            spell_slots: {},
-            features: [],
-            hit_dice: [],
-            death_saves: { successes: 0, failures: 0 },
-            concentrating_on: null,
-            exhaustion_level: 0,
-          }],
+          rows: [
+            {
+              id: 'char-1',
+              name: 'Rook',
+              user_id: 'player-1',
+              class: 'Fighter',
+              hit_points: 4,
+              max_hit_points: 20,
+              temp_hit_points: 0,
+              spell_slots: {},
+              features: [],
+              hit_dice: [],
+              death_saves: { successes: 0, failures: 0 },
+              concentrating_on: null,
+              exhaustion_level: 0,
+            },
+          ],
         };
       }
       if (String(sql).includes('FROM session_players')) return { rows: [{ '?column?': 1 }] };
