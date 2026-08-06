@@ -221,8 +221,13 @@ function makeScenario(opts: {
  */
 function routeCharacterQueries(charRows: Record<string, Record<string, unknown>>): void {
   mockQuery.mockImplementation(async (sql: string, params?: unknown[]) => {
+    if (sql.startsWith('UPDATE characters SET hit_points')) {
+      return { rows: [{ version: 2 }] };
+    }
     const id = params?.[0] as string | undefined;
-    if (id && charRows[id]) return { rows: [charRows[id]] };
+    if (id && charRows[id]) {
+      return { rows: [{ wild_shape: null, version: 1, ...charRows[id] }] };
+    }
     // Default: no rows
     return { rows: [] };
   });

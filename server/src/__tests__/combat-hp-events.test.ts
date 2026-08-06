@@ -122,6 +122,15 @@ describe('combat HP socket events', () => {
       role: 'player',
       characterId: 'char-1',
     });
+    mockQuery.mockImplementation(async (sql: string) => {
+      if (sql.includes('SELECT wild_shape, version')) {
+        return { rows: [{ wild_shape: null, version: 4 }] };
+      }
+      if (sql.startsWith('UPDATE characters SET hit_points')) {
+        return { rows: [{ version: 5 }] };
+      }
+      return { rows: [] };
+    });
 
     const emissions: Emission[] = [];
     const { socket, handlers } = fakeSocket('dm-sock');

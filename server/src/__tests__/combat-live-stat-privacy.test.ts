@@ -269,6 +269,15 @@ describe('combat HP handlers — exact stats gated, condition visuals not', () =
     );
     const em: Emission[] = [];
     const handlers = new Map<string, (data: unknown) => Promise<void>>();
+    mockQuery.mockImplementation(async (sql: string) => {
+      if (sql.includes('SELECT wild_shape, version')) {
+        return { rows: [{ wild_shape: null, version: 4 }] };
+      }
+      if (sql.startsWith('UPDATE characters SET hit_points = 0')) {
+        return { rows: [{ version: 5 }] };
+      }
+      return { rows: [] };
+    });
     const socket = {
       id: 'dm-sock',
       on: (ev: string, cb: (data: unknown) => Promise<void>) => handlers.set(ev, cb),

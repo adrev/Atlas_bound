@@ -12,9 +12,33 @@ import * as OAService from '../services/OpportunityAttackService.js';
 import * as ConditionService from '../services/ConditionService.js';
 import { createRoom, getAllRooms } from '../utils/roomState.js';
 
+function characterHpQueryResult(sql: string, nextVersion = 5) {
+  if (sql.includes('SELECT wild_shape, version') && sql.includes('FROM characters')) {
+    return {
+      rows: [
+        {
+          wild_shape: null,
+          version: nextVersion - 1,
+          armor_class: 12,
+          speed: 30,
+          dndbeyond_id: null,
+          ability_scores: {},
+          inventory: [],
+          class: 'Fighter',
+          features: [],
+        },
+      ],
+    };
+  }
+  if (sql.startsWith('UPDATE characters SET hit_points')) {
+    return { rows: [{ version: nextVersion }] };
+  }
+  return undefined;
+}
+
 beforeEach(() => {
   mockQuery.mockReset();
-  mockQuery.mockResolvedValue({ rows: [] });
+  mockQuery.mockImplementation(async (sql: string) => characterHpQueryResult(sql) ?? { rows: [] });
   // Wipe any rooms left over from previous tests.
   for (const id of Array.from(getAllRooms().keys())) {
     getAllRooms().delete(id);
@@ -255,6 +279,68 @@ describe('CombatService death-save state helpers', () => {
     expect(combatant.conditions).toEqual([]);
   });
 
+  it('leaves HP, death saves, and conditions untouched when healing loses the version race', async () => {
+    const sessionId = 's-heal-version-conflict';
+    const token = makeToken('tPC', {
+      ownerUserId: 'player-1',
+      characterId: 'char-1',
+      conditions: ['unconscious', 'stable'],
+    });
+    const combatant = makeCombatant('tPC', {
+      characterId: 'char-1',
+      hp: 0,
+      maxHp: 20,
+      isNPC: false,
+      conditions: ['unconscious', 'stable'],
+      deathSaves: { successes: 1, failures: 1 },
+    });
+    seedRoom(sessionId, [token], [combatant]);
+    mockQuery.mockImplementation(async (sql: string) => {
+      if (sql.includes('SELECT wild_shape, version')) return characterHpQueryResult(sql);
+      if (sql.startsWith('UPDATE characters SET hit_points')) return { rows: [] };
+      return { rows: [] };
+    });
+
+    await expect(CombatService.applyHeal(sessionId, 'tPC', 5)).rejects.toThrow(
+      'Healing was not applied: the character changed mid-action. Retry.'
+    );
+
+    expect(combatant.hp).toBe(0);
+    expect(combatant.deathSaves).toEqual({ successes: 1, failures: 1 });
+    expect(token.conditions).toEqual(['unconscious', 'stable']);
+    expect(combatant.conditions).toEqual(['unconscious', 'stable']);
+  });
+
+  it('leaves death saves and conditions untouched when stabilization loses the version race', async () => {
+    const sessionId = 's-stable-version-conflict';
+    const token = makeToken('tPC', {
+      ownerUserId: 'player-1',
+      characterId: 'char-1',
+      conditions: ['unconscious'],
+    });
+    const combatant = makeCombatant('tPC', {
+      characterId: 'char-1',
+      hp: 0,
+      isNPC: false,
+      conditions: ['unconscious'],
+      deathSaves: { successes: 2, failures: 1 },
+    });
+    seedRoom(sessionId, [token], [combatant]);
+    mockQuery.mockImplementation(async (sql: string) => {
+      if (sql.includes('SELECT wild_shape, version')) return characterHpQueryResult(sql);
+      if (sql.startsWith('UPDATE characters SET hit_points = 0')) return { rows: [] };
+      return { rows: [] };
+    });
+
+    await expect(CombatService.markStable(sessionId, 'tPC')).rejects.toThrow(
+      'Stabilization was not applied: the character changed mid-action. Retry.'
+    );
+
+    expect(combatant.deathSaves).toEqual({ successes: 2, failures: 1 });
+    expect(token.conditions).toEqual(['unconscious']);
+    expect(combatant.conditions).toEqual(['unconscious']);
+  });
+
   it('damaging a stable PC removes stable and records a death-save failure', async () => {
     const sessionId = 's-damage-stable';
     const token = makeToken('tPC', {
@@ -330,6 +416,37 @@ describe('CombatService death-save state helpers', () => {
     expect(combatant.deathSaves).toEqual({ successes: 0, failures: 3 });
   });
 
+  it('restores HP, temp HP, and death saves when damage loses the version race', async () => {
+    const sessionId = 's-damage-version-conflict';
+    const token = makeToken('tPC', {
+      ownerUserId: 'player-1',
+      characterId: 'char-1',
+    });
+    const combatant = makeCombatant('tPC', {
+      characterId: 'char-1',
+      hp: 4,
+      maxHp: 20,
+      tempHp: 2,
+      isNPC: false,
+      deathSaves: { successes: 1, failures: 0 },
+    });
+    seedRoom(sessionId, [token], [combatant]);
+    mockQuery.mockImplementation(async (sql: string) => {
+      if (sql.includes('SELECT wild_shape, version')) return characterHpQueryResult(sql);
+      if (sql.startsWith('UPDATE characters SET hit_points')) return { rows: [] };
+      return { rows: [] };
+    });
+
+    await expect(CombatService.applyDamage(sessionId, 'tPC', 5)).rejects.toThrow(
+      'Damage was not applied: the character changed mid-action. Retry.'
+    );
+
+    expect(combatant.hp).toBe(4);
+    expect(combatant.tempHp).toBe(2);
+    expect(combatant.deathSaves).toEqual({ successes: 1, failures: 0 });
+    expect(token.conditions).toEqual([]);
+  });
+
   it('rejects applyDamage when combat-state persistence fails', async () => {
     const sessionId = 's-damage-persist-fail';
     seedRoom(sessionId, [makeToken('tNPC')], [makeCombatant('tNPC', { hp: 20 })]);
@@ -361,6 +478,8 @@ describe('CombatService death-save state helpers', () => {
     });
     seedRoom(sessionId, [token], [combatant]);
     mockQuery.mockImplementation(async (sql: string) => {
+      const characterResult = characterHpQueryResult(sql);
+      if (characterResult) return characterResult;
       if (sql.startsWith('UPDATE tokens SET conditions')) throw new Error('conditions failed');
       return { rows: [] };
     });
@@ -388,6 +507,8 @@ describe('CombatService death-save state helpers', () => {
     });
     seedRoom(sessionId, [token], [combatant]);
     mockQuery.mockImplementation(async (sql: string) => {
+      const characterResult = characterHpQueryResult(sql);
+      if (characterResult) return characterResult;
       if (sql.startsWith('SELECT defenses')) {
         return {
           rows: [
@@ -431,6 +552,8 @@ describe('CombatService death-save state helpers', () => {
     });
     seedRoom(sessionId, [token], [combatant]);
     mockQuery.mockImplementation(async (sql: string) => {
+      const characterResult = characterHpQueryResult(sql);
+      if (characterResult) return characterResult;
       if (sql.startsWith('SELECT defenses')) {
         return {
           rows: [
@@ -472,6 +595,8 @@ describe('CombatService death-save state helpers', () => {
     });
     seedRoom(sessionId, [token], [combatant]);
     mockQuery.mockImplementation(async (sql: string) => {
+      const characterResult = characterHpQueryResult(sql);
+      if (characterResult) return characterResult;
       if (sql.startsWith('SELECT defenses')) {
         return {
           rows: [
