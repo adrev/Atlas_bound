@@ -893,11 +893,18 @@ async function handleHound(c: ChatCommandContext): Promise<boolean> {
       whisperToCaller(c.io, c.ctx, '!hound: bonus action already spent.');
       return true;
     }
+    // Reserve before the async Sorcery Point write so concurrent bonus-action
+    // commands cannot both pass the availability check.
+    economy.bonusAction = true;
   }
 
-  if (!(await spendPersistedSorceryPoints(c, caller, 'hound', 3, row))) return true;
+  if (!(await spendPersistedSorceryPoints(c, caller, 'hound', 3, row))) {
+    if (economy && c.ctx.room.actionEconomies.get(caller.id) === economy) {
+      economy.bonusAction = false;
+    }
+    return true;
+  }
   if (economy) {
-    economy.bonusAction = true;
     c.io.to(c.ctx.room.sessionId).emit('combat:action-used', {
       tokenId: caller.id,
       actionType: 'bonusAction',

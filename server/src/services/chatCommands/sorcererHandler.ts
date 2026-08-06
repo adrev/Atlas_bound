@@ -421,12 +421,24 @@ function prepareFlexibleAction(
     whisperToCaller(c.io, c.ctx, '!flexible: bonus action already spent this turn.');
     return null;
   }
+  // Reserve before the async character write so concurrent commands cannot
+  // both observe an available bonus action. Rollback remains silent on failure.
+  economy.bonusAction = true;
   return { economy };
+}
+
+function releaseFlexibleAction(
+  c: ChatCommandContext,
+  sorcerer: SorcererState,
+  economy: ActionEconomy | null
+): void {
+  if (economy && c.ctx.room.actionEconomies.get(sorcerer.caller.id) === economy) {
+    economy.bonusAction = false;
+  }
 }
 
 function consumeFlexibleAction(c: ChatCommandContext, sorcerer: SorcererState, economy: ActionEconomy | null): void {
   if (!economy) return;
-  economy.bonusAction = true;
   c.io.to(c.ctx.room.sessionId).emit('combat:action-used', {
     tokenId: sorcerer.caller.id,
     actionType: 'bonusAction',
@@ -616,6 +628,7 @@ async function handleFlexible(c: ChatCommandContext): Promise<boolean> {
         nextSlots
       ))
     ) {
+      releaseFlexibleAction(c, sorcerer, prepared.economy);
       return true;
     }
     consumeFlexibleAction(c, sorcerer, prepared.economy);
@@ -668,6 +681,7 @@ async function handleFlexible(c: ChatCommandContext): Promise<boolean> {
       nextSlots
     ))
   ) {
+    releaseFlexibleAction(c, sorcerer, prepared.economy);
     return true;
   }
   consumeFlexibleAction(c, sorcerer, prepared.economy);

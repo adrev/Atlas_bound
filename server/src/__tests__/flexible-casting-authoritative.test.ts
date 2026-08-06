@@ -483,6 +483,41 @@ describe('atomic Flexible Casting', () => {
     expect(updateCalls()).toEqual([]);
   });
 
+  it('reserves the bonus action while the guarded resource write is in flight', async () => {
+    let resolveUpdate!: (value: { rows: Array<{ version: number }> }) => void;
+    const pendingUpdate = new Promise<{ rows: Array<{ version: number }> }>((resolve) => {
+      resolveUpdate = resolve;
+    });
+    mockQuery.mockImplementation(async (sql: string) => {
+      if (sql.startsWith('UPDATE characters')) return pendingUpdate;
+      if (sql.includes('SELECT class, level, name, features')) {
+        return { rows: [characterRow()] };
+      }
+      return { rows: [] };
+    });
+
+    const room = getAllRooms().get(SESSION)!;
+    const firstEmissions: Emission[] = [];
+    const firstCommand = run(firstEmissions, '!flexible slot2sp 1');
+    await vi.waitFor(() => expect(updateCalls()).toHaveLength(1));
+    expect(room.actionEconomies.get('sorcerer-token')?.bonusAction).toBe(true);
+    expect(channelsFor(firstEmissions, 'combat:action-used')).toEqual([]);
+
+    const concurrentEmissions: Emission[] = [];
+    await run(concurrentEmissions, '!flexible slot2sp 1');
+    expect(updateCalls()).toHaveLength(1);
+    expect(whispers(concurrentEmissions)[0]).toContain('already spent');
+
+    resolveUpdate({ rows: [{ version: 8 }] });
+    await firstCommand;
+    expect(channelsFor(firstEmissions, 'combat:action-used')).toEqual([
+      'dm-1',
+      'dm-2',
+      'sorcerer-1',
+      'sorcerer-2',
+    ]);
+  });
+
   it.each([
     ['version conflict', []],
     ['database failure', new Error('database unavailable')],
@@ -564,6 +599,42 @@ describe('persisted Sorcery Point subclass consumers', () => {
     expect(selectSql).toContain('user_id');
     expect(publicMessages(emissions)).toEqual([]);
     expect(channelsFor(emissions, 'character:updated')).toEqual([]);
+  });
+
+  it('reserves Hound of Ill Omen\'s bonus action while its point spend is in flight', async () => {
+    const row = characterRow({
+      class: 'Sorcerer (Shadow Magic)',
+      level: 6,
+      features: JSON.stringify([
+        { name: 'Hound of Ill Omen', description: '', source: 'Sorcerer', sourceType: 'class' },
+        { ...FONT_OF_MAGIC, usesTotal: 6, usesRemaining: 5 },
+      ]),
+    });
+    let resolveUpdate!: (value: { rows: Array<{ version: number }> }) => void;
+    const pendingUpdate = new Promise<{ rows: Array<{ version: number }> }>((resolve) => {
+      resolveUpdate = resolve;
+    });
+    mockQuery.mockImplementation(async (sql: string) => {
+      if (sql.startsWith('UPDATE characters')) return pendingUpdate;
+      if (sql.includes('SELECT class, level, name, features')) return { rows: [row] };
+      return { rows: [] };
+    });
+
+    const room = getAllRooms().get(SESSION)!;
+    const firstEmissions: Emission[] = [];
+    const firstCommand = run(firstEmissions, '!hound Enemy');
+    await vi.waitFor(() => expect(updateCalls()).toHaveLength(1));
+    expect(room.actionEconomies.get('sorcerer-token')?.bonusAction).toBe(true);
+    expect(channelsFor(firstEmissions, 'combat:action-used')).toEqual([]);
+
+    const concurrentEmissions: Emission[] = [];
+    await run(concurrentEmissions, '!hound Enemy');
+    expect(updateCalls()).toHaveLength(1);
+    expect(whispers(concurrentEmissions)[0]).toContain('already spent');
+
+    resolveUpdate({ rows: [{ version: 8 }] });
+    await firstCommand;
+    expect(publicMessages(firstEmissions)).toHaveLength(1);
   });
 
   it('enforces Hound level, map scope, spend ordering, and bonus action', async () => {
