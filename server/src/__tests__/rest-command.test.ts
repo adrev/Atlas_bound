@@ -85,12 +85,52 @@ beforeEach(() => {
   mockConnect.mockReset();
   mockRelease.mockReset();
   mockQuery.mockResolvedValue({ rows: [] });
-  mockClientQuery.mockResolvedValue({ rows: [] });
+  mockClientQuery.mockResolvedValue({ rows: [{ version: 3 }] });
   mockConnect.mockResolvedValue({ query: mockClientQuery, release: mockRelease });
   for (const id of Array.from(getAllRooms().keys())) getAllRooms().delete(id);
 });
 
 describe('!rest server-owned command', () => {
+  it('rejects an unknown rest kind without changing the party', async () => {
+    const ctx = makeContext('dm');
+    const { io, emissions } = fakeIo();
+    await tryHandleChatCommand(io, ctx, '!rest shrot');
+    expect(mockConnect).not.toHaveBeenCalled();
+    expect(mockQuery).not.toHaveBeenCalled();
+    expect(emissions[0].channelId).toBe('sock-dm');
+    expect((emissions[0].payload as { content: string }).content).toContain('usage');
+  });
+
+  it('does not rest a same-named token from a different map', async () => {
+    const ctx = makeContext('dm');
+    ctx.room.tokens.set('elsewhere', makeToken('elsewhere', 'Nyx', { mapId: 'prep', characterId: 'char-npc' }));
+    const { io, emissions } = fakeIo();
+    await tryHandleChatCommand(io, ctx, '!rest short Nyx');
+    expect(mockQuery).not.toHaveBeenCalled();
+    expect(mockConnect).not.toHaveBeenCalled();
+    expect((emissions[0].payload as { content: string }).content).toContain('no token');
+  });
+
+  it('rolls back the entire party rest if a later character changed concurrently', async () => {
+    const ctx = makeContext('dm');
+    mockQuery.mockResolvedValue({ rows: [
+      { id: 'char-1', name: 'Rook', version: 2, hit_points: 4, max_hit_points: 20 },
+      { id: 'char-2', name: 'Nyx', version: 8, hit_points: 4, max_hit_points: 20 },
+    ] });
+    mockClientQuery.mockImplementation(async (sql: string, params?: unknown[]) => {
+      if (sql.startsWith('UPDATE characters')) {
+        return { rows: params?.at(-2) === 'char-1' ? [{ version: 3 }] : [] };
+      }
+      return { rows: [] };
+    });
+    const { io, emissions } = fakeIo();
+    await tryHandleChatCommand(io, ctx, '!rest long');
+    expect(mockClientQuery.mock.calls.map(([sql]) => sql)).toContain('ROLLBACK');
+    expect(mockClientQuery.mock.calls.map(([sql]) => sql)).not.toContain('COMMIT');
+    expect(emissions.some((e) => e.event === 'character:updated')).toBe(false);
+    expect(emissions.every((e) => e.channelId === 'sock-dm')).toBe(true);
+  });
+
   it('applies a long rest to linked session PCs without client-side rest triggers', async () => {
     const ctx = makeContext('dm');
     const updateCalls: unknown[][] = [];
@@ -101,6 +141,7 @@ describe('!rest server-owned command', () => {
             {
               id: 'char-1',
               name: 'Rook',
+              version: 2,
               user_id: 'player-1',
               class: 'Fighter',
               hit_points: 4,
@@ -140,7 +181,7 @@ describe('!rest server-owned command', () => {
     expect(mockClientQuery.mock.calls.map((call) => call[0])).toContain('COMMIT');
     expect(mockClientQuery.mock.calls.map((call) => call[0])).not.toContain('ROLLBACK');
     expect(updateCalls).toHaveLength(1);
-    expect(updateCalls[0].at(-1)).toBe('char-1');
+    expect(updateCalls[0].slice(-2)).toEqual(['char-1', 2]);
 
     const characterUpdate = emissions.find((e) => e.event === 'character:updated');
     const payload = characterUpdate?.payload as {
@@ -155,7 +196,7 @@ describe('!rest server-owned command', () => {
       { name: 'Second Wind', usesTotal: 1, usesRemaining: 1, resetOn: 'short' },
     ]);
     expect(payload.changes?.hitDice).toEqual([
-      { dieSize: 10, total: 3, used: 0 },
+      { dieSize: 10, total: 3, used: 1 },
       { dieSize: 8, total: 2, used: 2 },
     ]);
     expect(payload.changes?.deathSaves).toEqual({ successes: 0, failures: 0 });
@@ -173,6 +214,9 @@ describe('!rest server-owned command', () => {
     expect(String((chat?.payload as { content?: string })?.content ?? '')).toContain(
       'Rook: HP restored'
     );
+    expect(chat?.channelId).toBe('sock-dm');
+    const publicChat = emissions.find((e) => e.event === 'chat:new-message' && e.channelId === ctx.room.sessionId);
+    expect((publicChat?.payload as { content: string }).content).not.toMatch(/HP|Spell slots|Concentration|Hit Dice/);
   });
 
   it('applies a targeted short rest to the named token character', async () => {
@@ -188,6 +232,7 @@ describe('!rest server-owned command', () => {
             {
               id: 'char-warlock',
               name: 'Nyx',
+              version: 2,
               class: 'Warlock',
               spell_slots: { 2: { max: 2, used: 2 } },
               features: [{ name: 'Fey Step', usesTotal: 1, usesRemaining: 0, resetOn: 'short' }],
@@ -226,6 +271,7 @@ describe('!rest server-owned command', () => {
             {
               id: 'char-1',
               name: 'Rook',
+              version: 2,
               class: 'Fighter',
               hit_points: 4,
               max_hit_points: 20,

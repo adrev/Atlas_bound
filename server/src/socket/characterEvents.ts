@@ -16,6 +16,7 @@ import {
   computeRest,
   computeSpendHitDie,
   persistRestUpdates,
+  RestRecoveryError,
   syncRestToCombatants,
 } from '../services/RestService.js';
 import {
@@ -311,10 +312,14 @@ export function registerCharacterEvents(io: Server, socket: Socket): void {
       const client = await pool.connect();
       try {
         await client.query('BEGIN');
-        version = await persistRestUpdates(client, result.characterId, result.updates);
+        version = await persistRestUpdates(client, result.characterId, result.updates, row.version);
         await client.query('COMMIT');
       } catch (err) {
         await client.query('ROLLBACK');
+        if (err instanceof RestRecoveryError) {
+          socket.emit('session:error', { message: err.message });
+          return;
+        }
         throw err;
       } finally {
         client.release();
@@ -341,7 +346,7 @@ export function registerCharacterEvents(io: Server, socket: Socket): void {
         broadcastSystem(
           io,
           ctx,
-          `🛌 ${result.name} finishes a ${kind === 'long' ? 'Long' : 'Short'} Rest\n   ${result.changes.join(' • ')}`
+          `🛌 ${result.name} finishes a ${kind === 'long' ? 'Long' : 'Short'} Rest`
         );
       }
     })
@@ -378,12 +383,16 @@ export function registerCharacterEvents(io: Server, socket: Socket): void {
           ) {
             characterOwnerUserId = charUserId;
             result = computeSpendHitDie(row, dieSize);
-            version = await persistRestUpdates(client, result.characterId, result.updates);
+            version = await persistRestUpdates(client, result.characterId, result.updates, row.version);
           }
         }
         await client.query('COMMIT');
       } catch (err) {
         await client.query('ROLLBACK');
+        if (err instanceof RestRecoveryError) {
+          socket.emit('session:error', { message: err.message });
+          return;
+        }
         throw err;
       } finally {
         client.release();
@@ -405,7 +414,7 @@ export function registerCharacterEvents(io: Server, socket: Socket): void {
         broadcastSystem(
           io,
           ctx,
-          `💤 ${result.name} spends 1d${dieSize} Hit Die\n   ${result.changes.join(' • ')}`
+          `💤 ${result.name} spends a Hit Die`
         );
       }
     })
@@ -442,12 +451,16 @@ export function registerCharacterEvents(io: Server, socket: Socket): void {
           ) {
             characterOwnerUserId = charUserId;
             result = computeAdjustSpellSlot(row, level, delta);
-            version = await persistRestUpdates(client, result.characterId, result.updates);
+            version = await persistRestUpdates(client, result.characterId, result.updates, row.version);
           }
         }
         await client.query('COMMIT');
       } catch (err) {
         await client.query('ROLLBACK');
+        if (err instanceof RestRecoveryError) {
+          socket.emit('session:error', { message: err.message });
+          return;
+        }
         throw err;
       } finally {
         client.release();

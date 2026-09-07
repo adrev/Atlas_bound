@@ -577,6 +577,7 @@ describe('rest-resource version propagation', () => {
             {
               id: 'char-1',
               name: 'Rook',
+              version: 1,
               user_id: 'player-1',
               class: 'Fighter',
               hit_points: 4,
@@ -630,6 +631,7 @@ describe('rest-resource version propagation', () => {
             {
               id: 'char-1',
               name: 'Hex',
+              version: 1,
               user_id: 'player-1',
               class: 'Warlock',
               hit_points: 10,
@@ -678,6 +680,7 @@ describe('rest-resource version propagation', () => {
             {
               id: 'char-1',
               name: 'Rook',
+              version: 1,
               user_id: 'player-1',
               class: 'Fighter',
               hit_points: 5,
@@ -730,6 +733,7 @@ describe('rest-resource version propagation', () => {
             {
               id: 'char-1',
               name: 'Rook',
+              version: 1,
               user_id: 'player-1',
               spell_slots: { '1': { max: 2, used: 0 } },
             },
@@ -762,7 +766,7 @@ describe('rest-resource version propagation', () => {
     expect(adjusted.updates).not.toHaveProperty('version');
   });
 
-  it('never propagates a null rest-write version row as version 0', async () => {
+  it('rolls back a rest when the database does not confirm the committed version', async () => {
     seedRestRoom('vers-null-rest');
     mockQuery.mockImplementation(async (sql: string) => {
       if (String(sql).includes('SELECT * FROM characters')) {
@@ -771,6 +775,7 @@ describe('rest-resource version propagation', () => {
             {
               id: 'char-1',
               name: 'Rook',
+              version: 1,
               user_id: 'player-1',
               class: 'Fighter',
               hit_points: 4,
@@ -801,8 +806,9 @@ describe('rest-resource version propagation', () => {
     await handlers.get('character:rest')?.({ characterId: 'char-1', kind: 'long' });
 
     const update = characterUpdatePayload(emissions);
-    expect(update?.changes?.hitPoints).toBe(20);
-    expect(update?.changes).not.toHaveProperty('version');
+    expect(update).toBeUndefined();
+    expect(mockClientQuery.mock.calls.map(([sql]) => sql)).toContain('ROLLBACK');
+    expect(mockClientQuery.mock.calls.map(([sql]) => sql)).not.toContain('COMMIT');
   });
 
   it('no-op spell-slot adjust neither writes nor fans out a version', async () => {

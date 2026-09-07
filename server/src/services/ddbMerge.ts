@@ -185,7 +185,15 @@ export function mergeFeatures(
       return key ? [[key, feature] as const] : [];
     })
   );
-  const merged = incoming.map((f) => {
+  const incomingResourceKeys = new Set<string>();
+  const uniqueIncoming = incoming.filter((feature) => {
+    const key = serverManagedFeatureResourceKey(feature.name);
+    if (!key) return true;
+    if (incomingResourceKeys.has(key)) return false;
+    incomingResourceKeys.add(key);
+    return true;
+  });
+  const merged = uniqueIncoming.map((f) => {
     const resourceKey = serverManagedFeatureResourceKey(f.name);
     const prev = oldByName.get(f.name.toLowerCase()) ??
       (resourceKey ? oldByResourceKey.get(resourceKey) : undefined);
@@ -197,14 +205,13 @@ export function mergeFeatures(
     const usesRemaining = typeof usesTotal === 'number'
       ? Math.max(0, Math.min(prevRem, usesTotal))
       : prev.usesRemaining;
-    return { ...f, usesRemaining };
+    return {
+      ...f,
+      usesTotal,
+      usesRemaining,
+      resetOn: f.resetOn === undefined ? prev.resetOn : f.resetOn,
+    };
   });
-  const incomingResourceKeys = new Set(
-    incoming.flatMap((feature) => {
-      const key = serverManagedFeatureResourceKey(feature.name);
-      return key ? [key] : [];
-    })
-  );
   const persistedServerResources = old.filter(
     (feature) => {
       const key = serverManagedFeatureResourceKey(feature.name);

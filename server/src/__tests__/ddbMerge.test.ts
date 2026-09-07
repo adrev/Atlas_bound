@@ -2,6 +2,8 @@ import { describe, it, expect } from 'vitest';
 import {
   mergeHitDice, mergeSpellSlots, mergeFeatures, buildMergeUpdate,
 } from '../services/ddbMerge.js';
+import { computeRest } from '../services/RestService.js';
+import { preserveServerManagedFeatureResources } from '../utils/featureResourceAuthority.js';
 
 describe('mergeHitDice', () => {
   it('zeroes `used` for die sizes that didn\'t exist before', () => {
@@ -53,6 +55,33 @@ describe('mergeSpellSlots', () => {
 });
 
 describe('mergeFeatures', () => {
+  it.each([
+    ['Ki Points', 'Ki', 'short'],
+    ['Sorcery Points', 'Font of Magic', 'long'],
+  ] as const)('keeps %s rest recovery working after a metadata-light DDB sync', (name, alias, resetOn) => {
+    const merged = mergeFeatures(
+      [{ name, usesTotal: 5, usesRemaining: 0, resetOn }],
+      [{ name: alias, description: 'Updated DDB description' }],
+    );
+    expect(merged).toEqual([
+      { name: alias, description: 'Updated DDB description', usesTotal: 5, usesRemaining: 0, resetOn },
+    ]);
+    const rest = computeRest({ id: 'char-1', features: merged }, resetOn);
+    expect(rest.updates.features).toEqual([{ ...merged[0], usesRemaining: 5 }]);
+  });
+
+  it('deduplicates reserved resource aliases without breaking later sheet saves', () => {
+    const merged = mergeFeatures(
+      [{ name: 'Ki Points', usesTotal: 5, usesRemaining: 2, resetOn: 'short' }],
+      [{ name: 'Ki' }, { name: 'Ki Points' }, { name: 'Custom' }, { name: 'Custom' }],
+    );
+    expect(merged).toEqual([
+      { name: 'Ki', usesTotal: 5, usesRemaining: 2, resetOn: 'short' },
+      { name: 'Custom' }, { name: 'Custom' },
+    ]);
+    expect(preserveServerManagedFeatureResources(merged, [{ name: 'Custom' }])).not.toBeNull();
+  });
+
   it('preserves usesRemaining when the feature carried over', () => {
     const out = mergeFeatures(
       [{ name: 'Second Wind', usesTotal: 1, usesRemaining: 0, resetOn: 'short' }],

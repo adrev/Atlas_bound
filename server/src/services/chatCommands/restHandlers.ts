@@ -6,6 +6,7 @@ import {
 } from '../ChatCommands.js';
 import pool from '../../db/connection.js';
 import { broadcastEvent } from '../../utils/eventBroadcast.js';
+import { resolveViewingMapId } from '../../utils/roomState.js';
 import {
   computeRest,
   persistRestUpdates,
@@ -36,13 +37,18 @@ async function handleRest(c: ChatCommandContext): Promise<boolean> {
     return true;
   }
   const kindRaw = parts.shift()!.toLowerCase();
+  if (!['short', 's', 'long', 'l'].includes(kindRaw)) {
+    whisperToCaller(c.io, c.ctx, '!rest: usage `!rest <short|long> [target]`');
+    return true;
+  }
   const kind: RestKind = kindRaw === 'short' || kindRaw === 's' ? 'short' : 'long';
   const targetName = parts.join(' ').trim();
 
   let rows: Record<string, unknown>[] = [];
   if (targetName) {
+    const mapId = resolveViewingMapId(c.ctx.room, c.ctx.player.userId, c.ctx.player.role);
     const matches = Array.from(c.ctx.room.tokens.values()).filter(
-      (t) => t.name.toLowerCase() === targetName.toLowerCase()
+      (t) => t.mapId === mapId && t.name.toLowerCase() === targetName.toLowerCase()
     );
     if (matches.length === 0) {
       whisperToCaller(c.io, c.ctx, `!rest: no token named "${targetName}" on this map.`);
@@ -63,7 +69,7 @@ async function handleRest(c: ChatCommandContext): Promise<boolean> {
          JOIN session_players sp ON sp.character_id = c.id
         WHERE sp.session_id = $1
           AND c.user_id <> 'npc'
-        ORDER BY c.name ASC`,
+        ORDER BY c.id ASC`,
       [c.ctx.room.sessionId]
     );
     rows = result.rows as Record<string, unknown>[];
@@ -81,12 +87,15 @@ async function handleRest(c: ChatCommandContext): Promise<boolean> {
   }
 
   const results = rows.map((row) => computeRest(row, kind));
+  const expectedVersions = new Map(rows.map((row) => [String(row.id), row.version]));
   const versions = new Map<string, number>();
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
     for (const result of results) {
-      const version = await persistRestUpdates(client, result.characterId, result.updates);
+      const version = await persistRestUpdates(
+        client, result.characterId, result.updates, expectedVersions.get(result.characterId)
+      );
       if (version !== undefined) versions.set(result.characterId, version);
     }
     await client.query('COMMIT');
@@ -123,11 +132,14 @@ async function handleRest(c: ChatCommandContext): Promise<boolean> {
     .map((result) => `   ${result.name}: ${result.changes.join(' • ')}`)
     .join('\n');
 
-  broadcastSystem(
-    c.io,
-    c.ctx,
-    `🛌 ${c.ctx.player.displayName} completes a ${kind === 'long' ? 'Long' : 'Short'} Rest${targetName ? ` (${targetName} only)` : ' — whole party'}.\n${details}`
-  );
+  whisperToCaller(c.io, c.ctx, `Rest results:\n${details}`);
+  if (!targetName) {
+    broadcastSystem(
+      c.io,
+      c.ctx,
+      `🛌 ${c.ctx.player.displayName} completes a ${kind === 'long' ? 'Long' : 'Short'} Rest for the party.`
+    );
+  }
   return true;
 }
 
