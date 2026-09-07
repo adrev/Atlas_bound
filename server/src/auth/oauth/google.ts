@@ -2,7 +2,7 @@ import { Router, type Request, type Response } from 'express';
 import { Google } from 'arctic';
 import { v4 as uuidv4 } from 'uuid';
 import { lucia } from '../lucia.js';
-import { findOrCreateOAuthUser, parseCookies } from './discord.js';
+import { findOrCreateOAuthUser, OAuthAccountLinkRequiredError, parseCookies } from './discord.js';
 import {
   sanitizeReturnPath,
   returnPathSetCookie,
@@ -96,6 +96,7 @@ router.get('/google/callback', async (req: Request, res: Response) => {
     const googleUser = (await userResponse.json()) as {
       sub: string;
       email?: string;
+      email_verified?: boolean;
       name?: string;
       picture?: string;
     };
@@ -104,6 +105,7 @@ router.get('/google/callback', async (req: Request, res: Response) => {
       provider: 'google',
       providerUserId: googleUser.sub,
       email: googleUser.email ?? null,
+      emailVerified: googleUser.email_verified === true,
       username: googleUser.name ?? googleUser.email ?? 'Google User',
       avatarUrl: googleUser.picture ?? null,
     });
@@ -127,7 +129,7 @@ router.get('/google/callback', async (req: Request, res: Response) => {
       `google_code_verifier=; Path=/; HttpOnly; Max-Age=0`,
       returnPathClearCookie(),
     ]);
-    res.redirect('/?auth=error&reason=server_error');
+    res.redirect(`/?auth=error&reason=${err instanceof OAuthAccountLinkRequiredError ? 'account_link_required' : 'server_error'}`);
   }
 });
 

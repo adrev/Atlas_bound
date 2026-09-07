@@ -279,6 +279,8 @@ emit_env CHRONICLER_BACKEND "$CHRONICLER_BACKEND_VALUE"
 # endpoints return 503 (failsafe — no anonymous worker access).
 emit_env CHRONICLE_WORKER_TOKEN "$CHRONICLE_WORKER_TOKEN_VALUE"
 
+# Room permissions, reactions, and fanout are process-local. Affinity is
+# best-effort, so keep one instance until distributed state is implemented.
 gcloud run deploy "$SERVICE_NAME" \
   --image "$IMAGE" \
   --project "$PROJECT_ID" \
@@ -288,7 +290,7 @@ gcloud run deploy "$SERVICE_NAME" \
   --memory 1Gi \
   --cpu 1 \
   --min-instances 1 \
-  --max-instances 3 \
+  --max-instances 1 \
   --session-affinity \
   --timeout 3600 \
   --add-cloudsql-instances "$CLOUD_SQL_CONNECTION" \

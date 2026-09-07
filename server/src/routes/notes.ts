@@ -116,7 +116,7 @@ router.post('/sessions/:sessionId/notes', async (req: Request, res: Response) =>
 });
 
 // Authorize a mutation: the caller must be the DM of the note's
-// session, OR the author of the note itself. Players can edit and
+// session, OR a current member who authored the note. Players can edit and
 // delete their own notes but not anyone else's; they also can't
 // toggle is_shared (that's enforced at the isShared handler).
 async function assertCanMutateNote(noteId: string, userId: string): Promise<{
@@ -134,6 +134,7 @@ async function assertCanMutateNote(noteId: string, userId: string): Promise<{
     throw err;
   }
   const sessionId = noteRows[0].session_id as string;
+  await assertSessionMember(sessionId, userId);
   const isAuthor = noteRows[0].created_by === userId;
   const isDM = await isSessionDM(sessionId, userId);
   if (!isDM && !isAuthor) {

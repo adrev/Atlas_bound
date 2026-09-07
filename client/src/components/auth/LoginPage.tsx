@@ -13,6 +13,12 @@ export function LoginPage() {
 
   const { login, register, error, clearError } = useAuthStore();
   const [submitting, setSubmitting] = useState(false);
+  const authReason = new URLSearchParams(window.location.search).get('reason');
+  const oauthError = new URLSearchParams(window.location.search).get('auth') === 'error'
+    ? authReason === 'account_link_required'
+      ? 'This email already belongs to another login. Use your original sign-in method. If you did not create that account, contact support before continuing.'
+      : 'Sign-in could not be completed. Please try again.'
+    : null;
 
   const handleSubmit = async () => {
     if (!email.trim() || !password.trim()) return;
@@ -37,7 +43,11 @@ export function LoginPage() {
     // through the OAuth round-trip — the callback redirects back to it.
     // Without this, logging in from an invite link dropped the invite
     // and dead-ended new players in an empty lobby.
-    const here = window.location.pathname + window.location.search;
+    const cleanSearch = new URLSearchParams(window.location.search);
+    cleanSearch.delete('auth');
+    cleanSearch.delete('reason');
+    const query = cleanSearch.toString();
+    const here = window.location.pathname + (query ? `?${query}` : '');
     const next = here !== '/' ? `?next=${encodeURIComponent(here)}` : '';
     window.location.href = `/api/auth/${provider}${next}`;
   };
@@ -56,6 +66,7 @@ export function LoginPage() {
         </div>
 
         {/* OAuth Buttons */}
+        {oauthError && <p role="alert" style={{ color: theme.text.primary }}>{oauthError}</p>}
         <div style={styles.oauthSection}>
           <button style={styles.discordBtn} onClick={() => handleOAuth('discord')}>
             <svg width="24" height="24" viewBox="0 -28.5 256 256" fill="currentColor">

@@ -107,7 +107,7 @@ describe('requireAdmin middleware', () => {
     return res;
   }
 
-  type FakeReq = { user?: { id?: string; email?: string | null } };
+  type FakeReq = { user?: { id?: string; email?: string | null; emailVerified?: boolean } };
 
   function callRequireAdmin(req: FakeReq, res: FakeRes, next: () => void) {
     // Cast only at the boundary — keeps the rest of the test strongly typed.
@@ -138,7 +138,7 @@ describe('requireAdmin middleware', () => {
   });
 
   it('calls next() for an admin (matched by email)', () => {
-    const req: FakeReq = { user: { id: 'some-id', email: 'admin@example.com' } };
+    const req: FakeReq = { user: { id: 'some-id', email: 'admin@example.com', emailVerified: true } };
     const res = makeRes();
     const next = vi.fn();
     callRequireAdmin(req, res, next);

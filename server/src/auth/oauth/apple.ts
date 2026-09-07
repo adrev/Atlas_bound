@@ -3,7 +3,7 @@ import express from 'express';
 import { Apple } from 'arctic';
 import { v4 as uuidv4 } from 'uuid';
 import { lucia } from '../lucia.js';
-import { findOrCreateOAuthUser, parseCookies } from './discord.js';
+import { findOrCreateOAuthUser, OAuthAccountLinkRequiredError, parseCookies } from './discord.js';
 import { APPLE_CLIENT_ID, APPLE_TEAM_ID, APPLE_KEY_ID, APPLE_PRIVATE_KEY } from '../../config.js';
 import { getOAuthOrigin } from './origin.js';
 import {
@@ -84,7 +84,6 @@ router.post(
       // Apple sends user info only on FIRST authorization in the POST body
       // as a JSON-encoded string in the `user` field
       let appleUserName: string | null = null;
-      let appleUserEmail: string | null = null;
 
       if (req.body.user) {
         try {
@@ -96,7 +95,6 @@ router.post(
             const parts = [userData.name.firstName, userData.name.lastName].filter(Boolean);
             appleUserName = parts.join(' ') || null;
           }
-          appleUserEmail = userData.email ?? null;
         } catch {
           // user field parse failed, continue without it
         }
@@ -109,16 +107,20 @@ router.post(
       const payload = JSON.parse(Buffer.from(idToken.split('.')[1], 'base64url').toString()) as {
         sub: string;
         email?: string;
+        email_verified?: boolean | string;
       };
 
       const appleUserId = payload.sub;
-      const email = appleUserEmail ?? payload.email ?? null;
+      // Only the token-endpoint response is an identity claim; the
+      // browser-posted user object must never choose the linked account.
+      const email = payload.email ?? null;
       const displayName = appleUserName ?? (email ? email.split('@')[0] : 'Apple User');
 
       const userId = await findOrCreateOAuthUser({
         provider: 'apple',
         providerUserId: appleUserId,
         email,
+        emailVerified: payload.email_verified === true || payload.email_verified === 'true',
         username: displayName,
         avatarUrl: null, // Apple doesn't provide avatars
       });
@@ -140,7 +142,7 @@ router.post(
         `apple_oauth_state=; Path=/; HttpOnly; Max-Age=0`,
         returnPathClearCookie(),
       ]);
-      res.redirect('/?auth=error&reason=server_error');
+      res.redirect(`/?auth=error&reason=${err instanceof OAuthAccountLinkRequiredError ? 'account_link_required' : 'server_error'}`);
     }
   }
 );

@@ -1,6 +1,8 @@
 import { Router, type Request, type Response } from 'express';
 import { z } from 'zod';
+import { ipKeyGenerator } from 'express-rate-limit';
 import { lucia } from '../auth/lucia.js';
+import { BoundedRateLimiter } from '../utils/boundedRateLimiter.js';
 
 /**
  * Minimal client-error reporter. Used by the React ErrorBoundary.
@@ -16,8 +18,6 @@ import { lucia } from '../auth/lucia.js';
  * surface minimal makes the endpoint easy to spam-filter later if a
  * hostile client tries to flood it.
  */
-const router = Router();
-
 const clientErrorSchema = z.object({
   message: z.string().max(2000),
   stack: z.string().max(8000).optional(),
@@ -27,61 +27,64 @@ const clientErrorSchema = z.object({
   buildId: z.string().max(64).optional(),
 });
 
-// In-memory rate limit: 20 reports per IP per minute. Good enough to
-// stop a rogue client from DOS'ing our log pipeline while still
-// catching genuine bursts during a bug.
+// Bound both the rolling report count and the number of tracked addresses.
+// At capacity, new addresses fail closed until an existing entry expires.
 const RATE_LIMIT_WINDOW_MS = 60_000;
 const RATE_LIMIT_MAX = 20;
-const reports = new Map<string, number[]>();
+const RATE_LIMIT_MAX_KEYS = 10_000;
 
-function shouldRateLimit(ip: string): boolean {
-  const now = Date.now();
-  const list = (reports.get(ip) ?? []).filter((t) => now - t < RATE_LIMIT_WINDOW_MS);
-  if (list.length >= RATE_LIMIT_MAX) return true;
-  list.push(now);
-  reports.set(ip, list);
-  return false;
+export function createErrorsRouter(
+  limiter = new BoundedRateLimiter(RATE_LIMIT_MAX, RATE_LIMIT_WINDOW_MS, RATE_LIMIT_MAX_KEYS)
+): Router {
+  const router = Router();
+
+  router.post('/', async (req: Request, res: Response) => {
+    const parsed = clientErrorSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: 'Invalid error payload' });
+      return;
+    }
+
+    // Express applies the configured proxy trust; never trust a raw XFF prefix.
+    // Group IPv6 addresses by subnet so rotating interface IDs cannot reset limits.
+    const ip = ipKeyGenerator(req.ip || 'unknown');
+    if (!limiter.consume(ip)) {
+      res.status(429).json({ error: 'Too many error reports' });
+      return;
+    }
+
+    let userId: string | null = null;
+    try {
+      const sessionCookie = lucia.readSessionCookie(req.headers.cookie ?? '');
+      if (sessionCookie) {
+        const { session } = await lucia.validateSession(sessionCookie);
+        if (session) userId = session.userId;
+      }
+    } catch {
+      /* ignore — reporting works unauthenticated too */
+    }
+
+    const data = parsed.data;
+    // One line, structured. Cloud Logging turns the JSON blob into
+    // searchable fields automatically.
+    console.error(
+      JSON.stringify({
+        level: 'client-error',
+        userId,
+        ip,
+        message: data.message,
+        url: data.url,
+        buildId: data.buildId,
+        stack: data.stack,
+        componentStack: data.componentStack,
+        userAgent: data.userAgent ?? req.headers['user-agent'],
+        at: new Date().toISOString(),
+      })
+    );
+
+    res.status(204).end();
+  });
+  return router;
 }
 
-router.post('/', async (req: Request, res: Response) => {
-  const parsed = clientErrorSchema.safeParse(req.body);
-  if (!parsed.success) {
-    res.status(400).json({ error: 'Invalid error payload' });
-    return;
-  }
-
-  const ip = (req.headers['x-forwarded-for']?.toString().split(',')[0].trim()) || req.ip || 'unknown';
-  if (shouldRateLimit(ip)) {
-    res.status(429).json({ error: 'Too many error reports' });
-    return;
-  }
-
-  let userId: string | null = null;
-  try {
-    const sessionCookie = lucia.readSessionCookie(req.headers.cookie ?? '');
-    if (sessionCookie) {
-      const { session } = await lucia.validateSession(sessionCookie);
-      if (session) userId = session.userId;
-    }
-  } catch { /* ignore — reporting works unauthenticated too */ }
-
-  const data = parsed.data;
-  // One line, structured. Cloud Logging turns the JSON blob into
-  // searchable fields automatically.
-  console.error(JSON.stringify({
-    level: 'client-error',
-    userId,
-    ip,
-    message: data.message,
-    url: data.url,
-    buildId: data.buildId,
-    stack: data.stack,
-    componentStack: data.componentStack,
-    userAgent: data.userAgent ?? req.headers['user-agent'],
-    at: new Date().toISOString(),
-  }));
-
-  res.status(204).end();
-});
-
-export default router;
+export default createErrorsRouter();

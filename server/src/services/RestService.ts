@@ -3,6 +3,8 @@ import type { RoomState } from '../utils/roomState.js';
 
 export type RestKind = 'short' | 'long';
 
+export class RestRecoveryError extends Error {}
+
 export interface RestResult {
   characterId: string;
   name: string;
@@ -116,7 +118,10 @@ function computeLongRest(row: Record<string, unknown>): RestResult {
   const updatedFeatures = features.map((feature) => {
     const total = finiteNumber(feature.usesTotal, NaN);
     const remaining = finiteNumber(feature.usesRemaining, total);
-    if (Number.isFinite(total) && total > 0 && remaining < total) {
+    if (
+      (feature.resetOn === 'short' || feature.resetOn === 'long') &&
+      Number.isFinite(total) && total > 0 && remaining < total
+    ) {
       restoredFeatures += 1;
       return { ...feature, usesRemaining: total };
     }
@@ -130,7 +135,7 @@ function computeLongRest(row: Record<string, unknown>): RestResult {
   const hitDice = parseArray<HitDicePool>(row.hit_dice);
   let restoredHitDice = 0;
   const totalHitDice = hitDice.reduce((sum, pool) => sum + Math.max(0, finiteNumber(pool.total)), 0);
-  let remainingRecovery = totalHitDice > 0 ? Math.max(1, Math.ceil(totalHitDice / 2)) : 0;
+  let remainingRecovery = totalHitDice > 0 ? Math.max(1, Math.floor(totalHitDice / 2)) : 0;
   const updatedHitDice = hitDice.map((pool) => {
     const used = finiteNumber(pool.used);
     if (used <= 0 || remainingRecovery <= 0) return pool;
@@ -248,7 +253,7 @@ export function computeSpendHitDie(
     };
   }
 
-  const heal = Math.max(1, roll + conMod);
+  const heal = Math.max(0, roll + conMod);
   const newHp = Math.min(maxHitPoints, hitPoints + heal);
   const updatedHitDice = hitDice.map((poolItem, idx) => (
     idx === poolIdx ? { ...poolItem, used: finiteNumber(poolItem.used) + 1 } : poolItem
@@ -341,12 +346,14 @@ export function computeAdjustSpellSlot(
  * `character:updated` fanout, otherwise the owner's next optimistic
  * `character:update` sends a stale expectedVersion and hits a false
  * `character:update-conflict`. Returns undefined when there was
- * nothing to persist (no version bump happened).
+ * nothing to persist (no version bump happened). A stale read or invalid
+ * write result throws so the caller rolls back before announcing success.
  */
 export async function persistRestUpdates(
   client: PoolClient,
   characterId: string,
   updates: Record<string, unknown>,
+  expectedVersion: unknown,
 ): Promise<number | undefined> {
   const setClauses: string[] = [];
   const params: unknown[] = [];
@@ -360,17 +367,26 @@ export async function persistRestUpdates(
   }
 
   if (setClauses.length === 0) return undefined;
+  if (typeof expectedVersion !== 'number' || !Number.isSafeInteger(expectedVersion) || expectedVersion < 1) {
+    throw new RestRecoveryError('Character version is unavailable. Refresh the character and try again.');
+  }
   setClauses.push('updated_at = NOW()::text');
-  params.push(characterId);
+  params.push(characterId, expectedVersion);
   const { rows } = await client.query(
-    `UPDATE characters SET ${setClauses.join(', ')} WHERE id = $${idx} RETURNING version`,
+    `UPDATE characters SET ${setClauses.join(', ')} WHERE id = $${idx} AND version = $${idx + 1} RETURNING version`,
     params,
   );
+  if (rows.length !== 1) {
+    throw new RestRecoveryError('Character changed during recovery. Refresh the character and try again.');
+  }
   // Only a real DB version (integer >= 1) may propagate — the column
   // defaults to 1 and only ever increments. Number(null) is 0, so a
   // null/mocked row would otherwise masquerade as a valid version.
   const version = Number((rows[0] as { version?: unknown } | undefined)?.version);
-  return Number.isInteger(version) && version >= 1 ? version : undefined;
+  if (!Number.isSafeInteger(version) || version <= expectedVersion) {
+    throw new RestRecoveryError('Could not confirm recovery. Refresh the character and try again.');
+  }
+  return version;
 }
 
 export function syncRestToCombatants(

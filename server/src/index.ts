@@ -7,7 +7,7 @@ import { Server } from 'socket.io';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import type { ClientToServerEvents, ServerToClientEvents } from '@dnd-vtt/shared';
-import { PORT, CORS_ORIGINS, UPLOAD_DIR, IS_PRODUCTION, validateConfig } from './config.js';
+import { PORT, CORS_ORIGINS, IS_PRODUCTION, validateConfig } from './config.js';
 import { initDatabase } from './db/schema.js';
 import sessionsRouter from './routes/sessions.js';
 import mapsRouter from './routes/maps.js';
@@ -35,7 +35,6 @@ import {
   portraitUpload,
   handoutUpload,
   validateAndSaveUpload,
-  tryServeUploadFromGcs,
   isUploadStorageError,
 } from './routes/uploads.js';
 import rateLimit from 'express-rate-limit';
@@ -44,9 +43,8 @@ import discordAuth from './auth/oauth/discord.js';
 import googleAuth from './auth/oauth/google.js';
 import appleAuth from './auth/oauth/apple.js';
 import { requireAuth } from './auth/middleware.js';
-import { lucia } from './auth/lucia.js';
 import pool from './db/connection.js';
-import { canReadUploadedMapAsset } from './utils/uploadAuth.js';
+import { createUploadRouter } from './utils/serveUploads.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -156,119 +154,8 @@ app.use(
 );
 app.use(express.json({ limit: '10mb' }));
 
-// Static file serving for uploads (authenticated + scoped, with nosniff).
-//
-// Paths under /uploads/tokens, /uploads/spells, /uploads/items are treated
-// as public compendium artwork and only require a valid session.
-//
-// Paths under /uploads/maps and /uploads/portraits are scoped to users
-// who share a session with the asset: otherwise any authenticated user
-// could harvest maps/portraits from other users' sessions by guessing
-// filenames. The lookup is imperfect (file renames etc. are not tracked)
-// but it stops cross-session scraping in the common case.
-app.use(
-  '/uploads',
-  async (req, res, next) => {
-    const sessionCookie = lucia.readSessionCookie(req.headers.cookie ?? '');
-    if (!sessionCookie) {
-      res.status(401).json({ error: 'Authentication required' });
-      return;
-    }
-    const { session, user } = await lucia.validateSession(sessionCookie);
-    if (!session || !user) {
-      res.status(401).json({ error: 'Invalid session' });
-      return;
-    }
-
-    const reqPath = req.path;
-    const serveAuthorizedUpload = async () => {
-      if (await tryServeUploadFromGcs(reqPath, res)) return;
-      next();
-    };
-
-    // Reject any path traversal attempts (belt-and-suspenders in addition
-    // to express.static's own protection).
-    if (reqPath.includes('..')) {
-      res.status(400).json({ error: 'Invalid path' });
-      return;
-    }
-
-    // Public compendium art — no per-user scoping needed.
-    if (
-      reqPath.startsWith('/tokens/') ||
-      reqPath.startsWith('/spells/') ||
-      reqPath.startsWith('/items/')
-    ) {
-      await serveAuthorizedUpload();
-      return;
-    }
-
-    // Handout images are auth-required. The handout text itself controls
-    // who sees the URL; if a logged-in user has the URL we allow the image
-    // fetch so historic handouts/notes render correctly.
-    if (reqPath.startsWith('/handouts/')) {
-      await serveAuthorizedUpload();
-      return;
-    }
-
-    // Maps: DMs can read every map asset in their session; players can
-    // only read the active player-ribbon map asset. Two distinct asset
-    // namespaces share this prefix:
-    //   /uploads/maps/{file}                       — full-resolution map
-    //   /uploads/maps/thumbnails/{file}            — 480-px JPEG thumbnail
-    // Both check the maps table; the thumbnail variant matches against
-    // `thumbnail_url` so the same membership rule applies without
-    // letting an attacker enumerate thumbnails for sessions they
-    // aren't in.
-    if (reqPath.startsWith('/maps/')) {
-      const url = `/uploads${reqPath}`;
-      const isThumbnail = reqPath.startsWith('/maps/thumbnails/');
-      const column = isThumbnail ? 'thumbnail_url' : 'image_url';
-      if (!(await canReadUploadedMapAsset(url, user.id, column))) {
-        res.status(403).json({ error: 'Forbidden' });
-        return;
-      }
-      await serveAuthorizedUpload();
-      return;
-    }
-
-    // Portraits: caller must own the character that uses the portrait,
-    // or share a session with a character that uses it.
-    if (reqPath.startsWith('/portraits/')) {
-      const filename = reqPath.slice('/portraits/'.length);
-      const url = `/uploads/portraits/${filename}`;
-      const { rows } = await pool.query(
-        `SELECT 1 FROM characters c
-       LEFT JOIN session_players sp1 ON sp1.character_id = c.id
-       LEFT JOIN session_players sp2 ON sp2.session_id = sp1.session_id
-       WHERE c.portrait_url = $1
-         AND (c.user_id = $2 OR sp2.user_id = $2)
-       LIMIT 1`,
-        [url, user.id]
-      );
-      if (rows.length === 0) {
-        res.status(403).json({ error: 'Forbidden' });
-        return;
-      }
-      await serveAuthorizedUpload();
-      return;
-    }
-
-    // Default-deny any /uploads subpath we don't recognise. Adding a new
-    // upload folder must be an explicit decision — otherwise a future
-    // /uploads/private/ folder (e.g. for handout images scoped to a
-    // specific player) would be silently readable by every logged-in
-    // user.
-    res.status(404).json({ error: 'Not found' });
-    return;
-  },
-  express.static(UPLOAD_DIR, {
-    maxAge: '1h',
-    setHeaders: (res) => {
-      res.setHeader('X-Content-Type-Options', 'nosniff');
-    },
-  })
-);
+// Authenticate and authorize one canonical path before either storage backend.
+app.use('/uploads', createUploadRouter());
 
 // Auth routes (unauthenticated)
 app.use('/api/auth', authRouter);

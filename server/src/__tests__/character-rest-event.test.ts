@@ -70,12 +70,36 @@ beforeEach(() => {
   mockConnect.mockReset();
   mockRelease.mockReset();
   mockQuery.mockResolvedValue({ rows: [] });
-  mockClientQuery.mockResolvedValue({ rows: [] });
+  mockClientQuery.mockResolvedValue({ rows: [{ version: 3 }] });
   mockConnect.mockResolvedValue({ query: mockClientQuery, release: mockRelease });
   for (const id of Array.from(getAllRooms().keys())) getAllRooms().delete(id);
 });
 
 describe('character:rest socket event', () => {
+  it('does not report success or change live HP when a concurrent save wins', async () => {
+    seedPlayerRoom();
+    mockQuery.mockImplementation(async (sql: string) => {
+      if (sql.includes('SELECT * FROM characters')) return { rows: [{
+        id: 'char-1', name: 'Rook', user_id: 'player-1', version: 2,
+        hit_points: 4, max_hit_points: 20,
+      }] };
+      if (sql.includes('FROM session_players')) return { rows: [{}] };
+      return { rows: [] };
+    });
+    mockClientQuery.mockResolvedValue({ rows: [] });
+    const { io, emissions } = fakeIo();
+    const { socket, handlers, emissions: local } = fakeSocket();
+    registerCharacterEvents(io, socket);
+    await handlers.get('character:rest')?.({ characterId: 'char-1', kind: 'long' });
+    expect(mockClientQuery.mock.calls.map(([sql]) => sql)).toContain('ROLLBACK');
+    expect(mockClientQuery.mock.calls.map(([sql]) => sql)).not.toContain('COMMIT');
+    expect(emissions.some((e) => ['character:updated', 'chat:new-message'].includes(e.event))).toBe(false);
+    expect(local.some((e) => e.event === 'character:rested')).toBe(false);
+    expect(local.find((e) => e.event === 'session:error')?.payload).toEqual({
+      message: 'Character changed during recovery. Refresh the character and try again.',
+    });
+  });
+
   it('applies a server-owned rest for the owning player character', async () => {
     seedPlayerRoom();
     mockQuery.mockImplementation(async (sql: string) => {
@@ -84,6 +108,7 @@ describe('character:rest socket event', () => {
           rows: [{
             id: 'char-1',
             name: 'Rook',
+            version: 2,
             user_id: 'player-1',
             class: 'Fighter',
             hit_points: 4,
@@ -120,6 +145,8 @@ describe('character:rest socket event', () => {
       changes?: string[];
     };
     expect(rested.changes?.join(' ')).toContain('HP restored');
+    const publicChat = emissions.find((e) => e.event === 'chat:new-message')?.payload as { content: string };
+    expect(publicChat.content).toBe('🛌 Rook finishes a Long Rest');
   });
 
   it('rejects rest requests for characters outside the current session', async () => {
@@ -130,6 +157,7 @@ describe('character:rest socket event', () => {
           rows: [{
             id: 'char-1',
             name: 'Rook',
+            version: 2,
             user_id: 'player-1',
             hit_points: 4,
             max_hit_points: 20,
@@ -157,6 +185,7 @@ describe('character:rest socket event', () => {
           rows: [{
             id: 'char-1',
             name: 'Rook',
+            version: 2,
             user_id: 'player-1',
             class: 'Fighter',
             hit_points: 20,
@@ -200,6 +229,7 @@ describe('character:rest socket event', () => {
           rows: [{
             id: 'char-1',
             name: 'Rook',
+            version: 2,
             user_id: 'player-1',
             class: 'Fighter',
             hit_points: 5,
@@ -209,6 +239,7 @@ describe('character:rest socket event', () => {
           }],
         };
       }
+      if (sql.startsWith('UPDATE characters')) return { rows: [{ version: 3 }] };
       return { rows: [] };
     });
     const { io, emissions } = fakeIo();
@@ -251,7 +282,7 @@ describe('character:rest socket event', () => {
     };
     expect(chat.type).toBe('system');
     expect(chat.sessionId).toBe('session-rest-event');
-    expect(chat.content).toContain('Rook spends 1d10 Hit Die');
+    expect(chat.content).toBe('💤 Rook spends a Hit Die');
   });
 
   it('adjusts spell slots on the server with a locked character row', async () => {
@@ -266,11 +297,13 @@ describe('character:rest socket event', () => {
           rows: [{
             id: 'char-1',
             name: 'Rook',
+            version: 2,
             user_id: 'player-1',
             spell_slots: { '1': { max: 2, used: 0 } },
           }],
         };
       }
+      if (sql.startsWith('UPDATE characters')) return { rows: [{ version: 3 }] };
       return { rows: [] };
     });
     const { io, emissions } = fakeIo();

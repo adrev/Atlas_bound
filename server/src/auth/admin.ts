@@ -2,7 +2,7 @@ import type { Request, Response, NextFunction } from 'express';
 
 /**
  * Parse the ADMIN_USER_IDS env var into a Set of allowed identifiers.
- * Admins may be identified by user id or email (comma-separated list).
+ * Admins may be identified by user id or verified email (comma-separated list).
  */
 function getAdminIdentifiers(): Set<string> {
   const raw = process.env.ADMIN_USER_IDS ?? '';
@@ -20,7 +20,7 @@ function getAdminIdentifiers(): Set<string> {
  * that just want to surface an `isAdmin` flag back to the client so
  * the navbar can hide/show the admin link.
  */
-export function isAdminUser(user: { id?: string; email?: string | null } | null | undefined): boolean {
+export function isAdminUser(user: { id?: string; email?: string | null; emailVerified?: boolean } | null | undefined): boolean {
   if (!user || !user.id) return false;
   const admins = getAdminIdentifiers();
   if (admins.size === 0) {
@@ -30,7 +30,8 @@ export function isAdminUser(user: { id?: string; email?: string | null } | null 
   }
   if (admins.has(user.id)) return true;
   const email = user.email ?? '';
-  return Boolean(email && admins.has(email));
+  return user.emailVerified === true && Boolean(email &&
+    Array.from(admins).some((entry) => entry.toLowerCase() === email.toLowerCase()));
 }
 
 /**
@@ -38,7 +39,7 @@ export function isAdminUser(user: { id?: string; email?: string | null } | null 
  *
  * Requires `requireAuth` to have run first so `req.user` is populated.
  *
- * Admins are identified by matching `req.user.id` or `req.user.email`
+ * Admins are identified by matching `req.user.id` or a verified `req.user.email`
  * against the `ADMIN_USER_IDS` environment variable (comma-separated).
  *
  * If `ADMIN_USER_IDS` is empty:
@@ -73,7 +74,7 @@ export function requireAdmin(
     return;
   }
 
-  if (isAdminUser({ id: user.id, email: (user as { email?: string | null }).email ?? null })) {
+  if (isAdminUser(user)) {
     next();
     return;
   }
