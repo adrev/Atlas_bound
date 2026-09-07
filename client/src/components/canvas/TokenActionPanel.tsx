@@ -17,6 +17,7 @@ import {
   emitSpellSlotAdjust,
 } from '../../socket/emitters';
 import { broadcastCastAndAwaitCounterspell } from '../../socket/counterspellWindow';
+import { registerTargetingResolver } from './targetingDispatch';
 import { theme } from '../../styles/theme';
 import type {
   ActionType,
@@ -2765,10 +2766,10 @@ export function TokenActionPanel({
       }
     };
 
-    window.addEventListener('target-token-selected', handleTargetSelect);
+    const unregisterTargeting = registerTargetingResolver(window, handleTargetSelect);
     window.addEventListener('keydown', handleEscape);
     return () => {
-      window.removeEventListener('target-token-selected', handleTargetSelect);
+      unregisterTargeting();
       window.removeEventListener('keydown', handleEscape);
     };
   }, [isTargeting, targetingData]);

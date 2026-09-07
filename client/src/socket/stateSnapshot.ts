@@ -3,7 +3,7 @@ import { useMapStore } from '../stores/useMapStore';
 import { useCombatStore, resolveTurnIndex } from '../stores/useCombatStore';
 import { useCharacterStore } from '../stores/useCharacterStore';
 import type { Token, Combatant, Character } from '@dnd-vtt/shared';
-import { recordEventId, getLastEventId } from './eventCursor';
+import { recordEventId, getLastEventId, getSyncGeneration } from './eventCursor';
 
 /**
  * Debounced snapshot trigger. Callers (UI actions, socket listeners)
@@ -31,12 +31,14 @@ const MIN_INTERVAL_MS = 80;
 // Mutation-triggered pulls clear this validator first: not every mutation is
 // represented in the event cursor/ETag yet, so reusing it there could delay
 // authoritative reconciliation until the server's periodic cache refresh.
-// Scoped to the session it came from: navigating to a different session must
-// NOT send the previous session's ETag (the server now namespaces the ETag
-// by sessionId, but clearing it client-side also avoids a needless
-// round-trip + keeps the two in lockstep).
+// Scoped to the sync generation and applied cursor, not just the session ID:
+// re-entering the same session or a 410 reset also requires a fresh body.
 let lastStateEtag: string | null = null;
-let lastStateEtagSessionId: string | null = null;
+let lastStateEtagGeneration: number | null = null;
+let lastStateEtagEventId = 0;
+let snapshotInvalidation = 0;
+let nextSnapshotRequestId = 0;
+let lastAppliedSnapshotRequestId = 0;
 
 function combatantsChanged(current: Combatant[], next: Combatant[]): boolean {
   if (current.length !== next.length) return true;
@@ -84,6 +86,8 @@ export function triggerSnapshot(_reason?: string): void {
   // validator to mask writes that are not yet reflected in the ETag inputs.
   // Direct periodic pullStateSnapshot() calls continue to use the cache.
   lastStateEtag = null;
+  snapshotInvalidation += 1;
+  const generation = getSyncGeneration();
   if (snapshotTimer) clearTimeout(snapshotTimer);
   // Hard floor so rapid-fire triggers (e.g. a token drag emitting
   // 30 move events/sec) can't escalate into 30 HTTP calls.
@@ -91,6 +95,7 @@ export function triggerSnapshot(_reason?: string): void {
   const delay = elapsed < MIN_INTERVAL_MS ? MIN_INTERVAL_MS - elapsed : 150;
   snapshotTimer = setTimeout(() => {
     snapshotTimer = null;
+    if (generation !== getSyncGeneration()) return;
     lastSnapshotAt = Date.now();
     void pullStateSnapshot();
   }, delay);
@@ -121,12 +126,19 @@ export function triggerSnapshot(_reason?: string): void {
 export async function pullStateSnapshot(): Promise<{ ok: boolean; applied: boolean }> {
   const sessionId = useSessionStore.getState().sessionId;
   if (!sessionId) return { ok: false, applied: false };
+  const generation = getSyncGeneration();
+  const invalidation = snapshotInvalidation;
+  const requestId = ++nextSnapshotRequestId;
+  const cursor = getLastEventId();
+  const isCurrent = () =>
+    generation === getSyncGeneration() &&
+    invalidation === snapshotInvalidation &&
+    requestId >= lastAppliedSnapshotRequestId;
 
-  // Drop a cached ETag that belongs to a different session — never send
-  // session A's validator while polling session B.
-  if (lastStateEtagSessionId !== sessionId) {
+  // Only an applied body in this lifetime, not overtaken by events, can
+  // justify a conditional request. A discarded body must never seed a 304.
+  if (lastStateEtagGeneration !== generation || lastStateEtagEventId !== cursor) {
     lastStateEtag = null;
-    lastStateEtagSessionId = sessionId;
   }
 
   try {
@@ -136,17 +148,24 @@ export async function pullStateSnapshot(): Promise<{ ok: boolean; applied: boole
       credentials: 'include',
       headers,
     });
+    if (!isCurrent()) return { ok: false, applied: false };
 
-    // 304 Not Modified — nothing changed since our last pull. Keep the
-    // cached state, skip the parse + reconcile entirely.
-    if (resp.status === 304) return { ok: true, applied: false };
+    // A 304 is useful only while the exact local baseline is still valid.
+    // Otherwise leave recovery unconditional on the next trigger/poll.
+    if (resp.status === 304) {
+      if (
+        !lastStateEtag ||
+        headers['If-None-Match'] !== lastStateEtag ||
+        cursor !== getLastEventId()
+      ) {
+        lastStateEtag = null;
+        return { ok: false, applied: false };
+      }
+      return { ok: true, applied: false };
+    }
 
     if (!resp.ok) return { ok: false, applied: false };
     const newEtag = resp.headers.get('ETag');
-    if (newEtag) {
-      lastStateEtag = newEtag;
-      lastStateEtagSessionId = sessionId;
-    }
 
     const snap = (await resp.json()) as {
       mapId?: string | null;
@@ -163,6 +182,7 @@ export async function pullStateSnapshot(): Promise<{ ok: boolean; applied: boole
       nextEventId: number;
       roundNumber: number;
     };
+    if (!isCurrent()) return { ok: false, applied: false };
 
     // STALENESS GUARD: a /state response can land AFTER live socket
     // events that the server read happened BEFORE (HTTP overtaken by
@@ -172,6 +192,7 @@ export async function pullStateSnapshot(): Promise<{ ok: boolean; applied: boole
     // rubber-band token positions and rewind combat (turn indicator
     // jumping backwards). Discard; the next poll re-converges.
     if (typeof snap.nextEventId === 'number' && snap.nextEventId < getLastEventId()) {
+      lastStateEtag = null;
       return { ok: true, applied: false };
     }
 
@@ -191,6 +212,7 @@ export async function pullStateSnapshot(): Promise<{ ok: boolean; applied: boole
       !snap.combat &&
       (Object.keys(useMapStore.getState().tokens).length > 0 || useCombatStore.getState().active)
     ) {
+      lastStateEtag = null;
       return { ok: true, applied: false };
     }
 
@@ -227,6 +249,7 @@ export async function pullStateSnapshot(): Promise<{ ok: boolean; applied: boole
           return (
             existing.x !== t.x ||
             existing.y !== t.y ||
+            existing.version !== t.version ||
             existing.size !== t.size ||
             existing.imageUrl !== t.imageUrl ||
             existing.visible !== t.visible ||
@@ -318,6 +341,10 @@ export async function pullStateSnapshot(): Promise<{ ok: boolean; applied: boole
     if (typeof snap.nextEventId === 'number') {
       recordEventId(snap.nextEventId);
     }
+    lastAppliedSnapshotRequestId = requestId;
+    lastStateEtag = newEtag;
+    lastStateEtagGeneration = generation;
+    lastStateEtagEventId = getLastEventId();
 
     return { ok: true, applied: true };
   } catch {

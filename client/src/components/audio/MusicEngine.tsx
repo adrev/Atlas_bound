@@ -3,6 +3,7 @@ import { useSessionStore } from '../../stores/useSessionStore';
 import { useAudioStore } from '../../stores/useAudioStore';
 import { TRACKS } from './tracks';
 import { musicPlaybackRef } from './musicPlaybackRef';
+import { startMusicPlayback } from './startMusicPlayback';
 
 /**
  * Headless audio engine mounted in AppShell for ALL users.
@@ -19,16 +20,30 @@ export function MusicEngine() {
   const masterMuted = useAudioStore((s) => s.masterMuted);
   const musicMuted = useAudioStore((s) => s.musicMuted);
   const isMuted = masterMuted || musicMuted;
+  const wasMutedRef = useRef(isMuted);
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const prevTrackRef = useRef<string | null>(null);
   const prevFileIndexRef = useRef<number | null>(null);
   const trackIndexRef = useRef<Record<string, number>>({});
-  const fadeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const fadeCleanupRef = useRef<(() => void) | null>(null);
+  const explicitlyPausedRef = useRef(false);
+  const pendingFileRef = useRef<string | null>(null);
   /** Monotonic counter to detect stale fade callbacks (race condition fix). */
   const playIdRef = useRef(0);
   /** Interval id for the playback-ref updater. */
   const progressTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const playbackCleanupRef = useRef<(() => void) | null>(null);
+  const cancelPlayback = useCallback(() => {
+    playbackCleanupRef.current?.();
+    playbackCleanupRef.current = null;
+  }, []);
+  const cancelTransition = useCallback(() => {
+    playIdRef.current++;
+    fadeCleanupRef.current?.();
+    fadeCleanupRef.current = null;
+    cancelPlayback();
+  }, [cancelPlayback]);
   /**
    * Ref-backed handlers for the audio element. Attached ONCE to the element
    * the moment it's created inside `ensureAudio`, but always delegate to the
@@ -108,9 +123,10 @@ export function MusicEngine() {
 
   // Fade out current audio
   const fadeOut = useCallback((durationMs: number, myPlayId: number): Promise<boolean> => {
+    fadeCleanupRef.current?.();
     return new Promise((resolve) => {
       const audio = audioRef.current;
-      if (!audio || audio.paused) { resolve(true); return; }
+      if (!audio || audio.paused) { resolve(playIdRef.current === myPlayId); return; }
 
       if (durationMs <= 0) {
         audio.pause();
@@ -124,47 +140,67 @@ export function MusicEngine() {
       const decrement = startVol / steps;
       let step = 0;
 
-      if (fadeTimerRef.current) clearInterval(fadeTimerRef.current);
-      fadeTimerRef.current = setInterval(() => {
+      // Cancellation must settle the awaiting transition, not just its timer.
+      const finish = (completed: boolean) => {
+        clearInterval(timer);
+        if (fadeCleanupRef.current === cancel) fadeCleanupRef.current = null;
+        resolve(completed);
+      };
+      const cancel = () => finish(false);
+      const timer = setInterval(() => {
+        if (playIdRef.current !== myPlayId) { cancel(); return; }
         step++;
         audio.volume = Math.max(0, startVol - decrement * step);
         if (step >= steps) {
-          if (fadeTimerRef.current) clearInterval(fadeTimerRef.current);
-          fadeTimerRef.current = null;
           audio.pause();
-          resolve(playIdRef.current === myPlayId);
+          finish(true);
         }
-      }, stepMs) as unknown as ReturnType<typeof setTimeout>;
+      }, stepMs);
+      fadeCleanupRef.current = cancel;
     });
   }, []);
 
-  // Play a file with fade in
-  const playFile = useCallback((url: string, volume: number) => {
+  // Starting and resuming share retries, without reassigning src on resume.
+  const startPlayback = useCallback((audio: HTMLAudioElement) => {
+    cancelPlayback();
+    audio.volume = 0;
+    musicPlaybackRef.paused = true;
+    startProgressUpdater();
+    const playId = playIdRef.current;
+    playbackCleanupRef.current = startMusicPlayback(
+      audio,
+      () => useAudioStore.getState().getEffectiveVolume('music'),
+      () => {
+        const settings = useAudioStore.getState();
+        return playIdRef.current === playId && audioRef.current === audio &&
+          prevTrackRef.current !== null && !explicitlyPausedRef.current &&
+          !settings.masterMuted && !settings.musicMuted;
+      },
+    );
+  }, [cancelPlayback, startProgressUpdater]);
+
+  const playFile = useCallback((url: string) => {
+    cancelTransition();
+    pendingFileRef.current = null;
     const audio = ensureAudio();
     audio.src = url;
-    audio.volume = 0;
     musicPlaybackRef.currentFileUrl = url;
-    musicPlaybackRef.paused = false;
-    startProgressUpdater();
-    audio.play().then(() => {
-      const targetVol = Math.min(1, Math.max(0, volume));
-      const steps = 15;
-      const stepMs = 500 / steps;
-      const increment = targetVol / steps;
-      let step = 0;
-      const timer = setInterval(() => {
-        step++;
-        audio.volume = Math.min(targetVol, increment * step);
-        if (step >= steps) clearInterval(timer);
-      }, stepMs);
-    }).catch(() => {
-      const handler = () => {
-        audio.play().catch(() => {});
-        document.removeEventListener('click', handler);
-      };
-      document.addEventListener('click', handler, { once: true });
-    });
-  }, [ensureAudio, startProgressUpdater]);
+    startPlayback(audio);
+  }, [cancelTransition, ensureAudio, startPlayback]);
+
+  const resumePlayback = useCallback(() => {
+    const settings = useAudioStore.getState();
+    if (explicitlyPausedRef.current || settings.masterMuted || settings.musicMuted || !prevTrackRef.current) return;
+    if (pendingFileRef.current) {
+      playFile(pendingFileRef.current);
+      return;
+    }
+    const audio = audioRef.current;
+    if (audio?.paused && audio.src) {
+      cancelTransition();
+      startPlayback(audio);
+    }
+  }, [cancelTransition, playFile, startPlayback]);
 
   // Advance to the next file in the current theme
   const advanceToNext = useCallback(() => {
@@ -173,11 +209,11 @@ export function MusicEngine() {
     const track = TRACKS.find((t) => t.id === trackId);
     if (!track) return;
     const nextUrl = getNextFile(track.id, track.files);
-    const vol = useAudioStore.getState().getEffectiveVolume('music');
     // Update the session store with new file index so UI stays in sync
     const idx = trackIndexRef.current[track.id];
+    prevFileIndexRef.current = idx;
     useSessionStore.getState().setCurrentTrackFileIndex(idx);
-    playFile(nextUrl, vol);
+    playFile(nextUrl);
   }, [getNextFile, playFile]);
 
   // Go to previous file (or restart if >3s in)
@@ -188,18 +224,21 @@ export function MusicEngine() {
     const track = TRACKS.find((t) => t.id === trackId);
     if (!track) return;
 
-    if (audio && audio.currentTime > 3) {
+    if (audio && audio.currentTime > 3 && !pendingFileRef.current) {
+      cancelTransition();
       audio.currentTime = 0;
+      audio.volume = useAudioStore.getState().getEffectiveVolume('music');
+      resumePlayback();
       return;
     }
 
     const currentIdx = trackIndexRef.current[trackId] ?? 0;
     const prevIdx = (currentIdx - 1 + track.files.length) % track.files.length;
     trackIndexRef.current[trackId] = prevIdx;
+    prevFileIndexRef.current = prevIdx;
     useSessionStore.getState().setCurrentTrackFileIndex(prevIdx);
-    const vol = useAudioStore.getState().getEffectiveVolume('music');
-    playFile(track.files[prevIdx], vol);
-  }, [playFile]);
+    playFile(track.files[prevIdx]);
+  }, [cancelTransition, playFile, resumePlayback]);
 
   // Handle music-action events (pause/resume/next/prev)
   useEffect(() => {
@@ -208,16 +247,14 @@ export function MusicEngine() {
       const audio = audioRef.current;
       switch (action) {
         case 'pause':
-          if (audio && !audio.paused) {
-            audio.pause();
-            musicPlaybackRef.paused = true;
-          }
+          explicitlyPausedRef.current = true;
+          cancelTransition();
+          audio?.pause();
+          musicPlaybackRef.paused = true;
           break;
         case 'resume':
-          if (audio && audio.paused && audio.src && prevTrackRef.current) {
-            audio.play().catch(() => {});
-            musicPlaybackRef.paused = false;
-          }
+          explicitlyPausedRef.current = false;
+          resumePlayback();
           break;
         case 'next':
           advanceToNext();
@@ -229,7 +266,7 @@ export function MusicEngine() {
     };
     window.addEventListener('music-action', handler);
     return () => window.removeEventListener('music-action', handler);
-  }, [advanceToNext, goToPrev]);
+  }, [advanceToNext, goToPrev, cancelTransition, resumePlayback]);
 
   // Keep the ended/error handler refs up-to-date so the stable listeners
   // attached inside `ensureAudio` always run the latest logic.
@@ -252,18 +289,20 @@ export function MusicEngine() {
     const themeChanged = currentTrack !== prevTrackRef.current;
     const fileChanged = currentTrackFileIndex !== prevFileIndexRef.current;
     if (!themeChanged && !fileChanged) return;
+    cancelTransition();
 
     const wasPlaying = prevTrackRef.current !== null;
     prevTrackRef.current = currentTrack;
     prevFileIndexRef.current = currentTrackFileIndex;
 
     if (currentTrack === null) {
-      playIdRef.current++;
+      pendingFileRef.current = null;
+      explicitlyPausedRef.current = false;
       const myId = playIdRef.current;
       fadeOut(300, myId);
       musicPlaybackRef.currentTime = 0;
       musicPlaybackRef.duration = 0;
-      musicPlaybackRef.paused = false;
+      musicPlaybackRef.paused = true;
       musicPlaybackRef.currentFileUrl = '';
       stopProgressUpdater();
       return;
@@ -272,23 +311,30 @@ export function MusicEngine() {
     const track = TRACKS.find((t) => t.id === currentTrack);
     if (!track || track.files.length === 0) return;
 
-    playIdRef.current++;
     const myPlayId = playIdRef.current;
+    let url: string;
+    if (currentTrackFileIndex != null && currentTrackFileIndex < track.files.length) {
+      url = track.files[currentTrackFileIndex];
+      trackIndexRef.current[track.id] = currentTrackFileIndex;
+    } else {
+      url = getNextFile(track.id, track.files);
+    }
+    // Keep the selected destination if a pause/mute interrupts its fade. Only
+    // an explicit resume/unmute may continue it; normal resumes keep position.
+    pendingFileRef.current = url;
+    const settings = useAudioStore.getState();
+    if (explicitlyPausedRef.current || settings.masterMuted || settings.musicMuted) {
+      audioRef.current?.pause();
+      return;
+    }
 
     (async () => {
       const stillCurrent = await fadeOut(wasPlaying ? 500 : 0, myPlayId);
-      if (!stillCurrent) return; // A newer play was requested — abort
+      if (!stillCurrent || playIdRef.current !== myPlayId) return;
 
-      let url: string;
-      if (currentTrackFileIndex != null && currentTrackFileIndex < track.files.length) {
-        url = track.files[currentTrackFileIndex];
-        trackIndexRef.current[track.id] = currentTrackFileIndex;
-      } else {
-        url = getNextFile(track.id, track.files);
-      }
-      playFile(url, effectiveVolume);
+      playFile(url);
     })();
-  }, [currentTrack, currentTrackFileIndex, effectiveVolume, fadeOut, getNextFile, playFile, stopProgressUpdater]);
+  }, [currentTrack, currentTrackFileIndex, fadeOut, getNextFile, playFile, stopProgressUpdater, cancelTransition]);
 
   // Update volume when settings change
   useEffect(() => {
@@ -299,19 +345,24 @@ export function MusicEngine() {
 
   // Handle mute/unmute
   useEffect(() => {
-    const audio = audioRef.current;
-    if (!audio) return;
-    if (isMuted && !audio.paused) {
-      audio.pause();
-    } else if (!isMuted && audio.src && prevTrackRef.current) {
-      audio.play().catch(() => {});
+    const wasMuted = wasMutedRef.current;
+    wasMutedRef.current = isMuted;
+    if (isMuted) {
+      cancelTransition();
+      audioRef.current?.pause();
+      musicPlaybackRef.paused = true;
+    } else if (wasMuted) {
+      resumePlayback();
     }
-  }, [isMuted]);
+  }, [isMuted, cancelTransition, resumePlayback]);
 
   // Cleanup on unmount
   useEffect(() => {
     return () => {
-      if (fadeTimerRef.current) clearInterval(fadeTimerRef.current as unknown as number);
+      prevTrackRef.current = null;
+      pendingFileRef.current = null;
+      trackIndexRef.current = {};
+      cancelTransition();
       stopProgressUpdater();
       const audio = audioRef.current;
       if (audio) {
@@ -321,7 +372,7 @@ export function MusicEngine() {
       }
       audioRef.current = null;
     };
-  }, [stopProgressUpdater, stableHandleEnded, stableHandleError]);
+  }, [stopProgressUpdater, stableHandleEnded, stableHandleError, cancelTransition]);
 
   // Allow external seek via a window event (used by progress bar click)
   useEffect(() => {

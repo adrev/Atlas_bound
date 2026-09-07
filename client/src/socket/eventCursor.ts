@@ -22,6 +22,12 @@ import { dispatchReplayEvent } from './replayHandlers';
  */
 
 let lastEventId = 0;
+let syncGeneration = 0;
+
+/** A reset/re-entry is a new lifetime even if the session ID is unchanged. */
+export function getSyncGeneration(): number {
+  return syncGeneration;
+}
 
 /** Update the cursor when a live event arrives. */
 export function recordEventId(id: number): void {
@@ -35,7 +41,20 @@ export function getLastEventId(): number {
 /** Reset when the user leaves the session (new room, new cursor). */
 export function resetEventCursor(): void {
   lastEventId = 0;
+  syncGeneration += 1;
 }
+
+// Observe transitions synchronously: comparing IDs only when a request settles
+// misses A -> null -> A navigation while that request is in flight.
+useSessionStore.subscribe((state, previous) => {
+  if (
+    state.sessionId !== previous.sessionId ||
+    state.roomCode !== previous.roomCode ||
+    state.userId !== previous.userId
+  ) {
+    resetEventCursor();
+  }
+});
 
 /**
  * Ask the server for any events since our last-seen id and replay
@@ -45,6 +64,8 @@ export function resetEventCursor(): void {
 export async function pullEventCursor(socket: Socket): Promise<number> {
   const sessionId = useSessionStore.getState().sessionId;
   if (!sessionId) return 0;
+  const generation = getSyncGeneration();
+  const since = lastEventId;
 
   // Cursor 0 means we have no authoritative baseline in the event
   // stream yet — either a brand-new join or a just-performed 410 reset
@@ -63,17 +84,20 @@ export async function pullEventCursor(socket: Socket): Promise<number> {
   // cursor via `nextEventId`. Once the cursor is nonzero, normal delta
   // replay resumes below. This is the invariant: cursor 0 never requests
   // or replays historical room backlog.
-  if (lastEventId === 0) return 0;
+  if (since === 0) return 0;
 
   try {
-    const resp = await fetch(`/api/sessions/${sessionId}/events?since=${lastEventId}`, {
+    const resp = await fetch(`/api/sessions/${sessionId}/events?since=${since}`, {
       credentials: 'include',
     });
+    if (generation !== getSyncGeneration()) return 0;
     if (resp.status === 410) {
+      // A newer snapshot/live event may already have recovered this range.
+      if (lastEventId !== since) return 0;
       // Our cursor is older than the replay buffer — server can't
       // guarantee a complete delta. Force a fresh session:join so
       // the client rebuilds state from the authoritative hydration.
-      lastEventId = 0;
+      resetEventCursor();
       // The caller (keep-alive loop) re-emits session:join on the
       // next tick anyway, but nudge it now.
       socket.emit('session:join', {
@@ -87,6 +111,7 @@ export async function pullEventCursor(socket: Socket): Promise<number> {
       events: Array<{ id: number; kind: string; payload: Record<string, unknown> }>;
       latestEventId: number;
     };
+    if (generation !== getSyncGeneration()) return 0;
 
     if (!body.events || body.events.length === 0) {
       // Still advance our cursor to match the server's idea of
@@ -98,20 +123,25 @@ export async function pullEventCursor(socket: Socket): Promise<number> {
       return 0;
     }
 
-    for (const e of body.events) {
+    let replayed = 0;
+    for (const e of [...body.events].sort((a, b) => a.id - b.id)) {
+      if (generation !== getSyncGeneration()) return replayed;
+      // Idempotent does not mean order-independent: an old absolute token
+      // position/character update can undo a newer snapshot or live event.
+      if (e.id <= lastEventId) continue;
       // Replay through our own dispatcher — mirrors what the live
       // socket listener would do for each event kind but avoids
       // reaching into socket.io-client's internal Emitter callbacks.
-      // Handlers are idempotent so re-applying an event we may have
-      // already processed is a no-op.
       dispatchReplayEvent(e.kind, e.payload);
-      if (e.id > lastEventId) lastEventId = e.id;
+      replayed += 1;
+      if (generation !== getSyncGeneration()) return replayed;
+      recordEventId(e.id);
     }
 
     if (typeof body.latestEventId === 'number') {
       lastEventId = Math.max(lastEventId, body.latestEventId);
     }
-    return body.events.length;
+    return replayed;
   } catch {
     // Network blip — the next keep-alive tick will retry.
     return 0;

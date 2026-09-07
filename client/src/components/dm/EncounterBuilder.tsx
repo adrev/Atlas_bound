@@ -9,6 +9,7 @@ import { Button, Section, Divider } from '../ui';
 import type { CompendiumMonster } from '@dnd-vtt/shared';
 import { getCreatureIconUrl, getCreatureImageUrl } from '../../utils/compendiumIcons';
 import { computeSpawnAnchor, computeTokenPosition } from '../../utils/zoneSpawn';
+import { showToast } from '../ui/Toast';
 
 // --- Helpers (reused from CreatureLibrary) ---
 
@@ -225,11 +226,11 @@ export function EncounterBuilder() {
 
   // Deploy encounter
   const handleDeploy = async (presetId: string) => {
-    if (!currentMap) return;
+    if (!currentMap || deploying) return;
     setDeploying(presetId);
     try {
       const resp = await fetch(`/api/encounters/${presetId}/deploy`, { method: 'POST' });
-      if (!resp.ok) return;
+      if (!resp.ok) throw new Error('Could not load the encounter. Please try again.');
       const data = await resp.json();
       const allCreatures = data.creatures as EncounterCreature[];
 
@@ -336,8 +337,11 @@ export function EncounterBuilder() {
           tokenIndex++;
         }
       }
-    } catch { /* ignore */ }
-    setDeploying(null);
+    } catch {
+      showToast({ message: 'Encounter deployment failed. Check the map for any creatures already placed before retrying.', variant: 'danger' });
+    } finally {
+      setDeploying(null);
+    }
   };
 
   // --- Build Mode ---
