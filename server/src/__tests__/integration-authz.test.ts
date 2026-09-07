@@ -24,7 +24,7 @@ beforeEach(() => {
  * (or none) so we can exercise the real authorization helpers exactly
  * the way the production routes do — without pulling in Lucia / cookies.
  */
-function buildApp(authedUser: { id: string; email?: string } | null) {
+function buildApp(authedUser: { id: string; email?: string; emailVerified?: boolean } | null) {
   const app = express();
   app.use(express.json());
   app.use((req: Request, _res: Response, next: NextFunction) => {
@@ -236,10 +236,17 @@ describe('Integration: admin-only endpoint (requireAdmin)', () => {
 
   it('returns 200 for admin matched by email', async () => {
     process.env.ADMIN_USER_IDS = 'admin@example.com';
-    const app = buildApp({ id: 'some-id', email: 'admin@example.com' });
+    const app = buildApp({ id: 'some-id', email: 'admin@example.com', emailVerified: true });
     mountAdminEndpoint(app);
     const res = await supertest(app).post('/api/compendium/sync');
     expect(res.status).toBe(200);
+  });
+
+  it('returns 403 for an unverified registration matching an admin email', async () => {
+    process.env.ADMIN_USER_IDS = 'admin@example.com';
+    const app = buildApp({ id: 'new-account', email: 'admin@example.com', emailVerified: false });
+    mountAdminEndpoint(app);
+    expect((await supertest(app).post('/api/compendium/sync')).status).toBe(403);
   });
 
   it('returns 403 when ADMIN_USER_IDS is empty and NODE_ENV=production', async () => {

@@ -96,6 +96,7 @@ function makeApp(mountPath: string, router: express.Router) {
   app.use(express.json());
   app.use((req: Request, _res, next) => {
     req.user = {
+      emailVerified: true,
       id: 'owner-1',
       email: 'owner@example.com',
       displayName: 'Owner',

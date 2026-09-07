@@ -136,7 +136,7 @@ router.get('/me', optionalAuth, (req: Request, res: Response) => {
       // Surfaced so the client navbar can show/hide the /admin link
       // without an extra round-trip. Admin endpoints still re-check
       // server-side via requireAdmin.
-      isAdmin: isAdminUser({ id: req.user.id, email: req.user.email ?? null }),
+      isAdmin: isAdminUser(req.user),
     },
   });
 });

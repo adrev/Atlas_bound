@@ -82,6 +82,7 @@ router.get('/discord/callback', async (req: Request, res: Response) => {
       id: string;
       username: string;
       email?: string;
+      verified?: boolean;
       avatar?: string;
     };
     const avatarUrl = discordUser.avatar
@@ -92,6 +93,7 @@ router.get('/discord/callback', async (req: Request, res: Response) => {
       provider: 'discord',
       providerUserId: discordUser.id,
       email: discordUser.email ?? null,
+      emailVerified: discordUser.verified === true,
       username: discordUser.username,
       avatarUrl,
     });
@@ -113,18 +115,23 @@ router.get('/discord/callback', async (req: Request, res: Response) => {
       `discord_oauth_state=; Path=/; HttpOnly; Max-Age=0`,
       returnPathClearCookie(),
     ]);
-    res.redirect('/?auth=error&reason=server_error');
+    res.redirect(`/?auth=error&reason=${err instanceof OAuthAccountLinkRequiredError ? 'account_link_required' : 'server_error'}`);
   }
 });
+
+export class OAuthAccountLinkRequiredError extends Error {}
 
 async function findOrCreateOAuthUser(params: {
   provider: string;
   providerUserId: string;
   email: string | null;
+  emailVerified: boolean;
   username: string;
   avatarUrl: string | null;
 }): Promise<string> {
-  const { provider, providerUserId, email, username, avatarUrl } = params;
+  const { provider, providerUserId, emailVerified, username, avatarUrl } = params;
+  const email = params.email?.trim().toLowerCase() || null;
+  const trustedEmail = emailVerified ? email : null;
 
   // 1. Check existing OAuth account
   const { rows: oauthRows } = await pool.query(
@@ -136,15 +143,42 @@ async function findOrCreateOAuthUser(params: {
       'UPDATE oauth_accounts SET provider_username = $1, provider_avatar_url = $2 WHERE provider = $3 AND provider_user_id = $4',
       [username, avatarUrl, provider, providerUserId]
     );
+    if (trustedEmail) {
+      // Legacy password/OAuth combinations require explicit recovery: a
+      // password may have been planted before the first OAuth login.
+      try {
+        await pool.query(
+          `UPDATE auth_users SET email = COALESCE(email, $2), email_verified = 1
+           WHERE id = $1 AND hashed_password IS NULL
+             AND (lower(email) = $2 OR (email IS NULL AND NOT EXISTS (
+               SELECT 1 FROM auth_users AS other WHERE other.id <> $1 AND lower(other.email) = $2)))`,
+          [oauthRows[0].user_id, trustedEmail]
+        );
+      } catch (err) {
+        // Another signup may claim this email after the NOT EXISTS check.
+        // Email adoption is optional; the linked provider still owns this ID.
+        const dbError = err as { code?: string; table?: string; constraint?: string } | null;
+        if (
+          dbError?.code !== '23505' ||
+          dbError.table !== 'auth_users' ||
+          dbError.constraint !== 'auth_users_email_key'
+        ) {
+          throw err;
+        }
+      }
+    }
     return oauthRows[0].user_id;
   }
 
   // 2. Check existing auth_user by email
-  if (email) {
-    const { rows: userRows } = await pool.query('SELECT id FROM auth_users WHERE email = $1', [
-      email,
+  if (trustedEmail) {
+    const { rows: userRows } = await pool.query('SELECT id, email_verified, hashed_password FROM auth_users WHERE lower(email) = $1', [
+      trustedEmail,
     ]);
     if (userRows.length > 0) {
+      if (userRows.length !== 1 || userRows[0].email_verified !== 1 || userRows[0].hashed_password != null) {
+        throw new OAuthAccountLinkRequiredError('Sign in with the original login method to resolve this account.');
+      }
       await pool.query(
         `INSERT INTO oauth_accounts (provider, provider_user_id, user_id, provider_email, provider_username, provider_avatar_url)
          VALUES ($1, $2, $3, $4, $5, $6)`,
@@ -160,8 +194,8 @@ async function findOrCreateOAuthUser(params: {
   try {
     await client.query('BEGIN');
     await client.query(
-      'INSERT INTO auth_users (id, email, display_name, avatar_url) VALUES ($1, $2, $3, $4)',
-      [userId, email, username, avatarUrl]
+      'INSERT INTO auth_users (id, email, display_name, avatar_url, email_verified) VALUES ($1, $2, $3, $4, $5)',
+      [userId, trustedEmail, username, avatarUrl, trustedEmail ? 1 : 0]
     );
     await client.query(
       'INSERT INTO users (id, display_name, avatar_url, auth_user_id) VALUES ($1, $2, $3, $4)',
