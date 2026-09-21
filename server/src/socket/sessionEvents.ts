@@ -28,6 +28,7 @@ import { dbRowToCharacter } from '../utils/characterMapper.js';
 import { shouldDeliverChatRow } from '../utils/chatHistoryFilter.js';
 import { safeParseJSON } from '../utils/safeJson.js';
 import { rowToToken } from '../utils/tokenMapper.js';
+import { withConditionSources } from '../utils/conditionSources.js';
 import { tokenVisibleToPlayer } from '../utils/tokenVisibility.js';
 
 export function registerSessionEvents(io: Server, socket: Socket): void {
@@ -270,7 +271,7 @@ export function registerSessionEvents(io: Server, socket: Socket): void {
             const { rows: tokenRows } = await pool.query('SELECT * FROM tokens WHERE map_id = $1', [
               hydrationMapId,
             ]);
-            const tokens = tokenRows.map(rowToToken);
+            const tokens = tokenRows.map(rowToToken).map((t) => withConditionSources(room, t));
 
             if (room.tokens.size === 0) {
               for (const t of tokens) room.tokens.set(t.id, t);

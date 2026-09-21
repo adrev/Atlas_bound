@@ -227,6 +227,21 @@ describe('durable feature runtime', () => {
     expect(hydrateFeaturePointPools(final).has('c')).toBe(false);
   });
 
+  it('persists superiority die size as well as the spent count', async () => {
+    const db = database();
+    const first = await loadFeatureRuntime(db.query, 's', ['c']);
+    const pools = hydrateFeaturePointPools(first);
+    pools.set('c', new Map([['superiority', { max: 5, remaining: 0, die: 10 }]]));
+    captureFeaturePointPools(first, pools);
+    await saveFeatureRuntime(db.query, first);
+    const restored = await loadFeatureRuntime(db.query, 'other-session', ['c']);
+    expect(hydrateFeaturePointPools(restored).get('c')!.get('superiority')).toEqual({
+      max: 5,
+      remaining: 0,
+      die: 10,
+    });
+  });
+
   it('hydrates the same serialized state in a fresh Node process without refilling', () => {
     const state = {
       version: 1,
@@ -238,7 +253,10 @@ describe('durable feature runtime', () => {
         wildShape: { beastName: 'Bear', beastHp: 1, beastMax: 30, beastAc: 12, beastSpeed: null },
         enduranceUsed: true,
         indomitableUsed: 2,
-        pointPools: { sorcery: { max: 3, remaining: 0 } },
+        pointPools: {
+          sorcery: { max: 3, remaining: 0 },
+          superiority: { max: 5, remaining: 0, die: 10 },
+        },
       },
     };
     const moduleUrl = new URL('../utils/featureRuntime.ts', import.meta.url).href;

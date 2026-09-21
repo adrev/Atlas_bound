@@ -16,6 +16,7 @@ import { loadDrawingsForMapAsync, filterDrawingsForPlayer } from './drawingEvent
 import { loadZonesForMap } from './mapEvents.js';
 import { safeParseJSON } from '../utils/safeJson.js';
 import { rowToToken } from '../utils/tokenMapper.js';
+import { withConditionSources } from '../utils/conditionSources.js';
 import { tokenVisibleToPlayer } from '../utils/tokenVisibility.js';
 
 const MAP_SUMMARY_SELECT = `
@@ -145,7 +146,9 @@ export function registerSceneEvents(io: Server, socket: Socket): void {
       const { rows: tokenRows } = await pool.query('SELECT * FROM tokens WHERE map_id = $1', [
         mapId,
       ]);
-      const tokens: Token[] = tokenRows.map(rowToToken);
+      const tokens: Token[] = tokenRows
+        .map(rowToToken)
+        .map((t) => withConditionSources(ctx.room, t));
 
       const drawings = await loadDrawingsForMapAsync(mapId);
       const visibleDrawings = filterDrawingsForPlayer(drawings, ctx.player);
@@ -335,7 +338,9 @@ export function registerSceneEvents(io: Server, socket: Socket): void {
       const { rows: tokenRows } = await pool.query('SELECT * FROM tokens WHERE map_id = $1', [
         mapId,
       ]);
-      const tokens: Token[] = tokenRows.map(rowToToken);
+      const tokens: Token[] = tokenRows
+        .map(rowToToken)
+        .map((t) => withConditionSources(ctx.room, t));
       ctx.room.tokens.clear();
       for (const t of tokens) ctx.room.tokens.set(t.id, t);
 
