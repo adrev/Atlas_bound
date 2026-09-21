@@ -28,6 +28,10 @@ before this implementation and is retained as historical evidence.
   notification outbox. Shutdown drains admitted gameplay work for up to 9 seconds.
 - Deployment explicitly sets service/revision minimums to zero and retains
   request-based CPU allocation. No Cloud SQL shutdown or sizing change.
+- The deployment script now preserves existing environment values, Secret Manager
+  references and resource settings instead of rebuilding an allowlist from `.env`.
+  It pins the image digest, creates a no-traffic candidate, verifies its exact
+  revision and configuration, and leaves promotion as a separate reviewed action.
 
 ## Compatibility
 
@@ -44,7 +48,9 @@ this release. Never run old and new revisions concurrently against an active gam
 
 ## Local Verification
 
-- Full suite with explicit loopback PostgreSQL: 121 files, 1,444 tests passed.
+- Deployed runtime suite with explicit loopback PostgreSQL: 121 files, 1,444 tests
+  passed. After the deployment-script follow-up, the production branch passed
+  123 files / 1,461 tests, including 18 deployment regression tests; no skips.
 - Production build and zero-warning ESLint passed; dependency audit reported
   zero vulnerabilities. Worker protocol tests passed 8/8.
 - Real PostgreSQL tests cover fresh Node process restoration, concurrent writers,
@@ -70,9 +76,50 @@ hoisted dependencies, and excludes redundant `server/uploads` copies from contex
 Pre-release SQL backup operation `0a3a5509-8d1f-493e-9e70-d42000000032`
 completed successfully at `2026-09-21T11:33:31.730Z`.
 
-Candidate deployment, traffic promotion, measured cold-start latency and explicit
-idle-zero observations are recorded below only after they have actually happened.
-Until then, production remains on `atlas-bound-00064-kzr`.
+At approximately `2026-09-21T12:03Z`, traffic moved 100% to
+`atlas-bound-sz-f37c6cb`; the temporary `scalezero-qa` tag was removed. Image:
+`us-central1-docker.pkg.dev/atlas-bound-personal/cloud-run-source-deploy/atlas-bound@sha256:ce504ad62f273a01186da26d6c6967b7105ac4e43fc3ebcfa0a6142091ebac9a`.
+
+The corrected candidate passed authenticated live DM/player QA against a separate
+private fixture: token movement, music pause, chat, spent action/bonus/reaction/
+movement budgets, combat, condition sources, REST checkpoints and warm rejoin.
+Root HTML, referenced asset bundles and dice WASM returned 200. Anonymous session
+requests returned 401. Google/Discord redirects retained production callback URLs;
+this does not claim a new real-provider login was completed.
+
+After promotion, `https://dnd.kbrt.ai/readyz` returned 200 at
+`2026-09-21T12:03:34.109Z` (1.106 seconds, warm). Configuration comparison confirmed
+unchanged environment hash, CPU/memory, service/revision maxima, concurrency,
+timeout, SQL connection, service identity, affinity, boost and ingress. Both
+minimums are effectively zero and request-based CPU throttling is explicit.
+Cloud Run omits the revision min annotation for its default zero value.
+
+Cloud Monitoring reported both active and idle instance counts as zero from
+`2026-09-21T12:20:00Z`, after the last warm request at 12:03:34 UTC. The same zero
+values were still present at 12:22 UTC, immediately before the wake test. These
+are explicit zero samples, not an inference from missing metrics.
+
+The first authenticated request at `2026-09-21T12:22:23.251853Z` caused a new
+AUTOSCALING instance start, confirmed by the system log at 12:22:23.267542 UTC.
+Startup passed its first TCP probe at 12:22:26.583782 UTC. Client-observed timings
+were **4.571 seconds cold** and **0.736 seconds for the next warm request**. These
+are one observed pair, including network latency, not a latency guarantee.
+
+Strict cold REST and DM/player WebSocket rejoin assertions passed for unchanged
+generation/cursor, token position/version, condition-source metadata, combat,
+spent action/bonus/reaction/movement budgets, music and chat. All test sockets
+closed by approximately 12:22:31 UTC. The exact isolated private fixture and its
+authentication cookies were removed using SQL-only cleanup; no existing campaign
+was edited. The temporary SQL proxy was stopped. No runtime errors were observed.
+Cloud SQL remained `RUNNABLE`, `ALWAYS`, `db-f1-micro`.
+
+The second natural idle-zero check is still pending at this checkpoint. Monitoring
+uses only the control plane so health checks do not keep the application warm.
+
+The newer main branch has a separate, undeployed integration candidate. Its
+canonical feature-resource migration needs a reviewed quiescent cutover and must
+not be deployed over active legacy writers. See its integration report and the
+candidate-deployment contract before planning a subsequent release.
 
 Rollback baseline: `atlas-bound-00064-kzr` (revision minimum 1). Route traffic back
 only if no active game can be split across versions. Keep the additive schema and
