@@ -311,13 +311,16 @@ describe('session:kick handler', () => {
 
   function setupHandler(dmSocketId: string, sessionId: string, roomCode: string) {
     const handlers = new Map<string, (data: unknown) => Promise<void> | void>();
+    const fetchSockets = vi.fn().mockResolvedValue([]);
+    const broadcast = { emit: vi.fn(), except: vi.fn().mockReturnThis() };
     const io: any = {
-      to: () => ({ emit: vi.fn() }),
+      to: vi.fn(() => broadcast),
+      in: vi.fn(() => ({ fetchSockets })),
       sockets: { sockets: new Map() },
     };
     const socket: any = {
       id: dmSocketId,
-      data: {},
+      data: { userId: '11111111-1111-1111-1111-111111111111' },
       emit: vi.fn(),
       on: (name: string, cb: (data: unknown) => Promise<void> | void) => {
         handlers.set(name, cb);
@@ -336,22 +339,28 @@ describe('session:kick handler', () => {
       role: 'dm',
       characterId: null,
     });
-    return { handlers, io };
+    mockQuery.mockResolvedValueOnce({ rows: [{}] }); // SQL caller DM authorization
+    return { handlers, io, socket, fetchSockets, broadcast };
   }
 
   it('rejects kicking yourself (no DELETE issued)', async () => {
     const { handlers } = setupHandler('sock-dm', 'sess-1', 'ROOM1234');
     const kick = handlers.get('session:kick')!;
     await kick({ targetUserId: '11111111-1111-1111-1111-111111111111' });
-    // No DB writes should have happened.
-    expect(mockQuery).not.toHaveBeenCalled();
+    // Caller authorization is read-only; self-kick must never reach a DELETE.
+    expect(mockQuery).toHaveBeenCalledTimes(1);
+    expect(mockQuery).toHaveBeenCalledWith(expect.stringContaining("AND role = 'dm'"), [
+      'sess-1',
+      '11111111-1111-1111-1111-111111111111',
+    ]);
+    expect(mockQuery.mock.calls.every((c) => !/DELETE/i.test(c[0] as string))).toBe(true);
   });
 
   it('rejects a co-DM kicking another co-DM (owner must demote first)', async () => {
     // With co-DMs, the hierarchy is explicit: one DM cannot kick their
     // peer \u2014 the owner has to demote them before they can be kicked.
-    // The handler issues ONE combined role+owner lookup, sees role=dm
-    // on someone who isn't the session owner, and bails without a DELETE.
+    // After authorizing the caller in SQL, the target role+owner lookup
+    // sees a peer DM and must still bail without a DELETE.
     const { handlers } = setupHandler('sock-dm', 'sess-2', 'ROOM5678');
     roomState.addPlayerToRoom('sess-2', {
       userId: '22222222-2222-2222-2222-222222222222',
@@ -367,7 +376,11 @@ describe('session:kick handler', () => {
     const kick = handlers.get('session:kick')!;
     await kick({ targetUserId: '22222222-2222-2222-2222-222222222222' });
 
-    expect(mockQuery).toHaveBeenCalledTimes(1);
+    expect(mockQuery).toHaveBeenCalledTimes(2);
+    expect(mockQuery).toHaveBeenNthCalledWith(2, expect.stringContaining('SELECT sp.role'), [
+      'sess-2',
+      '22222222-2222-2222-2222-222222222222',
+    ]);
     expect(mockQuery.mock.calls.every((c) => !/DELETE/i.test(c[0] as string))).toBe(true);
   });
 
@@ -386,12 +399,26 @@ describe('session:kick handler', () => {
     const kick = handlers.get('session:kick')!;
     await kick({ targetUserId: ownerId });
 
-    expect(mockQuery).toHaveBeenCalledTimes(1);
+    expect(mockQuery).toHaveBeenCalledTimes(2);
+    expect(mockQuery).toHaveBeenNthCalledWith(2, expect.stringContaining('SELECT sp.role'), [
+      'sess-2b',
+      ownerId,
+    ]);
     expect(mockQuery.mock.calls.every((c) => !/DELETE/i.test(c[0] as string))).toBe(true);
   });
 
   it('deletes the session_players row when kicking a regular player', async () => {
-    const { handlers } = setupHandler('sock-dm', 'sess-3', 'ROOMABCD');
+    const { handlers, io, socket, fetchSockets, broadcast } = setupHandler(
+      'sock-dm',
+      'sess-3',
+      'ROOMABCD'
+    );
+    const remoteSocket = {
+      id: 'remote-secondary',
+      data: { userId: '33333333-3333-3333-3333-333333333333' },
+      leave: vi.fn(),
+    };
+    fetchSockets.mockResolvedValueOnce([remoteSocket]);
     roomState.addPlayerToRoom('sess-3', {
       userId: '33333333-3333-3333-3333-333333333333',
       displayName: 'Alice',
@@ -409,5 +436,40 @@ describe('session:kick handler', () => {
     // The last call should be the DELETE.
     const calls = mockQuery.mock.calls.map((c) => c[0] as string);
     expect(calls.some((sql) => /DELETE\s+FROM\s+session_players/i.test(sql))).toBe(true);
+    expect(mockQuery).toHaveBeenCalledTimes(3);
+    expect(mockQuery).toHaveBeenLastCalledWith(
+      'DELETE FROM session_players WHERE session_id = $1 AND user_id = $2',
+      ['sess-3', remoteSocket.data.userId]
+    );
+    expect(fetchSockets).toHaveBeenCalledOnce();
+    expect(remoteSocket.leave).toHaveBeenCalledWith('sess-3');
+    expect(io.to).toHaveBeenCalledWith(remoteSocket.id);
+    expect(broadcast.emit).toHaveBeenCalledWith('session:kicked', {
+      userId: remoteSocket.data.userId,
+    });
+    expect(socket.emit).not.toHaveBeenCalledWith('session:error', expect.anything());
+    expect(roomState.getRoom('sess-3')!.players.has(remoteSocket.data.userId)).toBe(false);
+  });
+
+  it('rejects a cached DM whose SQL role was revoked', async () => {
+    const { handlers, fetchSockets, socket } = setupHandler('sock-dm', 'sess-revoked', 'REVOKED1');
+    mockQuery.mockReset().mockResolvedValueOnce({ rows: [] });
+    await handlers.get('session:kick')!({ targetUserId: '33333333-3333-3333-3333-333333333333' });
+    expect(mockQuery).toHaveBeenCalledTimes(1);
+    expect(mockQuery).toHaveBeenCalledWith(expect.stringContaining("AND role = 'dm'"), [
+      'sess-revoked',
+      socket.data.userId,
+    ]);
+    expect(mockQuery.mock.calls.every((c) => !/DELETE/i.test(c[0] as string))).toBe(true);
+    expect(fetchSockets).not.toHaveBeenCalled();
+    expect(socket.emit).toHaveBeenCalledWith('session:error', expect.anything());
+  });
+
+  it('rejects missing authenticated identity without trusting cached DM presence', async () => {
+    const { handlers, socket, fetchSockets } = setupHandler('sock-dm', 'sess-no-auth', 'NOAUTH01');
+    socket.data = {};
+    await handlers.get('session:kick')!({ targetUserId: '33333333-3333-3333-3333-333333333333' });
+    expect(mockQuery).not.toHaveBeenCalled();
+    expect(fetchSockets).not.toHaveBeenCalled();
   });
 });

@@ -1,0 +1,141 @@
+# Scale-to-Zero Persistence Release
+
+Target: `atlas-bound-personal / us-central1 / atlas-bound`.
+
+This release implements the prerequisites identified in
+`scale-to-zero-preflight-2026-09-21.md`. It is based on the deployed `a0e4afd`,
+not the newer, unreleased main branch. The preflight hold describes the state
+before this implementation and is retained as historical evidence.
+
+## Changes
+
+- Versioned Postgres runtime snapshots preserve combat budgets, condition
+  metadata, music, DM map previews, hooks, event cursors and ready-check data.
+- Character feature resources have independent durable records. Per-session
+  advisory locks and ordered character locks serialize concurrent instances.
+- Socket.IO uses the PostgreSQL adapter. Gameplay writes commit before success
+  broadcasts; failed transactions restore the local cache. Presence is rebuilt
+  from live transports and SQL membership, not saved as permanent state.
+- Reconnects establish a fresh client request lifetime and authoritative snapshot;
+  stale responses, replay cursors and generations cannot overwrite that state.
+- Ready-check timers are re-created from durable deadlines after commit. Timer
+  retries are bounded and cancelled checks cannot trigger a later encounter.
+- Chronicle work has persisted leases and attempt-fenced results. Vertex work
+  is bounded and request-bound; expired jobs become visibly retryable. External
+  workers use adaptive idle polling and must be upgraded with the server.
+- Required catalog initialization finishes before serving. Discord notifications
+  are awaited with their existing timeout and remain best-effort, not a durable
+  notification outbox. Shutdown drains admitted gameplay work for up to 9 seconds.
+- Deployment explicitly sets service/revision minimums to zero and retains
+  request-based CPU allocation. No Cloud SQL shutdown or sizing change.
+- The deployment script now preserves existing environment values, Secret Manager
+  references and resource settings instead of rebuilding an allowlist from `.env`.
+  It pins the image digest, creates a no-traffic candidate, verifies its exact
+  revision and configuration, and leaves promotion as a separate reviewed action.
+
+## Compatibility
+
+Previously lost memory-only counters cannot be reconstructed. Existing campaigns
+may need one-time DM reconciliation of XP and feature uses. Legacy combat without
+a runtime checkpoint restores unknown turn budgets as spent, not free actions;
+advance the turn or reconcile explicitly. Rules and newer unreleased main changes
+are not silently bundled into this operational release.
+
+The SQL changes are additive. Do not remove runtime or Chronicle lease columns
+when rolling back. An old server does not maintain these snapshots: after gameplay
+on an old revision, an operator must reconcile the checkpoints before re-enabling
+this release. Never run old and new revisions concurrently against an active game.
+
+## Local Verification
+
+- Deployed runtime suite with explicit loopback PostgreSQL: 121 files, 1,444 tests
+  passed. After the deployment-script follow-up, the production branch passed
+  123 files / 1,461 tests, including 18 deployment regression tests; no skips.
+- Production build and zero-warning ESLint passed; dependency audit reported
+  zero vulnerabilities. Worker protocol tests passed 8/8.
+- Real PostgreSQL tests cover fresh Node process restoration, concurrent writers,
+  failed commits, feature resources, ready checks and Chronicle lease recovery.
+- Two-process WebSocket suite passed 15/15: cross-instance movement, chat/music,
+  privacy filtering, room switches, multi-tab disconnects, process kill, cold
+  REST hydration and rejoin. These are local integration tests, not a claim that
+  real players or production OAuth were exercised.
+
+Candidate smoke testing caught missing condition-source metadata during map
+rejoin. Socket join, scene changes, REST map hydration and runtime token hydration
+now restore it; regression coverage includes two-process kill and cold restoration.
+Review also found Battle Master superiority pools carry a die size; the durable
+schema now preserves that field instead of rejecting these commands.
+
+The production container was built locally after Cloud Build's default service
+account lacked source-archive read permission. No IAM permissions were broadened;
+the failed build's uploaded archive was removed. The Dockerfile now handles fully
+hoisted dependencies, and excludes redundant `server/uploads` copies from context.
+
+## Rollout Record
+
+Pre-release SQL backup operation `0a3a5509-8d1f-493e-9e70-d42000000032`
+completed successfully at `2026-09-21T11:33:31.730Z`.
+
+At approximately `2026-09-21T12:03Z`, traffic moved 100% to
+`atlas-bound-sz-f37c6cb`; the temporary `scalezero-qa` tag was removed. Image:
+`us-central1-docker.pkg.dev/atlas-bound-personal/cloud-run-source-deploy/atlas-bound@sha256:ce504ad62f273a01186da26d6c6967b7105ac4e43fc3ebcfa0a6142091ebac9a`.
+
+The corrected candidate passed authenticated live DM/player QA against a separate
+private fixture: token movement, music pause, chat, spent action/bonus/reaction/
+movement budgets, combat, condition sources, REST checkpoints and warm rejoin.
+Root HTML, referenced asset bundles and dice WASM returned 200. Anonymous session
+requests returned 401. Google/Discord redirects retained production callback URLs;
+this does not claim a new real-provider login was completed.
+
+After promotion, `https://dnd.kbrt.ai/readyz` returned 200 at
+`2026-09-21T12:03:34.109Z` (1.106 seconds, warm). Configuration comparison confirmed
+unchanged environment hash, CPU/memory, service/revision maxima, concurrency,
+timeout, SQL connection, service identity, affinity, boost and ingress. Both
+minimums are effectively zero and request-based CPU throttling is explicit.
+Cloud Run omits the revision min annotation for its default zero value.
+
+Cloud Monitoring reported both active and idle instance counts as zero from
+`2026-09-21T12:20:00Z`, after the last warm request at 12:03:34 UTC. The same zero
+values were still present at 12:22 UTC, immediately before the wake test. These
+are explicit zero samples, not an inference from missing metrics.
+
+The first authenticated request at `2026-09-21T12:22:23.251853Z` caused a new
+AUTOSCALING instance start, confirmed by the system log at 12:22:23.267542 UTC.
+Startup passed its first TCP probe at 12:22:26.583782 UTC. Client-observed timings
+were **4.571 seconds cold** and **0.736 seconds for the next warm request**. These
+are one observed pair, including network latency, not a latency guarantee.
+
+Strict cold REST and DM/player WebSocket rejoin assertions passed for unchanged
+generation/cursor, token position/version, condition-source metadata, combat,
+spent action/bonus/reaction/movement budgets, music and chat. All test sockets
+closed by approximately 12:22:31 UTC. The exact isolated private fixture and its
+authentication cookies were removed using SQL-only cleanup; no existing campaign
+was edited. The temporary SQL proxy was stopped. No runtime errors were observed.
+Cloud SQL remained `RUNNABLE`, `ALWAYS`, `db-f1-micro`.
+
+The second natural idle-zero check passed: both active and idle instance counts
+were explicitly zero at `2026-09-21T12:39:00Z` and again at 12:40 UTC. No further
+application requests were sent after the cold-rejoin check. The full observed
+cycle was natural zero, authenticated cold wake with intact game state, then
+natural zero again. Each shutdown occurred about 16-17 minutes after the last
+request, including metric sampling. Monitoring used only the control plane so
+health checks did not keep the application warm.
+
+Open WebSockets are active requests, not idle users: the service remains active
+while players are connected. Cloud SQL remains running and separately billable.
+The first visit after a genuinely quiet period has the measured cold-start delay;
+subsequent requests do not need to wait for another instance startup.
+
+The newer main branch has a separate, undeployed integration candidate in
+[PR #210](https://github.com/adrev/Atlas_bound/pull/210). Its
+canonical feature-resource migration needs a reviewed quiescent cutover and must
+not be deployed over active legacy writers. See its integration report and the
+candidate-deployment contract before planning a subsequent release. Its local
+2,106-test suite and GitHub CI passed; this does not authorize that data cutover.
+The production-based release history is preserved in
+[PR #209](https://github.com/adrev/Atlas_bound/pull/209), which should not be merged
+directly over newer main. Both PRs remain draft pending integration/release gates.
+
+Rollback baseline: `atlas-bound-00064-kzr` (revision minimum 1). Route traffic back
+only if no active game can be split across versions. Keep the additive schema and
+the pre-release backup; investigate/reconcile durable runtime state before retry.

@@ -28,8 +28,20 @@ import type { Combatant, CombatState, Token, ActionEconomy } from '@dnd-vtt/shar
 const { mockQuery } = vi.hoisted(() => ({ mockQuery: vi.fn() }));
 vi.mock('../db/connection.js', () => ({ default: { query: mockQuery } }));
 
-import { tryHandleChatCommand } from '../services/ChatCommands.js';
-import { createRoom, getAllRooms, type RoomState, type RoomPlayer, type PlayerContext } from '../utils/roomState.js';
+import { tryHandleChatCommand as dispatchChatCommand } from '../services/ChatCommands.js';
+import {
+  createRoom,
+  getAllRooms,
+  type RoomState,
+  type RoomPlayer,
+  type PlayerContext,
+} from '../utils/roomState.js';
+import {
+  loadFeatureRuntime,
+  runWithFeatureRuntime,
+  saveFeatureRuntime,
+  type FeatureQuery,
+} from '../utils/featureRuntime.js';
 
 // Trigger handler registration side effects.
 import '../services/chatCommands/subclassFeaturesHandler.js';
@@ -158,13 +170,15 @@ interface Scenario {
   callerEconomy: ActionEconomy;
 }
 
-function makeScenario(opts: {
-  callerCharId?: string;
-  callerOwnerId?: string;
-  inCombat?: boolean;
-  otherTokens?: Token[];
-  otherCombatants?: Combatant[];
-} = {}): Scenario {
+function makeScenario(
+  opts: {
+    callerCharId?: string;
+    callerOwnerId?: string;
+    inCombat?: boolean;
+    otherTokens?: Token[];
+    otherCombatants?: Combatant[];
+  } = {}
+): Scenario {
   const sessionId = 'sess-' + Math.random().toString(36).slice(2);
   const room = createRoom(sessionId, 'ROOM-' + sessionId, 'dm-user');
   room.playerMapId = 'map-1';
@@ -236,7 +250,31 @@ function routeCharacterQueries(charRows: Record<string, Record<string, unknown>>
   });
 }
 
+// This test-local store models hydration between commands without giving live
+// handlers a process-global fallback or changing their character-query mocks.
+let featureRows = new Map<string, unknown>();
+const featureQuery: FeatureQuery = async (sql, params = []) => {
+  const key = `${sql.includes('session_feature_runtime') ? 'session' : 'character'}:${params[0]}`;
+  if (sql.startsWith('INSERT') && !featureRows.has(key)) {
+    featureRows.set(key, { version: 1, namespaces: {} });
+  }
+  if (sql.startsWith('SELECT')) return { rows: [{ state: structuredClone(featureRows.get(key)) }] };
+  if (sql.startsWith('UPDATE')) featureRows.set(key, JSON.parse(String(params[1])));
+  return { rows: [], rowCount: 1 };
+};
+
+async function tryHandleChatCommand(io: Server, ctx: PlayerContext, raw: string): Promise<boolean> {
+  const ids = [...ctx.room.tokens.values()].flatMap((token) =>
+    token.characterId ? [token.characterId] : []
+  );
+  const runtime = await loadFeatureRuntime(featureQuery, ctx.room.sessionId, ids);
+  const handled = await runWithFeatureRuntime(runtime, () => dispatchChatCommand(io, ctx, raw));
+  await saveFeatureRuntime(featureQuery, runtime);
+  return handled;
+}
+
 beforeEach(() => {
+  featureRows = new Map();
   mockQuery.mockReset();
   mockQuery.mockResolvedValue({ rows: [] });
   for (const id of Array.from(getAllRooms().keys())) getAllRooms().delete(id);
@@ -327,10 +365,19 @@ describe('Monk — Stunning Strike', () => {
     });
     routeCharacterQueries({
       'char-caller': {
-        class: 'Monk', level: 5, name: 'Kai', features: [],
-        ability_scores: { wis: 16 }, proficiency_bonus: 2,
+        class: 'Monk',
+        level: 5,
+        name: 'Kai',
+        features: [],
+        ability_scores: { wis: 16 },
+        proficiency_bonus: 2,
       },
-      'char-foe': { ability_scores: { con: 10 }, saving_throws: [], proficiency_bonus: 2, name: 'Foe' },
+      'char-foe': {
+        ability_scores: { con: 10 },
+        saving_throws: [],
+        proficiency_bonus: 2,
+        name: 'Foe',
+      },
     });
     const { io, emissions } = makeFakeIo();
 
@@ -354,10 +401,19 @@ describe('Monk — Stunning Strike', () => {
     });
     routeCharacterQueries({
       'char-caller': {
-        class: 'Monk', level: 5, name: 'Kai', features: [],
-        ability_scores: { wis: 16 }, proficiency_bonus: 2,
+        class: 'Monk',
+        level: 5,
+        name: 'Kai',
+        features: [],
+        ability_scores: { wis: 16 },
+        proficiency_bonus: 2,
       },
-      'char-foe': { ability_scores: { con: 10 }, saving_throws: [], proficiency_bonus: 2, name: 'Foe' },
+      'char-foe': {
+        ability_scores: { con: 10 },
+        saving_throws: [],
+        proficiency_bonus: 2,
+        name: 'Foe',
+      },
     });
     const { io, emissions } = makeFakeIo();
 
@@ -394,7 +450,12 @@ describe('Base subclass features — shared save consumers', () => {
         name: 'Storm',
         features: [{ name: 'Wrath of the Storm' }],
       },
-      'char-enemy': { ability_scores: { dex: 10 }, saving_throws: [], proficiency_bonus: 2, name: 'Enemy' },
+      'char-enemy': {
+        ability_scores: { dex: 10 },
+        saving_throws: [],
+        proficiency_bonus: 2,
+        name: 'Enemy',
+      },
     });
     const { io, emissions } = makeFakeIo();
 
@@ -424,7 +485,13 @@ describe('Base subclass features — shared save consumers', () => {
         features: [{ name: 'Fey Presence' }],
         spell_save_dc: 13,
       },
-      'char-half': { ability_scores: { wis: 10 }, saving_throws: [], proficiency_bonus: 2, name: 'Pip', race: 'Lightfoot Halfling' },
+      'char-half': {
+        ability_scores: { wis: 10 },
+        saving_throws: [],
+        proficiency_bonus: 2,
+        name: 'Pip',
+        race: 'Lightfoot Halfling',
+      },
     });
     const { io, emissions } = makeFakeIo();
 
@@ -452,7 +519,12 @@ describe('Misc class features — shared save consumers', () => {
     });
     routeCharacterQueries({
       'char-caller': { class: 'Fighter', level: 5, name: 'Dragonborn' },
-      'char-enemy': { ability_scores: { dex: 10 }, saving_throws: [], proficiency_bonus: 2, name: 'Enemy' },
+      'char-enemy': {
+        ability_scores: { dex: 10 },
+        saving_throws: [],
+        proficiency_bonus: 2,
+        name: 'Enemy',
+      },
     });
     const { io, emissions } = makeFakeIo();
 
@@ -478,7 +550,12 @@ describe('Misc class features — shared save consumers', () => {
     });
     routeCharacterQueries({
       'char-caller': { class: 'Fighter (Battle Master)', level: 3, name: 'BM', features: [] },
-      'char-enemy': { ability_scores: { str: 20 }, saving_throws: ['str'], proficiency_bonus: 2, name: 'Enemy' },
+      'char-enemy': {
+        ability_scores: { str: 20 },
+        saving_throws: ['str'],
+        proficiency_bonus: 2,
+        name: 'Enemy',
+      },
     });
     const { io, emissions } = makeFakeIo();
 
@@ -501,7 +578,13 @@ describe('Misc class features — shared save consumers', () => {
     });
     routeCharacterQueries({
       'char-caller': { class: 'Fighter (Battle Master)', level: 3, name: 'BM', features: [] },
-      'char-half': { ability_scores: { wis: 10 }, saving_throws: [], proficiency_bonus: 2, name: 'Pip', race: 'Lightfoot Halfling' },
+      'char-half': {
+        ability_scores: { wis: 10 },
+        saving_throws: [],
+        proficiency_bonus: 2,
+        name: 'Pip',
+        race: 'Lightfoot Halfling',
+      },
     });
     const { io, emissions } = makeFakeIo();
 
@@ -533,7 +616,9 @@ describe('Tier 10 — Healing Light (Celestial Warlock)', () => {
       const p = e.payload as { type?: string };
       return p.type === 'whisper';
     });
-    expect(String((whisper?.payload as { content?: string })?.content ?? '')).toMatch(/isn't a Warlock/i);
+    expect(String((whisper?.payload as { content?: string })?.content ?? '')).toMatch(
+      /isn't a Warlock/i
+    );
   });
 
   it('reports pool status for a Celestial Warlock', async () => {
@@ -544,15 +629,31 @@ describe('Tier 10 — Healing Light (Celestial Warlock)', () => {
     const { io, emissions } = makeFakeIo();
     await tryHandleChatCommand(io, s.ctx, '!healinglight status');
     const w = emissions.find((e) => (e.payload as { type?: string }).type === 'whisper');
-    expect(String((w?.payload as { content?: string })?.content ?? '')).toMatch(/Healing Light: 6\/6 d6/);
+    expect(String((w?.payload as { content?: string })?.content ?? '')).toMatch(
+      /Healing Light: 6\/6 d6/
+    );
   });
 
   it('spends dice and heals a target in combat', async () => {
     const targetTok = makeToken('tAlly', 'Ally', { characterId: 'char-ally' });
-    const targetComb = makeCombatant('tAlly', { hp: 10, maxHp: 30, characterId: 'char-ally', isNPC: false });
-    const s = makeScenario({ inCombat: true, otherTokens: [targetTok], otherCombatants: [targetComb] });
+    const targetComb = makeCombatant('tAlly', {
+      hp: 10,
+      maxHp: 30,
+      characterId: 'char-ally',
+      isNPC: false,
+    });
+    const s = makeScenario({
+      inCombat: true,
+      otherTokens: [targetTok],
+      otherCombatants: [targetComb],
+    });
     routeCharacterQueries({
-      'char-caller': { class: 'Warlock', level: 3, name: 'Seraph', features: [{ name: 'Healing Light' }] },
+      'char-caller': {
+        class: 'Warlock',
+        level: 3,
+        name: 'Seraph',
+        features: [{ name: 'Healing Light' }],
+      },
     });
     const { io, emissions } = makeFakeIo();
     // roll 2d6 → force both to 6 via high Math.random
@@ -572,7 +673,12 @@ describe('Tier 10 — Frenzy (Berserker Barbarian)', () => {
   it('activates only when raging', async () => {
     const s = makeScenario({ inCombat: true });
     routeCharacterQueries({
-      'char-caller': { class: 'Barbarian (Berserker)', level: 3, name: 'Grok', features: [{ name: 'Frenzy' }] },
+      'char-caller': {
+        class: 'Barbarian (Berserker)',
+        level: 3,
+        name: 'Grok',
+        features: [{ name: 'Frenzy' }],
+      },
     });
     const { io, emissions } = makeFakeIo();
     await tryHandleChatCommand(io, s.ctx, '!frenzy');
@@ -584,7 +690,12 @@ describe('Tier 10 — Frenzy (Berserker Barbarian)', () => {
     const s = makeScenario({ inCombat: true });
     s.caller.conditions = ['raging' as any];
     routeCharacterQueries({
-      'char-caller': { class: 'Barbarian (Berserker)', level: 3, name: 'Grok', features: [{ name: 'Frenzy' }] },
+      'char-caller': {
+        class: 'Barbarian (Berserker)',
+        level: 3,
+        name: 'Grok',
+        features: [{ name: 'Frenzy' }],
+      },
     });
     const { io, emissions } = makeFakeIo();
     const handled = await tryHandleChatCommand(io, s.ctx, '!frenzy');
@@ -600,7 +711,12 @@ describe('Tier 10 — Spirit Shield (Ancestral Guardian)', () => {
     const s = makeScenario({ inCombat: true });
     s.caller.conditions = ['raging' as any];
     routeCharacterQueries({
-      'char-caller': { class: 'Barbarian (Ancestral Guardian)', level: 3, name: 'Grok', features: [{ name: 'Spirit Shield' }] },
+      'char-caller': {
+        class: 'Barbarian (Ancestral Guardian)',
+        level: 3,
+        name: 'Grok',
+        features: [{ name: 'Spirit Shield' }],
+      },
     });
     const { io, emissions } = makeFakeIo();
     await tryHandleChatCommand(io, s.ctx, '!spiritshield Ally 10');
@@ -613,11 +729,21 @@ describe('Tier 10 — Spirit Shield (Ancestral Guardian)', () => {
 
   it('rolls 2d6 reduction at L6', async () => {
     const ally = makeToken('tAlly', 'Ally', { characterId: 'char-ally' });
-    const allyComb = makeCombatant('tAlly', { hp: 10, maxHp: 30, characterId: 'char-ally', isNPC: false });
+    const allyComb = makeCombatant('tAlly', {
+      hp: 10,
+      maxHp: 30,
+      characterId: 'char-ally',
+      isNPC: false,
+    });
     const s = makeScenario({ inCombat: true, otherTokens: [ally], otherCombatants: [allyComb] });
     s.caller.conditions = ['raging' as any];
     routeCharacterQueries({
-      'char-caller': { class: 'Barbarian (Ancestral Guardian)', level: 6, name: 'Grok', features: [{ name: 'Spirit Shield' }] },
+      'char-caller': {
+        class: 'Barbarian (Ancestral Guardian)',
+        level: 6,
+        name: 'Grok',
+        features: [{ name: 'Spirit Shield' }],
+      },
       'char-ally': { hit_points: 10, max_hit_points: 30 },
     });
     const { io, emissions } = makeFakeIo();
@@ -635,7 +761,15 @@ describe('Tier 10 — Combat Wild Shape (Moon Druid)', () => {
   it('bonus-action transform', async () => {
     const s = makeScenario({ inCombat: true });
     routeCharacterQueries({
-      'char-caller': { class: 'Druid (Moon)', level: 3, name: 'Elder', features: [{ name: 'Combat Wild Shape' }], spell_slots: {}, hit_points: 30, max_hit_points: 30 },
+      'char-caller': {
+        class: 'Druid (Moon)',
+        level: 3,
+        name: 'Elder',
+        features: [{ name: 'Combat Wild Shape' }],
+        spell_slots: {},
+        hit_points: 30,
+        max_hit_points: 30,
+      },
     });
     const { io, emissions } = makeFakeIo();
     await tryHandleChatCommand(io, s.ctx, '!moondruid shape');
@@ -646,7 +780,15 @@ describe('Tier 10 — Combat Wild Shape (Moon Druid)', () => {
   it('heal refuses when no slots available', async () => {
     const s = makeScenario({ inCombat: true });
     routeCharacterQueries({
-      'char-caller': { class: 'Druid (Moon)', level: 3, name: 'Elder', features: [{ name: 'Combat Wild Shape' }], spell_slots: {}, hit_points: 20, max_hit_points: 30 },
+      'char-caller': {
+        class: 'Druid (Moon)',
+        level: 3,
+        name: 'Elder',
+        features: [{ name: 'Combat Wild Shape' }],
+        spell_slots: {},
+        hit_points: 20,
+        max_hit_points: 30,
+      },
     });
     const { io, emissions } = makeFakeIo();
     await tryHandleChatCommand(io, s.ctx, '!moondruid heal 2');
@@ -683,7 +825,13 @@ describe('Tier 11 — Fighting Spirit (Samurai)', () => {
   it('grants advantage and 5 temp HP at L3', async () => {
     const s = makeScenario({ inCombat: true });
     routeCharacterQueries({
-      'char-caller': { class: 'Fighter (Samurai)', level: 3, name: 'Musashi', features: [{ name: 'Fighting Spirit' }], temp_hit_points: 0 },
+      'char-caller': {
+        class: 'Fighter (Samurai)',
+        level: 3,
+        name: 'Musashi',
+        features: [{ name: 'Fighting Spirit' }],
+        temp_hit_points: 0,
+      },
     });
     const { io, emissions } = makeFakeIo();
     await tryHandleChatCommand(io, s.ctx, '!fightingspirit');
@@ -694,7 +842,13 @@ describe('Tier 11 — Fighting Spirit (Samurai)', () => {
   it('grants 15 temp HP at L15', async () => {
     const s = makeScenario({ inCombat: true });
     routeCharacterQueries({
-      'char-caller': { class: 'Fighter (Samurai)', level: 15, name: 'Musashi', features: [{ name: 'Fighting Spirit' }], temp_hit_points: 0 },
+      'char-caller': {
+        class: 'Fighter (Samurai)',
+        level: 15,
+        name: 'Musashi',
+        features: [{ name: 'Fighting Spirit' }],
+        temp_hit_points: 0,
+      },
     });
     const { io, emissions } = makeFakeIo();
     await tryHandleChatCommand(io, s.ctx, '!fightingspirit');
@@ -706,7 +860,12 @@ describe('Tier 11 — Echo Knight', () => {
   it('summons echo with bonus action', async () => {
     const s = makeScenario({ inCombat: true });
     routeCharacterQueries({
-      'char-caller': { class: 'Fighter (Echo Knight)', level: 3, name: 'Mia', features: [{ name: 'Manifest Echo' }] },
+      'char-caller': {
+        class: 'Fighter (Echo Knight)',
+        level: 3,
+        name: 'Mia',
+        features: [{ name: 'Manifest Echo' }],
+      },
     });
     const { io, emissions } = makeFakeIo();
     await tryHandleChatCommand(io, s.ctx, '!echo summon 5 7');
@@ -717,7 +876,12 @@ describe('Tier 11 — Echo Knight', () => {
   it('swap emits the teleport line', async () => {
     const s = makeScenario({ inCombat: true });
     routeCharacterQueries({
-      'char-caller': { class: 'Fighter (Echo Knight)', level: 3, name: 'Mia', features: [{ name: 'Manifest Echo' }] },
+      'char-caller': {
+        class: 'Fighter (Echo Knight)',
+        level: 3,
+        name: 'Mia',
+        features: [{ name: 'Manifest Echo' }],
+      },
     });
     const { io, emissions } = makeFakeIo();
     await tryHandleChatCommand(io, s.ctx, '!echo summon 5 7');
@@ -731,7 +895,12 @@ describe('Tier 11 — Cavalier mark + warding', () => {
     const enemy = makeToken('tEnemy', 'Enemy');
     const s = makeScenario({ inCombat: true, otherTokens: [enemy] });
     routeCharacterQueries({
-      'char-caller': { class: 'Fighter (Cavalier)', level: 3, name: 'Arthur', features: [{ name: 'Unwavering Mark' }] },
+      'char-caller': {
+        class: 'Fighter (Cavalier)',
+        level: 3,
+        name: 'Arthur',
+        features: [{ name: 'Unwavering Mark' }],
+      },
     });
     const { io, emissions } = makeFakeIo();
     await tryHandleChatCommand(io, s.ctx, '!cavmark Enemy');
@@ -745,7 +914,12 @@ describe('Tier 11 — Open Hand Monk (noreact)', () => {
     const enemy = makeToken('tEnemy', 'Enemy');
     const s = makeScenario({ inCombat: true, otherTokens: [enemy] });
     routeCharacterQueries({
-      'char-caller': { class: 'Monk (Open Hand)', level: 3, name: 'Kai', features: [{ name: 'Open Hand Technique' }] },
+      'char-caller': {
+        class: 'Monk (Open Hand)',
+        level: 3,
+        name: 'Kai',
+        features: [{ name: 'Open Hand Technique' }],
+      },
     });
     const { io, emissions } = makeFakeIo();
     await tryHandleChatCommand(io, s.ctx, '!openhand Enemy 13 noreact');
@@ -764,8 +938,18 @@ describe('Tier 11 — Open Hand Monk (noreact)', () => {
       otherCombatants: [makeCombatant('tEnemy', { characterId: 'char-enemy' })],
     });
     routeCharacterQueries({
-      'char-caller': { class: 'Monk (Open Hand)', level: 3, name: 'Kai', features: [{ name: 'Open Hand Technique' }] },
-      'char-enemy': { ability_scores: { dex: 10 }, saving_throws: [], proficiency_bonus: 2, name: 'Enemy' },
+      'char-caller': {
+        class: 'Monk (Open Hand)',
+        level: 3,
+        name: 'Kai',
+        features: [{ name: 'Open Hand Technique' }],
+      },
+      'char-enemy': {
+        ability_scores: { dex: 10 },
+        saving_throws: [],
+        proficiency_bonus: 2,
+        name: 'Enemy',
+      },
     });
     const { io, emissions } = makeFakeIo();
 
@@ -838,7 +1022,12 @@ describe('Tier 11 — Shadow Sorcerer Strength of the Grave', () => {
 describe('Tier 12 — Healing Word', () => {
   it('heals at 1d4+mod, burns bonus action', async () => {
     const ally = makeToken('tAlly', 'Ally', { characterId: 'char-ally' });
-    const allyC = makeCombatant('tAlly', { hp: 5, maxHp: 30, characterId: 'char-ally', isNPC: false });
+    const allyC = makeCombatant('tAlly', {
+      hp: 5,
+      maxHp: 30,
+      characterId: 'char-ally',
+      isNPC: false,
+    });
     const s = makeScenario({ inCombat: true, otherTokens: [ally], otherCombatants: [allyC] });
     routeCharacterQueries({
       'char-caller': {
@@ -860,7 +1049,12 @@ describe('Tier 12 — Healing Word', () => {
 
   it('scales with upcast slot', async () => {
     const ally = makeToken('tAlly', 'Ally', { characterId: 'char-ally' });
-    const allyC = makeCombatant('tAlly', { hp: 5, maxHp: 30, characterId: 'char-ally', isNPC: false });
+    const allyC = makeCombatant('tAlly', {
+      hp: 5,
+      maxHp: 30,
+      characterId: 'char-ally',
+      isNPC: false,
+    });
     const s = makeScenario({ inCombat: true, otherTokens: [ally], otherCombatants: [allyC] });
     routeCharacterQueries({
       'char-caller': {
@@ -907,7 +1101,13 @@ describe('Tier 12 — Magic Missile', () => {
     const enemy = makeToken('tEnemy', 'Enemy');
     const s = makeScenario({ inCombat: true, otherTokens: [enemy] });
     routeCharacterQueries({
-      'char-caller': { class: 'Wizard', level: 5, name: 'Wiz', ability_scores: { int: 16 }, proficiency_bonus: 3 },
+      'char-caller': {
+        class: 'Wizard',
+        level: 5,
+        name: 'Wiz',
+        ability_scores: { int: 16 },
+        proficiency_bonus: 3,
+      },
     });
     const { io, emissions } = makeFakeIo();
     await withRandomSeed(Array(5).fill(0.5), async () => {
@@ -921,7 +1121,13 @@ describe('Tier 12 — Counterspell', () => {
   it('auto-counters when my-slot ≥ spell-lvl', async () => {
     const s = makeScenario({ inCombat: true });
     routeCharacterQueries({
-      'char-caller': { class: 'Wizard', level: 7, name: 'Wiz', ability_scores: { int: 16 }, proficiency_bonus: 3 },
+      'char-caller': {
+        class: 'Wizard',
+        level: 7,
+        name: 'Wiz',
+        ability_scores: { int: 16 },
+        proficiency_bonus: 3,
+      },
     });
     const { io, emissions } = makeFakeIo();
     await tryHandleChatCommand(io, s.ctx, '!counterspell Evoker 3 3');
@@ -932,7 +1138,13 @@ describe('Tier 12 — Counterspell', () => {
   it('rolls ability check when spell-lvl exceeds my-slot', async () => {
     const s = makeScenario({ inCombat: true });
     routeCharacterQueries({
-      'char-caller': { class: 'Wizard', level: 9, name: 'Wiz', ability_scores: { int: 16 }, proficiency_bonus: 4 },
+      'char-caller': {
+        class: 'Wizard',
+        level: 9,
+        name: 'Wiz',
+        ability_scores: { int: 16 },
+        proficiency_bonus: 4,
+      },
     });
     const { io, emissions } = makeFakeIo();
     await withRandomSeed([0.99], async () => {
@@ -965,7 +1177,8 @@ describe('Tier 12 — Command', () => {
       },
     });
     const { io, emissions } = makeFakeIo();
-    await withRandomSeed([0.05], async () => { // low d20 → fail
+    await withRandomSeed([0.05], async () => {
+      // low d20 → fail
       await tryHandleChatCommand(io, s.ctx, '!command Enemy halt');
     });
     expect(enemy.conditions).toContain('commanded');
@@ -976,12 +1189,20 @@ describe('Tier 12 — Command', () => {
     const enemy = makeToken('tEnemy', 'Enemy');
     const s = makeScenario({ inCombat: true, otherTokens: [enemy] });
     routeCharacterQueries({
-      'char-caller': { class: 'Cleric', level: 3, name: 'P', ability_scores: { wis: 16 }, proficiency_bonus: 2 },
+      'char-caller': {
+        class: 'Cleric',
+        level: 3,
+        name: 'P',
+        ability_scores: { wis: 16 },
+        proficiency_bonus: 2,
+      },
     });
     const { io, emissions } = makeFakeIo();
     await tryHandleChatCommand(io, s.ctx, '!command Enemy nope');
     const w = emissions.find((e) => (e.payload as { type?: string }).type === 'whisper');
-    expect(String((w?.payload as { content?: string })?.content ?? '')).toMatch(/word must be one of/);
+    expect(String((w?.payload as { content?: string })?.content ?? '')).toMatch(
+      /word must be one of/
+    );
   });
 });
 
@@ -994,7 +1215,14 @@ describe('Tier 13 — Path to the Grave', () => {
     const enemy = makeToken('tEnemy', 'Enemy');
     const s = makeScenario({ inCombat: true, otherTokens: [enemy] });
     routeCharacterQueries({
-      'char-caller': { class: 'Cleric (Grave)', level: 2, name: 'Morr', features: [{ name: 'Path to the Grave' }], ability_scores: { wis: 16 }, proficiency_bonus: 2 },
+      'char-caller': {
+        class: 'Cleric (Grave)',
+        level: 2,
+        name: 'Morr',
+        features: [{ name: 'Path to the Grave' }],
+        ability_scores: { wis: 16 },
+        proficiency_bonus: 2,
+      },
     });
     const { io, emissions } = makeFakeIo();
     await tryHandleChatCommand(io, s.ctx, '!pathtograve Enemy');
@@ -1017,8 +1245,18 @@ describe('Tier 13 — Conquering Presence', () => {
         proficiency_bonus: 2,
         spell_save_dc: 13,
       },
-      'c-g1': { ability_scores: { wis: 10 }, saving_throws: [], proficiency_bonus: 2, name: 'Goblin1' },
-      'c-g2': { ability_scores: { wis: 10 }, saving_throws: [], proficiency_bonus: 2, name: 'Goblin2' },
+      'c-g1': {
+        ability_scores: { wis: 10 },
+        saving_throws: [],
+        proficiency_bonus: 2,
+        name: 'Goblin1',
+      },
+      'c-g2': {
+        ability_scores: { wis: 10 },
+        saving_throws: [],
+        proficiency_bonus: 2,
+        name: 'Goblin2',
+      },
     });
     const { io, emissions } = makeFakeIo();
     // Low rolls on both WIS saves (2 saves = 2 random numbers).
@@ -1042,14 +1280,22 @@ describe('Tier 13 — Conquering Presence', () => {
         proficiency_bonus: 2,
         spell_save_dc: 13,
       },
-      'c-halfling': { ability_scores: { wis: 10 }, saving_throws: [], proficiency_bonus: 2, name: 'Pip', race: 'Lightfoot Halfling' },
+      'c-halfling': {
+        ability_scores: { wis: 10 },
+        saving_throws: [],
+        proficiency_bonus: 2,
+        name: 'Pip',
+        race: 'Lightfoot Halfling',
+      },
     });
     const { io, emissions } = makeFakeIo();
     await withRandomSeed([0.01, 0.99], async () => {
       await tryHandleChatCommand(io, s.ctx, '!conquer Pip');
     });
     expect(e1.conditions).not.toContain('frightened');
-    expect(lastBroadcast(emissions)).toContain('Lightfoot Halfling: advantage on save vs frightened');
+    expect(lastBroadcast(emissions)).toContain(
+      'Lightfoot Halfling: advantage on save vs frightened'
+    );
   });
 });
 
@@ -1083,7 +1329,14 @@ describe('Tier 14 — Arcane Shot (Banishing)', () => {
     const enemy = makeToken('tEnemy', 'Enemy');
     const s = makeScenario({ inCombat: true, otherTokens: [enemy] });
     routeCharacterQueries({
-      'char-caller': { class: 'Fighter (Arcane Archer)', level: 3, name: 'Robin', features: [{ name: 'Arcane Shot' }], ability_scores: { int: 14 }, proficiency_bonus: 2 },
+      'char-caller': {
+        class: 'Fighter (Arcane Archer)',
+        level: 3,
+        name: 'Robin',
+        features: [{ name: 'Arcane Shot' }],
+        ability_scores: { int: 14 },
+        proficiency_bonus: 2,
+      },
     });
     const { io, emissions } = makeFakeIo();
     await tryHandleChatCommand(io, s.ctx, '!arcaneshot bogus Enemy');
@@ -1096,7 +1349,14 @@ describe('Tier 14 — Psi Warrior pool', () => {
   it('seeds 2*PB dice at the right die size', async () => {
     const s = makeScenario({ inCombat: true });
     routeCharacterQueries({
-      'char-caller': { class: 'Fighter (Psi Warrior)', level: 5, name: 'Mind', features: [{ name: 'Psionic Power' }], proficiency_bonus: 3, ability_scores: { int: 14 } },
+      'char-caller': {
+        class: 'Fighter (Psi Warrior)',
+        level: 5,
+        name: 'Mind',
+        features: [{ name: 'Psionic Power' }],
+        proficiency_bonus: 3,
+        ability_scores: { int: 14 },
+      },
     });
     const { io, emissions } = makeFakeIo();
     await tryHandleChatCommand(io, s.ctx, '!psidie status');
@@ -1114,7 +1374,12 @@ describe('Tier 15 — Mastermind Help at 30 ft', () => {
     const ally = makeToken('tAlly', 'Ally');
     const s = makeScenario({ inCombat: true, otherTokens: [ally] });
     routeCharacterQueries({
-      'char-caller': { class: 'Rogue (Mastermind)', level: 3, name: 'Brain', features: [{ name: 'Master of Tactics' }] },
+      'char-caller': {
+        class: 'Rogue (Mastermind)',
+        level: 3,
+        name: 'Brain',
+        features: [{ name: 'Master of Tactics' }],
+      },
     });
     const { io, emissions } = makeFakeIo();
     await tryHandleChatCommand(io, s.ctx, '!helpat Ally');
@@ -1166,7 +1431,12 @@ describe('Tier 16 — Fireball', () => {
         proficiency_bonus: 3,
         spell_save_dc: 14,
       },
-      'c-g1': { ability_scores: { dex: 10 }, saving_throws: [], proficiency_bonus: 2, name: 'Goblin' },
+      'c-g1': {
+        ability_scores: { dex: 10 },
+        saving_throws: [],
+        proficiency_bonus: 2,
+        name: 'Goblin',
+      },
     });
     const { io, emissions } = makeFakeIo();
     // Seed: 8 damage d6 rolls, then the goblin's d20 save.
@@ -1186,7 +1456,13 @@ describe('Tier 16 — Misty Step', () => {
   it('burns bonus action', async () => {
     const s = makeScenario({ inCombat: true });
     routeCharacterQueries({
-      'char-caller': { class: 'Sorcerer', level: 3, name: 'Sor', ability_scores: { cha: 16 }, proficiency_bonus: 2 },
+      'char-caller': {
+        class: 'Sorcerer',
+        level: 3,
+        name: 'Sor',
+        ability_scores: { cha: 16 },
+        proficiency_bonus: 2,
+      },
     });
     const { io, emissions } = makeFakeIo();
     await tryHandleChatCommand(io, s.ctx, '!mistystep');
@@ -1257,7 +1533,9 @@ describe('Tier 18 — Alert', () => {
     const { io, emissions } = makeFakeIo();
     await tryHandleChatCommand(io, s.ctx, '!alert');
     const w = emissions.find((e) => (e.payload as { type?: string }).type === 'whisper');
-    expect(String((w?.payload as { content?: string })?.content ?? '')).toMatch(/doesn't have.*Alert/i);
+    expect(String((w?.payload as { content?: string })?.content ?? '')).toMatch(
+      /doesn't have.*Alert/i
+    );
   });
 
   it('broadcasts when the feat is present', async () => {
@@ -1275,7 +1553,12 @@ describe('Tier 18 — Savage Attacker', () => {
   it('keeps the higher of two rolls', async () => {
     const s = makeScenario({ inCombat: true });
     routeCharacterQueries({
-      'char-caller': { class: 'Barbarian', level: 4, name: 'Grok', features: [{ name: 'Savage Attacker' }] },
+      'char-caller': {
+        class: 'Barbarian',
+        level: 4,
+        name: 'Grok',
+        features: [{ name: 'Savage Attacker' }],
+      },
     });
     const { io, emissions } = makeFakeIo();
     await tryHandleChatCommand(io, s.ctx, '!savageattacker 8 14');
@@ -1287,7 +1570,12 @@ describe('Tier 18 — Heavy Armor Master', () => {
   it('reduces damage by 3', async () => {
     const s = makeScenario({ inCombat: true });
     routeCharacterQueries({
-      'char-caller': { class: 'Fighter', level: 4, name: 'F', features: [{ name: 'Heavy Armor Master' }] },
+      'char-caller': {
+        class: 'Fighter',
+        level: 4,
+        name: 'F',
+        features: [{ name: 'Heavy Armor Master' }],
+      },
     });
     const { io, emissions } = makeFakeIo();
     await tryHandleChatCommand(io, s.ctx, '!heavyarmormaster 7');
@@ -1299,7 +1587,7 @@ describe('Tier 18 — Heavy Armor Master', () => {
 // Tier 19 — Race features
 // ═══════════════════════════════════════════════════════════════════
 
-describe('Tier 19 — Goliath Stone\'s Endurance', () => {
+describe("Tier 19 — Goliath Stone's Endurance", () => {
   it('reduces damage by 1d12 + CON', async () => {
     const s = makeScenario({ inCombat: true });
     routeCharacterQueries({
@@ -1373,7 +1661,12 @@ describe('Tier 20 — Wand of Magic Missiles', () => {
 describe('Tier 20 — Potion tiers', () => {
   it('superior rolls 8d4+8', async () => {
     const ally = makeToken('tAlly', 'Ally', { characterId: 'char-ally' });
-    const allyC = makeCombatant('tAlly', { hp: 1, maxHp: 60, characterId: 'char-ally', isNPC: false });
+    const allyC = makeCombatant('tAlly', {
+      hp: 1,
+      maxHp: 60,
+      characterId: 'char-ally',
+      isNPC: false,
+    });
     const s = makeScenario({ inCombat: true, otherTokens: [ally], otherCombatants: [allyC] });
     routeCharacterQueries({
       'char-caller': { class: 'Fighter', name: 'F' },
@@ -1425,7 +1718,12 @@ describe('Tier 10 — Awakened Mind', () => {
     const ally = makeToken('tAlly', 'Ally');
     const s = makeScenario({ otherTokens: [ally] });
     routeCharacterQueries({
-      'char-caller': { class: 'Warlock (Great Old One)', level: 3, name: 'W', features: [{ name: 'Awakened Mind' }] },
+      'char-caller': {
+        class: 'Warlock (Great Old One)',
+        level: 3,
+        name: 'W',
+        features: [{ name: 'Awakened Mind' }],
+      },
     });
     const { io, emissions } = makeFakeIo();
     await tryHandleChatCommand(io, s.ctx, '!awakened Ally | meet me out back');
@@ -1490,7 +1788,12 @@ describe('Tier 10 — Fancy Footwork', () => {
     const enemy = makeToken('tE', 'Enemy');
     const s = makeScenario({ inCombat: true, otherTokens: [enemy] });
     routeCharacterQueries({
-      'char-caller': { class: 'Rogue (Swashbuckler)', level: 3, name: 'Finn', features: [{ name: 'Fancy Footwork' }] },
+      'char-caller': {
+        class: 'Rogue (Swashbuckler)',
+        level: 3,
+        name: 'Finn',
+        features: [{ name: 'Fancy Footwork' }],
+      },
     });
     const { io, emissions } = makeFakeIo();
     await tryHandleChatCommand(io, s.ctx, '!footwork Enemy');
@@ -1506,7 +1809,12 @@ describe('Tier 10 — Healing Light pool exhaustion', () => {
     pools.set('healinglight', { max: 4, remaining: 1 });
     s.room.pointPools.set(s.caller.characterId!, pools);
     routeCharacterQueries({
-      'char-caller': { class: 'Warlock (Celestial)', level: 3, name: 'Ser', features: [{ name: 'Healing Light' }] },
+      'char-caller': {
+        class: 'Warlock (Celestial)',
+        level: 3,
+        name: 'Ser',
+        features: [{ name: 'Healing Light' }],
+      },
     });
     const { io, emissions } = makeFakeIo();
     await tryHandleChatCommand(io, s.ctx, '!healinglight Ally 2');
@@ -1521,7 +1829,13 @@ describe('Tier 10 — Frenzy end', () => {
     const s = makeScenario({ inCombat: true });
     s.caller.conditions = ['raging' as any, 'frenzied' as any];
     routeCharacterQueries({
-      'char-caller': { class: 'Barbarian (Berserker)', level: 5, name: 'Grok', features: [{ name: 'Frenzy' }], exhaustion_level: 0 },
+      'char-caller': {
+        class: 'Barbarian (Berserker)',
+        level: 5,
+        name: 'Grok',
+        features: [{ name: 'Frenzy' }],
+        exhaustion_level: 0,
+      },
     });
     const { io, emissions } = makeFakeIo();
     await tryHandleChatCommand(io, s.ctx, '!frenzy end');
@@ -1538,7 +1852,12 @@ describe('Tier 11 — Wild Magic Barbarian', () => {
     const s = makeScenario({ inCombat: true });
     s.caller.conditions = ['raging' as any];
     routeCharacterQueries({
-      'char-caller': { class: 'Barbarian (Wild Magic)', level: 3, name: 'Grok', features: [{ name: 'Wild Magic' }] },
+      'char-caller': {
+        class: 'Barbarian (Wild Magic)',
+        level: 3,
+        name: 'Grok',
+        features: [{ name: 'Wild Magic' }],
+      },
     });
     const { io, emissions } = makeFakeIo();
     await withRandomSeed([0.0], async () => {
@@ -1551,12 +1870,19 @@ describe('Tier 11 — Wild Magic Barbarian', () => {
   it('refuses when not raging', async () => {
     const s = makeScenario({ inCombat: true });
     routeCharacterQueries({
-      'char-caller': { class: 'Barbarian (Wild Magic)', level: 3, name: 'Grok', features: [{ name: 'Wild Magic' }] },
+      'char-caller': {
+        class: 'Barbarian (Wild Magic)',
+        level: 3,
+        name: 'Grok',
+        features: [{ name: 'Wild Magic' }],
+      },
     });
     const { io, emissions } = makeFakeIo();
     await tryHandleChatCommand(io, s.ctx, '!wildbarb');
     const w = emissions.find((e) => (e.payload as { type?: string }).type === 'whisper');
-    expect(String((w?.payload as { content?: string })?.content ?? '')).toMatch(/when you enter Rage/);
+    expect(String((w?.payload as { content?: string })?.content ?? '')).toMatch(
+      /when you enter Rage/
+    );
   });
 });
 
@@ -1565,7 +1891,12 @@ describe('Tier 11 — Divine Fury (Zealot)', () => {
     const s = makeScenario({ inCombat: true });
     s.caller.conditions = ['raging' as any];
     routeCharacterQueries({
-      'char-caller': { class: 'Barbarian (Zealot)', level: 6, name: 'Zeal', features: [{ name: 'Divine Fury' }] },
+      'char-caller': {
+        class: 'Barbarian (Zealot)',
+        level: 6,
+        name: 'Zeal',
+        features: [{ name: 'Divine Fury' }],
+      },
     });
     const { io, emissions } = makeFakeIo();
     await withRandomSeed([0.99], async () => {
@@ -1579,7 +1910,12 @@ describe('Tier 11 — Divine Fury (Zealot)', () => {
     const s = makeScenario({ inCombat: true });
     s.caller.conditions = ['raging' as any];
     routeCharacterQueries({
-      'char-caller': { class: 'Barbarian (Zealot)', level: 6, name: 'Zeal', features: [{ name: 'Divine Fury' }] },
+      'char-caller': {
+        class: 'Barbarian (Zealot)',
+        level: 6,
+        name: 'Zeal',
+        features: [{ name: 'Divine Fury' }],
+      },
     });
     const { io, emissions } = makeFakeIo();
     await tryHandleChatCommand(io, s.ctx, '!divinefury');
@@ -1609,7 +1945,9 @@ describe('Tier 11 — Glamour Bard Mantle', () => {
     const { io, emissions } = makeFakeIo();
     await tryHandleChatCommand(io, s.ctx, '!mantle Ally1 Ally2 Ally3');
     const w = emissions.find((e) => (e.payload as { type?: string }).type === 'whisper');
-    expect(String((w?.payload as { content?: string })?.content ?? '')).toMatch(/up to CHA mod \(1\)/);
+    expect(String((w?.payload as { content?: string })?.content ?? '')).toMatch(
+      /up to CHA mod \(1\)/
+    );
   });
 
   it('grants 5 temp HP at L3 with CHA 18', async () => {
@@ -1646,7 +1984,13 @@ describe('Tier 11 — Glamour Bard Mantle', () => {
         features: [{ name: 'Enthralling Performance' }],
         ability_scores: { cha: 18 },
       },
-      'char-elf': { ability_scores: { wis: 10 }, saving_throws: [], proficiency_bonus: 2, name: 'Elf', race: 'High Elf' },
+      'char-elf': {
+        ability_scores: { wis: 10 },
+        saving_throws: [],
+        proficiency_bonus: 2,
+        name: 'Elf',
+        race: 'High Elf',
+      },
     });
     const { io, emissions } = makeFakeIo();
 
@@ -1717,10 +2061,21 @@ describe('Tier 11 — Hound of Ill Omen', () => {
 describe('Tier 12 — Cure Wounds', () => {
   it('heals 1d8+mod', async () => {
     const ally = makeToken('tAlly', 'Ally', { characterId: 'char-ally' });
-    const allyC = makeCombatant('tAlly', { hp: 5, maxHp: 30, characterId: 'char-ally', isNPC: false });
+    const allyC = makeCombatant('tAlly', {
+      hp: 5,
+      maxHp: 30,
+      characterId: 'char-ally',
+      isNPC: false,
+    });
     const s = makeScenario({ inCombat: true, otherTokens: [ally], otherCombatants: [allyC] });
     routeCharacterQueries({
-      'char-caller': { class: 'Cleric', level: 3, name: 'P', ability_scores: { wis: 16 }, proficiency_bonus: 2 },
+      'char-caller': {
+        class: 'Cleric',
+        level: 3,
+        name: 'P',
+        ability_scores: { wis: 16 },
+        proficiency_bonus: 2,
+      },
     });
     const { io, emissions } = makeFakeIo();
     await withRandomSeed([0.99], async () => {
@@ -1736,12 +2091,24 @@ describe('Tier 12 — Mass Healing Word', () => {
     const tokens = Array.from({ length: 7 }, (_, i) => makeToken(`tA${i}`, `Ally${i}`));
     const s = makeScenario({ inCombat: true, otherTokens: tokens });
     routeCharacterQueries({
-      'char-caller': { class: 'Cleric', level: 5, name: 'P', ability_scores: { wis: 16 }, proficiency_bonus: 3 },
+      'char-caller': {
+        class: 'Cleric',
+        level: 5,
+        name: 'P',
+        ability_scores: { wis: 16 },
+        proficiency_bonus: 3,
+      },
     });
     const { io, emissions } = makeFakeIo();
-    await tryHandleChatCommand(io, s.ctx, '!masshealingword Ally0 Ally1 Ally2 Ally3 Ally4 Ally5 Ally6');
+    await tryHandleChatCommand(
+      io,
+      s.ctx,
+      '!masshealingword Ally0 Ally1 Ally2 Ally3 Ally4 Ally5 Ally6'
+    );
     const w = emissions.find((e) => (e.payload as { type?: string }).type === 'whisper');
-    expect(String((w?.payload as { content?: string })?.content ?? '')).toMatch(/1-6 targets required/);
+    expect(String((w?.payload as { content?: string })?.content ?? '')).toMatch(
+      /1-6 targets required/
+    );
   });
 });
 
@@ -1750,7 +2117,13 @@ describe('Tier 12 — Guiding Bolt', () => {
     const enemy = makeToken('tE', 'Enemy');
     const s = makeScenario({ inCombat: true, otherTokens: [enemy] });
     routeCharacterQueries({
-      'char-caller': { class: 'Cleric', level: 3, name: 'P', ability_scores: { wis: 16 }, proficiency_bonus: 2 },
+      'char-caller': {
+        class: 'Cleric',
+        level: 3,
+        name: 'P',
+        ability_scores: { wis: 16 },
+        proficiency_bonus: 2,
+      },
     });
     const { io, emissions } = makeFakeIo();
     await withRandomSeed([0.99, ...Array(4).fill(0.99)], async () => {
@@ -1766,8 +2139,20 @@ describe('Tier 12 — Thunderwave', () => {
     const e1 = makeToken('tE1', 'Goblin', { characterId: 'c-g1' });
     const s = makeScenario({ inCombat: true, otherTokens: [e1] });
     routeCharacterQueries({
-      'char-caller': { class: 'Wizard', level: 3, name: 'W', ability_scores: { int: 16 }, proficiency_bonus: 2, spell_save_dc: 13 },
-      'c-g1': { ability_scores: { con: 18 }, saving_throws: ['con'], proficiency_bonus: 3, name: 'Goblin' },
+      'char-caller': {
+        class: 'Wizard',
+        level: 3,
+        name: 'W',
+        ability_scores: { int: 16 },
+        proficiency_bonus: 2,
+        spell_save_dc: 13,
+      },
+      'c-g1': {
+        ability_scores: { con: 18 },
+        saving_throws: ['con'],
+        proficiency_bonus: 3,
+        name: 'Goblin',
+      },
     });
     const { io, emissions } = makeFakeIo();
     // damage rolls first (2d8), then save d20
@@ -1787,7 +2172,13 @@ describe('Tier 12 — Spiritual Weapon dice scaling', () => {
     const enemy = makeToken('tE', 'Enemy');
     const s = makeScenario({ inCombat: true, otherTokens: [enemy] });
     routeCharacterQueries({
-      'char-caller': { class: 'Cleric', level: 9, name: 'P', ability_scores: { wis: 16 }, proficiency_bonus: 4 },
+      'char-caller': {
+        class: 'Cleric',
+        level: 9,
+        name: 'P',
+        ability_scores: { wis: 16 },
+        proficiency_bonus: 4,
+      },
     });
     const { io, emissions } = makeFakeIo();
     await tryHandleChatCommand(io, s.ctx, '!spiritualweapon Enemy 5');
@@ -1800,8 +2191,20 @@ describe('Tier 12 — Spirit Guardians', () => {
     const e1 = makeToken('tE1', 'Goblin', { characterId: 'c-g1' });
     const s = makeScenario({ inCombat: true, otherTokens: [e1] });
     routeCharacterQueries({
-      'char-caller': { class: 'Cleric', level: 5, name: 'P', ability_scores: { wis: 16 }, proficiency_bonus: 3, spell_save_dc: 14 },
-      'c-g1': { ability_scores: { wis: 8 }, saving_throws: [], proficiency_bonus: 2, name: 'Goblin' },
+      'char-caller': {
+        class: 'Cleric',
+        level: 5,
+        name: 'P',
+        ability_scores: { wis: 16 },
+        proficiency_bonus: 3,
+        spell_save_dc: 14,
+      },
+      'c-g1': {
+        ability_scores: { wis: 8 },
+        saving_throws: [],
+        proficiency_bonus: 2,
+        name: 'Goblin',
+      },
     });
     const { io, emissions } = makeFakeIo();
     await withRandomSeed(Array(4).fill(0.99), async () => {
@@ -1816,7 +2219,13 @@ describe('Tier 12 — Sanctuary', () => {
     const ally = makeToken('tA', 'Ally');
     const s = makeScenario({ inCombat: true, otherTokens: [ally] });
     routeCharacterQueries({
-      'char-caller': { class: 'Cleric', level: 3, name: 'P', ability_scores: { wis: 16 }, proficiency_bonus: 2 },
+      'char-caller': {
+        class: 'Cleric',
+        level: 3,
+        name: 'P',
+        ability_scores: { wis: 16 },
+        proficiency_bonus: 2,
+      },
     });
     const { io, emissions } = makeFakeIo();
     await tryHandleChatCommand(io, s.ctx, '!sanctuary Ally');
@@ -1830,7 +2239,14 @@ describe('Tier 12 — Banishment', () => {
     const enemy = makeToken('tE', 'Enemy', { characterId: 'c-e' });
     const s = makeScenario({ inCombat: true, otherTokens: [enemy] });
     routeCharacterQueries({
-      'char-caller': { class: 'Wizard', level: 7, name: 'W', ability_scores: { int: 16 }, proficiency_bonus: 3, spell_save_dc: 15 },
+      'char-caller': {
+        class: 'Wizard',
+        level: 7,
+        name: 'W',
+        ability_scores: { int: 16 },
+        proficiency_bonus: 3,
+        spell_save_dc: 15,
+      },
       'c-e': { ability_scores: { cha: 8 }, saving_throws: [], proficiency_bonus: 2, name: 'Enemy' },
     });
     const { io, emissions } = makeFakeIo();
@@ -1844,8 +2260,21 @@ describe('Tier 12 — Banishment', () => {
     const enemy = makeToken('tE', 'Gnome', { characterId: 'c-e' });
     const s = makeScenario({ inCombat: true, otherTokens: [enemy] });
     routeCharacterQueries({
-      'char-caller': { class: 'Wizard', level: 7, name: 'W', ability_scores: { int: 16 }, proficiency_bonus: 3, spell_save_dc: 15 },
-      'c-e': { ability_scores: { cha: 10 }, saving_throws: [], proficiency_bonus: 2, name: 'Gnome', race: 'Forest Gnome' },
+      'char-caller': {
+        class: 'Wizard',
+        level: 7,
+        name: 'W',
+        ability_scores: { int: 16 },
+        proficiency_bonus: 3,
+        spell_save_dc: 15,
+      },
+      'c-e': {
+        ability_scores: { cha: 10 },
+        saving_throws: [],
+        proficiency_bonus: 2,
+        name: 'Gnome',
+        race: 'Forest Gnome',
+      },
     });
     const { io, emissions } = makeFakeIo();
     await withRandomSeed([0, 0.99], async () => {
@@ -1865,7 +2294,13 @@ describe('Tier 12 — Silvery Barbs', () => {
     const ally = makeToken('tA', 'Ally');
     const s = makeScenario({ inCombat: true, otherTokens: [enemy, ally] });
     routeCharacterQueries({
-      'char-caller': { class: 'Sorcerer', level: 3, name: 'S', ability_scores: { cha: 16 }, proficiency_bonus: 2 },
+      'char-caller': {
+        class: 'Sorcerer',
+        level: 3,
+        name: 'S',
+        ability_scores: { cha: 16 },
+        proficiency_bonus: 2,
+      },
     });
     const { io, emissions } = makeFakeIo();
     await tryHandleChatCommand(io, s.ctx, '!silverybarbs Enemy Ally');
@@ -1878,7 +2313,13 @@ describe('Tier 12 — Dispel Magic', () => {
   it('auto-dispels at equal slot', async () => {
     const s = makeScenario({ inCombat: true });
     routeCharacterQueries({
-      'char-caller': { class: 'Wizard', level: 7, name: 'W', ability_scores: { int: 16 }, proficiency_bonus: 3 },
+      'char-caller': {
+        class: 'Wizard',
+        level: 7,
+        name: 'W',
+        ability_scores: { int: 16 },
+        proficiency_bonus: 3,
+      },
     });
     const { io, emissions } = makeFakeIo();
     await tryHandleChatCommand(io, s.ctx, '!dispelmagic Enemy 3 3');
@@ -1893,7 +2334,14 @@ describe('Tier 13 — Forge Blessing', () => {
     const ally = makeToken('tA', 'Ally');
     const s = makeScenario({ inCombat: true, otherTokens: [ally] });
     routeCharacterQueries({
-      'char-caller': { class: 'Cleric (Forge)', level: 1, name: 'Smith', features: [{ name: 'Blessing of the Forge' }], ability_scores: { wis: 16 }, proficiency_bonus: 2 },
+      'char-caller': {
+        class: 'Cleric (Forge)',
+        level: 1,
+        name: 'Smith',
+        features: [{ name: 'Blessing of the Forge' }],
+        ability_scores: { wis: 16 },
+        proficiency_bonus: 2,
+      },
     });
     const { io, emissions } = makeFakeIo();
     await tryHandleChatCommand(io, s.ctx, '!forgeblessing Ally');
@@ -1907,7 +2355,14 @@ describe('Tier 13 — Voice of Authority', () => {
     const ally = makeToken('tA', 'Ally');
     const s = makeScenario({ inCombat: true, otherTokens: [ally] });
     routeCharacterQueries({
-      'char-caller': { class: 'Cleric (Order)', level: 1, name: 'Law', features: [{ name: 'Voice of Authority' }], ability_scores: { wis: 16 }, proficiency_bonus: 2 },
+      'char-caller': {
+        class: 'Cleric (Order)',
+        level: 1,
+        name: 'Law',
+        features: [{ name: 'Voice of Authority' }],
+        ability_scores: { wis: 16 },
+        proficiency_bonus: 2,
+      },
     });
     const { io, emissions } = makeFakeIo();
     await tryHandleChatCommand(io, s.ctx, '!voice Ally');
@@ -1921,7 +2376,14 @@ describe('Tier 13 — Embolden Bond', () => {
     const a2 = makeToken('tA2', 'A2');
     const s = makeScenario({ inCombat: true, otherTokens: [a1, a2] });
     routeCharacterQueries({
-      'char-caller': { class: 'Cleric (Peace)', level: 3, name: 'Pax', features: [{ name: 'Emboldening Bond' }], ability_scores: { wis: 16 }, proficiency_bonus: 2 },
+      'char-caller': {
+        class: 'Cleric (Peace)',
+        level: 3,
+        name: 'Pax',
+        features: [{ name: 'Emboldening Bond' }],
+        ability_scores: { wis: 16 },
+        proficiency_bonus: 2,
+      },
     });
     const { io, emissions } = makeFakeIo();
     await tryHandleChatCommand(io, s.ctx, '!emboldenbond A1 A2');
@@ -1935,7 +2397,14 @@ describe('Tier 13 — Twilight Sanctuary (clear)', () => {
     const ally = makeToken('tA', 'A', { conditions: ['charmed' as any, 'frightened' as any] });
     const s = makeScenario({ inCombat: true, otherTokens: [ally] });
     routeCharacterQueries({
-      'char-caller': { class: 'Cleric (Twilight)', level: 3, name: 'T', features: [{ name: 'Twilight Sanctuary' }], ability_scores: { wis: 16 }, proficiency_bonus: 2 },
+      'char-caller': {
+        class: 'Cleric (Twilight)',
+        level: 3,
+        name: 'T',
+        features: [{ name: 'Twilight Sanctuary' }],
+        ability_scores: { wis: 16 },
+        proficiency_bonus: 2,
+      },
     });
     const { io, emissions } = makeFakeIo();
     await tryHandleChatCommand(io, s.ctx, '!twilightsanct A clear');
@@ -1944,13 +2413,26 @@ describe('Tier 13 — Twilight Sanctuary (clear)', () => {
   });
 });
 
-describe('Tier 13 — Nature\'s Wrath', () => {
+describe("Tier 13 — Nature's Wrath", () => {
   it('restrains on failed save', async () => {
     const enemy = makeToken('tE', 'Enemy', { characterId: 'c-e' });
     const s = makeScenario({ inCombat: true, otherTokens: [enemy] });
     routeCharacterQueries({
-      'char-caller': { class: 'Paladin (Ancients)', level: 3, name: 'A', features: [{ name: "Nature's Wrath" }], ability_scores: { cha: 16 }, proficiency_bonus: 2, spell_save_dc: 13 },
-      'c-e': { ability_scores: { str: 8, dex: 10 }, saving_throws: [], proficiency_bonus: 2, name: 'Enemy' },
+      'char-caller': {
+        class: 'Paladin (Ancients)',
+        level: 3,
+        name: 'A',
+        features: [{ name: "Nature's Wrath" }],
+        ability_scores: { cha: 16 },
+        proficiency_bonus: 2,
+        spell_save_dc: 13,
+      },
+      'c-e': {
+        ability_scores: { str: 8, dex: 10 },
+        saving_throws: [],
+        proficiency_bonus: 2,
+        name: 'Enemy',
+      },
     });
     const { io, emissions } = makeFakeIo();
     await withRandomSeed([0.05], async () => {
@@ -1963,8 +2445,21 @@ describe('Tier 13 — Nature\'s Wrath', () => {
     const enemy = makeToken('tE', 'Enemy', { characterId: 'c-e', conditions: ['paralyzed'] });
     const s = makeScenario({ inCombat: true, otherTokens: [enemy] });
     routeCharacterQueries({
-      'char-caller': { class: 'Paladin (Ancients)', level: 3, name: 'A', features: [{ name: "Nature's Wrath" }], ability_scores: { cha: 16 }, proficiency_bonus: 2, spell_save_dc: 13 },
-      'c-e': { ability_scores: { str: 20, dex: 20 }, saving_throws: [], proficiency_bonus: 2, name: 'Enemy' },
+      'char-caller': {
+        class: 'Paladin (Ancients)',
+        level: 3,
+        name: 'A',
+        features: [{ name: "Nature's Wrath" }],
+        ability_scores: { cha: 16 },
+        proficiency_bonus: 2,
+        spell_save_dc: 13,
+      },
+      'c-e': {
+        ability_scores: { str: 20, dex: 20 },
+        saving_throws: [],
+        proficiency_bonus: 2,
+        name: 'Enemy',
+      },
     });
     const { io, emissions } = makeFakeIo();
     await tryHandleChatCommand(io, s.ctx, '!natureswrath Enemy');
@@ -1978,7 +2473,15 @@ describe('Tier 13 — Champion Challenge', () => {
     const e1 = makeToken('tE1', 'Foe', { characterId: 'c-f1' });
     const s = makeScenario({ inCombat: true, otherTokens: [e1] });
     routeCharacterQueries({
-      'char-caller': { class: 'Paladin (Crown)', level: 3, name: 'King', features: [{ name: 'Champion Challenge' }], ability_scores: { cha: 16 }, proficiency_bonus: 2, spell_save_dc: 13 },
+      'char-caller': {
+        class: 'Paladin (Crown)',
+        level: 3,
+        name: 'King',
+        features: [{ name: 'Champion Challenge' }],
+        ability_scores: { cha: 16 },
+        proficiency_bonus: 2,
+        spell_save_dc: 13,
+      },
       'c-f1': { ability_scores: { wis: 8 }, saving_throws: [], proficiency_bonus: 2, name: 'Foe' },
     });
     const { io, emissions } = makeFakeIo();
@@ -1994,7 +2497,15 @@ describe('Tier 13 — Dreadful Aspect', () => {
     const e1 = makeToken('tE1', 'Vict', { characterId: 'c-v1' });
     const s = makeScenario({ inCombat: true, otherTokens: [e1] });
     routeCharacterQueries({
-      'char-caller': { class: 'Paladin (Oathbreaker)', level: 3, name: 'Dread', features: [{ name: 'Dreadful Aspect' }], ability_scores: { cha: 16 }, proficiency_bonus: 2, spell_save_dc: 13 },
+      'char-caller': {
+        class: 'Paladin (Oathbreaker)',
+        level: 3,
+        name: 'Dread',
+        features: [{ name: 'Dreadful Aspect' }],
+        ability_scores: { cha: 16 },
+        proficiency_bonus: 2,
+        spell_save_dc: 13,
+      },
       'c-v1': { ability_scores: { wis: 8 }, saving_throws: [], proficiency_bonus: 2, name: 'Vict' },
     });
     const { io, emissions } = makeFakeIo();
@@ -2010,7 +2521,15 @@ describe('Tier 13 — Rebuke the Violent', () => {
     const enemy = makeToken('tE', 'Foe', { characterId: 'c-e' });
     const s = makeScenario({ inCombat: true, otherTokens: [enemy] });
     routeCharacterQueries({
-      'char-caller': { class: 'Paladin (Redemption)', level: 3, name: 'Red', features: [{ name: 'Rebuke the Violent' }], ability_scores: { cha: 16 }, proficiency_bonus: 2, spell_save_dc: 13 },
+      'char-caller': {
+        class: 'Paladin (Redemption)',
+        level: 3,
+        name: 'Red',
+        features: [{ name: 'Rebuke the Violent' }],
+        ability_scores: { cha: 16 },
+        proficiency_bonus: 2,
+        spell_save_dc: 13,
+      },
       'c-e': { ability_scores: { wis: 10 }, saving_throws: [], proficiency_bonus: 2, name: 'Foe' },
     });
     const { io, emissions } = makeFakeIo();
@@ -2026,7 +2545,15 @@ describe('Tier 13 — Rebuke the Violent', () => {
     const enemy = makeToken('tE', 'Foe', { characterId: 'c-e', conditions: ['inspired' as never] });
     const s = makeScenario({ inCombat: true, otherTokens: [enemy] });
     routeCharacterQueries({
-      'char-caller': { class: 'Paladin (Redemption)', level: 3, name: 'Red', features: [{ name: 'Rebuke the Violent' }], ability_scores: { cha: 16 }, proficiency_bonus: 2, spell_save_dc: 13 },
+      'char-caller': {
+        class: 'Paladin (Redemption)',
+        level: 3,
+        name: 'Red',
+        features: [{ name: 'Rebuke the Violent' }],
+        ability_scores: { cha: 16 },
+        proficiency_bonus: 2,
+        spell_save_dc: 13,
+      },
       'c-e': { ability_scores: { wis: 10 }, saving_throws: [], proficiency_bonus: 2, name: 'Foe' },
     });
     const { io, emissions } = makeFakeIo();
@@ -2046,7 +2573,14 @@ describe('Tier 14 — Rallying Cry', () => {
     const a1 = makeToken('tA1', 'A1', { characterId: 'c-a1' });
     const s = makeScenario({ inCombat: true, otherTokens: [a1] });
     routeCharacterQueries({
-      'char-caller': { class: 'Fighter (Banneret)', level: 3, name: 'B', features: [{ name: 'Rallying Cry' }], ability_scores: {}, proficiency_bonus: 2 },
+      'char-caller': {
+        class: 'Fighter (Banneret)',
+        level: 3,
+        name: 'B',
+        features: [{ name: 'Rallying Cry' }],
+        ability_scores: {},
+        proficiency_bonus: 2,
+      },
       'c-a1': { temp_hit_points: 0 },
     });
     const { io, emissions } = makeFakeIo();
@@ -2063,7 +2597,14 @@ describe('Tier 14 — Psi Strike', () => {
     pools.set('psi', { max: 6, remaining: 6 });
     s.room.pointPools.set(s.caller.characterId!, pools);
     routeCharacterQueries({
-      'char-caller': { class: 'Fighter (Psi Warrior)', level: 5, name: 'M', features: [{ name: 'Psionic Strike' }], ability_scores: { int: 14 }, proficiency_bonus: 3 },
+      'char-caller': {
+        class: 'Fighter (Psi Warrior)',
+        level: 5,
+        name: 'M',
+        features: [{ name: 'Psionic Strike' }],
+        ability_scores: { int: 14 },
+        proficiency_bonus: 3,
+      },
     });
     const { io, emissions } = makeFakeIo();
     await withRandomSeed([0.99], async () => {
@@ -2074,11 +2615,18 @@ describe('Tier 14 — Psi Strike', () => {
   });
 });
 
-describe('Tier 14 — Giant\'s Might', () => {
+describe("Tier 14 — Giant's Might", () => {
   it('applies giant-size condition', async () => {
     const s = makeScenario({ inCombat: true });
     routeCharacterQueries({
-      'char-caller': { class: 'Fighter (Rune Knight)', level: 3, name: 'R', features: [{ name: "Giant's Might" }], ability_scores: {}, proficiency_bonus: 2 },
+      'char-caller': {
+        class: 'Fighter (Rune Knight)',
+        level: 3,
+        name: 'R',
+        features: [{ name: "Giant's Might" }],
+        ability_scores: {},
+        proficiency_bonus: 2,
+      },
     });
     const { io, emissions } = makeFakeIo();
     await tryHandleChatCommand(io, s.ctx, '!giantsmight');
@@ -2090,7 +2638,14 @@ describe('Tier 14 — Rune', () => {
   it('echoes stone rune effect', async () => {
     const s = makeScenario({ inCombat: true });
     routeCharacterQueries({
-      'char-caller': { class: 'Fighter (Rune Knight)', level: 3, name: 'R', features: [{ name: 'Rune Knight Bonus Proficiencies' }], ability_scores: {}, proficiency_bonus: 2 },
+      'char-caller': {
+        class: 'Fighter (Rune Knight)',
+        level: 3,
+        name: 'R',
+        features: [{ name: 'Rune Knight Bonus Proficiencies' }],
+        ability_scores: {},
+        proficiency_bonus: 2,
+      },
     });
     const { io, emissions } = makeFakeIo();
     await tryHandleChatCommand(io, s.ctx, '!rune stone');
@@ -2105,7 +2660,14 @@ describe('Tier 15 — Insightful Fighting', () => {
     const enemy = makeToken('tE', 'Foe', { characterId: 'c-f' });
     const s = makeScenario({ inCombat: true, otherTokens: [enemy] });
     routeCharacterQueries({
-      'char-caller': { class: 'Rogue (Inquisitive)', level: 3, name: 'I', features: [{ name: 'Insightful Fighting' }], ability_scores: { wis: 18 }, proficiency_bonus: 2 },
+      'char-caller': {
+        class: 'Rogue (Inquisitive)',
+        level: 3,
+        name: 'I',
+        features: [{ name: 'Insightful Fighting' }],
+        ability_scores: { wis: 18 },
+        proficiency_bonus: 2,
+      },
       'c-f': { ability_scores: { cha: 8 }, proficiency_bonus: 2, name: 'Foe' },
     });
     const { io, emissions } = makeFakeIo();
@@ -2121,7 +2683,12 @@ describe('Tier 15 — Skirmisher', () => {
   it('burns reaction', async () => {
     const s = makeScenario({ inCombat: true });
     routeCharacterQueries({
-      'char-caller': { class: 'Rogue (Scout)', level: 3, name: 'Sc', features: [{ name: 'Skirmisher' }] },
+      'char-caller': {
+        class: 'Rogue (Scout)',
+        level: 3,
+        name: 'Sc',
+        features: [{ name: 'Skirmisher' }],
+      },
     });
     const { io, emissions } = makeFakeIo();
     await tryHandleChatCommand(io, s.ctx, '!skirmish');
@@ -2136,7 +2703,12 @@ describe('Tier 15 — Psiknack', () => {
     pools.set('psi', { max: 4, remaining: 4 });
     s.room.pointPools.set(s.caller.characterId!, pools);
     routeCharacterQueries({
-      'char-caller': { class: 'Rogue (Soulknife)', level: 3, name: 'Sk', features: [{ name: 'Psi-Bolstered Knack' }] },
+      'char-caller': {
+        class: 'Rogue (Soulknife)',
+        level: 3,
+        name: 'Sk',
+        features: [{ name: 'Psi-Bolstered Knack' }],
+      },
     });
     const { io, emissions } = makeFakeIo();
     await withRandomSeed([0.99], async () => {
@@ -2153,7 +2725,14 @@ describe('Tier 16 — Lightning Bolt', () => {
     const e = makeToken('tE', 'G', { characterId: 'c-g' });
     const s = makeScenario({ inCombat: true, otherTokens: [e] });
     routeCharacterQueries({
-      'char-caller': { class: 'Wizard', level: 5, name: 'W', ability_scores: { int: 16 }, proficiency_bonus: 3, spell_save_dc: 14 },
+      'char-caller': {
+        class: 'Wizard',
+        level: 5,
+        name: 'W',
+        ability_scores: { int: 16 },
+        proficiency_bonus: 3,
+        spell_save_dc: 14,
+      },
       'c-g': { ability_scores: { dex: 10 }, saving_throws: [], proficiency_bonus: 2, name: 'G' },
     });
     const { io, emissions } = makeFakeIo();
@@ -2169,7 +2748,14 @@ describe('Tier 16 — Scorching Ray', () => {
     const e = makeToken('tE', 'G');
     const s = makeScenario({ inCombat: true, otherTokens: [e] });
     routeCharacterQueries({
-      'char-caller': { class: 'Wizard', level: 5, name: 'W', ability_scores: { int: 16 }, proficiency_bonus: 3, spell_attack_bonus: 6 },
+      'char-caller': {
+        class: 'Wizard',
+        level: 5,
+        name: 'W',
+        ability_scores: { int: 16 },
+        proficiency_bonus: 3,
+        spell_attack_bonus: 6,
+      },
     });
     const { io, emissions } = makeFakeIo();
     await tryHandleChatCommand(io, s.ctx, '!scorchingray G 3');
@@ -2182,7 +2768,14 @@ describe('Tier 16 — Cone of Cold', () => {
     const e = makeToken('tE', 'G', { characterId: 'c-g' });
     const s = makeScenario({ inCombat: true, otherTokens: [e] });
     routeCharacterQueries({
-      'char-caller': { class: 'Wizard', level: 9, name: 'W', ability_scores: { int: 16 }, proficiency_bonus: 4, spell_save_dc: 16 },
+      'char-caller': {
+        class: 'Wizard',
+        level: 9,
+        name: 'W',
+        ability_scores: { int: 16 },
+        proficiency_bonus: 4,
+        spell_save_dc: 16,
+      },
       'c-g': { ability_scores: { con: 12 }, saving_throws: [], proficiency_bonus: 2, name: 'G' },
     });
     const { io, emissions } = makeFakeIo();
@@ -2199,7 +2792,14 @@ describe('Tier 16 — Entangle', () => {
     const e = makeToken('tE', 'G', { characterId: 'c-g' });
     const s = makeScenario({ inCombat: true, otherTokens: [e] });
     routeCharacterQueries({
-      'char-caller': { class: 'Druid', level: 3, name: 'D', ability_scores: { wis: 16 }, proficiency_bonus: 2, spell_save_dc: 13 },
+      'char-caller': {
+        class: 'Druid',
+        level: 3,
+        name: 'D',
+        ability_scores: { wis: 16 },
+        proficiency_bonus: 2,
+        spell_save_dc: 13,
+      },
       'c-g': { ability_scores: { str: 8 }, saving_throws: [], proficiency_bonus: 2, name: 'G' },
     });
     const { io, emissions } = makeFakeIo();
@@ -2215,7 +2815,14 @@ describe('Tier 16 — Web', () => {
     const e = makeToken('tE', 'G', { characterId: 'c-g' });
     const s = makeScenario({ inCombat: true, otherTokens: [e] });
     routeCharacterQueries({
-      'char-caller': { class: 'Wizard', level: 3, name: 'W', ability_scores: { int: 16 }, proficiency_bonus: 2, spell_save_dc: 13 },
+      'char-caller': {
+        class: 'Wizard',
+        level: 3,
+        name: 'W',
+        ability_scores: { int: 16 },
+        proficiency_bonus: 2,
+        spell_save_dc: 13,
+      },
       'c-g': { ability_scores: { dex: 8 }, saving_throws: [], proficiency_bonus: 2, name: 'G' },
     });
     const { io, emissions } = makeFakeIo();
@@ -2232,7 +2839,14 @@ describe('Tier 16 — Web', () => {
     });
     const s = makeScenario({ inCombat: true, otherTokens: [e] });
     routeCharacterQueries({
-      'char-caller': { class: 'Wizard', level: 3, name: 'W', ability_scores: { int: 16 }, proficiency_bonus: 2, spell_save_dc: 13 },
+      'char-caller': {
+        class: 'Wizard',
+        level: 3,
+        name: 'W',
+        ability_scores: { int: 16 },
+        proficiency_bonus: 2,
+        spell_save_dc: 13,
+      },
       'c-g': { ability_scores: { dex: 10 }, saving_throws: [], proficiency_bonus: 2, name: 'G' },
     });
     const { io, emissions } = makeFakeIo();
@@ -2252,7 +2866,14 @@ describe('Tier 16 — Moonbeam', () => {
     const e = makeToken('tE', 'G', { characterId: 'c-g' });
     const s = makeScenario({ inCombat: true, otherTokens: [e] });
     routeCharacterQueries({
-      'char-caller': { class: 'Druid', level: 3, name: 'D', ability_scores: { wis: 16 }, proficiency_bonus: 2, spell_save_dc: 13 },
+      'char-caller': {
+        class: 'Druid',
+        level: 3,
+        name: 'D',
+        ability_scores: { wis: 16 },
+        proficiency_bonus: 2,
+        spell_save_dc: 13,
+      },
       'c-g': { ability_scores: { con: 8 }, saving_throws: [], proficiency_bonus: 2, name: 'G' },
     });
     const { io, emissions } = makeFakeIo();
@@ -2268,7 +2889,14 @@ describe('Tier 16 — Call Lightning', () => {
     const e = makeToken('tE', 'G', { characterId: 'c-g' });
     const s = makeScenario({ inCombat: true, otherTokens: [e] });
     routeCharacterQueries({
-      'char-caller': { class: 'Druid', level: 5, name: 'D', ability_scores: { wis: 16 }, proficiency_bonus: 3, spell_save_dc: 14 },
+      'char-caller': {
+        class: 'Druid',
+        level: 5,
+        name: 'D',
+        ability_scores: { wis: 16 },
+        proficiency_bonus: 3,
+        spell_save_dc: 14,
+      },
       'c-g': { ability_scores: { dex: 10 }, saving_throws: [], proficiency_bonus: 2, name: 'G' },
     });
     const { io, emissions } = makeFakeIo();
@@ -2282,7 +2910,14 @@ describe('Tier 16 — Shatter', () => {
     const e = makeToken('tE', 'G', { characterId: 'c-g' });
     const s = makeScenario({ inCombat: true, otherTokens: [e] });
     routeCharacterQueries({
-      'char-caller': { class: 'Sorcerer', level: 3, name: 'S', ability_scores: { cha: 16 }, proficiency_bonus: 2, spell_save_dc: 13 },
+      'char-caller': {
+        class: 'Sorcerer',
+        level: 3,
+        name: 'S',
+        ability_scores: { cha: 16 },
+        proficiency_bonus: 2,
+        spell_save_dc: 13,
+      },
       'c-g': { ability_scores: { con: 10 }, saving_throws: [], proficiency_bonus: 2, name: 'G' },
     });
     const { io, emissions } = makeFakeIo();
@@ -2305,7 +2940,7 @@ describe('Tier 17 — Revivify', () => {
     await tryHandleChatCommand(io, s.ctx, '!revivify A');
     // Should have run UPDATE for hit_points
     const updates = mockQuery.mock.calls.filter((call) =>
-      /UPDATE characters SET hit_points = 1/.test(call[0]),
+      /UPDATE characters SET hit_points = 1/.test(call[0])
     );
     expect(updates.length).toBeGreaterThan(0);
   });
@@ -2531,7 +3166,14 @@ describe('Tier 19 — Radiant Soul', () => {
   it('burns action and broadcasts fly', async () => {
     const s = makeScenario({ inCombat: true });
     routeCharacterQueries({
-      'char-caller': { class: 'Paladin', level: 5, name: 'P', race: 'Aasimar', ability_scores: {}, proficiency_bonus: 3 },
+      'char-caller': {
+        class: 'Paladin',
+        level: 5,
+        name: 'P',
+        race: 'Aasimar',
+        ability_scores: {},
+        proficiency_bonus: 3,
+      },
     });
     const { io, emissions } = makeFakeIo();
     await tryHandleChatCommand(io, s.ctx, '!radiantsoul');
@@ -2609,7 +3251,7 @@ describe('Tier 19 — Mimicry (Kenku)', () => {
       'char-caller': { class: 'Rogue', level: 3, name: 'K', race: 'Kenku' },
     });
     const { io, emissions } = makeFakeIo();
-    await tryHandleChatCommand(io, s.ctx, '!mimicry lord\'s voice');
+    await tryHandleChatCommand(io, s.ctx, "!mimicry lord's voice");
     expect(lastBroadcast(emissions)).toMatch(/lord's voice/);
   });
 });
@@ -2686,7 +3328,13 @@ describe('Edge — Healing Word token name ending in a digit', () => {
     const allyC = makeCombatant('tA3', { hp: 5, maxHp: 30, characterId: 'char-a3', isNPC: false });
     const s = makeScenario({ inCombat: true, otherTokens: [ally3], otherCombatants: [allyC] });
     routeCharacterQueries({
-      'char-caller': { class: 'Cleric', level: 5, name: 'P', ability_scores: { wis: 16 }, proficiency_bonus: 3 },
+      'char-caller': {
+        class: 'Cleric',
+        level: 5,
+        name: 'P',
+        ability_scores: { wis: 16 },
+        proficiency_bonus: 3,
+      },
     });
     const { io, emissions } = makeFakeIo();
     // Expect 3d4 + 3 (slot 3 upcast) = max 15 heal.
@@ -2702,7 +3350,13 @@ describe('Edge — Frenzy attack command gate', () => {
     const s = makeScenario({ inCombat: true });
     s.caller.conditions = ['raging' as any];
     routeCharacterQueries({
-      'char-caller': { class: 'Barbarian (Berserker)', level: 5, name: 'G', features: [{ name: 'Frenzy' }], exhaustion_level: 0 },
+      'char-caller': {
+        class: 'Barbarian (Berserker)',
+        level: 5,
+        name: 'G',
+        features: [{ name: 'Frenzy' }],
+        exhaustion_level: 0,
+      },
     });
     const { io, emissions } = makeFakeIo();
     await tryHandleChatCommand(io, s.ctx, '!frenzy attack');
@@ -2714,7 +3368,13 @@ describe('Edge — Frenzy attack command gate', () => {
     const s = makeScenario({ inCombat: true });
     s.caller.conditions = ['raging' as any, 'frenzied' as any];
     routeCharacterQueries({
-      'char-caller': { class: 'Barbarian (Berserker)', level: 5, name: 'G', features: [{ name: 'Frenzy' }], exhaustion_level: 0 },
+      'char-caller': {
+        class: 'Barbarian (Berserker)',
+        level: 5,
+        name: 'G',
+        features: [{ name: 'Frenzy' }],
+        exhaustion_level: 0,
+      },
     });
     const { io, emissions } = makeFakeIo();
     await tryHandleChatCommand(io, s.ctx, '!frenzy attack');
@@ -2723,7 +3383,7 @@ describe('Edge — Frenzy attack command gate', () => {
 });
 
 describe('Edge — Psi Warrior Psi-Field double-spend prevention', () => {
-  it("refuses when reaction already spent and does NOT drain the pool", async () => {
+  it('refuses when reaction already spent and does NOT drain the pool', async () => {
     const ally = makeToken('tA', 'A', { characterId: 'c-a' });
     const s = makeScenario({ inCombat: true, otherTokens: [ally] });
     s.callerEconomy.reaction = true; // already used
@@ -2731,13 +3391,22 @@ describe('Edge — Psi Warrior Psi-Field double-spend prevention', () => {
     pools.set('psi', { max: 4, remaining: 4 });
     s.room.pointPools.set(s.caller.characterId!, pools);
     routeCharacterQueries({
-      'char-caller': { class: 'Fighter (Psi Warrior)', level: 5, name: 'M', features: [{ name: 'Protective Field' }], ability_scores: { int: 14 }, proficiency_bonus: 3 },
+      'char-caller': {
+        class: 'Fighter (Psi Warrior)',
+        level: 5,
+        name: 'M',
+        features: [{ name: 'Protective Field' }],
+        ability_scores: { int: 14 },
+        proficiency_bonus: 3,
+      },
     });
     const { io, emissions } = makeFakeIo();
     await tryHandleChatCommand(io, s.ctx, '!psifield A 10');
     expect(pools.get('psi')!.remaining).toBe(4); // pool NOT drained
     const w = emissions.find((e) => (e.payload as { type?: string }).type === 'whisper');
-    expect(String((w?.payload as { content?: string })?.content ?? '')).toMatch(/reaction already spent/);
+    expect(String((w?.payload as { content?: string })?.content ?? '')).toMatch(
+      /reaction already spent/
+    );
   });
 });
 
@@ -2745,7 +3414,13 @@ describe('Edge — Counterspell with no explicit my-slot defaults to 3', () => {
   it('auto-counters L3 without the third arg', async () => {
     const s = makeScenario({ inCombat: true });
     routeCharacterQueries({
-      'char-caller': { class: 'Wizard', level: 5, name: 'W', ability_scores: { int: 16 }, proficiency_bonus: 3 },
+      'char-caller': {
+        class: 'Wizard',
+        level: 5,
+        name: 'W',
+        ability_scores: { int: 16 },
+        proficiency_bonus: 3,
+      },
     });
     const { io, emissions } = makeFakeIo();
     await tryHandleChatCommand(io, s.ctx, '!counterspell Lich 3');
@@ -2777,7 +3452,9 @@ describe('Edge — Bag of Holding capacity overflow', () => {
     await tryHandleChatCommand(io, s.ctx, '!bagofholding in first-rock 450');
     await tryHandleChatCommand(io, s.ctx, '!bagofholding in boulder 100');
     const w = emissions.filter((e) => (e.payload as { type?: string }).type === 'whisper');
-    expect(w.some((e) => /over capacity/.test((e.payload as { content?: string }).content ?? ''))).toBe(true);
+    expect(
+      w.some((e) => /over capacity/.test((e.payload as { content?: string }).content ?? ''))
+    ).toBe(true);
   });
 });
 
@@ -2799,7 +3476,11 @@ describe('Edge — Echo Knight L7 Unleash Incarnation once per round', () => {
     await tryHandleChatCommand(io, s.ctx, '!echo attack');
     await tryHandleChatCommand(io, s.ctx, '!echo attack');
     const w = emissions.filter((e) => (e.payload as { type?: string }).type === 'whisper');
-    expect(w.some((e) => /already used this round/.test((e.payload as { content?: string }).content ?? ''))).toBe(true);
+    expect(
+      w.some((e) =>
+        /already used this round/.test((e.payload as { content?: string }).content ?? '')
+      )
+    ).toBe(true);
   });
 });
 
@@ -2808,7 +3489,14 @@ describe('Edge — Arcane Shot seeking has no save', () => {
     const enemy = makeToken('tE', 'E');
     const s = makeScenario({ inCombat: true, otherTokens: [enemy] });
     routeCharacterQueries({
-      'char-caller': { class: 'Fighter (Arcane Archer)', level: 3, name: 'R', features: [{ name: 'Arcane Shot' }], ability_scores: { int: 14 }, proficiency_bonus: 2 },
+      'char-caller': {
+        class: 'Fighter (Arcane Archer)',
+        level: 3,
+        name: 'R',
+        features: [{ name: 'Arcane Shot' }],
+        ability_scores: { int: 14 },
+        proficiency_bonus: 2,
+      },
     });
     const { io, emissions } = makeFakeIo();
     await tryHandleChatCommand(io, s.ctx, '!arcaneshot seeking E');
@@ -2837,7 +3525,13 @@ describe('Edge — Spiritual Weapon slot scaling', () => {
       const enemy = makeToken('tE', 'E');
       const s = makeScenario({ inCombat: true, otherTokens: [enemy] });
       routeCharacterQueries({
-        'char-caller': { class: 'Cleric', level: 17, name: 'P', ability_scores: { wis: 16 }, proficiency_bonus: 6 },
+        'char-caller': {
+          class: 'Cleric',
+          level: 17,
+          name: 'P',
+          ability_scores: { wis: 16 },
+          proficiency_bonus: 6,
+        },
       });
       const { io, emissions } = makeFakeIo();
       await tryHandleChatCommand(io, s.ctx, `!spiritualweapon E ${slot}`);
@@ -2852,7 +3546,14 @@ describe('Edge — Fireball upcast slot scaling', () => {
     const enemy = makeToken('tE', 'G', { characterId: 'c-g' });
     const s = makeScenario({ inCombat: true, otherTokens: [enemy] });
     routeCharacterQueries({
-      'char-caller': { class: 'Wizard', level: 9, name: 'W', ability_scores: { int: 16 }, proficiency_bonus: 4, spell_save_dc: 16 },
+      'char-caller': {
+        class: 'Wizard',
+        level: 9,
+        name: 'W',
+        ability_scores: { int: 16 },
+        proficiency_bonus: 4,
+        spell_save_dc: 16,
+      },
       'c-g': { ability_scores: { dex: 10 }, saving_throws: [], proficiency_bonus: 2, name: 'G' },
     });
     const { io, emissions } = makeFakeIo();

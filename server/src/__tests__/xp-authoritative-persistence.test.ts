@@ -9,6 +9,7 @@ const { mockQuery, mockConnect, mockClientQuery, mockRelease } = vi.hoisted(() =
 }));
 vi.mock('../db/connection.js', () => ({
   default: { query: mockQuery, connect: mockConnect },
+  rawPool: { connect: mockConnect },
 }));
 
 import { tryHandleChatCommand } from '../services/ChatCommands.js';
@@ -553,7 +554,13 @@ describe('!xp threshold — own linked character only', () => {
 
 describe('characters.experience schema migration', () => {
   async function capturedDdl(): Promise<string> {
-    mockQuery.mockResolvedValue({ rows: [] });
+    mockQuery.mockImplementation(async (sql: string) => ({
+      rows: sql.includes('AS "wildShape"')
+        ? [{ experience: false, wildShape: false, complete: false }]
+        : sql.includes("to_regclass('character_feature_runtime')")
+          ? [{ legacy: null }]
+          : [],
+    }));
     await initDatabase();
     return mockQuery.mock.calls.map((call) => String(call[0])).join('\n');
   }

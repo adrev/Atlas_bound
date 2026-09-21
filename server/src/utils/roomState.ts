@@ -2,6 +2,8 @@ import type { Token, Drawing } from '@dnd-vtt/shared';
 import type { CombatState, ActionEconomy } from '@dnd-vtt/shared';
 import { blocksActions } from '@dnd-vtt/shared';
 import { tokenVisibleToPlayer } from './tokenVisibility.js';
+import { randomUUID } from 'node:crypto';
+import type { FeaturePointPools } from './featureRuntime.js';
 
 export interface RoomPlayer {
   userId: string;
@@ -118,6 +120,7 @@ export interface PendingOpportunity {
 }
 
 export interface RoomState {
+  generation: string;
   sessionId: string;
   roomCode: string;
   dmUserId: string;
@@ -157,6 +160,10 @@ export interface RoomState {
    * 15-second timeout fires.
    */
   readyCheck: {
+    // Optional only for legacy callers/fixtures; durable checks always set these.
+    id?: string;
+    deadline?: number;
+    playerIds?: string[];
     tokenIds: string[];
     responses: Map<string, boolean>; // userId -> ready
     timeout: ReturnType<typeof setTimeout> | null;
@@ -320,7 +327,7 @@ export interface RoomState {
    * Lives alongside the other per-combat caches; populated on-demand
    * by !ki / !sp / etc. Reset via the same commands.
    */
-  pointPools: Map<string, Map<string, { max: number; remaining: number }>>;
+  pointPools: FeaturePointPools;
 }
 
 // ── Rate limiting ──────────────────────────────────────────
@@ -349,6 +356,7 @@ const socketIndex = new Map<string, { sessionId: string; userId: string }>();
 
 export function createRoom(sessionId: string, roomCode: string, dmUserId: string): RoomState {
   const room: RoomState = {
+    generation: randomUUID(),
     sessionId,
     roomCode,
     dmUserId,
@@ -455,6 +463,8 @@ export function removeSocketFromRoom(
 
   room.players.delete(userId);
   if (room.players.size === 0) {
+    if (room.readyCheck?.timeout) clearTimeout(room.readyCheck.timeout);
+    room.readyCheck = null;
     rooms.delete(sessionId);
     roomCodeIndex.delete(room.roomCode);
   }
@@ -483,14 +493,14 @@ export function removePlayerFromRoom(sessionId: string, userId: string): void {
   room.userSockets.delete(userId);
 
   if (room.players.size === 0) {
+    if (room.readyCheck?.timeout) clearTimeout(room.readyCheck.timeout);
+    room.readyCheck = null;
     rooms.delete(sessionId);
     roomCodeIndex.delete(room.roomCode);
   }
 }
 
-export function getPlayerBySocketId(
-  socketId: string
-): PlayerContext | undefined {
+export function getPlayerBySocketId(socketId: string): PlayerContext | undefined {
   const entry = socketIndex.get(socketId);
   if (!entry) return undefined;
   const room = rooms.get(entry.sessionId);
@@ -520,7 +530,9 @@ export function getPlayerBySocketId(
  */
 export function refreshSocketPresence(
   socketId: string
-): { ok: true; sessionId: string; userId: string; nextEventId: number } | { ok: false } {
+):
+  | { ok: true; sessionId: string; userId: string; nextEventId: number; generation: string }
+  | { ok: false } {
   const ctx = getPlayerBySocketId(socketId);
   if (!ctx) return { ok: false };
   // Defensive: ensure this socket is still in the user's live-socket set
@@ -537,6 +549,7 @@ export function refreshSocketPresence(
     sessionId: ctx.room.sessionId,
     userId: ctx.player.userId,
     nextEventId: ctx.room.nextEventId,
+    generation: ctx.room.generation,
   };
 }
 
@@ -552,6 +565,8 @@ export function getAllRooms(): Map<string, RoomState> {
 export function deleteRoom(sessionId: string): void {
   const room = rooms.get(sessionId);
   if (!room) return;
+  if (room.readyCheck?.timeout) clearTimeout(room.readyCheck.timeout);
+  room.readyCheck = null;
   // Clean up all socket index entries for every user in the room.
   for (const [userId, sockets] of room.userSockets) {
     for (const sid of sockets) {

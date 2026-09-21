@@ -26,33 +26,45 @@ async function fetchAllPages(baseUrl: string): Promise<unknown[]> {
     try {
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 30000);
-      const response = await fetch(url, { signal: controller.signal, headers: { 'Accept': 'application/json' } });
+      const response = await fetch(url, {
+        signal: controller.signal,
+        headers: { Accept: 'application/json' },
+      });
       clearTimeout(timeout);
-      if (!response.ok) { console.warn(`Open5e API error: ${response.status} for ${url}`); break; }
+      if (!response.ok) throw new Error(`Open5e API error: ${response.status}`);
       const data = (await response.json()) as { results: unknown[]; next: string | null };
       results.push(...data.results);
       url = data.next;
       if (page % 3 === 0) console.log(`  Fetched ${results.length} records...`);
     } catch (err) {
-      console.warn(`Fetch failed for ${url}: ${(err as Error).message}. Got ${results.length} records so far.`);
-      break;
+      throw new Error(`Incomplete compendium fetch after ${results.length} records`, {
+        cause: err,
+      });
     }
   }
   return results;
 }
 
 export async function isCompendiumSeeded(): Promise<boolean> {
-  const { rows } = await pool.query('SELECT COUNT(*) as cnt FROM compendium_monsters');
-  return Number(rows[0].cnt) > 0;
+  const stats = await getCompendiumStats();
+  return stats.monsterCount > 0 && stats.spellCount > 0 && stats.itemCount > 0;
 }
 
-export async function getCompendiumStats(): Promise<{ monsterCount: number; spellCount: number; itemCount: number }> {
+export async function getCompendiumStats(): Promise<{
+  monsterCount: number;
+  spellCount: number;
+  itemCount: number;
+}> {
   const [m, s, i] = await Promise.all([
     pool.query('SELECT COUNT(*) as cnt FROM compendium_monsters'),
     pool.query('SELECT COUNT(*) as cnt FROM compendium_spells'),
     pool.query('SELECT COUNT(*) as cnt FROM compendium_items'),
   ]);
-  return { monsterCount: Number(m.rows[0].cnt), spellCount: Number(s.rows[0].cnt), itemCount: Number(i.rows[0].cnt) };
+  return {
+    monsterCount: Number(m.rows[0].cnt),
+    spellCount: Number(s.rows[0].cnt),
+    itemCount: Number(i.rows[0].cnt),
+  };
 }
 
 async function seedMonsters(rawMonsters: unknown[]): Promise<void> {
@@ -75,7 +87,10 @@ async function seedMonsters(rawMonsters: unknown[]): Promise<void> {
         const speedObj = m.speed as Record<string, unknown>;
         for (const [key, val] of Object.entries(speedObj)) {
           if (typeof val === 'number') speed[key] = val;
-          else if (typeof val === 'string') { const parsed = parseInt(val, 10); if (!isNaN(parsed)) speed[key] = parsed; }
+          else if (typeof val === 'string') {
+            const parsed = parseInt(val, 10);
+            if (!isNaN(parsed)) speed[key] = parsed;
+          }
         }
       }
 
@@ -94,7 +109,8 @@ async function seedMonsters(rawMonsters: unknown[]): Promise<void> {
       const legendaryActions = Array.isArray(m.legendary_actions) ? m.legendary_actions : [];
       const source = (m.document__title as string) ?? 'SRD';
 
-      await client.query(`
+      await client.query(
+        `
         INSERT INTO compendium_monsters
           (slug, name, size, type, alignment, armor_class, hit_points, hit_dice,
            speed, ability_scores, challenge_rating, cr_numeric,
@@ -104,18 +120,41 @@ async function seedMonsters(rawMonsters: unknown[]): Promise<void> {
            source, raw_json)
         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23)
         ON CONFLICT (slug) DO UPDATE SET name=$2, raw_json=$23
-      `, [
-        slug, name, size, type, alignment, armorClass, hitPoints, hitDice,
-        JSON.stringify(speed), JSON.stringify(abilityScores), cr, parseCR(cr),
-        JSON.stringify(actions), JSON.stringify(specialAbilities), JSON.stringify(legendaryActions),
-        (m.desc as string) ?? '', (m.senses as string) ?? '', (m.languages as string) ?? '',
-        (m.damage_resistances as string) ?? '', (m.damage_immunities as string) ?? '',
-        (m.condition_immunities as string) ?? '', source, JSON.stringify(m),
-      ]);
+      `,
+        [
+          slug,
+          name,
+          size,
+          type,
+          alignment,
+          armorClass,
+          hitPoints,
+          hitDice,
+          JSON.stringify(speed),
+          JSON.stringify(abilityScores),
+          cr,
+          parseCR(cr),
+          JSON.stringify(actions),
+          JSON.stringify(specialAbilities),
+          JSON.stringify(legendaryActions),
+          (m.desc as string) ?? '',
+          (m.senses as string) ?? '',
+          (m.languages as string) ?? '',
+          (m.damage_resistances as string) ?? '',
+          (m.damage_immunities as string) ?? '',
+          (m.condition_immunities as string) ?? '',
+          source,
+          JSON.stringify(m),
+        ]
+      );
     }
     await client.query('COMMIT');
-  } catch (err) { await client.query('ROLLBACK'); throw err; }
-  finally { client.release(); }
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
 }
 
 async function seedSpells(rawSpells: unknown[]): Promise<void> {
@@ -132,31 +171,54 @@ async function seedSpells(rawSpells: unknown[]): Promise<void> {
       else if (typeof s.level === 'string') level = parseSpellLevel(s.level);
       let concentration = 0;
       if (typeof s.concentration === 'boolean') concentration = s.concentration ? 1 : 0;
-      else if (typeof s.concentration === 'string') concentration = s.concentration.toLowerCase() === 'yes' ? 1 : 0;
+      else if (typeof s.concentration === 'string')
+        concentration = s.concentration.toLowerCase() === 'yes' ? 1 : 0;
       let ritual = 0;
       if (typeof s.ritual === 'boolean') ritual = s.ritual ? 1 : 0;
       else if (typeof s.ritual === 'string') ritual = s.ritual.toLowerCase() === 'yes' ? 1 : 0;
       let classes: string[] = [];
-      if (typeof s.dnd_class === 'string' && s.dnd_class) classes = s.dnd_class.split(',').map((c: string) => c.trim()).filter(Boolean);
+      if (typeof s.dnd_class === 'string' && s.dnd_class)
+        classes = s.dnd_class
+          .split(',')
+          .map((c: string) => c.trim())
+          .filter(Boolean);
       else if (Array.isArray(s.classes)) classes = s.classes as string[];
       const source = (s.document__title as string) ?? 'SRD';
 
-      await client.query(`
+      await client.query(
+        `
         INSERT INTO compendium_spells
           (slug, name, level, school, casting_time, range, components, duration,
            description, higher_levels, concentration, ritual, classes, source, raw_json)
         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
         ON CONFLICT (slug) DO UPDATE SET name=$2, raw_json=$15
-      `, [
-        slug, name, level, (s.school as string) ?? '', (s.casting_time as string) ?? '',
-        (s.range as string) ?? '', (s.components as string) ?? '', (s.duration as string) ?? '',
-        (s.desc as string) ?? '', (s.higher_level as string) ?? '',
-        concentration, ritual, JSON.stringify(classes), source, JSON.stringify(s),
-      ]);
+      `,
+        [
+          slug,
+          name,
+          level,
+          (s.school as string) ?? '',
+          (s.casting_time as string) ?? '',
+          (s.range as string) ?? '',
+          (s.components as string) ?? '',
+          (s.duration as string) ?? '',
+          (s.desc as string) ?? '',
+          (s.higher_level as string) ?? '',
+          concentration,
+          ritual,
+          JSON.stringify(classes),
+          source,
+          JSON.stringify(s),
+        ]
+      );
     }
     await client.query('COMMIT');
-  } catch (err) { await client.query('ROLLBACK'); throw err; }
-  finally { client.release(); }
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
 }
 
 async function seedItems(rawItems: unknown[]): Promise<void> {
@@ -168,24 +230,46 @@ async function seedItems(rawItems: unknown[]): Promise<void> {
       const slug = (i.slug as string) ?? '';
       const name = (i.name as string) ?? '';
       let requiresAttunement = 0;
-      if (typeof i.requires_attunement === 'boolean') requiresAttunement = i.requires_attunement ? 1 : 0;
-      else if (typeof i.requires_attunement === 'string') requiresAttunement = i.requires_attunement.toLowerCase().includes('requires attunement') ? 1 : 0;
+      if (typeof i.requires_attunement === 'boolean')
+        requiresAttunement = i.requires_attunement ? 1 : 0;
+      else if (typeof i.requires_attunement === 'string')
+        requiresAttunement = i.requires_attunement.toLowerCase().includes('requires attunement')
+          ? 1
+          : 0;
       const source = (i.document__title as string) ?? 'SRD';
 
-      await client.query(`
+      await client.query(
+        `
         INSERT INTO compendium_items (slug, name, type, rarity, requires_attunement, description, source, raw_json)
         VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
         ON CONFLICT (slug) DO UPDATE SET name=$2, raw_json=$8
-      `, [slug, name, (i.type as string) ?? '', (i.rarity as string) ?? '', requiresAttunement, (i.desc as string) ?? '', source, JSON.stringify(i)]);
+      `,
+        [
+          slug,
+          name,
+          (i.type as string) ?? '',
+          (i.rarity as string) ?? '',
+          requiresAttunement,
+          (i.desc as string) ?? '',
+          source,
+          JSON.stringify(i),
+        ]
+      );
     }
     await client.query('COMMIT');
-  } catch (err) { await client.query('ROLLBACK'); throw err; }
-  finally { client.release(); }
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
 }
 
 export async function seedCompendium(): Promise<void> {
   console.log('Fetching monsters from Open5e...');
-  const rawMonsters = await fetchAllPages('https://api.open5e.com/v1/monsters/?format=json&limit=50');
+  const rawMonsters = await fetchAllPages(
+    'https://api.open5e.com/v1/monsters/?format=json&limit=50'
+  );
   console.log(`Seeding monsters... ${rawMonsters.length} fetched`);
   await seedMonsters(rawMonsters);
   console.log(`Monsters seeded: ${rawMonsters.length}`);
@@ -197,13 +281,17 @@ export async function seedCompendium(): Promise<void> {
   console.log(`Spells seeded: ${rawSpells.length}`);
 
   console.log('Fetching magic items from Open5e...');
-  const rawItems = await fetchAllPages('https://api.open5e.com/v1/magicitems/?format=json&limit=50');
+  const rawItems = await fetchAllPages(
+    'https://api.open5e.com/v1/magicitems/?format=json&limit=50'
+  );
   console.log(`Seeding items... ${rawItems.length} fetched`);
   await seedItems(rawItems);
   console.log(`Items seeded: ${rawItems.length}`);
 
   const stats = await getCompendiumStats();
-  console.log(`Compendium seeded: ${stats.monsterCount} monsters, ${stats.spellCount} spells, ${stats.itemCount} items`);
+  console.log(
+    `Compendium seeded: ${stats.monsterCount} monsters, ${stats.spellCount} spells, ${stats.itemCount} items`
+  );
 }
 
 export async function reseedCompendium(): Promise<void> {

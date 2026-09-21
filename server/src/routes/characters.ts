@@ -220,10 +220,8 @@ router.put('/:id', async (req: Request, res: Response) => {
     const { rows } = await pool.query('SELECT features FROM characters WHERE id = $1', [
       String(req.params.id),
     ]);
-    protectedFeatures = preserveServerManagedFeatureResources(
-      rows[0]?.features,
-      updates.features
-    ) ?? undefined;
+    protectedFeatures =
+      preserveServerManagedFeatureResources(rows[0]?.features, updates.features) ?? undefined;
     if (!protectedFeatures) {
       res.status(400).json({ error: 'Invalid feature resource state' });
       return;
@@ -418,7 +416,7 @@ router.put('/:id', async (req: Request, res: Response) => {
       Object.keys(updates).map((field) => [field, committed[field]])
     );
     fanoutChanges.version = committed.version;
-    fanoutCharacterUpdateAcrossRooms(
+    await fanoutCharacterUpdateAcrossRooms(
       io,
       String(req.params.id),
       String(rows[0].user_id),

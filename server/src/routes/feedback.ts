@@ -59,7 +59,7 @@ async function recentSubmissionCount(userId: string): Promise<number> {
   const { rows } = await pool.query(
     `SELECT COUNT(*)::int AS n FROM feedback
      WHERE user_id = $1 AND created_at::timestamp > NOW() - INTERVAL '24 hours'`,
-    [userId],
+    [userId]
   );
   return (rows[0]?.n as number) ?? 0;
 }
@@ -90,25 +90,32 @@ router.post('/feedback', requireAuth, async (req: Request, res: Response) => {
       page_url, browser, app_version, screenshot_url, anonymous, status
     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'open')`,
     [
-      id, userId, data.sessionId ?? null, data.category, data.content,
-      data.pageUrl ?? null, data.browser ?? null, data.appVersion ?? null,
+      id,
+      userId,
+      data.sessionId ?? null,
+      data.category,
+      data.content,
+      data.pageUrl ?? null,
+      data.browser ?? null,
+      data.appVersion ?? null,
       data.screenshotUrl ?? null,
       data.anonymous ? 1 : 0,
-    ],
+    ]
   );
 
   // Side-channel notification to Discord. Look up the submitter's
   // display name + email so admins see who sent it (unless the user
   // ticked the anonymous box, in which case the webhook scrubs both).
-  // We deliberately don't await — the user has already succeeded;
-  // letting Discord delivery run in the background keeps the response
-  // snappy and means a slow webhook can't stretch the request.
-  let submitter: { displayName: string | null; email: string | null } = { displayName: null, email: null };
+  // Keep bounded notification work within the request CPU lifetime.
+  let submitter: { displayName: string | null; email: string | null } = {
+    displayName: null,
+    email: null,
+  };
   if (!data.anonymous) {
     try {
       const { rows: userRows } = await pool.query(
         'SELECT display_name, email FROM auth_users WHERE id = $1',
-        [userId],
+        [userId]
       );
       if (userRows[0]) {
         submitter = {
@@ -122,13 +129,8 @@ router.post('/feedback', requireAuth, async (req: Request, res: Response) => {
     }
   }
 
-  // Fire the webhook in the background. We DO want the result so we
-  // can stamp `discord_thread_url` onto the row for cross-referencing
-  // from later Releases announcements — but we deliberately don't
-  // block the user's response on it. The .then() handler below patches
-  // the row once Discord responds; if the webhook fails, the row just
-  // stays without a URL and everything else works.
-  sendFeedbackWebhook({
+  // Notification failure is best-effort; the primary feedback is already saved.
+  await sendFeedbackWebhook({
     id,
     category: data.category,
     content: data.content,
@@ -143,10 +145,10 @@ router.post('/feedback', requireAuth, async (req: Request, res: Response) => {
     .then(async (result) => {
       if (result.threadUrl) {
         try {
-          await pool.query(
-            'UPDATE feedback SET discord_thread_url = $1 WHERE id = $2',
-            [result.threadUrl, id],
-          );
+          await pool.query('UPDATE feedback SET discord_thread_url = $1 WHERE id = $2', [
+            result.threadUrl,
+            id,
+          ]);
         } catch (err) {
           console.warn('[feedback] failed to backfill discord_thread_url:', err);
         }
@@ -171,11 +173,11 @@ router.get('/admin/feedback', requireAuth, requireAdmin, async (req: Request, re
   const params: unknown[] = [];
   let p = 1;
 
-  if (status && VALID_STATUSES.includes(status as typeof VALID_STATUSES[number])) {
+  if (status && VALID_STATUSES.includes(status as (typeof VALID_STATUSES)[number])) {
     where.push(`f.status = $${p++}`);
     params.push(status);
   }
-  if (category && VALID_CATEGORIES.includes(category as typeof VALID_CATEGORIES[number])) {
+  if (category && VALID_CATEGORIES.includes(category as (typeof VALID_CATEGORIES)[number])) {
     where.push(`f.category = $${p++}`);
     params.push(category);
   }
@@ -224,37 +226,39 @@ router.get('/admin/feedback', requireAuth, requireAdmin, async (req: Request, re
   });
 });
 
-router.patch('/admin/feedback/:id', requireAuth, requireAdmin, async (req: Request, res: Response) => {
-  const id = String(req.params.id);
-  const parsed = updateSchema.safeParse(req.body);
-  if (!parsed.success) {
-    res.status(400).json({ error: 'Invalid update payload', details: parsed.error.issues });
-    return;
-  }
+router.patch(
+  '/admin/feedback/:id',
+  requireAuth,
+  requireAdmin,
+  async (req: Request, res: Response) => {
+    const id = String(req.params.id);
+    const parsed = updateSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: 'Invalid update payload', details: parsed.error.issues });
+      return;
+    }
 
-  const updates: string[] = [];
-  const params: unknown[] = [];
-  let p = 1;
+    const updates: string[] = [];
+    const params: unknown[] = [];
+    let p = 1;
 
-  if (parsed.data.status !== undefined) {
-    updates.push(`status = $${p++}`);
-    params.push(parsed.data.status);
-  }
-  if (parsed.data.adminNotes !== undefined) {
-    updates.push(`admin_notes = $${p++}`);
-    params.push(parsed.data.adminNotes);
-  }
-  if (updates.length === 0) {
+    if (parsed.data.status !== undefined) {
+      updates.push(`status = $${p++}`);
+      params.push(parsed.data.status);
+    }
+    if (parsed.data.adminNotes !== undefined) {
+      updates.push(`admin_notes = $${p++}`);
+      params.push(parsed.data.adminNotes);
+    }
+    if (updates.length === 0) {
+      res.json({ ok: true });
+      return;
+    }
+    updates.push(`updated_at = NOW()::text`);
+    params.push(id);
+    await pool.query(`UPDATE feedback SET ${updates.join(', ')} WHERE id = $${p}`, params);
     res.json({ ok: true });
-    return;
   }
-  updates.push(`updated_at = NOW()::text`);
-  params.push(id);
-  await pool.query(
-    `UPDATE feedback SET ${updates.join(', ')} WHERE id = $${p}`,
-    params,
-  );
-  res.json({ ok: true });
-});
+);
 
 export default router;

@@ -6,6 +6,7 @@ import {
 } from '../ChatCommands.js';
 import * as ConditionService from '../ConditionService.js';
 import pool from '../../db/connection.js';
+import { characterFeatures } from '../../utils/featureRuntime.js';
 import type { Token, ActionBreakdown } from '@dnd-vtt/shared';
 import type { PlayerContext } from '../../utils/roomState.js';
 import { tokenConditionChanges } from '../../utils/conditionSources.js';
@@ -30,7 +31,7 @@ function resolveCallerToken(ctx: PlayerContext): Token | null {
 function resolveTargetByName(ctx: PlayerContext, name: string): Token | null {
   const needle = name.toLowerCase();
   const matches = Array.from(ctx.room.tokens.values()).filter(
-    (t) => t.name.toLowerCase() === needle,
+    (t) => t.name.toLowerCase() === needle
   );
   if (matches.length === 0) return null;
   matches.sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
@@ -46,7 +47,7 @@ function actionSaveEffect(
   ability: SaveAbility,
   dc: number,
   successText: string,
-  failText: string,
+  failText: string
 ): string {
   return `${saveResult.saved ? 'SAVED' : 'FAILED'}: ${ability.toUpperCase()} ${formatSaveTotal(saveResult)} vs DC ${dc} — ${saveResult.saved ? successText : failText}${saveNotesLabel(saveResult)}`;
 }
@@ -58,7 +59,9 @@ async function handleReckless(c: ChatCommandContext): Promise<boolean> {
     whisperToCaller(c.io, c.ctx, '!reckless: no owned PC token.');
     return true;
   }
-  const { rows } = await pool.query('SELECT class, level, name FROM characters WHERE id = $1', [caller.characterId]);
+  const { rows } = await pool.query('SELECT class, level, name FROM characters WHERE id = $1', [
+    caller.characterId,
+  ]);
   const row = rows[0] as Record<string, unknown> | undefined;
   const classLower = String(row?.class || '').toLowerCase();
   if (!classLower.includes('barbarian')) {
@@ -95,8 +98,9 @@ async function handleReckless(c: ChatCommandContext): Promise<boolean> {
     changes: tokenConditionChanges(c.ctx.room, caller.id),
   });
   broadcastSystem(
-    c.io, c.ctx,
-    `😤 ${caller.name} attacks recklessly — advantage on own STR melee attacks, attacks against have advantage until next turn.`,
+    c.io,
+    c.ctx,
+    `😤 ${caller.name} attacks recklessly — advantage on own STR melee attacks, attacks against have advantage until next turn.`
   );
   return true;
 }
@@ -104,12 +108,9 @@ async function handleReckless(c: ChatCommandContext): Promise<boolean> {
 // ────── !endurance (Half-Orc Relentless Endurance, auto-1HP) ──
 /**
  * When a half-orc drops to 0 HP but not killed outright, they drop
- * to 1 HP instead. 1/long rest. We track usage in a module-level
- * Set keyed on characterId (reset via !endurance reset on long rest
- * or automatically if the DM runs !rest long).
+ * to 1 HP instead. 1/long rest, persisted per character.
+ * Reset explicitly via !endurance reset after a long rest.
  */
-const endUsed = new Set<string>();
-
 async function handleEndurance(c: ChatCommandContext): Promise<boolean> {
   const arg = c.rest.trim().toLowerCase();
   const caller = resolveCallerToken(c.ctx);
@@ -117,7 +118,10 @@ async function handleEndurance(c: ChatCommandContext): Promise<boolean> {
     whisperToCaller(c.io, c.ctx, '!endurance: no owned PC token.');
     return true;
   }
-  const { rows } = await pool.query('SELECT race, name, hit_points, max_hit_points FROM characters WHERE id = $1', [caller.characterId]);
+  const { rows } = await pool.query(
+    'SELECT race, name, hit_points, max_hit_points FROM characters WHERE id = $1',
+    [caller.characterId]
+  );
   const row = rows[0] as Record<string, unknown> | undefined;
   const raceLower = String(row?.race || '').toLowerCase();
   if (!raceLower.includes('half-orc') && !raceLower.includes('orc')) {
@@ -126,13 +130,17 @@ async function handleEndurance(c: ChatCommandContext): Promise<boolean> {
   }
 
   if (arg === 'reset') {
-    endUsed.delete(caller.characterId);
+    characterFeatures(caller.characterId).enduranceUsed = false;
     broadcastSystem(c.io, c.ctx, `💪 ${caller.name}'s Relentless Endurance refreshed.`);
     return true;
   }
   if (arg === 'status') {
-    const used = endUsed.has(caller.characterId);
-    whisperToCaller(c.io, c.ctx, `💪 Relentless Endurance: ${used ? 'USED (resets on long rest)' : 'available'}.`);
+    const used = characterFeatures(caller.characterId).enduranceUsed;
+    whisperToCaller(
+      c.io,
+      c.ctx,
+      `💪 Relentless Endurance: ${used === undefined ? 'not recorded; !endurance reset after a long rest' : used ? 'USED (resets on long rest)' : 'available'}.`
+    );
     return true;
   }
 
@@ -142,13 +150,16 @@ async function handleEndurance(c: ChatCommandContext): Promise<boolean> {
     whisperToCaller(c.io, c.ctx, `!endurance: only usable when at 0 HP (you're at ${hp}).`);
     return true;
   }
-  if (endUsed.has(caller.characterId)) {
-    whisperToCaller(c.io, c.ctx, '!endurance: already used this long rest.');
+  if (characterFeatures(caller.characterId).enduranceUsed !== false) {
+    whisperToCaller(
+      c.io,
+      c.ctx,
+      '!endurance: used or not recorded. Run !endurance reset after a long rest.'
+    );
     return true;
   }
-  endUsed.add(caller.characterId);
-  await pool.query('UPDATE characters SET hit_points = 1 WHERE id = $1', [caller.characterId])
-    .catch((e) => console.warn('[!endurance] hp write failed:', e));
+  characterFeatures(caller.characterId).enduranceUsed = true;
+  await pool.query('UPDATE characters SET hit_points = 1 WHERE id = $1', [caller.characterId]);
   c.io.to(c.ctx.room.sessionId).emit('character:updated', {
     characterId: caller.characterId,
     changes: { hitPoints: 1 },
@@ -161,8 +172,9 @@ async function handleEndurance(c: ChatCommandContext): Promise<boolean> {
     type: 'heal',
   });
   broadcastSystem(
-    c.io, c.ctx,
-    `💪 **${caller.name} uses Relentless Endurance** — drops to 1 HP instead of 0! (1/long rest.)`,
+    c.io,
+    c.ctx,
+    `💪 **${caller.name} uses Relentless Endurance** — drops to 1 HP instead of 0! (1/long rest.)`
   );
   return true;
 }
@@ -182,7 +194,9 @@ async function handleArcaneRecovery(c: ChatCommandContext): Promise<boolean> {
     whisperToCaller(c.io, c.ctx, '!arcanerecovery: no owned PC token.');
     return true;
   }
-  const { rows } = await pool.query('SELECT class, level, name FROM characters WHERE id = $1', [caller.characterId]);
+  const { rows } = await pool.query('SELECT class, level, name FROM characters WHERE id = $1', [
+    caller.characterId,
+  ]);
   const row = rows[0] as Record<string, unknown> | undefined;
   const classLower = String(row?.class || '').toLowerCase();
   if (!classLower.includes('wizard')) {
@@ -192,8 +206,9 @@ async function handleArcaneRecovery(c: ChatCommandContext): Promise<boolean> {
   const lvl = Number(row?.level) || 1;
   const budget = Math.ceil(lvl / 2);
   broadcastSystem(
-    c.io, c.ctx,
-    `📖 ${caller.name} uses Arcane Recovery — recover spell slots totalling up to ${budget} levels (no slot 6+). 1/long rest.`,
+    c.io,
+    c.ctx,
+    `📖 ${caller.name} uses Arcane Recovery — recover spell slots totalling up to ${budget} levels (no slot 6+). 1/long rest.`
   );
   return true;
 }
@@ -214,8 +229,9 @@ async function handleBreath(c: ChatCommandContext): Promise<boolean> {
   const parts = c.rest.split(/\s+/).filter(Boolean);
   if (parts.length < 2) {
     whisperToCaller(
-      c.io, c.ctx,
-      '!breath: usage `!breath <dice>/<ability>/<dc> <target1> [target2 …]`\n  e.g. `!breath 2d6/dex/13 goblin orc`',
+      c.io,
+      c.ctx,
+      '!breath: usage `!breath <dice>/<ability>/<dc> <target1> [target2 …]`\n  e.g. `!breath 2d6/dex/13 goblin orc`'
     );
     return true;
   }
@@ -243,7 +259,8 @@ async function handleBreath(c: ChatCommandContext): Promise<boolean> {
   const rollDice = (notation: string): { total: number; rolls: number[] } => {
     const m = notation.match(/(\d+)d(\d+)(?:\s*([+-])\s*(\d+))?/);
     if (!m) return { total: 0, rolls: [] };
-    const n = parseInt(m[1], 10), s = parseInt(m[2], 10);
+    const n = parseInt(m[1], 10),
+      s = parseInt(m[2], 10);
     const sign = m[3] === '-' ? -1 : 1;
     const mod = m[4] ? parseInt(m[4], 10) * sign : 0;
     const rolls: number[] = [];
@@ -263,7 +280,9 @@ async function handleBreath(c: ChatCommandContext): Promise<boolean> {
 
   const lines: string[] = [];
   const breathTargets: NonNullable<ActionBreakdown['targets']> = [];
-  lines.push(`🐲 ${callerName} uses Breath Weapon: ${diceRaw} (${dmgRolls.join('+')} = ${fullDmg}) vs ${ability.toUpperCase()} DC ${dc}`);
+  lines.push(
+    `🐲 ${callerName} uses Breath Weapon: ${diceRaw} (${dmgRolls.join('+')} = ${fullDmg}) vs ${ability.toUpperCase()} DC ${dc}`
+  );
   for (const name of parts.slice(1)) {
     const target = resolveTargetByName(c.ctx, name);
     if (!target) {
@@ -274,7 +293,9 @@ async function handleBreath(c: ChatCommandContext): Promise<boolean> {
     const saveResult = await rollTargetSave(c, target, ability, dc, 'breath');
     const tName = saveResult.displayName;
     const dmg = saveResult.saved ? halfDmg : fullDmg;
-    lines.push(`  • ${tName}: ${formatSaveTotal(saveResult)} → ${saveResult.saved ? 'SAVED (half)' : 'FAILED'} — ${dmg} dmg${saveNotesLabel(saveResult)}`);
+    lines.push(
+      `  • ${tName}: ${formatSaveTotal(saveResult)} → ${saveResult.saved ? 'SAVED (half)' : 'FAILED'} — ${dmg} dmg${saveNotesLabel(saveResult)}`
+    );
     breathTargets.push({
       name: tName,
       tokenId: target.id,
@@ -320,13 +341,21 @@ async function handleBreath(c: ChatCommandContext): Promise<boolean> {
 async function handleEldritch(c: ChatCommandContext): Promise<boolean> {
   const parts = c.rest.split(/\s+/).filter(Boolean);
   if (parts.length < 2) {
-    whisperToCaller(c.io, c.ctx, '!eldritch: usage `!eldritch <bolts> <cha-mod> [target-name]`\n  e.g. `!eldritch 2 4` → 2 beams, +4 CHA per beam');
+    whisperToCaller(
+      c.io,
+      c.ctx,
+      '!eldritch: usage `!eldritch <bolts> <cha-mod> [target-name]`\n  e.g. `!eldritch 2 4` → 2 beams, +4 CHA per beam'
+    );
     return true;
   }
   const bolts = parseInt(parts[0], 10);
   const cha = parseInt(parts[1], 10);
   if (!Number.isFinite(bolts) || bolts < 1 || bolts > 4) {
-    whisperToCaller(c.io, c.ctx, '!eldritch: bolts must be 1-4 (1 @ L1, 2 @ L5, 3 @ L11, 4 @ L17).');
+    whisperToCaller(
+      c.io,
+      c.ctx,
+      '!eldritch: bolts must be 1-4 (1 @ L1, 2 @ L5, 3 @ L11, 4 @ L17).'
+    );
     return true;
   }
   if (!Number.isFinite(cha)) {
@@ -337,7 +366,9 @@ async function handleEldritch(c: ChatCommandContext): Promise<boolean> {
   const caller = resolveCallerToken(c.ctx);
   const callerName = caller?.name || c.ctx.player.displayName;
   const lines: string[] = [];
-  lines.push(`✨ ${callerName} fires ${bolts} Eldritch Blast beam${bolts === 1 ? '' : 's'}${targetLabel ? ` at ${targetLabel}` : ''}:`);
+  lines.push(
+    `✨ ${callerName} fires ${bolts} Eldritch Blast beam${bolts === 1 ? '' : 's'}${targetLabel ? ` at ${targetLabel}` : ''}:`
+  );
   const beamRolls: number[] = [];
   const beamTotals: number[] = [];
   let total = 0;
@@ -349,7 +380,9 @@ async function handleEldritch(c: ChatCommandContext): Promise<boolean> {
     beamTotals.push(beam);
     lines.push(`  • beam ${i + 1}: d10=${roll}${cha >= 0 ? '+' : ''}${cha}=${beam} force`);
   }
-  lines.push(`  Total: ${total} force${cha !== 0 ? ' (incl. Agonizing Blast)' : ''}. DM: roll to hit for each beam separately.`);
+  lines.push(
+    `  Total: ${total} force${cha !== 0 ? ' (incl. Agonizing Blast)' : ''}. DM: roll to hit for each beam separately.`
+  );
   const ebBreakdown: ActionBreakdown = {
     actor: { name: callerName, tokenId: caller?.id },
     action: {
@@ -359,12 +392,16 @@ async function handleEldritch(c: ChatCommandContext): Promise<boolean> {
       cost: 'Action (cantrip)',
     },
     effect: `${bolts}× 1d10${cha !== 0 ? ` +${cha} (Agonizing Blast)` : ''} force. Total potential damage: **${total}**.`,
-    ...(targetLabel ? {
-      targets: [{
-        name: targetLabel,
-        effect: `${bolts} beams × d10${cha !== 0 ? `+${cha}` : ''} — total ${total} force`,
-      }],
-    } : {}),
+    ...(targetLabel
+      ? {
+          targets: [
+            {
+              name: targetLabel,
+              effect: `${bolts} beams × d10${cha !== 0 ? `+${cha}` : ''} — total ${total} force`,
+            },
+          ],
+        }
+      : {}),
     notes: [
       `Warlock cantrip`,
       `Bolts: ${bolts} (1 @ L1, 2 @ L5, 3 @ L11, 4 @ L17)`,
@@ -419,13 +456,19 @@ const MANEUVER_DESC: Record<string, string> = {
   rally: 'Rally — grant a chosen ally sup die + CHA mod temp HP',
 };
 
-function getOrSeedSup(ctx: PlayerContext, charId: string, level: number): { max: number; remaining: number; die: number } {
+function getOrSeedSup(
+  ctx: PlayerContext,
+  charId: string,
+  level: number
+): { max: number; remaining: number; die: number } {
   let pools = ctx.room.pointPools.get(charId);
   if (!pools) {
     pools = new Map();
     ctx.room.pointPools.set(charId, pools);
   }
-  let sup = pools.get('superiority') as { max: number; remaining: number; die?: number } | undefined;
+  let sup = pools.get('superiority') as
+    | { max: number; remaining: number; die?: 8 | 10 | 12 }
+    | undefined;
   if (!sup) {
     const count = level >= 15 ? 6 : level >= 7 ? 5 : 4;
     const die = level >= 18 ? 12 : level >= 10 ? 10 : 8;
@@ -435,13 +478,19 @@ function getOrSeedSup(ctx: PlayerContext, charId: string, level: number): { max:
   return sup as { max: number; remaining: number; die: number };
 }
 
-async function requireBattleMaster(c: ChatCommandContext, cmd: string): Promise<{ caller: Token; level: number; charId: string; name: string } | null> {
+async function requireBattleMaster(
+  c: ChatCommandContext,
+  cmd: string
+): Promise<{ caller: Token; level: number; charId: string; name: string } | null> {
   const caller = resolveCallerToken(c.ctx);
   if (!caller?.characterId) {
     whisperToCaller(c.io, c.ctx, `!${cmd}: no owned PC token.`);
     return null;
   }
-  const { rows } = await pool.query('SELECT class, level, name, features FROM characters WHERE id = $1', [caller.characterId]);
+  const { rows } = await pool.query(
+    'SELECT class, level, name, features FROM characters WHERE id = $1',
+    [caller.characterId]
+  );
   const row = rows[0] as Record<string, unknown> | undefined;
   const classLower = String(row?.class || '').toLowerCase();
   if (!classLower.includes('fighter')) {
@@ -463,12 +512,20 @@ async function handleSuperiority(c: ChatCommandContext): Promise<boolean> {
   const sup = getOrSeedSup(c.ctx, bm.charId, bm.level);
   const sub = parts[0]?.toLowerCase() || 'status';
   if (sub === 'status' || sub === '') {
-    whisperToCaller(c.io, c.ctx, `⚔ ${bm.name} Superiority Dice: ${sup.remaining}/${sup.max} (d${sup.die}).`);
+    whisperToCaller(
+      c.io,
+      c.ctx,
+      `⚔ ${bm.name} Superiority Dice: ${sup.remaining}/${sup.max} (d${sup.die}).`
+    );
     return true;
   }
   if (sub === 'reset' || sub === 'refresh') {
     sup.remaining = sup.max;
-    broadcastSystem(c.io, c.ctx, `⚔ ${bm.name} Superiority Dice refreshed: ${sup.max}/${sup.max} (d${sup.die}).`);
+    broadcastSystem(
+      c.io,
+      c.ctx,
+      `⚔ ${bm.name} Superiority Dice refreshed: ${sup.max}/${sup.max} (d${sup.die}).`
+    );
     return true;
   }
   if (sub === 'use' || sub === 'spend') {
@@ -494,7 +551,12 @@ async function handleSuperiority(c: ChatCommandContext): Promise<boolean> {
         `Dice remaining: ${sup.remaining}/${sup.max}`,
       ],
     };
-    broadcastSystem(c.io, c.ctx, `⚔ ${bm.name} spends a sup die — d${sup.die} = **${roll}**. (${sup.remaining}/${sup.max} left)`, { actionResult: supBreakdown });
+    broadcastSystem(
+      c.io,
+      c.ctx,
+      `⚔ ${bm.name} spends a sup die — d${sup.die} = **${roll}**. (${sup.remaining}/${sup.max} left)`,
+      { actionResult: supBreakdown }
+    );
     return true;
   }
   whisperToCaller(c.io, c.ctx, `!superiority: unknown subcommand "${sub}".`);
@@ -505,8 +567,9 @@ async function handleManeuver(c: ChatCommandContext): Promise<boolean> {
   const parts = c.rest.split(/\s+/).filter(Boolean);
   if (parts.length === 0) {
     whisperToCaller(
-      c.io, c.ctx,
-      '!maneuver: usage `!maneuver <name> [target] [dc]`\n  Options: trip, pushing, disarming, menacing, riposte, distracting, parry, feinting, precision, evasive, lunging, rally',
+      c.io,
+      c.ctx,
+      '!maneuver: usage `!maneuver <name> [target] [dc]`\n  Options: trip, pushing, disarming, menacing, riposte, distracting, parry, feinting, precision, evasive, lunging, rally'
     );
     return true;
   }
@@ -541,7 +604,9 @@ async function handleManeuver(c: ChatCommandContext): Promise<boolean> {
     const target = resolveTargetByName(c.ctx, targetName);
     if (target && Number.isFinite(dc)) {
       const saveResult = await rollTargetSave(c, target, saveMeta.ability, dc, saveMeta.on);
-      lines.push(`   ${saveResult.displayName} ${saveMeta.ability.toUpperCase()} save: ${formatSaveTotal(saveResult)} vs DC ${dc} → ${saveResult.saved ? 'SAVED' : 'FAILED'}${saveNotesLabel(saveResult)}`);
+      lines.push(
+        `   ${saveResult.displayName} ${saveMeta.ability.toUpperCase()} save: ${formatSaveTotal(saveResult)} vs DC ${dc} → ${saveResult.saved ? 'SAVED' : 'FAILED'}${saveNotesLabel(saveResult)}`
+      );
       if (!saveResult.saved && (saveMeta.on === 'prone' || saveMeta.on === 'frightened')) {
         const currentRound = c.ctx.room.combatState?.roundNumber ?? 0;
         ConditionService.applyConditionWithMeta(c.ctx.room.sessionId, target.id, {
@@ -611,7 +676,10 @@ async function handleCrit(c: ChatCommandContext): Promise<boolean> {
     whisperToCaller(c.io, c.ctx, '!crit: no owned PC token.');
     return true;
   }
-  const { rows } = await pool.query('SELECT class, level, name, features FROM characters WHERE id = $1', [caller.characterId]);
+  const { rows } = await pool.query(
+    'SELECT class, level, name, features FROM characters WHERE id = $1',
+    [caller.characterId]
+  );
   const row = rows[0] as Record<string, unknown> | undefined;
   const classLower = String(row?.class || '').toLowerCase();
   const level = Number(row?.level) || 1;
@@ -619,20 +687,32 @@ async function handleCrit(c: ChatCommandContext): Promise<boolean> {
   try {
     const rawF = row?.features;
     const feats = typeof rawF === 'string' ? JSON.parse(rawF as string) : (rawF ?? []);
-    if (Array.isArray(feats) && feats.some(
-      (f: { name?: string }) => typeof f?.name === 'string' && /improved\s+critical/i.test(f.name),
-    )) champLevel = Math.max(champLevel, 3);
-    if (Array.isArray(feats) && feats.some(
-      (f: { name?: string }) => typeof f?.name === 'string' && /superior\s+critical/i.test(f.name),
-    )) champLevel = Math.max(champLevel, 15);
-  } catch { /* ignore */ }
+    if (
+      Array.isArray(feats) &&
+      feats.some(
+        (f: { name?: string }) => typeof f?.name === 'string' && /improved\s+critical/i.test(f.name)
+      )
+    )
+      champLevel = Math.max(champLevel, 3);
+    if (
+      Array.isArray(feats) &&
+      feats.some(
+        (f: { name?: string }) => typeof f?.name === 'string' && /superior\s+critical/i.test(f.name)
+      )
+    )
+      champLevel = Math.max(champLevel, 15);
+  } catch {
+    /* ignore */
+  }
   // Fallback: Champion subclass detected on the class string.
-  if (champLevel === 0 && classLower.includes('champion')) champLevel = level >= 15 ? 15 : level >= 3 ? 3 : 0;
+  if (champLevel === 0 && classLower.includes('champion'))
+    champLevel = level >= 15 ? 15 : level >= 3 ? 3 : 0;
   const threshold = champLevel >= 15 ? 18 : champLevel >= 3 ? 19 : 20;
   const isCrit = rollRaw >= threshold;
   whisperToCaller(
-    c.io, c.ctx,
-    `⚔ d20=${rollRaw}: ${isCrit ? `CRIT (Champion ${threshold}-20 threshold)` : `not a crit (need ≥${threshold})`}.`,
+    c.io,
+    c.ctx,
+    `⚔ d20=${rollRaw}: ${isCrit ? `CRIT (Champion ${threshold}-20 threshold)` : `not a crit (need ≥${threshold})`}.`
   );
   return true;
 }

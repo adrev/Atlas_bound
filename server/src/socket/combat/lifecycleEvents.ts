@@ -1,6 +1,7 @@
 import { v4 as uuidv4 } from 'uuid';
 import type { Server, Socket } from 'socket.io';
 import { getPlayerBySocketId } from '../../utils/roomState.js';
+import { armReadyCheckTimer, assertReadyCheckTokens } from '../../services/ReadyCheckRuntime.js';
 import { broadcastEvent } from '../../utils/eventBroadcast.js';
 import * as CombatService from '../../services/CombatService.js';
 import * as DiscordService from '../../services/DiscordService.js';
@@ -100,6 +101,7 @@ export function registerCombatLifecycle(io: Server, socket: Socket): void {
       if (!ctx || ctx.player.role !== 'dm') return;
 
       // Gather player userIds who need to respond
+      assertReadyCheckTokens(ctx.room, parsed.data.tokenIds);
       const playerIds: string[] = [];
       for (const [, p] of ctx.room.players) {
         if (p.role === 'player') playerIds.push(p.userId);
@@ -114,23 +116,14 @@ export function registerCombatLifecycle(io: Server, socket: Socket): void {
       const tokenIds = parsed.data.tokenIds;
 
       ctx.room.readyCheck = {
+        id: uuidv4(),
+        deadline,
+        playerIds,
         tokenIds,
         responses: new Map(),
-        timeout: setTimeout(async () => {
-          // Auto-start after 15 seconds
-          if (!ctx.room.readyCheck) return;
-          ctx.room.readyCheck = null;
-
-          io.to(ctx.room.sessionId).emit('combat:ready-check-complete', {});
-
-          // Start combat with the stored tokenIds
-          try {
-            await startCombat(io, ctx.room.sessionId, tokenIds);
-          } catch (err) {
-            console.error('[READY CHECK] auto-start combat error:', err);
-          }
-        }, 15000),
+        timeout: null,
       };
+      armReadyCheckTimer(ctx.room, io);
 
       io.to(ctx.room.sessionId).emit('combat:ready-check-started', {
         playerIds,
@@ -155,27 +148,18 @@ export function registerCombatLifecycle(io: Server, socket: Socket): void {
       io.to(ctx.room.sessionId).emit('combat:ready-update', { responses });
 
       // Check if all players responded
-      let allReady = true;
-      for (const [, p] of ctx.room.players) {
-        if (p.role === 'player' && !ctx.room.readyCheck.responses.get(p.userId)) {
-          allReady = false;
-          break;
-        }
-      }
+      const playerIds =
+        ctx.room.readyCheck.playerIds ??
+        [...ctx.room.players.values()].filter((p) => p.role === 'player').map((p) => p.userId);
+      const allReady = playerIds.every((id) => ctx.room.readyCheck!.responses.get(id) === true);
 
       if (allReady) {
-        clearTimeout(ctx.room.readyCheck.timeout!);
         const tokenIds = ctx.room.readyCheck.tokenIds;
-        ctx.room.readyCheck = null;
-
+        assertReadyCheckTokens(ctx.room, tokenIds);
+        // The shared start path clears the check and timer in this transaction.
+        // Let failures escape so the event scope rolls back responses/start too.
+        await startCombat(io, ctx.room.sessionId, tokenIds);
         io.to(ctx.room.sessionId).emit('combat:ready-check-complete', {});
-
-        // Start combat
-        try {
-          await startCombat(io, ctx.room.sessionId, tokenIds);
-        } catch (err) {
-          console.error('[READY CHECK] all-ready combat start error:', err);
-        }
       }
     })
   );

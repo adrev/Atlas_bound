@@ -6,6 +6,7 @@ import {
 } from '../ChatCommands.js';
 import * as ConditionService from '../ConditionService.js';
 import pool from '../../db/connection.js';
+import { sessionFeatures } from '../../utils/featureRuntime.js';
 import type { ActionEconomy, Token, ActionBreakdown } from '@dnd-vtt/shared';
 import {
   isTokenActionable,
@@ -40,7 +41,7 @@ function resolveCallerToken(ctx: PlayerContext): Token | null {
 function resolveTargetByName(ctx: PlayerContext, name: string): Token | null {
   const needle = name.toLowerCase();
   const matches = Array.from(ctx.room.tokens.values()).filter(
-    (t) => t.name.toLowerCase() === needle,
+    (t) => t.name.toLowerCase() === needle
   );
   if (matches.length === 0) return null;
   matches.sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
@@ -53,7 +54,7 @@ function getClassFeatures(row: Record<string, unknown> | undefined): string[] {
     const feats = typeof rawF === 'string' ? JSON.parse(rawF as string) : (rawF ?? []);
     if (!Array.isArray(feats)) return [];
     return feats
-      .map((f: { name?: string }) => typeof f?.name === 'string' ? f.name : '')
+      .map((f: { name?: string }) => (typeof f?.name === 'string' ? f.name : ''))
       .filter(Boolean);
   } catch {
     return [];
@@ -73,7 +74,7 @@ function actionSaveEffect(
   ability: SaveAbility,
   dc: number,
   successText: string,
-  failText: string,
+  failText: string
 ): string {
   return `${saveResult.saved ? 'SAVED' : 'FAILED'}: ${ability.toUpperCase()} ${formatSaveTotal(saveResult)} vs DC ${dc} — ${saveResult.saved ? successText : failText}${saveNotesLabel(saveResult)}`;
 }
@@ -99,7 +100,7 @@ async function handleFightingSpirit(c: ChatCommandContext): Promise<boolean> {
   }
   const { rows } = await pool.query(
     'SELECT class, level, name, features, temp_hit_points FROM characters WHERE id = $1',
-    [caller.characterId],
+    [caller.characterId]
   );
   const row = rows[0] as Record<string, unknown> | undefined;
   const classLower = String(row?.class || '').toLowerCase();
@@ -130,10 +131,9 @@ async function handleFightingSpirit(c: ChatCommandContext): Promise<boolean> {
   // Temp HP (keep max, RAW).
   const curThp = Number(row?.temp_hit_points) || 0;
   const newThp = Math.max(curThp, thp);
-  await pool.query(
-    'UPDATE characters SET temp_hit_points = $1 WHERE id = $2',
-    [newThp, caller.characterId],
-  ).catch((e) => console.warn('[!fightingspirit] thp write failed:', e));
+  await pool
+    .query('UPDATE characters SET temp_hit_points = $1 WHERE id = $2', [newThp, caller.characterId])
+    .catch((e) => console.warn('[!fightingspirit] thp write failed:', e));
   c.io.to(c.ctx.room.sessionId).emit('character:updated', {
     characterId: caller.characterId,
     changes: { tempHitPoints: newThp },
@@ -148,11 +148,13 @@ async function handleFightingSpirit(c: ChatCommandContext): Promise<boolean> {
       cost: 'Bonus action',
     },
     effect: `Advantage on all attack rolls until end of turn; ${thp} temp HP → ${newThp} total.`,
-    targets: [{
-      name: callerName,
-      tokenId: caller.id,
-      effect: `Temp HP ${curThp} → ${newThp}; advantage on attacks`,
-    }],
+    targets: [
+      {
+        name: callerName,
+        tokenId: caller.id,
+        effect: `Temp HP ${curThp} → ${newThp}; advantage on attacks`,
+      },
+    ],
     notes: [
       `Samurai Fighter L${lvl}`,
       `Temp HP formula: 5 @ L3, 10 @ L10, 15 @ L15`,
@@ -160,9 +162,10 @@ async function handleFightingSpirit(c: ChatCommandContext): Promise<boolean> {
     ],
   };
   broadcastSystem(
-    c.io, c.ctx,
+    c.io,
+    c.ctx,
     `⚔ **Fighting Spirit** — ${callerName} gains **advantage on attacks until end of turn** + **${thp} temp HP** (now ${newThp}).`,
-    { actionResult: fsBreakdown },
+    { actionResult: fsBreakdown }
   );
   return true;
 }
@@ -182,9 +185,6 @@ async function handleFightingSpirit(c: ChatCommandContext): Promise<boolean> {
  *   !echo attack              — attack from echo's position
  *   !echo dismiss             — despawn the echo
  */
-const echoPositions = new Map<string, { x: number; y: number }>();
-const unleashUsed = new Map<string, number>(); // characterId -> roundNumber last used
-
 async function handleEchoKnight(c: ChatCommandContext): Promise<boolean> {
   const parts = c.rest.split(/\s+/).filter(Boolean);
   const sub = parts[0]?.toLowerCase() || 'summon';
@@ -195,7 +195,7 @@ async function handleEchoKnight(c: ChatCommandContext): Promise<boolean> {
   }
   const { rows } = await pool.query(
     'SELECT class, level, name, features, ability_scores FROM characters WHERE id = $1',
-    [caller.characterId],
+    [caller.characterId]
   );
   const row = rows[0] as Record<string, unknown> | undefined;
   const classLower = String(row?.class || '').toLowerCase();
@@ -213,7 +213,11 @@ async function handleEchoKnight(c: ChatCommandContext): Promise<boolean> {
     const x = parseInt(parts[1], 10);
     const y = parseInt(parts[2], 10);
     if (!Number.isFinite(x) || !Number.isFinite(y)) {
-      whisperToCaller(c.io, c.ctx, '!echo summon: usage `!echo summon <gridX> <gridY>` (within 15 ft / 3 squares of you)');
+      whisperToCaller(
+        c.io,
+        c.ctx,
+        '!echo summon: usage `!echo summon <gridX> <gridY>` (within 15 ft / 3 squares of you)'
+      );
       return true;
     }
     const economy = c.ctx.room.actionEconomies.get(caller.id);
@@ -229,33 +233,41 @@ async function handleEchoKnight(c: ChatCommandContext): Promise<boolean> {
         economy,
       });
     }
-    echoPositions.set(caller.characterId, { x, y });
+    const echoPositions = (sessionFeatures(c.ctx.room.sessionId).echoPositions ??= {});
+    echoPositions[caller.characterId] = { x, y };
     broadcastSystem(
-      c.io, c.ctx,
-      `🪞 **Manifest Echo** — ${callerName}'s echo appears at (${x}, ${y}). AC 14, 1 HP. Movement shared with ${callerName}.`,
+      c.io,
+      c.ctx,
+      `🪞 **Manifest Echo** — ${callerName}'s echo appears at (${x}, ${y}). AC 14, 1 HP. Movement shared with ${callerName}.`
     );
     return true;
   }
 
   if (sub === 'swap' || sub === 'teleport') {
-    const echo = echoPositions.get(caller.characterId);
+    const echoPositions = (sessionFeatures(c.ctx.room.sessionId).echoPositions ??= {});
+    const echo = echoPositions[caller.characterId];
     if (!echo) {
-      whisperToCaller(c.io, c.ctx, '!echo swap: no echo manifested. Use `!echo summon <x> <y>` first.');
+      whisperToCaller(
+        c.io,
+        c.ctx,
+        '!echo swap: no echo manifested. Use `!echo summon <x> <y>` first.'
+      );
       return true;
     }
     // Swap: echo -> caller's current position, caller -> echo's position.
     const oldCallerPos = { x: caller.x, y: caller.y };
-    echoPositions.set(caller.characterId, oldCallerPos);
+    echoPositions[caller.characterId] = oldCallerPos;
     // Don't actually move the token (DM controls movement) — just announce.
     broadcastSystem(
-      c.io, c.ctx,
-      `🪞 **Echo Swap** — ${callerName} teleports to echo at (${echo.x}, ${echo.y}); echo takes ${callerName}'s old position. (15 ft, no action cost)`,
+      c.io,
+      c.ctx,
+      `🪞 **Echo Swap** — ${callerName} teleports to echo at (${echo.x}, ${echo.y}); echo takes ${callerName}'s old position. (15 ft, no action cost)`
     );
     return true;
   }
 
   if (sub === 'attack' || sub === 'unleash') {
-    const echo = echoPositions.get(caller.characterId);
+    const echo = sessionFeatures(c.ctx.room.sessionId).echoPositions?.[caller.characterId];
     if (!echo) {
       whisperToCaller(c.io, c.ctx, '!echo attack: no echo manifested.');
       return true;
@@ -263,32 +275,42 @@ async function handleEchoKnight(c: ChatCommandContext): Promise<boolean> {
     const lvl = Number(row?.level) || 3;
     if (lvl >= 7) {
       // Unleash Incarnation: extra attack as part of Attack action.
-      const currentRound = c.ctx.room.combatState?.roundNumber ?? 0;
-      const lastUsed = unleashUsed.get(caller.characterId) ?? -1;
+      const combat = c.ctx.room.combatState;
+      const currentRound = `${combat?.startedAt ?? 'free-roam'}_${combat?.roundNumber ?? 0}`;
+      const unleashUsed = (sessionFeatures(c.ctx.room.sessionId).unleashUsed ??= {});
+      const lastUsed = unleashUsed[caller.characterId];
       if (lastUsed === currentRound) {
-        whisperToCaller(c.io, c.ctx, '!echo unleash: already used this round (Unleash Incarnation = 1/round).');
+        whisperToCaller(
+          c.io,
+          c.ctx,
+          '!echo unleash: already used this round (Unleash Incarnation = 1/round).'
+        );
         return true;
       }
-      unleashUsed.set(caller.characterId, currentRound);
-      const scores = typeof row?.ability_scores === 'string'
-        ? JSON.parse(row.ability_scores as string)
-        : (row?.ability_scores ?? {});
+      unleashUsed[caller.characterId] = currentRound;
+      const scores =
+        typeof row?.ability_scores === 'string'
+          ? JSON.parse(row.ability_scores as string)
+          : (row?.ability_scores ?? {});
       const conMod = Math.max(1, abilityMod(scores as Record<string, number>, 'con'));
       broadcastSystem(
-        c.io, c.ctx,
-        `🪞 **Unleash Incarnation** — ${callerName} adds an extra attack from the echo's position at (${echo.x}, ${echo.y}). Uses/long rest: ${conMod}.`,
+        c.io,
+        c.ctx,
+        `🪞 **Unleash Incarnation** — ${callerName} adds an extra attack from the echo's position at (${echo.x}, ${echo.y}). Uses/long rest: ${conMod}.`
       );
     } else {
       broadcastSystem(
-        c.io, c.ctx,
-        `🪞 ${callerName} attacks from the echo's position at (${echo.x}, ${echo.y}) (range + reach measured from echo).`,
+        c.io,
+        c.ctx,
+        `🪞 ${callerName} attacks from the echo's position at (${echo.x}, ${echo.y}) (range + reach measured from echo).`
       );
     }
     return true;
   }
 
   if (sub === 'dismiss' || sub === 'clear') {
-    echoPositions.delete(caller.characterId);
+    const echoPositions = sessionFeatures(c.ctx.room.sessionId).echoPositions;
+    if (echoPositions) delete echoPositions[caller.characterId];
     broadcastSystem(c.io, c.ctx, `🪞 ${callerName}'s echo dissipates.`);
     return true;
   }
@@ -328,10 +350,9 @@ async function handleCavalierMark(c: ChatCommandContext): Promise<boolean> {
     whisperToCaller(c.io, c.ctx, '!cavmark: no owned PC token.');
     return true;
   }
-  const { rows } = await pool.query(
-    'SELECT class, name, features FROM characters WHERE id = $1',
-    [caller.characterId],
-  );
+  const { rows } = await pool.query('SELECT class, name, features FROM characters WHERE id = $1', [
+    caller.characterId,
+  ]);
   const row = rows[0] as Record<string, unknown> | undefined;
   const classLower = String(row?.class || '').toLowerCase();
   if (!classLower.includes('fighter')) {
@@ -356,8 +377,9 @@ async function handleCavalierMark(c: ChatCommandContext): Promise<boolean> {
   });
   const callerName = (row?.name as string) || caller.name;
   broadcastSystem(
-    c.io, c.ctx,
-    `🛡 **Unwavering Mark** — ${callerName} marks ${target.name}. Disadvantage on attacks vs anyone other than ${callerName}; if it attacks someone else, ${callerName} can use a reaction for a special melee attack.`,
+    c.io,
+    c.ctx,
+    `🛡 **Unwavering Mark** — ${callerName} marks ${target.name}. Disadvantage on attacks vs anyone other than ${callerName}; if it attacks someone else, ${callerName} can use a reaction for a special melee attack.`
   );
   return true;
 }
@@ -365,7 +387,11 @@ async function handleCavalierMark(c: ChatCommandContext): Promise<boolean> {
 async function handleWardingManeuver(c: ChatCommandContext): Promise<boolean> {
   const parts = c.rest.split(/\s+/).filter(Boolean);
   if (parts.length < 1) {
-    whisperToCaller(c.io, c.ctx, '!warding: usage `!warding <ally>` (reaction when ally within 5 ft is targeted)');
+    whisperToCaller(
+      c.io,
+      c.ctx,
+      '!warding: usage `!warding <ally>` (reaction when ally within 5 ft is targeted)'
+    );
     return true;
   }
   const allyName = parts.join(' ');
@@ -381,7 +407,7 @@ async function handleWardingManeuver(c: ChatCommandContext): Promise<boolean> {
   }
   const { rows } = await pool.query(
     'SELECT class, level, name, features, ability_scores FROM characters WHERE id = $1',
-    [caller.characterId],
+    [caller.characterId]
   );
   const row = rows[0] as Record<string, unknown> | undefined;
   const classLower = String(row?.class || '').toLowerCase();
@@ -414,7 +440,15 @@ async function handleWardingManeuver(c: ChatCommandContext): Promise<boolean> {
   }
   const roll = Math.floor(Math.random() * 8) + 1;
   const callerName = (row?.name as string) || caller.name;
-  const conMod = Math.max(1, abilityMod(typeof row?.ability_scores === 'string' ? JSON.parse(row.ability_scores as string) : (row?.ability_scores as Record<string, number> ?? {}), 'con'));
+  const conMod = Math.max(
+    1,
+    abilityMod(
+      typeof row?.ability_scores === 'string'
+        ? JSON.parse(row.ability_scores as string)
+        : ((row?.ability_scores as Record<string, number>) ?? {}),
+      'con'
+    )
+  );
   const wmBreakdown: ActionBreakdown = {
     actor: { name: callerName, tokenId: caller.id },
     action: {
@@ -424,11 +458,13 @@ async function handleWardingManeuver(c: ChatCommandContext): Promise<boolean> {
       cost: 'Reaction',
     },
     effect: `${ally.name} gets **+1d8 = ${roll}** to AC and DEX save vs the triggering attack.`,
-    targets: [{
-      name: ally.name,
-      tokenId: ally.id,
-      effect: `+${roll} AC + DEX save vs triggering attack`,
-    }],
+    targets: [
+      {
+        name: ally.name,
+        tokenId: ally.id,
+        effect: `+${roll} AC + DEX save vs triggering attack`,
+      },
+    ],
     notes: [
       `Cavalier Fighter L${lvl}`,
       `AC bonus roll: 1d8 = ${roll}`,
@@ -436,9 +472,10 @@ async function handleWardingManeuver(c: ChatCommandContext): Promise<boolean> {
     ],
   };
   broadcastSystem(
-    c.io, c.ctx,
+    c.io,
+    c.ctx,
     `🛡 **Warding Maneuver** — ${callerName} protects ${ally.name}: **+1d8 = ${roll}** to AC + DEX save vs the triggering attack (reaction). Usable ${conMod}/long rest.`,
-    { actionResult: wmBreakdown },
+    { actionResult: wmBreakdown }
   );
   return true;
 }
@@ -467,10 +504,9 @@ async function handleWildBarb(c: ChatCommandContext): Promise<boolean> {
     whisperToCaller(c.io, c.ctx, '!wildbarb: no owned PC token.');
     return true;
   }
-  const { rows } = await pool.query(
-    'SELECT class, name, features FROM characters WHERE id = $1',
-    [caller.characterId],
-  );
+  const { rows } = await pool.query('SELECT class, name, features FROM characters WHERE id = $1', [
+    caller.characterId,
+  ]);
   const row = rows[0] as Record<string, unknown> | undefined;
   const classLower = String(row?.class || '').toLowerCase();
   if (!classLower.includes('barbarian')) {
@@ -497,16 +533,13 @@ async function handleWildBarb(c: ChatCommandContext): Promise<boolean> {
       cost: 'Triggered on Rage start',
     },
     effect,
-    notes: [
-      `Wild Magic Barbarian L3`,
-      `Table roll: d8 = ${d8}`,
-      `Duration: until rage ends`,
-    ],
+    notes: [`Wild Magic Barbarian L3`, `Table roll: d8 = ${d8}`, `Duration: until rage ends`],
   };
   broadcastSystem(
-    c.io, c.ctx,
+    c.io,
+    c.ctx,
     `🌀 **Wild Magic Surge** — ${callerName} rolls d8 = **${d8}**: ${effect}`,
-    { actionResult: wbBreakdown },
+    { actionResult: wbBreakdown }
   );
   return true;
 }
@@ -522,8 +555,6 @@ async function handleWildBarb(c: ChatCommandContext): Promise<boolean> {
  *
  *   !divinefury [necro]   — roll 1d6 + half-level, announce
  */
-const divineFuryUsed = new Set<string>();
-
 async function handleDivineFury(c: ChatCommandContext): Promise<boolean> {
   const useNecrotic = c.rest.trim().toLowerCase().startsWith('necro');
   const caller = resolveCallerToken(c.ctx);
@@ -533,7 +564,7 @@ async function handleDivineFury(c: ChatCommandContext): Promise<boolean> {
   }
   const { rows } = await pool.query(
     'SELECT class, level, name, features, version FROM characters WHERE id = $1',
-    [caller.characterId],
+    [caller.characterId]
   );
   const row = rows[0] as Record<string, unknown> | undefined;
   const classLower = String(row?.class || '').toLowerCase();
@@ -550,12 +581,13 @@ async function handleDivineFury(c: ChatCommandContext): Promise<boolean> {
     return true;
   }
   const combat = c.ctx.room.combatState;
-  const turnKey = `${combat?.roundNumber ?? 0}_${combat?.currentTurnIndex ?? 0}_${caller.characterId}`;
-  if (divineFuryUsed.has(turnKey)) {
+  const turnKey = `${combat?.startedAt ?? 'free-roam'}_${combat?.roundNumber ?? 0}_${combat?.currentTurnIndex ?? 0}`;
+  const divineFuryUsed = (sessionFeatures(c.ctx.room.sessionId).divineFuryUsed ??= {});
+  if (divineFuryUsed[caller.characterId] === turnKey) {
     whisperToCaller(c.io, c.ctx, '!divinefury: already used this turn.');
     return true;
   }
-  divineFuryUsed.add(turnKey);
+  divineFuryUsed[caller.characterId] = turnKey;
   const lvl = Number(row?.level) || 3;
   const half = Math.floor(lvl / 2);
   const roll = Math.floor(Math.random() * 6) + 1;
@@ -580,9 +612,10 @@ async function handleDivineFury(c: ChatCommandContext): Promise<boolean> {
     ],
   };
   broadcastSystem(
-    c.io, c.ctx,
+    c.io,
+    c.ctx,
     `⚡ **Divine Fury** — ${callerName} channels divine wrath: **+1d6+${half} = ${total} ${type}** damage (once/turn, first melee hit).`,
-    { actionResult: dfBreakdown },
+    { actionResult: dfBreakdown }
   );
   return true;
 }
@@ -599,10 +632,7 @@ async function handleDivineFury(c: ChatCommandContext): Promise<boolean> {
 async function handleOpenHand(c: ChatCommandContext): Promise<boolean> {
   const parts = c.rest.split(/\s+/).filter(Boolean);
   if (parts.length < 3) {
-    whisperToCaller(
-      c.io, c.ctx,
-      '!openhand: usage `!openhand <target> <dc> <prone|push|noreact>`',
-    );
+    whisperToCaller(c.io, c.ctx, '!openhand: usage `!openhand <target> <dc> <prone|push|noreact>`');
     return true;
   }
   const effect = parts[parts.length - 1].toLowerCase();
@@ -626,10 +656,9 @@ async function handleOpenHand(c: ChatCommandContext): Promise<boolean> {
     whisperToCaller(c.io, c.ctx, '!openhand: no owned PC token.');
     return true;
   }
-  const { rows } = await pool.query(
-    'SELECT class, name, features FROM characters WHERE id = $1',
-    [caller.characterId],
-  );
+  const { rows } = await pool.query('SELECT class, name, features FROM characters WHERE id = $1', [
+    caller.characterId,
+  ]);
   const row = rows[0] as Record<string, unknown> | undefined;
   const classLower = String(row?.class || '').toLowerCase();
   if (!classLower.includes('monk')) {
@@ -663,18 +692,21 @@ async function handleOpenHand(c: ChatCommandContext): Promise<boolean> {
         cost: 'Rider on Flurry of Blows hit',
       },
       effect: `${target.name} cannot take reactions until end of ${caller.name}'s next turn (no save).`,
-      targets: [{
-        name: target.name,
-        tokenId: target.id,
-        effect: 'No reactions until end of next turn',
-        conditionsApplied: ['no-reactions'],
-      }],
+      targets: [
+        {
+          name: target.name,
+          tokenId: target.id,
+          effect: 'No reactions until end of next turn',
+          conditionsApplied: ['no-reactions'],
+        },
+      ],
       notes: [`Open Hand Monk L3`, `Automatic — no save required`],
     };
     broadcastSystem(
-      c.io, c.ctx,
+      c.io,
+      c.ctx,
       `👊 **Open Hand Technique** — ${caller.name} strips ${target.name} of reactions until end of next turn (no save).`,
-      { actionResult: noReactBreakdown },
+      { actionResult: noReactBreakdown }
     );
     return true;
   }
@@ -705,12 +737,20 @@ async function handleOpenHand(c: ChatCommandContext): Promise<boolean> {
       cost: 'Rider on Flurry of Blows hit',
     },
     effect: `${tName} ${saveAbility.toUpperCase()} save ${formatSaveTotal(saveResult)} vs DC ${dc} → ${saveResult.saved ? 'SAVED' : effect === 'push' ? 'pushed 15 ft' : 'knocked PRONE'}.${saveNotesLabel(saveResult)}`,
-    targets: [{
-      name: tName,
-      tokenId: target.id,
-      effect: actionSaveEffect(saveResult, saveAbility, dc, 'no effect', effect === 'push' ? 'pushed 15 ft' : 'prone'),
-      ...(!saveResult.saved && condName ? { conditionsApplied: [condName] } : {}),
-    }],
+    targets: [
+      {
+        name: tName,
+        tokenId: target.id,
+        effect: actionSaveEffect(
+          saveResult,
+          saveAbility,
+          dc,
+          'no effect',
+          effect === 'push' ? 'pushed 15 ft' : 'prone'
+        ),
+        ...(!saveResult.saved && condName ? { conditionsApplied: [condName] } : {}),
+      },
+    ],
     notes: [
       `Open Hand Monk L3`,
       `Save: ${saveAbility.toUpperCase()} DC ${dc}`,
@@ -719,9 +759,10 @@ async function handleOpenHand(c: ChatCommandContext): Promise<boolean> {
     ],
   };
   broadcastSystem(
-    c.io, c.ctx,
+    c.io,
+    c.ctx,
     `👊 **Open Hand Technique** (${label}) — ${tName}: ${formatSaveTotal(saveResult)} vs ${dc} → ${saveResult.saved ? 'SAVED' : effect === 'push' ? 'pushed 15 ft' : 'KNOCKED PRONE'}${saveNotesLabel(saveResult)}`,
-    { actionResult: ohtBreakdown },
+    { actionResult: ohtBreakdown }
   );
   return true;
 }
@@ -753,7 +794,7 @@ async function handleGrave(c: ChatCommandContext): Promise<boolean> {
   }
   const { rows } = await pool.query(
     'SELECT class, name, features, ability_scores, saving_throws, proficiency_bonus, hit_points FROM characters WHERE id = $1',
-    [caller.characterId],
+    [caller.characterId]
   );
   const row = rows[0] as Record<string, unknown> | undefined;
   const classLower = String(row?.class || '').toLowerCase();
@@ -772,10 +813,9 @@ async function handleGrave(c: ChatCommandContext): Promise<boolean> {
     // Force HP to 1 if currently 0.
     const curHp = Number(row?.hit_points) || 0;
     if (curHp <= 0) {
-      await pool.query(
-        'UPDATE characters SET hit_points = 1 WHERE id = $1',
-        [caller.characterId],
-      ).catch((e) => console.warn('[!grave] hp write failed:', e));
+      await pool
+        .query('UPDATE characters SET hit_points = 1 WHERE id = $1', [caller.characterId])
+        .catch((e) => console.warn('[!grave] hp write failed:', e));
       c.io.to(c.ctx.room.sessionId).emit('character:updated', {
         characterId: caller.characterId,
         changes: { hitPoints: 1 },
@@ -798,12 +838,14 @@ async function handleGrave(c: ChatCommandContext): Promise<boolean> {
       cost: 'Triggered on reduction to 0 HP',
     },
     effect: `CHA save ${formatSaveTotal(saveResult)} vs DC ${dc} (5 + ${dmg} damage) → ${saveResult.saved ? 'SURVIVES at 1 HP' : 'FAILS, drops normally'}.${saveNotesLabel(saveResult)}`,
-    targets: [{
-      name: callerName,
-      tokenId: caller.id,
-      effect: saveResult.saved ? 'Clings to unlife at 1 HP' : 'Drops normally',
-      ...(saveResult.saved ? { healing: { amount: 1, hpAfter: 1 } } : {}),
-    }],
+    targets: [
+      {
+        name: callerName,
+        tokenId: caller.id,
+        effect: saveResult.saved ? 'Clings to unlife at 1 HP' : 'Drops normally',
+        ...(saveResult.saved ? { healing: { amount: 1, hpAfter: 1 } } : {}),
+      },
+    ],
     notes: [
       `Shadow Sorcerer L1`,
       `DC formula: 5 + damage taken = 5 + ${dmg} = ${dc}`,
@@ -813,9 +855,10 @@ async function handleGrave(c: ChatCommandContext): Promise<boolean> {
     ],
   };
   broadcastSystem(
-    c.io, c.ctx,
+    c.io,
+    c.ctx,
     `💀 **Strength of the Grave** — ${callerName} clings to unlife! CHA save ${formatSaveTotal(saveResult)} vs DC ${dc} → ${saveResult.saved ? '**SURVIVES at 1 HP**' : 'FAILS, drops normally'}.${saveNotesLabel(saveResult)}`,
-    { actionResult: graveBreakdown },
+    { actionResult: graveBreakdown }
   );
   return true;
 }
@@ -841,7 +884,7 @@ async function handleHound(c: ChatCommandContext): Promise<boolean> {
   }
   const { rows } = await pool.query(
     'SELECT class, level, name, features, version, user_id FROM characters WHERE id = $1',
-    [caller.characterId],
+    [caller.characterId]
   );
   const row = rows[0] as Record<string, unknown> | undefined;
   const classLower = String(row?.class || '').toLowerCase();
@@ -886,7 +929,11 @@ async function handleHound(c: ChatCommandContext): Promise<boolean> {
     }
     economy = c.ctx.room.actionEconomies.get(caller.id) ?? null;
     if (!economy) {
-      whisperToCaller(c.io, c.ctx, '!hound: combat action state is unavailable. No points were spent.');
+      whisperToCaller(
+        c.io,
+        c.ctx,
+        '!hound: combat action state is unavailable. No points were spent.'
+      );
       return true;
     }
     if (economy.bonusAction) {
@@ -913,8 +960,9 @@ async function handleHound(c: ChatCommandContext): Promise<boolean> {
   }
   const callerName = (row?.name as string) || caller.name;
   broadcastSystem(
-    c.io, c.ctx,
-    `🐺 **Hound of Ill Omen** — ${callerName} summons a spectral dire wolf to hunt ${target.name}. 5 min, 40 ft speed, ignores difficult terrain. ${target.name} has **disadvantage on saves** vs ${callerName}'s spells while hound is within 5 ft.`,
+    c.io,
+    c.ctx,
+    `🐺 **Hound of Ill Omen** — ${callerName} summons a spectral dire wolf to hunt ${target.name}. 5 min, 40 ft speed, ignores difficult terrain. ${target.name} has **disadvantage on saves** vs ${callerName}'s spells while hound is within 5 ft.`
   );
   return true;
 }
@@ -945,7 +993,7 @@ async function handleMantle(c: ChatCommandContext): Promise<boolean> {
   }
   const { rows } = await pool.query(
     'SELECT class, level, name, features, ability_scores FROM characters WHERE id = $1',
-    [caller.characterId],
+    [caller.characterId]
   );
   const row = rows[0] as Record<string, unknown> | undefined;
   const classLower = String(row?.class || '').toLowerCase();
@@ -958,9 +1006,10 @@ async function handleMantle(c: ChatCommandContext): Promise<boolean> {
     return true;
   }
   const lvl = Number(row?.level) || 3;
-  const scores = typeof row?.ability_scores === 'string'
-    ? JSON.parse(row.ability_scores as string)
-    : (row?.ability_scores ?? {});
+  const scores =
+    typeof row?.ability_scores === 'string'
+      ? JSON.parse(row.ability_scores as string)
+      : (row?.ability_scores ?? {});
   const chaMod = Math.max(1, abilityMod(scores as Record<string, number>, 'cha'));
   if (parts.length > chaMod) {
     whisperToCaller(c.io, c.ctx, `!mantle: can target up to CHA mod (${chaMod}).`);
@@ -985,7 +1034,9 @@ async function handleMantle(c: ChatCommandContext): Promise<boolean> {
   const callerName = (row?.name as string) || caller.name;
   const lines: string[] = [];
   const mantleTargets: NonNullable<ActionBreakdown['targets']> = [];
-  lines.push(`🎭 **Mantle of Inspiration** — ${callerName} grants ${thpValue} temp HP + free reaction-move to:`);
+  lines.push(
+    `🎭 **Mantle of Inspiration** — ${callerName} grants ${thpValue} temp HP + free reaction-move to:`
+  );
   for (const targetName of parts) {
     const target = resolveTargetByName(c.ctx, targetName);
     if (!target) {
@@ -996,14 +1047,16 @@ async function handleMantle(c: ChatCommandContext): Promise<boolean> {
     if (target.characterId) {
       const { rows: trows } = await pool.query(
         'SELECT temp_hit_points FROM characters WHERE id = $1',
-        [target.characterId],
+        [target.characterId]
       );
       const curThp = Number((trows[0] as Record<string, unknown>)?.temp_hit_points) || 0;
       const newThp = Math.max(curThp, thpValue);
-      await pool.query(
-        'UPDATE characters SET temp_hit_points = $1 WHERE id = $2',
-        [newThp, target.characterId],
-      ).catch((e) => console.warn('[!mantle] thp write failed:', e));
+      await pool
+        .query('UPDATE characters SET temp_hit_points = $1 WHERE id = $2', [
+          newThp,
+          target.characterId,
+        ])
+        .catch((e) => console.warn('[!mantle] thp write failed:', e));
       c.io.to(c.ctx.room.sessionId).emit('character:updated', {
         characterId: target.characterId,
         changes: { tempHitPoints: newThp },
@@ -1064,7 +1117,7 @@ async function handleEnthrall(c: ChatCommandContext): Promise<boolean> {
   }
   const { rows } = await pool.query(
     'SELECT class, name, features, ability_scores FROM characters WHERE id = $1',
-    [caller.characterId],
+    [caller.characterId]
   );
   const row = rows[0] as Record<string, unknown> | undefined;
   const classLower = String(row?.class || '').toLowerCase();
@@ -1076,9 +1129,10 @@ async function handleEnthrall(c: ChatCommandContext): Promise<boolean> {
     whisperToCaller(c.io, c.ctx, `!enthrall: ${caller.name} isn't a Glamour Bard.`);
     return true;
   }
-  const scores = typeof row?.ability_scores === 'string'
-    ? JSON.parse(row.ability_scores as string)
-    : (row?.ability_scores ?? {});
+  const scores =
+    typeof row?.ability_scores === 'string'
+      ? JSON.parse(row.ability_scores as string)
+      : (row?.ability_scores ?? {});
   const chaMod = Math.max(1, abilityMod(scores as Record<string, number>, 'cha'));
   if (targets.length > chaMod) {
     whisperToCaller(c.io, c.ctx, `!enthrall: can affect up to CHA mod (${chaMod}).`);
@@ -1099,7 +1153,9 @@ async function handleEnthrall(c: ChatCommandContext): Promise<boolean> {
     }
     const saveResult = await rollTargetSave(c, target, 'wis', dc, 'charmed');
     const tName = saveResult.displayName;
-    lines.push(`  • ${tName}: ${formatSaveTotal(saveResult)} → ${saveResult.saved ? 'SAVED' : 'CHARMED for 1 hour'}${saveNotesLabel(saveResult)}`);
+    lines.push(
+      `  • ${tName}: ${formatSaveTotal(saveResult)} → ${saveResult.saved ? 'SAVED' : 'CHARMED for 1 hour'}${saveNotesLabel(saveResult)}`
+    );
     enthrallTargets.push({
       name: tName,
       tokenId: target.id,

@@ -1,10 +1,16 @@
 import { create } from 'zustand';
 import type {
-  Player, SessionSettings, GameMode, SessionVisibility, SessionBan,
+  Player,
+  SessionSettings,
+  GameMode,
+  SessionVisibility,
+  SessionBan,
 } from '@dnd-vtt/shared';
 
 interface SessionState {
   sessionId: string | null;
+  /** Durable server generation; null until a full join establishes authority. */
+  generation: string | null;
   roomCode: string | null;
   userId: string | null;
   displayName: string | null;
@@ -50,6 +56,7 @@ interface SessionState {
 interface SessionActions {
   setSession: (data: {
     sessionId: string;
+    generation: string;
     roomCode: string;
     userId: string;
     isDM: boolean;
@@ -88,6 +95,7 @@ interface SessionActions {
 
 const initialState: SessionState = {
   sessionId: null,
+  generation: null,
   roomCode: null,
   userId: null,
   displayName: null,
@@ -121,6 +129,7 @@ export const useSessionStore = create<SessionState & SessionActions>((set) => ({
   setSession: (data) =>
     set({
       sessionId: data.sessionId,
+      generation: data.generation,
       roomCode: data.roomCode,
       userId: data.userId,
       isDM: data.isDM,
@@ -141,9 +150,7 @@ export const useSessionStore = create<SessionState & SessionActions>((set) => ({
   addPlayer: (player) =>
     set((state) => ({
       players: state.players.some((p) => p.userId === player.userId)
-        ? state.players.map((p) =>
-            p.userId === player.userId ? player : p
-          )
+        ? state.players.map((p) => (p.userId === player.userId ? player : p))
         : [...state.players, player],
     })),
 
@@ -154,9 +161,7 @@ export const useSessionStore = create<SessionState & SessionActions>((set) => ({
 
   setPlayerConnected: (userId, connected) =>
     set((state) => ({
-      players: state.players.map((p) =>
-        p.userId === userId ? { ...p, connected } : p,
-      ),
+      players: state.players.map((p) => (p.userId === userId ? { ...p, connected } : p)),
     })),
 
   updateSettings: (settings) => set({ settings }),
@@ -182,12 +187,8 @@ export const useSessionStore = create<SessionState & SessionActions>((set) => ({
 
   setPlayerRole: (userId, role) =>
     set((state) => {
-      const players = state.players.map((p) =>
-        p.userId === userId ? { ...p, role } : p,
-      );
-      const nextIsDM = userId === state.userId
-        ? role === 'dm'
-        : state.isDM;
+      const players = state.players.map((p) => (p.userId === userId ? { ...p, role } : p));
+      const nextIsDM = userId === state.userId ? role === 'dm' : state.isDM;
       return { players, isDM: nextIsDM };
     }),
 
@@ -198,7 +199,7 @@ export const useSessionStore = create<SessionState & SessionActions>((set) => ({
       // The new owner is guaranteed DM; ensure local copy reflects it.
       isDM: state.userId === newOwnerId ? true : state.isDM,
       players: state.players.map((p) =>
-        p.userId === newOwnerId && p.role !== 'dm' ? { ...p, role: 'dm' as const } : p,
+        p.userId === newOwnerId && p.role !== 'dm' ? { ...p, role: 'dm' as const } : p
       ),
     })),
 

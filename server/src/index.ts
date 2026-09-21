@@ -47,32 +47,35 @@ import { requireAuth } from './auth/middleware.js';
 import { lucia } from './auth/lucia.js';
 import pool from './db/connection.js';
 import { canReadUploadedMapAsset } from './utils/uploadAuth.js';
+import { createAdapter } from '@socket.io/postgres-adapter';
+import { rawPool, transportPool } from './db/connection.js';
+import { initRuntimeSchema } from './db/runtimeSchema.js';
+import { migrateChronicleJobs } from './db/chronicleJobs.js';
+import {
+  configureSessionRuntime,
+  runSocketOperation,
+  drainSessionRuntime,
+} from './services/SessionRuntime.js';
+import { configureSocketExecutor } from './utils/socketHelpers.js';
+import { installCommittedBroadcasts } from './socket/committedDelivery.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 // Initialize database (async for Postgres)
 await initDatabase();
+await initRuntimeSchema();
+await migrateChronicleJobs();
 console.log('Database initialized');
 
-// Seed compendium in the background (don't block startup). Flip a
-// module-level flag when done so /api/health can distinguish
-// "process is alive" from "ready to serve reads that hit the compendium".
-let compendiumReady = false;
-isCompendiumSeeded().then((seeded) => {
-  if (!seeded) {
-    console.log('Seeding D&D 5E compendium from open5e API...');
-    seedCompendium()
-      .then(() => {
-        compendiumReady = true;
-        console.log('Compendium seeded!');
-      })
-      .catch((err) => console.error('Seed failed:', err));
-  } else {
-    compendiumReady = true;
-    console.log('Compendium already seeded');
-  }
-});
+// Finish required initialization before accepting requests: request-based
+// instances cannot rely on CPU time after a successful response.
+if (!(await isCompendiumSeeded())) {
+  console.log('Seeding D&D 5E compendium before accepting requests...');
+  await seedCompendium();
+}
+const compendiumReady = await isCompendiumSeeded();
+if (!compendiumReady) throw new Error('Compendium initialization incomplete');
 
 // Seed PHB equipment (mundane weapons, armor, gear)
 const equipmentSeeded = await isEquipmentSeeded();
@@ -469,6 +472,10 @@ const io = new Server<ClientToServerEvents, ServerToClientEvents>(httpServer, {
 });
 
 // Expose io to non-socket modules (HTTP routes) that need to broadcast.
+io.adapter(createAdapter(transportPool));
+installCommittedBroadcasts(io);
+configureSessionRuntime(io);
+configureSocketExecutor(runSocketOperation);
 setIO(io);
 
 // Register socket event handlers
@@ -496,6 +503,32 @@ httpServer.listen(PORT, () => {
   console.log(`D&D VTT Server running on http://localhost:${PORT}`);
   console.log(`CORS origins: ${CORS_ORIGINS.join(', ')}`);
   console.log(`Environment: ${IS_PRODUCTION ? 'production' : 'development'}`);
+});
+
+let stopping = false;
+async function shutdown(): Promise<void> {
+  if (stopping) return;
+  stopping = true;
+  const deadline = setTimeout(() => process.exit(1), 9000);
+  deadline.unref();
+  httpServer.close();
+  try {
+    await drainSessionRuntime();
+    await new Promise<void>((resolve) => io.close(() => resolve()));
+    await rawPool.end();
+    await transportPool.end();
+    clearTimeout(deadline);
+    process.exit(0);
+  } catch (error) {
+    console.error('[shutdown]', error);
+    process.exit(1);
+  }
+}
+process.once('SIGTERM', () => {
+  void shutdown();
+});
+process.once('SIGINT', () => {
+  void shutdown();
 });
 
 export { app, io, httpServer };

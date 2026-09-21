@@ -1,13 +1,22 @@
 import type { Server } from 'socket.io';
 import type { RoomState } from '../utils/roomState.js';
-import { getAllRooms } from '../utils/roomState.js';
+import { getAllRooms, getRoom } from '../utils/roomState.js';
+import pool from '../db/connection.js';
+import { deferUntilCommit } from '../db/transactionContext.js';
+import { sessionRuntimeConfigured, withSessionRuntime } from './SessionRuntime.js';
+import { dbRowToCharacter } from '../utils/characterMapper.js';
 import {
   fullCharacterRecipientSocketIds,
   npcCharacterRecipientSocketIds,
 } from '../utils/characterVisibility.js';
 import { emitCombatStateSync } from '../utils/combatStateVisibility.js';
 import { readWildShapeColumn } from '../utils/wildShapeState.js';
-import { persistSessionCombatState } from './CombatService.js';
+import {
+  applyEffectiveFormStats,
+  computeEffectiveAcSpeed,
+  computeEffectiveHitPoints,
+  persistSessionCombatState,
+} from './CombatService.js';
 
 const LIVE_COMBAT_FIELDS = new Set([
   'hitPoints',
@@ -73,6 +82,18 @@ export function syncCharacterUpdateToCombat(
   changes: Record<string, unknown>,
   wildShapeRaw?: unknown
 ): boolean {
+  if (!applyCharacterUpdateToCombat(room, characterId, changes, wildShapeRaw)) return false;
+  persistSessionCombatState(room.sessionId);
+  emitCombatStateSync(io, room);
+  return true;
+}
+
+function applyCharacterUpdateToCombat(
+  room: RoomState,
+  characterId: string,
+  changes: Record<string, unknown>,
+  wildShapeRaw?: unknown
+): boolean {
   if (!room.combatState?.active) return false;
   if (!Object.keys(changes).some((field) => LIVE_COMBAT_FIELDS.has(field))) return false;
   // Invalid non-null form state also fails closed: do not replace current
@@ -121,10 +142,33 @@ export function syncCharacterUpdateToCombat(
     }
   }
 
-  if (!changed) return false;
-  persistSessionCombatState(room.sessionId);
-  emitCombatStateSync(io, room);
-  return true;
+  return changed;
+}
+
+/** SQL character rows outrank a checkpoint's derived combat stats. This also
+ * repairs the crash window between a REST commit and its room fanout. */
+export function reconcileCharacterCombatState(
+  room: RoomState,
+  rows: Record<string, unknown>[]
+): void {
+  for (const row of rows) {
+    const character = dbRowToCharacter(row);
+    const effectiveHp = computeEffectiveHitPoints(row);
+    const form = readWildShapeColumn(row.wild_shape);
+    applyCharacterUpdateToCombat(room, String(row.id), {
+      ...character,
+      hitPoints: effectiveHp.hp,
+      maxHitPoints: effectiveHp.maxHp,
+      armorClass: undefined,
+      speed: undefined,
+    });
+    if (form.status !== 'invalid') {
+      const stats = computeEffectiveAcSpeed(row, form.status === 'active' ? form.state : null);
+      for (const actor of room.combatState?.combatants ?? []) {
+        if (actor.characterId === row.id) applyEffectiveFormStats(room, actor, stats);
+      }
+    }
+  }
 }
 
 /** REST fallback has no originating socket/room, so update every live room
@@ -136,7 +180,49 @@ export function fanoutCharacterUpdateAcrossRooms(
   changes: Record<string, unknown>,
   wildShapeRaw?: unknown,
   sourceRoom?: RoomState
-): void {
+): void | Promise<void> {
+  if (sessionRuntimeConfigured()) {
+    // The originating socket already owns this room's transaction. Never
+    // mutate any other process-local room without its queue/advisory lock.
+    if (sourceRoom) {
+      syncCharacterUpdateToCombat(io, sourceRoom, characterId, changes, wildShapeRaw);
+      emitCharacterUpdate(io, sourceRoom, characterId, characterOwnerUserId, changes);
+    }
+    const fanout = async () => {
+      const { rows } = await pool.query(
+        `SELECT session_id FROM session_players WHERE character_id = $1
+         UNION SELECT m.session_id FROM tokens t JOIN maps m ON m.id = t.map_id
+           WHERE t.character_id = $1`,
+        [characterId]
+      );
+      for (const { session_id: sessionId } of rows) {
+        if (sessionId === sourceRoom?.sessionId) continue;
+        await withSessionRuntime(sessionId, async () => {
+          const room = getRoom(sessionId)!;
+          // A later write may have overtaken this fanout. Publish the latest
+          // locked row, never the old patch with a newer combat checkpoint.
+          const { rows: characters } = await pool.query('SELECT * FROM characters WHERE id = $1', [
+            characterId,
+          ]);
+          if (!characters[0]) return;
+          const current = dbRowToCharacter(characters[0]);
+          emitCharacterUpdate(io, room, characterId, String(characters[0].user_id), current);
+          if (room.combatState?.active) emitCombatStateSync(io, room);
+        });
+      }
+    };
+    const deliver = () =>
+      fanout().catch((error) => console.error('[character room fanout]', error));
+    // Do not await another room from an after-commit effect: two rooms can
+    // update the same character at once and otherwise wait on each other.
+    if (
+      deferUntilCommit(async () => {
+        void deliver();
+      })
+    )
+      return;
+    return deliver();
+  }
   const rooms = new Set<RoomState>();
   if (sourceRoom) rooms.add(sourceRoom);
   for (const room of getAllRooms().values()) {

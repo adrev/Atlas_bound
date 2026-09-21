@@ -12,6 +12,9 @@ import { tokenVisibleToPlayer } from '../../utils/tokenVisibility.js';
 import {
   readWildShapeColumn,
   serializeWildShapeState,
+  druidLevel,
+  isMoonDruid,
+  wildShapeCrCap,
   type WildShapeState,
 } from '../../utils/wildShapeState.js';
 import { emitWildShapePrivate } from '../../utils/wildShapeSync.js';
@@ -484,29 +487,6 @@ function parseFeatureList(value: unknown): Feature[] | null {
   } catch {
     return null;
   }
-}
-
-/** Druid level from the class string: "Druid" alone = total level,
- *  "Druid 5/Fighter 2" = 5. Unparseable multiclass fails closed. */
-function druidLevel(className: string, totalLevel: number): number | null {
-  const match = className.match(/(?:^|\/)\s*druid(?:\s*\([^)]*\))?\s+(\d+)/i);
-  if (match) return parseInt(match[1], 10);
-  if (/^\s*druid(?:\s*\([^)]*\))?\s*$/i.test(className)) return totalLevel;
-  return null;
-}
-
-function isMoonDruid(className: string, features: Feature[]): boolean {
-  if (/moon/i.test(className)) return true;
-  return features.some((feature) =>
-    /combat\s+wild\s+shape|circle\s+of\s+the\s+moon/i.test(String(feature?.name ?? ''))
-  );
-}
-
-function wildShapeCrCap(level: number, moon: boolean): number {
-  if (moon) return level >= 6 ? Math.floor(level / 3) : 1;
-  if (level >= 8) return 1;
-  if (level >= 4) return 0.5;
-  return 0.25;
 }
 
 function formatCr(cr: number): string {

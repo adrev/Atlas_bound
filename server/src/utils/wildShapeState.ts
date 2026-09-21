@@ -30,6 +30,28 @@ export type WildShapeColumn =
   | { status: 'active'; state: WildShapeState }
   | { status: 'invalid' };
 
+/** Shared by live transformation and the one-time legacy upgrade. */
+export function druidLevel(className: string, totalLevel: number): number | null {
+  const match = className.match(/(?:^|\/)\s*druid(?:\s*\([^)]*\))?\s+(\d+)/i);
+  if (match) return parseInt(match[1], 10);
+  if (/^\s*druid(?:\s*\([^)]*\))?\s*$/i.test(className)) return totalLevel;
+  return null;
+}
+
+export function isMoonDruid(className: string, features: { name?: unknown }[]): boolean {
+  if (/moon/i.test(className)) return true;
+  return features.some((feature) =>
+    /combat\s+wild\s+shape|circle\s+of\s+the\s+moon/i.test(String(feature?.name ?? ''))
+  );
+}
+
+export function wildShapeCrCap(level: number, moon: boolean): number {
+  if (moon) return level >= 6 ? Math.floor(level / 3) : 1;
+  if (level >= 8) return 1;
+  if (level >= 4) return 0.5;
+  return 0.25;
+}
+
 const MAX_FORM_HP = 999;
 const MAX_CR = 30;
 const MAX_SPEED = 500;
