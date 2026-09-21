@@ -3,7 +3,13 @@ import { z } from 'zod';
 
 const count = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
 const coordinate = z.number().finite();
-const pointPool = z.object({ max: count, remaining: count }).strict();
+const pointPool = z
+  .object({
+    max: count,
+    remaining: count,
+    die: z.union([z.literal(8), z.literal(10), z.literal(12)]).optional(),
+  })
+  .strict();
 const characterSchema = z
   .object({
     version: z.literal(1),
@@ -52,7 +58,7 @@ const sessionSchema = z
 
 export type CharacterFeatureState = z.infer<typeof characterSchema>['namespaces'];
 export type SessionFeatureState = z.infer<typeof sessionSchema>['namespaces'];
-export type FeaturePointPools = Map<string, Map<string, { max: number; remaining: number }>>;
+export type FeaturePointPools = Map<string, Map<string, z.infer<typeof pointPool>>>;
 export type FeatureQuery = (
   text: string,
   values?: unknown[]

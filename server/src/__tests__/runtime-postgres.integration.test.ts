@@ -243,6 +243,7 @@ async function seedImportantState(ids: FixtureIds): Promise<void> {
       ],
     ])
   );
+  room.tokens.get(ids.tokenId)!.conditionSources = { poisoned: ids.tokenId };
   room.legendaryActions.set(ids.tokenId, { max: 3, remaining: 0 });
   room.legendaryResistance.set(ids.tokenId, { max: 3, remaining: 1 });
   room.rechargePools.set(ids.tokenId, new Map([['Breath', { min: 5, available: false }]]));

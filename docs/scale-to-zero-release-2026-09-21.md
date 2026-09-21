@@ -44,15 +44,26 @@ this release. Never run old and new revisions concurrently against an active gam
 
 ## Local Verification
 
-- Full suite with explicit loopback PostgreSQL: 120 files, 1,441 tests passed.
+- Full suite with explicit loopback PostgreSQL: 121 files, 1,444 tests passed.
 - Production build and zero-warning ESLint passed; dependency audit reported
   zero vulnerabilities. Worker protocol tests passed 8/8.
 - Real PostgreSQL tests cover fresh Node process restoration, concurrent writers,
   failed commits, feature resources, ready checks and Chronicle lease recovery.
-- Two-process WebSocket suite passed 14/14: cross-instance movement, chat/music,
+- Two-process WebSocket suite passed 15/15: cross-instance movement, chat/music,
   privacy filtering, room switches, multi-tab disconnects, process kill, cold
   REST hydration and rejoin. These are local integration tests, not a claim that
   real players or production OAuth were exercised.
+
+Candidate smoke testing caught missing condition-source metadata during map
+rejoin. Socket join, scene changes, REST map hydration and runtime token hydration
+now restore it; regression coverage includes two-process kill and cold restoration.
+Review also found Battle Master superiority pools carry a die size; the durable
+schema now preserves that field instead of rejecting these commands.
+
+The production container was built locally after Cloud Build's default service
+account lacked source-archive read permission. No IAM permissions were broadened;
+the failed build's uploaded archive was removed. The Dockerfile now handles fully
+hoisted dependencies, and excludes redundant `server/uploads` copies from context.
 
 ## Rollout Record
 

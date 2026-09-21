@@ -552,6 +552,132 @@ describe.skipIf(!database)('two-process Socket.IO runtime against real local Pos
     }
   }, 25_000);
 
+  it('preserves poison sources, round expiry and spent budgets through warm rejoin and cold socket/REST hydration', async () => {
+    const s = await seed();
+    const { dm, player } = await pair(s);
+    const caster = await addToken(dm, s, 'Poison caster');
+    const target = await addToken(dm, s, 'Poison target');
+    await player.event('map:token-added', (body) => body.id === target.id);
+    dm.socket.emit('combat:start', { tokenIds: [target.id] });
+    expect(await player.event('combat:started')).toMatchObject({
+      currentTokenId: target.id,
+      roundNumber: 1,
+    });
+    dm.socket.emit('combat:lock-initiative', {});
+    await player.event('combat:review-complete');
+    for (const actionType of ['action', 'bonusAction', 'reaction']) {
+      const mark = player.messages.length;
+      player.socket.emit('combat:use-action', { actionType });
+      const used = await player.event(
+        'combat:action-used',
+        (body) => body.tokenId === target.id && body.actionType === actionType,
+        mark
+      );
+      expect(used.economy[actionType]).toBe(true);
+    }
+    player.socket.emit('combat:use-movement', { feet: 25 });
+    expect(await player.event('combat:movement-used')).toMatchObject({
+      tokenId: target.id,
+      remaining: 5,
+    });
+    const economy = {
+      action: true,
+      bonusAction: true,
+      reaction: true,
+      movementRemaining: 5,
+      movementMax: 30,
+    };
+    const metadata = {
+      name: 'poisoned',
+      source: 'Fixture poison',
+      casterTokenId: caster.id,
+      appliedRound: 1,
+      expiresAfterRound: 7,
+    };
+    player.socket.emit('condition:apply-with-meta', {
+      targetTokenId: target.id,
+      conditionName: metadata.name,
+      source: metadata.source,
+      casterTokenId: caster.id,
+      expiresAfterRound: metadata.expiresAfterRound,
+    });
+    for (const client of [dm, player]) {
+      const updated = await client.event(
+        'map:token-updated',
+        (body) => body.tokenId === target.id && body.changes.conditions?.includes('poisoned')
+      );
+      expect(updated.changes.conditions).toEqual(['poisoned']);
+      expect(updated.changes.conditionSources).toEqual({ poisoned: caster.id });
+    }
+
+    const assertTokens = (tokens: Payload[]) => {
+      expect(tokens.find((token) => token.id === caster.id)).toMatchObject({
+        ownerUserId: s.player,
+        visible: true,
+      });
+      const poisoned = tokens.find((token) => token.id === target.id);
+      expect(poisoned).toMatchObject({ ownerUserId: s.player, visible: true });
+      expect(poisoned?.conditions).toEqual(['poisoned']);
+      expect(poisoned?.conditionSources).toEqual({ poisoned: caster.id });
+    };
+    const assertCheckpoint = async () => {
+      const values = (
+        await sql.query('SELECT state FROM session_runtime WHERE session_id = $1', [s.id])
+      ).rows[0].state.values;
+      expect(values.conditionMeta).toEqual([[target.id, [['poisoned', metadata]]]]);
+      expect(values.actionEconomies).toEqual([[target.id, economy]]);
+      expect(values.combatState.roundNumber).toBe(1);
+      expect(values.combatState.combatants[0].conditions).toEqual(['poisoned']);
+    };
+    const assertRejoin = async (client: Client) => {
+      const mark = client.messages.length;
+      const joined = await join(client, s);
+      assertTokens(joined.map.tokens);
+      const combat = await client.event('combat:state-sync', () => true, mark);
+      expect(combat).toMatchObject({ currentTokenId: target.id, roundNumber: 1 });
+      expect(combat.actionEconomy).toEqual(economy);
+      expect(
+        combat.combatants.find((actor: Payload) => actor.tokenId === target.id).conditions
+      ).toEqual(['poisoned']);
+      await assertCheckpoint();
+    };
+    await assertCheckpoint();
+    // Exercise actual join payloads before REST can populate either warm cache.
+    await assertRejoin(player);
+    await assertRejoin(dm);
+
+    const oldPids = [first.child.pid, second.child.pid];
+    await kill(first);
+    await kill(second);
+    await until(
+      () => !dm.socket.connected && !player.socket.connected,
+      'Killed servers left condition fixture sockets connected'
+    );
+    first = await launch();
+    second = await launch();
+    expect(oldPids).not.toContain(first.child.pid);
+    expect(oldPids).not.toContain(second.child.pid);
+    await peersReady(first);
+    await peersReady(second);
+
+    // Each replacement starts with no room: socket join and map REST must
+    // independently restore the same metadata without refilling any budget.
+    await assertRejoin(await connect(first, s.playerCookie));
+    const response = await fetch(`${second.url}/api/maps/${s.map}`, {
+      headers: { Cookie: s.playerCookie },
+      signal: AbortSignal.timeout(8_000),
+    });
+    expect(response.status, await response.clone().text()).toBe(200);
+    const map = (await response.json()) as Payload;
+    expect(map.id).toBe(s.map);
+    assertTokens(map.tokens);
+    expect(map.tokens.map((token: Payload) => token.id).sort()).toEqual(
+      [caster.id, target.id].sort()
+    );
+    assertTokens((await rest(second, s, s.playerCookie)).tokens);
+    await assertCheckpoint();
+  }, 40_000);
+
   it('kills a process, cold-hydrates REST on its replacement and rejoins with durable music/cursor/map', async () => {
     const s = await seed();
     const { dm, player } = await pair(s);

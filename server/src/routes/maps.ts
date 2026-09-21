@@ -13,6 +13,9 @@ import { createMapSchema } from '../utils/validation.js';
 import { getAuthUserId, assertSessionDM, assertSessionMember } from '../utils/authorization.js';
 import { safeParseJSON } from '../utils/safeJson.js';
 import { rowToToken } from '../utils/tokenMapper.js';
+import { withConditionSources } from '../utils/conditionSources.js';
+import { runtimeHttp } from '../utils/runtimeHttp.js';
+import { getRoom } from '../utils/roomState.js';
 import { tokenVisibleToPlayer } from '../utils/tokenVisibility.js';
 
 const router = Router();
@@ -255,68 +258,84 @@ router.get('/sessions/:sessionId/maps', async (req: Request, res: Response) => {
 });
 
 // GET /api/maps/:id
-router.get('/maps/:id', async (req: Request, res: Response) => {
-  const userId = getAuthUserId(req);
-  const { id } = req.params;
+router.get(
+  '/maps/:id',
+  runtimeHttp(
+    async (req: Request, res: Response) => {
+      const userId = getAuthUserId(req);
+      const { id } = req.params;
 
-  const { rows: mapRows } = await pool.query('SELECT * FROM maps WHERE id = $1', [id]);
-  if (mapRows.length === 0) {
-    res.status(404).json({ error: 'Map not found' });
-    return;
-  }
-  const map = mapRows[0] as Record<string, unknown>;
+      const { rows: mapRows } = await pool.query('SELECT * FROM maps WHERE id = $1', [id]);
+      if (mapRows.length === 0) {
+        res.status(404).json({ error: 'Map not found' });
+        return;
+      }
+      const map = mapRows[0] as Record<string, unknown>;
 
-  const mapSessionId = String(map.session_id);
-  await assertSessionMember(mapSessionId, userId);
+      const mapSessionId = String(map.session_id);
+      await assertSessionMember(mapSessionId, userId);
 
-  // Players must only see the map currently active for the players —
-  // never a DM's prep/preview scene.
-  const { rows: roleRows } = await pool.query(
-    'SELECT role FROM session_players WHERE session_id = $1 AND user_id = $2',
-    [mapSessionId, userId]
-  );
-  const isDM = roleRows[0]?.role === 'dm';
-  if (!isDM) {
-    const { rows: sessionRows } = await pool.query(
-      'SELECT player_map_id FROM sessions WHERE id = $1',
-      [mapSessionId]
-    );
-    // Players must see only the ribbon map. The legacy fallback to
-    // `current_map_id` used to leak DM prep scenes on sessions that
-    // pre-date the preview isolation split.
-    const activeMapId = (sessionRows[0]?.player_map_id as string | null | undefined) ?? null;
-    if (!activeMapId || activeMapId !== id) {
-      res.status(403).json({ error: 'Not authorized to view this map' });
-      return;
+      // Players must only see the map currently active for the players —
+      // never a DM's prep/preview scene.
+      const { rows: roleRows } = await pool.query(
+        'SELECT role FROM session_players WHERE session_id = $1 AND user_id = $2',
+        [mapSessionId, userId]
+      );
+      const isDM = roleRows[0]?.role === 'dm';
+      if (!isDM) {
+        const { rows: sessionRows } = await pool.query(
+          'SELECT player_map_id FROM sessions WHERE id = $1',
+          [mapSessionId]
+        );
+        // Players must see only the ribbon map. The legacy fallback to
+        // `current_map_id` used to leak DM prep scenes on sessions that
+        // pre-date the preview isolation split.
+        const activeMapId = (sessionRows[0]?.player_map_id as string | null | undefined) ?? null;
+        if (!activeMapId || activeMapId !== id) {
+          res.status(403).json({ error: 'Not authorized to view this map' });
+          return;
+        }
+      }
+
+      const { rows: tokens } = await pool.query('SELECT * FROM tokens WHERE map_id = $1', [id]);
+      const runtime = getRoom(mapSessionId);
+      const allTokens = tokens
+        .map(rowToToken)
+        .map((token) => (runtime ? withConditionSources(runtime, token) : token));
+      // Filter hidden tokens for non-DMs so they can't inspect the REST
+      // response and discover hidden NPC positions / names.
+      const visibleTokens = isDM
+        ? allTokens
+        : allTokens.filter((t) => tokenVisibleToPlayer(t, userId));
+
+      res.json({
+        id: map.id,
+        sessionId: map.session_id,
+        name: map.name,
+        imageUrl: map.image_url,
+        thumbnailUrl: map.thumbnail_url,
+        width: map.width,
+        height: map.height,
+        gridSize: map.grid_size,
+        gridType: map.grid_type,
+        gridOffsetX: map.grid_offset_x,
+        gridOffsetY: map.grid_offset_y,
+        walls: safeParseJSON<unknown[]>(map.walls, [], 'maps.walls'),
+        fogState: safeParseJSON<unknown[]>(map.fog_state, [], 'maps.fog_state'),
+        createdAt: map.created_at,
+        ambientLight: map.ambient_light ?? 'bright',
+        ambientOpacity: (map.ambient_opacity as number | null) ?? undefined,
+        tokens: visibleTokens,
+      });
+    },
+    async (req) => {
+      const { rows } = await pool.query('SELECT session_id FROM maps WHERE id = $1', [
+        req.params.id,
+      ]);
+      return rows[0]?.session_id ?? null;
     }
-  }
-
-  const { rows: tokens } = await pool.query('SELECT * FROM tokens WHERE map_id = $1', [id]);
-  const allTokens = tokens.map(rowToToken);
-  // Filter hidden tokens for non-DMs so they can't inspect the REST
-  // response and discover hidden NPC positions / names.
-  const visibleTokens = isDM ? allTokens : allTokens.filter((t) => tokenVisibleToPlayer(t, userId));
-
-  res.json({
-    id: map.id,
-    sessionId: map.session_id,
-    name: map.name,
-    imageUrl: map.image_url,
-    thumbnailUrl: map.thumbnail_url,
-    width: map.width,
-    height: map.height,
-    gridSize: map.grid_size,
-    gridType: map.grid_type,
-    gridOffsetX: map.grid_offset_x,
-    gridOffsetY: map.grid_offset_y,
-    walls: safeParseJSON<unknown[]>(map.walls, [], 'maps.walls'),
-    fogState: safeParseJSON<unknown[]>(map.fog_state, [], 'maps.fog_state'),
-    createdAt: map.created_at,
-    ambientLight: map.ambient_light ?? 'bright',
-    ambientOpacity: (map.ambient_opacity as number | null) ?? undefined,
-    tokens: visibleTokens,
-  });
-});
+  )
+);
 
 // DELETE /api/maps/:id
 router.delete('/maps/:id', async (req: Request, res: Response) => {

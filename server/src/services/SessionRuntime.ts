@@ -14,6 +14,7 @@ import { sessionJoinSchema } from '../utils/validation.js';
 import { armReadyCheckTimer } from './ReadyCheckRuntime.js';
 import { snapshotRoom, restoreRoom, type RoomSnapshot } from '../utils/roomSnapshot.js';
 import { rowToToken } from '../utils/tokenMapper.js';
+import { withConditionSources } from '../utils/conditionSources.js';
 import { safeParseJSON } from '../utils/safeJson.js';
 import { reconcileCharacterCombatState } from './CharacterUpdateService.js';
 import {
@@ -111,7 +112,7 @@ async function refreshRoom(sessionId: string, preserveSocket?: Socket): Promise<
   );
   room.tokens = new Map(
     tokens.map((row) => {
-      const token = rowToToken(row);
+      const token = withConditionSources(room, rowToToken(row));
       return [token.id, token];
     })
   );

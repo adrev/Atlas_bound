@@ -59,10 +59,12 @@ async function run(): Promise<void> {
   const { setIO } = await import('../../socket/ioInstance.js');
   const { requireAuth } = await import('../../auth/middleware.js');
   const { default: sessionsRouter } = await import('../../routes/sessions.js');
+  const { default: mapsRouter } = await import('../../routes/maps.js');
 
   const app = express();
   app.use(express.json());
   app.use('/api/sessions', requireAuth, sessionsRouter);
+  app.use('/api', requireAuth, mapsRouter);
   app.use(
     (
       error: unknown,
