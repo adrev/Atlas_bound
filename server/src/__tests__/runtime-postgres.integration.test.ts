@@ -447,6 +447,183 @@ describe.skipIf(!database)('REAL PostgreSQL runtime durability', () => {
     expect((await durableRows(ids)).room.state.values.combatState.combatants[0].hp).toBe(23);
   });
 
+  it.each([
+    { ddb: null, exhaustion: 0, maximum: 20, expected: { hp: 20, maxHp: 26 } },
+    { ddb: '123', exhaustion: 0, maximum: 26, expected: { hp: 20, maxHp: 26 } },
+    { ddb: null, exhaustion: 4, maximum: 20, expected: { hp: 10, maxHp: 16 } },
+  ])(
+    'preserves encounter Tough/exhaustion HP after cold hydration: %j',
+    async ({ ddb, exhaustion, maximum, expected }) => {
+      const ids = await fixture();
+      await connection.rawPool.query(
+        `UPDATE characters SET class='Fighter', level=3, hit_points=20,
+      max_hit_points=$2, dndbeyond_id=$3, exhaustion_level=$4, features='[{"name":"Tough"}]' WHERE id=$1`,
+        [ids.characterId, maximum, ddb, exhaustion]
+      );
+      const combat = await import('../services/CombatService.js');
+      await runtime.withSessionRuntime(ids.sessionId, async () => {
+        expect(
+          (await combat.startCombatAsync(ids.sessionId, [ids.tokenId])).combatants[0]
+        ).toMatchObject(expected);
+      });
+      rooms.deleteRoom(ids.sessionId);
+      for (let restart = 0; restart < 2; restart++) {
+        const cold = await inspect(ids);
+        expect(cold.snapshot.values.combatState).toMatchObject({
+          combatants: [expect.objectContaining(expected)],
+        });
+      }
+    },
+    30_000
+  );
+
+  it('clears encounter-A opportunity claims at end/start before cold restoration of encounter B', async () => {
+    const ids = await fixture();
+    const combat = await import('../services/CombatService.js');
+    await runtime.withSessionRuntime(ids.sessionId, async () => {
+      await combat.startCombatAsync(ids.sessionId, [ids.tokenId]);
+      const room = rooms.getRoom(ids.sessionId)!;
+      const claim = {
+        opportunityId: 'old-claim',
+        attackerTokenId: ids.tokenId,
+        moverTokenId: 'mover',
+        attackerOwnerUserId: ids.userId,
+        trigger: 'movement' as const,
+        issuedAtMs: Date.now(),
+      };
+      room.pendingOpportunities.set('pair', claim);
+      await combat.endCombat(ids.sessionId);
+      expect(room.pendingOpportunities.size).toBe(0);
+      room.pendingOpportunities.set('pair', claim);
+      await combat.startCombatAsync(ids.sessionId, [ids.tokenId]);
+      expect(room.pendingOpportunities.size).toBe(0);
+    });
+    rooms.deleteRoom(ids.sessionId);
+    expect((await inspect(ids)).snapshot.values.pendingOpportunities).toEqual([]);
+  }, 30_000);
+
+  it.each([
+    { kind: 'XP', className: 'Fighter', feature: '', command: '!xp $TOKEN 1' },
+    { kind: 'Ki', className: 'Monk', feature: 'Ki Points', command: '!ki use 1' },
+    { kind: 'SP', className: 'Sorcerer', feature: 'Font of Magic', command: '!sp use 1' },
+    { kind: 'Lucky', className: 'Fighter', feature: 'Lucky', command: '!lucky use' },
+    {
+      kind: 'racial',
+      className: 'Fighter',
+      feature: 'Racial Spell: Hellish Rebuke',
+      command: '!racial cast Hellish Rebuke',
+    },
+    { kind: 'Wild Shape', className: 'Druid', feature: 'Wild Shape', command: '!beast dmg 1' },
+    { kind: 'superiority', className: 'Fighter', feature: '', command: '!maneuver precision' },
+  ])(
+    'runs actual $kind commands concurrently across sessions and cold processes without refill',
+    async ({ kind, className, feature, command }) => {
+      const first = await fixture();
+      const second = await fixture(first);
+      const form = {
+        formSlug: 'wolf',
+        formName: 'Wolf',
+        formHp: 3,
+        formMaxHp: 11,
+        formAc: 13,
+        formSpeed: { walk: 40 },
+        formCr: 0.25,
+        moon: false,
+      };
+      await connection.rawPool.query(
+        `UPDATE characters SET class=$2, level=10, race='Tiefling', experience=100,
+      features=$3, wild_shape=$4 WHERE id=$1`,
+        [
+          first.characterId,
+          className,
+          JSON.stringify(
+            feature
+              ? [
+                  {
+                    name: feature,
+                    sourceType: kind === 'Lucky' ? 'feat' : 'class',
+                    usesRemaining: kind === 'Wild Shape' ? 0 : 1,
+                    usesTotal: kind === 'racial' ? 1 : 3,
+                    resetOn: 'long',
+                  },
+                ]
+              : []
+          ),
+          kind === 'Wild Shape' ? JSON.stringify(form) : null,
+        ]
+      );
+      await runtime.withSessionRuntime(first.sessionId, async () => {
+        features.characterFeatures(first.characterId).xp = 999;
+        rooms.getRoom(first.sessionId)!.pointPools.set(
+          first.characterId,
+          new Map([
+            ['ki', { max: 10, remaining: 10 }],
+            ['sp', { max: 10, remaining: 10 }],
+          ])
+        );
+      });
+      const before = (
+        await connection.rawPool.query('SELECT version FROM characters WHERE id=$1', [
+          first.characterId,
+        ])
+      ).rows[0].version;
+      const a = worker({ ...first, mode: 'commands', commands: [command], hold: true });
+      const b = worker({ ...second, mode: 'commands', commands: [command] });
+      await a.wait('ready');
+      const bReady = await b.wait('ready');
+      a.send('start');
+      await a.wait('entered');
+      b.send('start');
+      try {
+        let locked = false;
+        for (let i = 0; i < 200; i++) {
+          const state = await connection.rawPool.query(
+            'SELECT wait_event_type FROM pg_stat_activity WHERE pid=$1',
+            [bReady.backendPid]
+          );
+          if (state.rows[0]?.wait_event_type === 'Lock') {
+            locked = true;
+            break;
+          }
+          await delay(10);
+        }
+        expect(locked).toBe(true);
+      } finally {
+        a.send('release');
+      }
+      await a.result();
+      await b.result();
+      expect(a.pid).not.toBe(b.pid);
+      const cold = worker({ ...first, mode: 'commands', commands: [command] });
+      await cold.wait('ready');
+      cold.send('start');
+      const result = await cold.result();
+      expect(JSON.stringify(result.messages)).not.toMatch(/NaN|undefined/);
+      expect(result.character.xp).toBe(999);
+      if (kind === 'XP') {
+        expect(result.sheet.experience).toBe(103);
+        expect(Number(result.sheet.version)).toBe(before + 3);
+      } else if (kind === 'Wild Shape') {
+        expect(result.sheet.wild_shape).toBeNull();
+        expect(Number(result.sheet.version)).toBe(before + 3);
+      } else if (kind === 'superiority') {
+        expect(result.character.pointPools?.superiority).toEqual({ max: 5, remaining: 2, die: 10 });
+        expect(JSON.stringify(result.messages)).toContain('d10');
+      } else {
+        expect(
+          JSON.parse(String(result.sheet.features)).find(
+            (f: { name: string }) => f.name === feature
+          ).usesRemaining
+        ).toBe(0);
+        expect(Number(result.sheet.version)).toBe(before + 1);
+      }
+      const restarted = await inspect(first);
+      expect(restarted.sheet).toEqual(result.sheet);
+      expect(restarted.character).toEqual(result.character);
+    },
+    30_000
+  );
+
   it('keeps main XP savepoint commits and their success messages inside the runtime transaction', async () => {
     const ids = await fixture();
     const { tryHandleChatCommand } = await import('../services/ChatCommands.js');

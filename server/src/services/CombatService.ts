@@ -234,6 +234,32 @@ export function computeEffectiveAcSpeed(
   return formState ? wildShapeFormStats(formState, baseline) : baseline;
 }
 
+/** Keep hydration identical to encounter initialization. DDB already includes
+ * Tough; manual characters retain the existing exhaustion-then-feat order. */
+export function computeEffectiveHitPoints(row: Record<string, unknown>): {
+  hp: number;
+  maxHp: number;
+} {
+  let hp = (row.hit_points as number) ?? 10;
+  let maxHp = (row.max_hit_points as number) ?? 10;
+  if (Number(row.exhaustion_level ?? 0) >= 4) {
+    maxHp = Math.floor(maxHp / 2);
+    hp = Math.min(hp, maxHp);
+  }
+  const features = safeJson(row.features, []);
+  const tough =
+    Array.isArray(features) &&
+    features.some(
+      (feature: { name?: string }) =>
+        typeof feature?.name === 'string' && /^\s*tough\s*$/i.test(feature.name)
+    );
+  if (tough && !row.dndbeyond_id) {
+    maxHp += 2 * (Number(row.level) || 1);
+    hp = Math.min(hp, maxHp);
+  }
+  return { hp, maxHp };
+}
+
 /**
  * Effective combat AC/speed for a character row: the sheet baseline,
  * overridden by the active Wild Shape form. An unreadable wild_shape
@@ -403,6 +429,7 @@ export function startCombat(sessionId: string, tokenIds: string[]): CombatState 
     .catch((err) => console.error('[CombatService] update session failed:', err));
 
   room.actionEconomies.clear();
+  room.pendingOpportunities.clear();
   return combatState;
 }
 
@@ -648,8 +675,7 @@ async function buildCombatState(
           /* ignore */
         }
 
-        hp = (charRow.hit_points as number) ?? 10;
-        maxHp = (charRow.max_hit_points as number) ?? 10;
+        ({ hp, maxHp } = computeEffectiveHitPoints(charRow));
         tempHp = (charRow.temp_hit_points as number) ?? 0;
         // Baseline sheet AC/speed (Unarmored Defense, Defense style,
         // equipment penalty), then the Wild Shape override: a druid
@@ -703,15 +729,6 @@ async function buildCombatState(
           /* race merge best-effort */
         }
         exhaustionLevel = Math.max(0, Math.min(6, Number(charRow.exhaustion_level ?? 0) || 0));
-        // 5e exhaustion L4: HP max halved. Apply here so the combat
-        // tracker respects the cap from the start of the encounter;
-        // the character row keeps its baseline maxHp for post-combat
-        // resets. Current HP is clamped too so the tracker doesn't
-        // show a PC above their effective max.
-        if (exhaustionLevel >= 4) {
-          maxHp = Math.floor(maxHp / 2);
-          if (hp > maxHp) hp = maxHp;
-        }
         // Compute per-source initiative modifiers so the review modal
         // can show DEX / Alert / Jack of All Trades / Remarkable
         // Athlete / Rakish Audacity / Dread Ambusher / Feral Instinct
@@ -747,7 +764,6 @@ async function buildCombatState(
           const hasFeature = (pattern: RegExp) =>
             featureList.some((f) => typeof f?.name === 'string' && pattern.test(f.name));
           const hasAlert = hasFeature(/^\s*alert\s*$/i);
-          const hasTough = hasFeature(/^\s*tough\s*$/i);
 
           // 2. Alert feat → +5 initiative.
           if (hasAlert) {
@@ -834,23 +850,6 @@ async function buildCombatState(
             initAdvantage = 'advantage';
           }
 
-          // Tough feat: +2 maxHP per character level. DDB imports
-          // already bake this into `max_hit_points`, so we only add
-          // the bonus when the character was created manually (i.e.
-          // has no dndbeyond_id). Lets homebrew PCs take the feat
-          // without requiring the player to edit maxHp manually.
-          if (hasTough) {
-            const ddbId = charRow.dndbeyond_id as string | null;
-            if (!ddbId) {
-              const lvl = Number(charRow.level) || 1;
-              const bonus = 2 * lvl;
-              maxHp += bonus;
-              // Keep current HP at least matching — Tough represents
-              // raw resilience, not temp HP. We don't auto-heal the
-              // character, just ensure the max cap reflects the feat.
-              if (hp > maxHp) hp = maxHp;
-            }
-          }
           // Defense fighting style +1 AC lives in deriveBaselineAcSpeed
           // so revert restoration computes the identical baseline.
         } catch {
@@ -1045,6 +1044,7 @@ async function buildCombatState(
   ]);
 
   room.actionEconomies.clear();
+  room.pendingOpportunities.clear();
   return combatState;
 }
 
@@ -1169,6 +1169,7 @@ export async function endCombat(sessionId: string): Promise<void> {
   room.combatState = null;
   room.gameMode = 'free-roam';
   room.actionEconomies.clear();
+  room.pendingOpportunities.clear();
 
   // Clear per-combat caches that used to leak into the NEXT encounter:
   // melee-reach/Mobile/Polearm caches are rebuilt at every combat start,

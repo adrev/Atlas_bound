@@ -3,6 +3,7 @@ import { resolve } from 'node:path';
 import type { RoomSnapshot } from '../../utils/roomSnapshot.js';
 import type { CharacterFeatureState, SessionFeatureState } from '../../utils/featureRuntime.js';
 import type { Token } from '@dnd-vtt/shared';
+import type { Server } from 'socket.io';
 
 export interface FixtureIds {
   sessionId: string;
@@ -26,10 +27,13 @@ export interface ObservedRuntime {
   gameMode: string;
   mapId: string | null;
   gridSize: number | undefined;
+  sheet: Record<string, unknown>;
+  messages: unknown[];
 }
 
 export interface WorkerRequest extends FixtureIds {
-  mode: 'inspect' | 'increment';
+  mode: 'inspect' | 'increment' | 'commands';
+  commands?: string[];
   iterations?: number;
   hold?: boolean;
 }
@@ -92,9 +96,19 @@ async function run(): Promise<void> {
   const { default: pool, rawPool } = await import('../../db/connection.js');
   const { configureSessionRuntime, withSessionRuntime } =
     await import('../../services/SessionRuntime.js');
-  const { getRoom } = await import('../../utils/roomState.js');
+  const { getRoom, addPlayerToRoom } = await import('../../utils/roomState.js');
   const { snapshotRoom } = await import('../../utils/roomSnapshot.js');
   const { characterFeatures, sessionFeatures } = await import('../../utils/featureRuntime.js');
+  const { afterCommit } = await import('../../db/transactionContext.js');
+  const messages: unknown[] = [];
+  const io = {
+    to: () => ({
+      emit: (...args: unknown[]) =>
+        afterCommit(() => {
+          messages.push(args);
+        }),
+    }),
+  } as unknown as Server;
   const start = deferred();
   const release = deferred();
   const onMessage = (message: unknown) => {
@@ -110,6 +124,35 @@ async function run(): Promise<void> {
       throw new Error('Wrong fixture schema');
     process.send?.({ type: 'ready', pid: process.pid, backendPid: rows[0].pid });
     await start.promise;
+    if (request.mode === 'commands') {
+      const { tryHandleChatCommand } = await import('../../services/ChatCommands.js');
+      await import('../../services/chatCommands/xpAndWildShapeHandler.js');
+      await import('../../services/chatCommands/monkHandler.js');
+      await import('../../services/chatCommands/sorcererHandler.js');
+      await import('../../services/chatCommands/utilityHandlers.js');
+      await import('../../services/chatCommands/racialSpellsHandler.js');
+      await import('../../services/chatCommands/miscClassHandlers.js');
+      await withSessionRuntime(request.sessionId, async () => {
+        const room = getRoom(request.sessionId)!;
+        const player = {
+          userId: request.userId,
+          role: 'dm' as const,
+          displayName: 'DM',
+          socketId: 'fixture-socket',
+          characterId: request.characterId,
+        };
+        addPlayerToRoom(request.sessionId, player);
+        process.send?.({ type: 'entered', pid: process.pid });
+        if (request.hold) await release.promise;
+        for (const command of request.commands ?? []) {
+          await tryHandleChatCommand(
+            io,
+            { room, player },
+            command.replace('$TOKEN', room.tokens.get(request.tokenId)!.name)
+          );
+        }
+      });
+    }
     if (request.mode === 'increment') {
       for (let i = 0; i < (request.iterations ?? 1); i++) {
         await withSessionRuntime(request.sessionId, async () => {
@@ -150,6 +193,13 @@ async function run(): Promise<void> {
           gameMode: room.gameMode,
           mapId: room.playerMapId,
           gridSize: room.mapGridSizes.get(request.mapId),
+          sheet: (
+            await pool.query(
+              'SELECT experience, features, wild_shape, version FROM characters WHERE id = $1',
+              [request.characterId]
+            )
+          ).rows[0],
+          messages,
         };
       }
     );

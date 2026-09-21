@@ -3,6 +3,7 @@ import type { CombatState, ActionEconomy } from '@dnd-vtt/shared';
 import { blocksActions } from '@dnd-vtt/shared';
 import { tokenVisibleToPlayer } from './tokenVisibility.js';
 import { randomUUID } from 'node:crypto';
+import type { FeaturePointPools } from './featureRuntime.js';
 
 export interface RoomPlayer {
   userId: string;
@@ -326,7 +327,7 @@ export interface RoomState {
    * Lives alongside the other per-combat caches; populated on-demand
    * by !ki / !sp / etc. Reset via the same commands.
    */
-  pointPools: Map<string, Map<string, { max: number; remaining: number }>>;
+  pointPools: FeaturePointPools;
 }
 
 // ── Rate limiting ──────────────────────────────────────────
@@ -499,9 +500,7 @@ export function removePlayerFromRoom(sessionId: string, userId: string): void {
   }
 }
 
-export function getPlayerBySocketId(
-  socketId: string
-): PlayerContext | undefined {
+export function getPlayerBySocketId(socketId: string): PlayerContext | undefined {
   const entry = socketIndex.get(socketId);
   if (!entry) return undefined;
   const room = rooms.get(entry.sessionId);

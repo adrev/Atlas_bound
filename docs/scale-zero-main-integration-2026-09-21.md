@@ -9,14 +9,16 @@ resources were changed, no image was deployed, and no PR was created or merged.
 - Production persistence change: `41eea57928f80c5c99e193c90c5d7fce67993d3c`.
 - Docker source exclusion: `a0d7d92ced587af4e5a0f640f77c6a1c3cdc34df`.
 - Fully hoisted dependency directory fix: `ffe5d2289835151dacd45b001e8c11937e295075`.
+- Condition-source hydration, superiority die, and scaling gate follow-up: `f37c6cb9e401c765d940702ced9c3984d7d25095`.
 - Branch: `codex/scale-zero-main`.
 
 ## Resolution policy
 
 Main's SQL-backed XP, Wild Shape, Lucky, Ki, Sorcery Points, racial charges,
 Channel Divinity, version guards, and private stat/sheet fanout remain
-authoritative. Legacy feature namespaces are retained as stored data, not used
-to override those implementations. Remaining process-local feature pools use
+authoritative. Legacy feature namespaces are retained for audit and adopted once
+only at the explicit, gated cutover described below; existing canonical values
+win. Remaining process-local feature pools use
 the production transaction-scoped persistence implementation.
 
 Generation-aware reconnects and snapshots retain main's redaction metadata and
@@ -24,6 +26,9 @@ private character-cache replacement. A legacy zero cursor still skips history;
 new clients may poll zero only after acquiring an authoritative snapshot baseline.
 Pending opportunity-attack claims preserve their original ID and issuance time,
 including consumption and TTL checks; old production snapshots have no claims.
+Encounter start/end now clears outstanding claims so a cold restore cannot carry
+an encounter-A prompt into encounter B. Hydration and encounter initialization
+share the same Tough/exhaustion HP calculation, without double-applying DDB Tough.
 Privacy settings reload from SQL instead of staying local to the join process.
 
 Main's sheet-edit fanout needed an additional integration adaptation. Runtime
@@ -40,29 +45,72 @@ by normal authoritative hydration; it cannot undo the committed character row.
 Using local Node 24.19.0 and the loopback-only PostgreSQL QA container with
 per-suite disposable schemas:
 
-- Full combined suite: 163 files, 2,057 tests passed, zero skipped.
+- Full combined suite: 167 files, 2,104 tests passed, zero skipped.
 - Production build passed for shared, client, and server.
 - ESLint passed with zero warnings.
 - No cloud, OAuth, external storage, or production smoke testing was performed.
 
-The added integration regressions cover SQL resource precedence over stale legacy
-namespaces, nested XP savepoint commits with swallowed-error rollback/no delivery,
+The added integration regressions execute real XP, Wild Shape, Lucky, Ki, SP,
+racial, and superiority commands concurrently across sessions and cold processes.
+They cover SQL resource precedence over stale legacy namespaces, nested XP
+savepoint commits with swallowed-error rollback/no delivery,
 REST character edit serialization, cold combat/stat recovery, privacy refresh,
-pending OA identity/expiry/consumption, and persisted replay redaction metadata.
+pending OA identity/expiry/consumption/encounter boundaries, and replay redaction.
+Eighteen real-PG upgrade cases cover schema provenance, ordinary-startup refusal,
+concurrent adoption, canonical zero/inactive/counter precedence, late first
+writers, rollback, strict superiority schema, trusted Moon/CR/movement eligibility,
+and unknown Wild Shape history remaining exhausted until an actual normal rest.
+
+Deploy-only commits `bb85337` and `3d1e7e1` contain no runtime changes and can be
+cherry-picked in that order independently. Their 16 tests include isolated mock
+CLI execution with actual JSON map/list flags, env/reference preservation,
+unchanged traffic, and concurrent candidate image/revision rejection. Installed
+gcloud help confirmed flags-file JSON syntax; no real service was deployed.
 
 ## Future main rollout gate
 
 Do not treat a green integration build as approval to deploy unreleased main.
 The production branch and main intentionally have different resource models.
-Before a future main rollout, inventory any populated legacy `xp`, `wildShape`,
-`luckPoints`, or Ki/Sorcery point-pool namespaces in `character_feature_runtime`
-and reconcile them with `characters.experience`, `characters.wild_shape`, and
-server-managed `characters.features` under a reviewed cutover plan.
+No-traffic is not database isolation. Normal main startup refuses an existing
+`character_feature_runtime` table without explicit quiesced-cutover approval,
+even if the table is empty or contains no retired keys. No column defaults or
+completion marker are committed on that refusal.
 
-This merge does not auto-copy legacy pools into SQL: doing that on hydration
-could restore spent resources or overwrite a newer authoritative sheet. An
-active legacy Wild Shape also lacks the trusted compendium identity required by
-main and cannot safely be converted just by renaming JSON keys. If these legacy
-namespaces are populated, migration or explicit DM reconciliation is a rollout
-blocker, not a reason to reinstate the old handlers. Their presence in production
-was not inspected during this local-only integration.
+The controlled upgrade captures XP/Wild Shape column presence before schema DDL,
+then adopts validated legacy values under one transaction and advisory lock.
+Pre-existing XP (including zero), Wild Shape (including NULL/inactive), and
+explicit feature counters win. The completion marker prevents re-adoption after
+canonical clear. Original legacy JSON remains intact for audit. A database
+INSERT/UPDATE fence rejects further legacy XP/form/Lucky/Ki/SP/racial writes,
+including a late first writer; retained features such as superiority still work.
+
+Active legacy forms must identify exactly one trusted Beast and match its saved
+max HP/AC/speed, Druid eligibility, Moon CR cap, and swim/fly restrictions. Spent
+form HP is preserved. Invalid/ambiguous forms, unsupported XP, missing Lucky feat,
+or incompatible resource state abort the entire upgrade for explicit repair.
+Eligible legacy Druids with unknown charge history get zero uses until a normal
+rest, including reverted/depleted forms and characters without a runtime row.
+This is deliberate conservative reconciliation, not an assertion of known usage.
+
+Required future release procedure, **not authorized or executed by this task**:
+
+1. Review the migration independently and test against an isolated restored
+   database copy. Run `node server/dist/scripts/legacyFeatureCutover.js --preflight`
+   with that copy's explicit DB configuration. It exercises DDL/adoption/fence and
+   rolls everything back. It takes locks: do not run it against live writers.
+2. Resolve every incompatible row under a reviewed data-reconciliation plan.
+   Preserve a verified backup and a reverse-migration/rollback plan.
+3. Drain and stop ALL legacy revisions, tagged URLs, sockets, background jobs,
+   and other writers. Maintenance is required; overlapping resource writers are
+   not supported. The post-cutover fence is a safety net, not a traffic switch.
+4. In a standalone operator process only, run
+   `ATLAS_LEGACY_FEATURE_CUTOVER=quiesced-v1 node server/dist/scripts/legacyFeatureCutover.js --apply`.
+   Never persist this approval in the service env. The deploy script refuses it.
+5. Start/review the main candidate, compare configuration and traffic, run the
+   approved QA, and make a separate promotion decision. An old image is NOT a
+   safe rollback after canonical mutations: its retired writes are fenced and
+   its stored legacy values are intentionally no longer current.
+
+Main remains a draft integration candidate until independent review and that
+operational cutover are approved. No live data inventory or reconciliation was
+performed. The production branch continues independently.

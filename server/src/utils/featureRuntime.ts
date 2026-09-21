@@ -59,6 +59,9 @@ const sessionSchema = z
 export type CharacterFeatureState = z.infer<typeof characterSchema>['namespaces'];
 export type SessionFeatureState = z.infer<typeof sessionSchema>['namespaces'];
 export type FeaturePointPools = Map<string, Map<string, z.infer<typeof pointPool>>>;
+export function parseCharacterFeatureState(value: unknown): CharacterFeatureState {
+  return characterSchema.parse(value).namespaces;
+}
 export type FeatureQuery = (
   text: string,
   values?: unknown[]

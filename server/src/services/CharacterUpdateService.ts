@@ -14,6 +14,7 @@ import { readWildShapeColumn } from '../utils/wildShapeState.js';
 import {
   applyEffectiveFormStats,
   computeEffectiveAcSpeed,
+  computeEffectiveHitPoints,
   persistSessionCombatState,
 } from './CombatService.js';
 
@@ -152,9 +153,12 @@ export function reconcileCharacterCombatState(
 ): void {
   for (const row of rows) {
     const character = dbRowToCharacter(row);
+    const effectiveHp = computeEffectiveHitPoints(row);
     const form = readWildShapeColumn(row.wild_shape);
     applyCharacterUpdateToCombat(room, String(row.id), {
       ...character,
+      hitPoints: effectiveHp.hp,
+      maxHitPoints: effectiveHp.maxHp,
       armorClass: undefined,
       speed: undefined,
     });

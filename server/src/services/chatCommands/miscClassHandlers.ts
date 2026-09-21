@@ -467,7 +467,7 @@ function getOrSeedSup(
     ctx.room.pointPools.set(charId, pools);
   }
   let sup = pools.get('superiority') as
-    | { max: number; remaining: number; die?: number }
+    | { max: number; remaining: number; die?: 8 | 10 | 12 }
     | undefined;
   if (!sup) {
     const count = level >= 15 ? 6 : level >= 7 ? 5 : 4;

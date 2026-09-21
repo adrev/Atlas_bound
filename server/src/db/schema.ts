@@ -1,7 +1,14 @@
-import pool from './connection.js';
+import pool, { rawPool } from './connection.js';
+import { inTransaction } from './transactionContext.js';
+import {
+  prepareLegacyFeatureUpgrade,
+  completeLegacyFeatureUpgrade,
+} from './legacyFeatureUpgrade.js';
 
 export async function initDatabase(): Promise<void> {
-  await pool.query(`
+  await inTransaction(rawPool, async () => {
+    const provenance = await prepareLegacyFeatureUpgrade();
+    await pool.query(`
     -- users FIRST — session_bans below references it, and so do
     -- several other tables. A fresh / cold Cloud SQL restore would
     -- fail this block entirely if users doesn't exist by the time
@@ -827,6 +834,9 @@ export async function initDatabase(): Promise<void> {
     FROM sessions s
     WHERE s.id = sp.session_id AND s.dm_user_id = sp.user_id AND sp.role <> 'dm';
   `);
+
+    await completeLegacyFeatureUpgrade(provenance);
+  });
 
   // --- Backfill invite codes for legacy sessions. --------------------------
   //
