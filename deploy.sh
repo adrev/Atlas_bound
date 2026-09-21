@@ -287,7 +287,9 @@ gcloud run deploy "$SERVICE_NAME" \
   --port 8080 \
   --memory 1Gi \
   --cpu 1 \
-  --min-instances 1 \
+  --min 0 \
+  --min-instances 0 \
+  --cpu-throttling \
   --max-instances 3 \
   --session-affinity \
   --timeout 3600 \

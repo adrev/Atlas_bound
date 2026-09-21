@@ -6,8 +6,8 @@
  *
  *   DM clicks "Forge Chronicle" in-session
  *      → POST /api/sessions/:id/chronicle/generate { transcript }
- *      → server queues a row (status: 'generating'), kicks off the
- *        Vertex AI call in the background, returns 202 immediately
+ *      → server awaits bounded Vertex execution and result persistence
+ *        (external-worker mode alone returns 202 for durable queued work)
  *      → polling: GET /api/sessions/:id/chronicle/:entryId
  *      → status: 'draft' once the call finishes
  *      → DM edits the recap if they want, then publishes
@@ -28,11 +28,15 @@ import { v4 as uuidv4 } from 'uuid';
 import { z } from 'zod';
 import pool from '../db/connection.js';
 import { getAuthUserId, assertSessionMember, assertSessionDM } from '../utils/authorization.js';
+import { CHRONICLER_MODEL_ID } from '../services/Chronicler.js';
+import { executeChronicle } from '../services/ChronicleExecution.js';
 import {
-  generateChronicle,
-  isChroniclerError,
-  CHRONICLER_MODEL_ID,
-} from '../services/Chronicler.js';
+  CHRONICLE_BACKEND,
+  claimChronicleJob,
+  finishChronicleJob,
+  recoverInterruptedChronicles,
+  requeueExternalChronicle,
+} from '../services/ChronicleJobs.js';
 
 const router = Router();
 
@@ -57,6 +61,7 @@ interface ChronicleRow {
   generation_started_at: string | null;
   generation_finished_at: string | null;
   generation_error: string | null;
+  generation_backend: 'vertex' | 'external';
   triggered_by: string | null;
   published_at: string | null;
   created_at: string;
@@ -97,107 +102,41 @@ function rowToChronicle(r: ChronicleRow, campaignName?: string) {
   };
 }
 
-// ── Background generator ────────────────────────────────────────
-
-/**
- * Which backend processes pending chronicle rows. Two values today:
- *
- *   - 'vertex' (default): the route fires Vertex AI inline, in the
- *     same Cloud Run instance that received the request.
- *   - 'ollama' (or anything else): the route is a no-op; a separate
- *     worker — typically the dgx-worker running on-prem — polls
- *     `/api/internal/chronicle/jobs/claim` for pending rows and
- *     posts the result back via `/api/internal/chronicle/jobs/:id/result`.
- *     Cloud Run can't reach the DGX over Tailscale, so the polling
- *     direction is mandatory: DGX → Cloud Run.
- */
-const CHRONICLER_BACKEND = (process.env.CHRONICLER_BACKEND ?? 'vertex').toLowerCase();
-
-/**
- * Fire the Vertex AI call out-of-band. The caller (POST generate) has
- * already returned 202 to the client; this fills in the row when the
- * model responds. Errors are stamped onto generation_error so the DM
- * can see what happened on the next poll.
- *
- * When CHRONICLER_BACKEND is anything other than 'vertex', this is a
- * no-op — the row stays at status='pending' for the external worker.
- */
-async function runChronicleGeneration(entryId: string): Promise<void> {
-  if (CHRONICLER_BACKEND !== 'vertex') {
-    // External worker takes ownership of the row. Lifecycle stays
-    // identical: pending → generating → draft → published.
-    return;
-  }
-  // Re-read the row inside this task — the route already inserted it.
-  const { rows } = await pool.query<ChronicleRow & { campaign_name: string; party_names: string[] }>(
-    `SELECT c.*, s.name AS campaign_name,
-            COALESCE(
-              (SELECT array_agg(ch.name)
-                 FROM session_players sp
-                 JOIN characters ch ON ch.id = sp.character_id
-                WHERE sp.session_id = c.campaign_id),
-              '{}'
-            ) AS party_names
-       FROM chronicle_entries c
-       JOIN sessions s ON s.id = c.campaign_id
-      WHERE c.id = $1`,
-    [entryId],
-  );
-  const row = rows[0];
-  if (!row) return;
-
-  await pool.query(
-    `UPDATE chronicle_entries
-        SET status = 'generating',
-            generation_started_at = NOW()::text,
-            updated_at = NOW()::text
-      WHERE id = $1`,
-    [entryId],
-  );
-
-  const result = await generateChronicle({
-    campaignName: row.campaign_name,
-    sequenceNumber: row.sequence_number,
-    transcript: row.raw_transcript,
-    partyNames: row.party_names ?? [],
-    sessionStartedAt: row.session_started_at ?? undefined,
-    sessionEndedAt: row.session_ended_at ?? undefined,
-  });
-
-  if (isChroniclerError(result)) {
-    await pool.query(
-      `UPDATE chronicle_entries
-          SET status = 'failed',
-              generation_finished_at = NOW()::text,
-              generation_error = $2,
-              updated_at = NOW()::text
-        WHERE id = $1`,
-      [entryId, `${result.error}${result.hint ? `: ${result.hint}` : ''}`],
+// All Vertex work, including worker termination and durable completion, is awaited.
+async function runChronicleGeneration(
+  entryId: string,
+  res: Response
+): Promise<'draft' | 'failed' | null> {
+  const controller = new AbortController();
+  const onClose = () => {
+    if (!res.writableEnded) controller.abort();
+  };
+  res.once('close', onClose);
+  if (res.destroyed) controller.abort();
+  try {
+    const job = await claimChronicleJob('vertex', entryId);
+    if (!job) return null;
+    const result = await executeChronicle(
+      {
+        campaignName: job.campaign_name,
+        sequenceNumber: job.sequence_number,
+        transcript: job.raw_transcript,
+        partyNames: job.party_names ?? [],
+        sessionStartedAt: job.session_started_at ?? undefined,
+        sessionEndedAt: job.session_ended_at ?? undefined,
+      },
+      controller.signal
     );
-    return;
-  }
-
-  await pool.query(
-    `UPDATE chronicle_entries
-        SET status = 'draft',
-            recap_short = $2,
-            recap_full = $3,
-            key_entities = $4,
-            where_left_off = $5,
-            model_used = $6,
-            generation_finished_at = NOW()::text,
-            generation_error = NULL,
-            updated_at = NOW()::text
-      WHERE id = $1`,
-    [
+    return await finishChronicleJob(
       entryId,
-      result.recapShort,
-      result.recapFull,
-      result.keyEntities,
-      result.whereLeftOff,
-      CHRONICLER_MODEL_ID,
-    ],
-  );
+      job.generation_attempt_id,
+      'vertex',
+      result,
+      CHRONICLER_MODEL_ID
+    );
+  } finally {
+    res.off('close', onClose);
+  }
 }
 
 // ── Transcript auto-build ───────────────────────────────────────
@@ -251,21 +190,24 @@ async function buildTranscriptFromChat(campaignId: string): Promise<TranscriptPr
   // Cutoff = the most recent published chronicle's published_at (or
   // session_ended_at if that's later). For the first recap this is null
   // and we pull everything.
-  const { rows: prevRows } = await pool.query<{ session_ended_at: string | null; published_at: string | null }>(
+  const { rows: prevRows } = await pool.query<{
+    session_ended_at: string | null;
+    published_at: string | null;
+  }>(
     `SELECT session_ended_at, published_at
        FROM chronicle_entries
       WHERE campaign_id = $1 AND status = 'published'
       ORDER BY published_at DESC
       LIMIT 1`,
-    [campaignId],
+    [campaignId]
   );
   const prev = prevRows[0];
   const sinceAt = prev
-    ? (prev.session_ended_at && prev.published_at
-        ? (new Date(prev.session_ended_at).getTime() > new Date(prev.published_at).getTime()
-            ? prev.session_ended_at
-            : prev.published_at)
-        : (prev.session_ended_at ?? prev.published_at))
+    ? prev.session_ended_at && prev.published_at
+      ? new Date(prev.session_ended_at).getTime() > new Date(prev.published_at).getTime()
+        ? prev.session_ended_at
+        : prev.published_at
+      : (prev.session_ended_at ?? prev.published_at)
     : null;
 
   // Pull chat ordered oldest-first so the transcript reads
@@ -284,7 +226,7 @@ async function buildTranscriptFromChat(campaignId: string): Promise<TranscriptPr
        FROM chat_messages
       ${where}
       ORDER BY created_at ASC`,
-    params,
+    params
   );
 
   const truncated = rows.length > MAX_TRANSCRIPT_LINES;
@@ -292,7 +234,9 @@ async function buildTranscriptFromChat(campaignId: string): Promise<TranscriptPr
 
   const lines: string[] = [];
   if (truncated) {
-    lines.push(`[…${rows.length - MAX_TRANSCRIPT_LINES} earlier messages trimmed; kept the most recent ${MAX_TRANSCRIPT_LINES}…]`);
+    lines.push(
+      `[…${rows.length - MAX_TRANSCRIPT_LINES} earlier messages trimmed; kept the most recent ${MAX_TRANSCRIPT_LINES}…]`
+    );
   }
 
   for (const r of kept) {
@@ -437,7 +381,7 @@ router.post('/sessions/:id/chronicle/generate', async (req: Request, res: Respon
     `SELECT COALESCE(MAX(sequence_number), 0) + 1 AS next_seq
        FROM chronicle_entries
       WHERE campaign_id = $1`,
-    [campaignId],
+    [campaignId]
   );
   const sequenceNumber = seqRows[0]?.next_seq ?? 1;
 
@@ -458,21 +402,31 @@ router.post('/sessions/:id/chronicle/generate', async (req: Request, res: Respon
     `INSERT INTO chronicle_entries (
        id, campaign_id, sequence_number, raw_transcript,
        session_started_at, session_ended_at, duration_ms,
-       triggered_by, status
-     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'pending')`,
+      triggered_by, generation_backend, status
+     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'pending')`,
     [
-      id, campaignId, sequenceNumber, transcript,
-      sessionStartedAt, sessionEndedAt, durationMs,
+      id,
+      campaignId,
+      sequenceNumber,
+      transcript,
+      sessionStartedAt,
+      sessionEndedAt,
+      durationMs,
       userId,
-    ],
+      CHRONICLE_BACKEND,
+    ]
   );
 
-  // Fire the LLM call out of band. The DM polls the row to get
-  // status flipped from 'generating' → 'draft' once Gemini returns.
-  // void marks the floating promise as intentional.
-  void runChronicleGeneration(id);
-
-  res.status(202).json({ entryId: id, status: 'pending', sequenceNumber });
+  if (CHRONICLE_BACKEND === 'external') {
+    res.status(202).json({ entryId: id, status: 'pending', sequenceNumber });
+    return;
+  }
+  const status = await runChronicleGeneration(id, res);
+  if (!status) {
+    res.status(409).json({ entryId: id, error: 'Generation attempt no longer owns this entry' });
+    return;
+  }
+  res.status(201).json({ entryId: id, status, sequenceNumber });
 });
 
 // ── GET /api/sessions/:id/chronicle ─────────────────────────────
@@ -487,16 +441,17 @@ router.get('/sessions/:id/chronicle', async (req: Request, res: Response) => {
   const { rows: dmRows } = await pool.query(
     `SELECT 1 FROM session_players
       WHERE session_id = $1 AND user_id = $2 AND role = 'dm' LIMIT 1`,
-    [campaignId, userId],
+    [campaignId, userId]
   );
   const isDM = dmRows.length > 0;
+  if (isDM) await recoverInterruptedChronicles(campaignId);
 
   const { rows } = await pool.query<ChronicleRow>(
     `SELECT * FROM chronicle_entries
       WHERE campaign_id = $1
         ${isDM ? '' : "AND status = 'published'"}
       ORDER BY sequence_number DESC`,
-    [campaignId],
+    [campaignId]
   );
 
   res.json({
@@ -513,21 +468,30 @@ router.get('/sessions/:id/chronicle/:entryId', async (req: Request, res: Respons
   const entryId = String(req.params.entryId);
   await assertSessionMember(campaignId, userId);
 
+  // Recovery changes only lifecycle metadata, never exposes draft content.
+  await recoverInterruptedChronicles(campaignId);
+
   const { rows } = await pool.query<ChronicleRow>(
     'SELECT * FROM chronicle_entries WHERE id = $1 AND campaign_id = $2',
-    [entryId, campaignId],
+    [entryId, campaignId]
   );
   const row = rows[0];
-  if (!row) { res.status(404).json({ error: 'Chronicle entry not found' }); return; }
+  if (!row) {
+    res.status(404).json({ error: 'Chronicle entry not found' });
+    return;
+  }
 
   // Players only see published rows.
   if (row.status !== 'published') {
     const { rows: dmRows } = await pool.query(
       `SELECT 1 FROM session_players
         WHERE session_id = $1 AND user_id = $2 AND role = 'dm' LIMIT 1`,
-      [campaignId, userId],
+      [campaignId, userId]
     );
-    if (dmRows.length === 0) { res.status(404).json({ error: 'Chronicle entry not found' }); return; }
+    if (dmRows.length === 0) {
+      res.status(404).json({ error: 'Chronicle entry not found' });
+      return;
+    }
   }
   res.json({ entry: rowToChronicle(row) });
 });
@@ -547,10 +511,14 @@ router.patch('/chronicle/:id', async (req: Request, res: Response) => {
 
   // Look up the campaign so we can gate DM-only edits.
   const { rows: lookupRows } = await pool.query<{ campaign_id: string }>(
-    'SELECT campaign_id FROM chronicle_entries WHERE id = $1', [id],
+    'SELECT campaign_id FROM chronicle_entries WHERE id = $1',
+    [id]
   );
   const lookup = lookupRows[0];
-  if (!lookup) { res.status(404).json({ error: 'Chronicle entry not found' }); return; }
+  if (!lookup) {
+    res.status(404).json({ error: 'Chronicle entry not found' });
+    return;
+  }
   await assertSessionDM(lookup.campaign_id, userId);
 
   const parsed = patchBodySchema.safeParse(req.body);
@@ -562,17 +530,34 @@ router.patch('/chronicle/:id', async (req: Request, res: Response) => {
   const updates: string[] = [];
   const params: unknown[] = [];
   let p = 1;
-  if (d.dmRecapShort !== undefined) { updates.push(`dm_recap_short = $${p++}`); params.push(d.dmRecapShort); }
-  if (d.dmRecapFull !== undefined)  { updates.push(`dm_recap_full = $${p++}`); params.push(d.dmRecapFull); }
-  if (d.whereLeftOff !== undefined) { updates.push(`where_left_off = $${p++}`); params.push(d.whereLeftOff); }
-  if (d.keyEntities !== undefined)  { updates.push(`key_entities = $${p++}`); params.push(d.keyEntities); }
+  if (d.dmRecapShort !== undefined) {
+    updates.push(`dm_recap_short = $${p++}`);
+    params.push(d.dmRecapShort);
+  }
+  if (d.dmRecapFull !== undefined) {
+    updates.push(`dm_recap_full = $${p++}`);
+    params.push(d.dmRecapFull);
+  }
+  if (d.whereLeftOff !== undefined) {
+    updates.push(`where_left_off = $${p++}`);
+    params.push(d.whereLeftOff);
+  }
+  if (d.keyEntities !== undefined) {
+    updates.push(`key_entities = $${p++}`);
+    params.push(d.keyEntities);
+  }
 
-  if (updates.length === 0) { res.json({ ok: true }); return; }
+  if (updates.length === 0) {
+    res.json({ ok: true });
+    return;
+  }
   updates.push(`updated_at = NOW()::text`);
   params.push(id);
   await pool.query(`UPDATE chronicle_entries SET ${updates.join(', ')} WHERE id = $${p}`, params);
 
-  const { rows } = await pool.query<ChronicleRow>('SELECT * FROM chronicle_entries WHERE id = $1', [id]);
+  const { rows } = await pool.query<ChronicleRow>('SELECT * FROM chronicle_entries WHERE id = $1', [
+    id,
+  ]);
   res.json({ entry: rowToChronicle(rows[0]) });
 });
 
@@ -582,10 +567,14 @@ router.post('/chronicle/:id/publish', async (req: Request, res: Response) => {
   const userId = getAuthUserId(req);
   const id = String(req.params.id);
   const { rows: lookupRows } = await pool.query<ChronicleRow>(
-    'SELECT * FROM chronicle_entries WHERE id = $1', [id],
+    'SELECT * FROM chronicle_entries WHERE id = $1',
+    [id]
   );
   const row = lookupRows[0];
-  if (!row) { res.status(404).json({ error: 'Chronicle entry not found' }); return; }
+  if (!row) {
+    res.status(404).json({ error: 'Chronicle entry not found' });
+    return;
+  }
   await assertSessionDM(row.campaign_id, userId);
 
   if (row.status === 'pending' || row.status === 'generating') {
@@ -601,9 +590,11 @@ router.post('/chronicle/:id/publish', async (req: Request, res: Response) => {
     `UPDATE chronicle_entries
         SET status = 'published', published_at = NOW()::text, updated_at = NOW()::text
       WHERE id = $1`,
-    [id],
+    [id]
   );
-  const { rows } = await pool.query<ChronicleRow>('SELECT * FROM chronicle_entries WHERE id = $1', [id]);
+  const { rows } = await pool.query<ChronicleRow>('SELECT * FROM chronicle_entries WHERE id = $1', [
+    id,
+  ]);
   res.json({ entry: rowToChronicle(rows[0]) });
 });
 
@@ -612,24 +603,29 @@ router.post('/chronicle/:id/publish', async (req: Request, res: Response) => {
 router.post('/chronicle/:id/retry', async (req: Request, res: Response) => {
   const userId = getAuthUserId(req);
   const id = String(req.params.id);
-  const { rows } = await pool.query<ChronicleRow>(
-    'SELECT * FROM chronicle_entries WHERE id = $1', [id],
-  );
+  const { rows } = await pool.query<ChronicleRow>('SELECT * FROM chronicle_entries WHERE id = $1', [
+    id,
+  ]);
   const row = rows[0];
-  if (!row) { res.status(404).json({ error: 'Chronicle entry not found' }); return; }
-  await assertSessionDM(row.campaign_id, userId);
-  if (row.status !== 'failed') {
-    res.status(409).json({ error: `Cannot retry — current status is '${row.status}'` });
+  if (!row) {
+    res.status(404).json({ error: 'Chronicle entry not found' });
     return;
   }
-  await pool.query(
-    `UPDATE chronicle_entries
-        SET status = 'pending', generation_error = NULL, updated_at = NOW()::text
-      WHERE id = $1`,
-    [id],
-  );
-  void runChronicleGeneration(id);
-  res.status(202).json({ entryId: id, status: 'pending' });
+  await assertSessionDM(row.campaign_id, userId);
+  if (row.generation_backend === 'external') {
+    if (!(await requeueExternalChronicle(id))) {
+      res.status(409).json({ error: 'Job is active or no longer retryable' });
+      return;
+    }
+    res.status(202).json({ entryId: id, status: 'pending' });
+    return;
+  }
+  const status = await runChronicleGeneration(id, res);
+  if (!status) {
+    res.status(409).json({ error: 'Job is active or no longer retryable' });
+    return;
+  }
+  res.json({ entryId: id, status });
 });
 
 // ── DELETE /api/chronicle/:id ───────────────────────────────────
@@ -638,10 +634,14 @@ router.delete('/chronicle/:id', async (req: Request, res: Response) => {
   const userId = getAuthUserId(req);
   const id = String(req.params.id);
   const { rows } = await pool.query<{ campaign_id: string }>(
-    'SELECT campaign_id FROM chronicle_entries WHERE id = $1', [id],
+    'SELECT campaign_id FROM chronicle_entries WHERE id = $1',
+    [id]
   );
   const row = rows[0];
-  if (!row) { res.status(404).json({ error: 'Chronicle entry not found' }); return; }
+  if (!row) {
+    res.status(404).json({ error: 'Chronicle entry not found' });
+    return;
+  }
   await assertSessionDM(row.campaign_id, userId);
   await pool.query('DELETE FROM chronicle_entries WHERE id = $1', [id]);
   res.json({ ok: true });
@@ -666,7 +666,7 @@ router.get('/chronicle/mine', async (req: Request, res: Response) => {
         AND c.status = 'published'
       ORDER BY c.published_at DESC
       LIMIT 12`,
-    [userId],
+    [userId]
   );
   res.json({
     entries: rows.map((r) => rowToChronicle(r, r.campaign_name)),

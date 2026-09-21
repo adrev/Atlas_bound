@@ -26,10 +26,11 @@ const VERTEX_LOCATION = process.env.VERTEX_LOCATION || 'us-central1';
 
 /** Project id. In Cloud Run, the Vertex SDK can discover the runtime
  *  project from metadata; local dev can override it explicitly. */
-const VERTEX_PROJECT_ID = process.env.GCP_PROJECT_ID
-  || process.env.GOOGLE_CLOUD_PROJECT
-  || process.env.GCLOUD_PROJECT
-  || '';
+const VERTEX_PROJECT_ID =
+  process.env.GCP_PROJECT_ID ||
+  process.env.GOOGLE_CLOUD_PROJECT ||
+  process.env.GCLOUD_PROJECT ||
+  '';
 
 /** Model id. Flash-Lite is the cheap tier; flip to "gemini-2.5-flash"
  *  for slightly better prose at ~2× the cost. */
@@ -81,22 +82,24 @@ export interface ChroniclerError {
  * the prompt shape without spinning up a Vertex client.
  */
 export function buildChroniclerRequest(input: ChroniclerInput): GenerateContentRequest {
-  const { campaignName, sequenceNumber, transcript, partyNames, sessionStartedAt, sessionEndedAt } = input;
+  const { campaignName, sequenceNumber, transcript, partyNames, sessionStartedAt, sessionEndedAt } =
+    input;
 
   // Trim oldest-first if the transcript is huge. We assume the most
   // recent events matter most for the recap; truncating the head is
   // a clean way to stay under the cap.
-  const trimmed = transcript.length > MAX_TRANSCRIPT_CHARS
-    ? `[…transcript trimmed at the head; kept most recent ${MAX_TRANSCRIPT_CHARS} chars…]\n${transcript.slice(-MAX_TRANSCRIPT_CHARS)}`
-    : transcript;
+  const trimmed =
+    transcript.length > MAX_TRANSCRIPT_CHARS
+      ? `[…transcript trimmed at the head; kept most recent ${MAX_TRANSCRIPT_CHARS} chars…]\n${transcript.slice(-MAX_TRANSCRIPT_CHARS)}`
+      : transcript;
 
-  const partyLine = partyNames && partyNames.length > 0
-    ? `The party at the table: ${partyNames.join(', ')}.`
-    : '';
+  const partyLine =
+    partyNames && partyNames.length > 0 ? `The party at the table: ${partyNames.join(', ')}.` : '';
 
-  const timingLine = (sessionStartedAt && sessionEndedAt)
-    ? `Session ran from ${sessionStartedAt} to ${sessionEndedAt}.`
-    : '';
+  const timingLine =
+    sessionStartedAt && sessionEndedAt
+      ? `Session ran from ${sessionStartedAt} to ${sessionEndedAt}.`
+      : '';
 
   // System instruction: the persona + the strict JSON contract.
   const systemPrompt = `You are the Chronicler — the in-world bard who keeps the chronicle of an ongoing D&D campaign.
@@ -216,7 +219,9 @@ export function setVertexClientForTesting(client: VertexAI | null): void {
  * use elsewhere (Discord webhook, etc.) and lets the route layer
  * persist the error message onto generation_error.
  */
-export async function generateChronicle(input: ChroniclerInput): Promise<ChroniclerOutput | ChroniclerError> {
+export async function generateChronicle(
+  input: ChroniclerInput
+): Promise<ChroniclerOutput | ChroniclerError> {
   if (!input.transcript || input.transcript.trim().length < 20) {
     return {
       error: 'Transcript too short',
@@ -224,11 +229,13 @@ export async function generateChronicle(input: ChroniclerInput): Promise<Chronic
     };
   }
 
-  const request = buildChroniclerRequest(input);
-  const generativeModel = getVertexClient().getGenerativeModel({ model: CHRONICLER_MODEL });
-
   let responseText = '';
   try {
+    const request = buildChroniclerRequest(input);
+    const generativeModel = getVertexClient().getGenerativeModel(
+      { model: CHRONICLER_MODEL },
+      { timeout: 85_000 }
+    );
     const result = await generativeModel.generateContent(request);
     const candidate = result.response?.candidates?.[0];
     const part = candidate?.content?.parts?.[0];

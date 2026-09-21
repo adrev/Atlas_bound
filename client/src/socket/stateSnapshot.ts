@@ -3,7 +3,12 @@ import { useMapStore } from '../stores/useMapStore';
 import { useCombatStore, resolveTurnIndex } from '../stores/useCombatStore';
 import { useCharacterStore } from '../stores/useCharacterStore';
 import type { Token, Combatant } from '@dnd-vtt/shared';
-import { recordEventId, getLastEventId } from './eventCursor';
+import {
+  recordSnapshotCursor,
+  getLastEventId,
+  getSyncGeneration,
+  requestFullRejoin,
+} from './eventCursor';
 
 /**
  * Debounced snapshot trigger. Callers (UI actions, socket listeners)
@@ -28,12 +33,14 @@ const MIN_INTERVAL_MS = 80;
 
 // ETag from the last 200 response, sent back as If-None-Match so the server
 // can answer 304 (unchanged) and we skip the JSON parse + full reconcile.
-// Scoped to the session it came from: navigating to a different session must
-// NOT send the previous session's ETag (the server now namespaces the ETag
-// by sessionId, but clearing it client-side also avoids a needless
-// round-trip + keeps the two in lockstep).
+// Scoped to the local request lifetime and applied cursor, not just the
+// durable server generation: same-generation rejoins need a fresh body too.
 let lastStateEtag: string | null = null;
-let lastStateEtagSessionId: string | null = null;
+let lastStateEtagGeneration: number | null = null;
+let lastStateEtagEventId = 0;
+let snapshotInvalidation = 0;
+let nextSnapshotRequestId = 0;
+let lastAppliedSnapshotRequestId = 0;
 
 function combatantsChanged(current: Combatant[], next: Combatant[]): boolean {
   if (current.length !== next.length) return true;
@@ -76,6 +83,11 @@ function combatantsChanged(current: Combatant[], next: Combatant[]): boolean {
  * server, just logged for local debugging.
  */
 export function triggerSnapshot(_reason?: string): void {
+  // A mutation may not carry an event ID. Do not let its previous ETag or
+  // an already-pending body mask this reconciliation.
+  lastStateEtag = null;
+  snapshotInvalidation += 1;
+  const lifetime = getSyncGeneration();
   if (snapshotTimer) clearTimeout(snapshotTimer);
   // Hard floor so rapid-fire triggers (e.g. a token drag emitting
   // 30 move events/sec) can't escalate into 30 HTTP calls.
@@ -83,6 +95,7 @@ export function triggerSnapshot(_reason?: string): void {
   const delay = elapsed < MIN_INTERVAL_MS ? MIN_INTERVAL_MS - elapsed : 150;
   snapshotTimer = setTimeout(() => {
     snapshotTimer = null;
+    if (lifetime !== getSyncGeneration()) return;
     lastSnapshotAt = Date.now();
     void pullStateSnapshot();
   }, delay);
@@ -92,7 +105,7 @@ export function triggerSnapshot(_reason?: string): void {
  * Authoritative state reconciler.
  *
  * The client polls `GET /api/sessions/:id/state` every keep-alive
- * tick (15 s). The server's response is the ground truth: we
+ * tick (5 s). The server's response is the ground truth: we
  * reconcile our local stores against it so ANY drift — no matter
  * how it happened (dead socket, unwrapped broadcast, OS-paused
  * timer) — self-heals inside one tick.
@@ -111,14 +124,20 @@ export function triggerSnapshot(_reason?: string): void {
  * every 15 s.
  */
 export async function pullStateSnapshot(): Promise<{ ok: boolean; applied: boolean }> {
-  const sessionId = useSessionStore.getState().sessionId;
-  if (!sessionId) return { ok: false, applied: false };
+  const { sessionId, generation } = useSessionStore.getState();
+  if (!sessionId || !generation) return { ok: false, applied: false };
+  const lifetime = getSyncGeneration();
+  const invalidation = snapshotInvalidation;
+  const requestId = ++nextSnapshotRequestId;
+  const cursor = getLastEventId();
+  const isCurrent = () =>
+    lifetime === getSyncGeneration() &&
+    invalidation === snapshotInvalidation &&
+    requestId >= lastAppliedSnapshotRequestId;
 
-  // Drop a cached ETag that belongs to a different session — never send
-  // session A's validator while polling session B.
-  if (lastStateEtagSessionId !== sessionId) {
+  // Drop validators from previous joins/sessions or overtaken snapshots.
+  if (lastStateEtagGeneration !== lifetime || lastStateEtagEventId !== cursor) {
     lastStateEtag = null;
-    lastStateEtagSessionId = sessionId;
   }
 
   try {
@@ -128,19 +147,32 @@ export async function pullStateSnapshot(): Promise<{ ok: boolean; applied: boole
       credentials: 'include',
       headers,
     });
+    if (!isCurrent()) return { ok: false, applied: false };
+
+    if (resp.status === 410) {
+      requestFullRejoin();
+      return { ok: false, applied: false };
+    }
 
     // 304 Not Modified — nothing changed since our last pull. Keep the
     // cached state, skip the parse + reconcile entirely.
-    if (resp.status === 304) return { ok: true, applied: false };
+    if (resp.status === 304) {
+      if (
+        !lastStateEtag ||
+        headers['If-None-Match'] !== lastStateEtag ||
+        cursor !== getLastEventId()
+      ) {
+        lastStateEtag = null;
+        return { ok: false, applied: false };
+      }
+      return { ok: true, applied: false };
+    }
 
     if (!resp.ok) return { ok: false, applied: false };
     const newEtag = resp.headers.get('ETag');
-    if (newEtag) {
-      lastStateEtag = newEtag;
-      lastStateEtagSessionId = sessionId;
-    }
 
     const snap = (await resp.json()) as {
+      generation?: string;
       mapId?: string | null;
       tokens: Token[];
       combat: null | {
@@ -155,6 +187,14 @@ export async function pullStateSnapshot(): Promise<{ ok: boolean; applied: boole
       nextEventId: number;
       roundNumber: number;
     };
+    if (!isCurrent()) return { ok: false, applied: false };
+    // Check generation BEFORE comparing counters: a new state lineage may
+    // have cursor 0 while a restored durable lineage retains its cursor.
+    // Missing generation is the cold/no-room fallback, never authoritative.
+    if (snap.generation !== generation) {
+      requestFullRejoin();
+      return { ok: false, applied: false };
+    }
 
     // STALENESS GUARD: a /state response can land AFTER live socket
     // events that the server read happened BEFORE (HTTP overtaken by
@@ -164,25 +204,7 @@ export async function pullStateSnapshot(): Promise<{ ok: boolean; applied: boole
     // rubber-band token positions and rewind combat (turn indicator
     // jumping backwards). Discard; the next poll re-converges.
     if (typeof snap.nextEventId === 'number' && snap.nextEventId < getLastEventId()) {
-      return { ok: true, applied: false };
-    }
-
-    // Guard against a non-authoritative "no room on this instance"
-    // snapshot wiping real local state. The server returns an empty
-    // snapshot with nextEventId 0 when getRoom() is null — e.g. a Cloud
-    // Run session-affinity miss, or an instance that just restarted and
-    // hasn't rehydrated the room. nextEventId is monotonic, so a session
-    // that has ever had activity always reports > 0; only this fallback
-    // (or a pristine, genuinely-empty room) reports 0. Reconciling an
-    // empty fallback over real state would wipe the map + end combat from
-    // a stale source — skip it; the socket and the next poll to the
-    // authoritative instance self-heal.
-    if (
-      snap.nextEventId === 0 &&
-      snap.tokens.length === 0 &&
-      !snap.combat &&
-      (Object.keys(useMapStore.getState().tokens).length > 0 || useCombatStore.getState().active)
-    ) {
+      lastStateEtag = null;
       return { ok: true, applied: false };
     }
 
@@ -298,8 +320,13 @@ export async function pullStateSnapshot(): Promise<{ ok: boolean; applied: boole
     // ── Advance the event cursor so the next /events?since=N call
     //    doesn't redundantly replay the same data we just reconciled.
     if (typeof snap.nextEventId === 'number') {
-      recordEventId(snap.nextEventId);
+      recordSnapshotCursor(snap.nextEventId);
     }
+    // Only an applied body in this request lifetime may seed a later 304.
+    lastAppliedSnapshotRequestId = requestId;
+    lastStateEtag = newEtag;
+    lastStateEtagGeneration = lifetime;
+    lastStateEtagEventId = getLastEventId();
 
     return { ok: true, applied: true };
   } catch {

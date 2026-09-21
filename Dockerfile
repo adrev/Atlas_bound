@@ -14,7 +14,7 @@ COPY server/package*.json ./server/
 COPY client/package*.json ./client/
 
 # Install all dependencies (including devDependencies for build)
-RUN npm install
+RUN npm ci
 
 # Copy source code
 COPY . .

@@ -33,121 +33,123 @@ import { tokenVisibleToPlayer } from '../utils/tokenVisibility.js';
 export function registerSessionEvents(io: Server, socket: Socket): void {
   socket.on(
     'session:join',
-    safeHandler(socket, async (data) => {
-      const parsed = sessionJoinSchema.safeParse(data);
-      if (!parsed.success) {
-        socket.emit('session:error', { message: 'Invalid join data' });
-        return;
-      }
+    safeHandler(
+      socket,
+      async (data) => {
+        const parsed = sessionJoinSchema.safeParse(data);
+        if (!parsed.success) {
+          socket.emit('session:error', { message: 'Invalid join data' });
+          return;
+        }
 
-      const { roomCode } = parsed.data;
-      // Identity comes from the authenticated session, never from client data
-      const userId = socket.data.userId as string;
-      const displayName = socket.data.displayName as string;
+        const { roomCode } = parsed.data;
+        // Identity comes from the authenticated session, never from client data
+        const userId = socket.data.userId as string;
+        const displayName = socket.data.displayName as string;
 
-      if (!userId) {
-        socket.emit('session:error', { message: 'Authentication required' });
-        return;
-      }
+        if (!userId) {
+          socket.emit('session:error', { message: 'Authentication required' });
+          return;
+        }
 
-      const { rows: sessionRows } = await pool.query(
-        `
+        const { rows: sessionRows } = await pool.query(
+          `
       SELECT id, name, room_code, dm_user_id, current_map_id, player_map_id, game_mode, settings,
              visibility, password_hash, invite_code, discord_webhook_url
       FROM sessions WHERE room_code = $1
     `,
-        [roomCode]
-      );
-      const session = sessionRows[0] as
-        | {
-            id: string;
-            name: string;
-            room_code: string;
-            dm_user_id: string;
-            current_map_id: string | null;
-            player_map_id: string | null;
-            game_mode: string;
-            settings: string;
-            visibility: string;
-            password_hash: string | null;
-            invite_code: string | null;
-            discord_webhook_url: string | null;
-          }
-        | undefined;
+          [roomCode]
+        );
+        const session = sessionRows[0] as
+          | {
+              id: string;
+              name: string;
+              room_code: string;
+              dm_user_id: string;
+              current_map_id: string | null;
+              player_map_id: string | null;
+              game_mode: string;
+              settings: string;
+              visibility: string;
+              password_hash: string | null;
+              invite_code: string | null;
+              discord_webhook_url: string | null;
+            }
+          | undefined;
 
-      if (!session) {
-        socket.emit('session:error', { message: 'Session not found' });
-        return;
-      }
+        if (!session) {
+          socket.emit('session:error', { message: 'Session not found' });
+          return;
+        }
 
-      const { rows: playerRows } = await pool.query(
-        `
+        const { rows: playerRows } = await pool.query(
+          `
       SELECT sp.user_id, sp.role, sp.character_id, u.display_name, u.avatar_url
       FROM session_players sp
       JOIN users u ON u.id = sp.user_id
       WHERE sp.session_id = $1
     `,
-        [session.id]
-      );
+          [session.id]
+        );
 
-      const currentPlayer = playerRows.find((p) => p.user_id === userId);
+        const currentPlayer = playerRows.find((p) => p.user_id === userId);
 
-      if (!currentPlayer) {
-        socket.emit('session:error', { message: 'You are not a member of this session' });
-        return;
-      }
+        if (!currentPlayer) {
+          socket.emit('session:error', { message: 'You are not a member of this session' });
+          return;
+        }
 
-      const isDM = currentPlayer.role === 'dm';
+        const isDM = currentPlayer.role === 'dm';
 
-      let room = getRoom(session.id);
-      if (!room) {
-        room = createRoom(session.id, session.room_code, session.dm_user_id);
-        room.currentMapId = session.current_map_id;
-        // Player ribbon is ONLY set from player_map_id. The old fallback
-        // to current_map_id leaked DM prep maps to players on legacy
-        // sessions (same fix we applied to the REST routes). current_map_id
-        // is still set on room.currentMapId for DM-side use (preview
-        // navigation, OA grid cache) but never surfaces to players.
-        room.playerMapId = session.player_map_id ?? null;
-        room.gameMode = session.game_mode as GameMode;
-      }
+        let room = getRoom(session.id);
+        if (!room) {
+          room = createRoom(session.id, session.room_code, session.dm_user_id);
+          room.currentMapId = session.current_map_id;
+          // Player ribbon is ONLY set from player_map_id. The old fallback
+          // to current_map_id leaked DM prep maps to players on legacy
+          // sessions (same fix we applied to the REST routes). current_map_id
+          // is still set on room.currentMapId for DM-side use (preview
+          // navigation, OA grid cache) but never surfaces to players.
+          room.playerMapId = session.player_map_id ?? null;
+          room.gameMode = session.game_mode as GameMode;
+        }
 
-      const wasPresentInRoom = room.players.has(userId);
-      const roomPlayer: RoomPlayer = {
-        userId,
-        displayName,
-        socketId: socket.id,
-        role: isDM ? 'dm' : 'player',
-        characterId: currentPlayer.character_id,
-      };
-      addPlayerToRoom(session.id, roomPlayer);
-      socket.join(session.id);
-      (socket as unknown as Record<string, unknown>).__sessionId = session.id;
-      (socket as unknown as Record<string, unknown>).__userId = userId;
-
-      const players: Player[] = playerRows.map((p) => {
-        const connected = room!.players.has(p.user_id);
-        return {
-          userId: p.user_id,
-          displayName: p.display_name,
-          avatarUrl: p.avatar_url,
-          role: p.role as 'dm' | 'player',
-          characterId: p.character_id,
-          connected,
+        const wasPresentInRoom = room.players.has(userId);
+        const roomPlayer: RoomPlayer = {
+          userId,
+          displayName,
+          socketId: socket.id,
+          role: isDM ? 'dm' : 'player',
+          characterId: currentPlayer.character_id,
         };
-      });
+        addPlayerToRoom(session.id, roomPlayer);
+        socket.join(session.id);
+        (socket as unknown as Record<string, unknown>).__sessionId = session.id;
+        (socket as unknown as Record<string, unknown>).__userId = userId;
 
-      const settings = safeParseJSON<Record<string, unknown>>(
-        session.settings,
-        {},
-        'sessions.settings'
-      );
+        const players: Player[] = playerRows.map((p) => {
+          const connected = room!.players.has(p.user_id);
+          return {
+            userId: p.user_id,
+            displayName: p.display_name,
+            avatarUrl: p.avatar_url,
+            role: p.role as 'dm' | 'player',
+            characterId: p.character_id,
+            connected,
+          };
+        });
 
-      // Bans are public \u2014 every member sees the list. Non-DMs see the
-      // same payload so they know who's been excluded (they just don't
-      // get the Unban button in the UI).
-      const { rows: banRows } = await pool.query(
-        `
+        const settings = safeParseJSON<Record<string, unknown>>(
+          session.settings,
+          {},
+          'sessions.settings'
+        );
+
+        // Bans are public \u2014 every member sees the list. Non-DMs see the
+        // same payload so they know who's been excluded (they just don't
+        // get the Unban button in the UI).
+        const { rows: banRows } = await pool.query(
+          `
       SELECT b.user_id, b.banned_by, b.banned_at, b.reason,
              u.display_name, u.avatar_url,
              bu.display_name AS banned_by_name
@@ -157,325 +159,329 @@ export function registerSessionEvents(io: Server, socket: Socket): void {
       WHERE b.session_id = $1
       ORDER BY b.banned_at DESC
     `,
-        [session.id]
-      );
-      const bans = banRows.map((r) => ({
-        userId: r.user_id as string,
-        displayName: r.display_name as string,
-        avatarUrl: r.avatar_url as string | null,
-        bannedBy: r.banned_by_name as string | null,
-        bannedByUserId: r.banned_by as string,
-        bannedAt: r.banned_at as string,
-        reason: r.reason as string | null,
-      }));
-
-      socket.emit('session:state-sync', {
-        sessionId: session.id,
-        roomCode: session.room_code,
-        userId,
-        isDM,
-        players,
-        // Only surface the Discord webhook to the DM — it lives on
-        // `sessions` alongside invite_code with the same privacy bar.
-        settings: {
-          ...DEFAULT_SESSION_SETTINGS,
-          ...settings,
-          ...(isDM ? { discordWebhookUrl: session.discord_webhook_url } : {}),
-        },
-        currentMapId: isDM ? room.currentMapId : room.playerMapId,
-        gameMode: room.gameMode,
-        visibility: (session.visibility as 'public' | 'private') ?? 'public',
-        hasPassword: session.password_hash !== null,
-        inviteCode: isDM ? session.invite_code : null,
-        ownerUserId: session.dm_user_id,
-        bans,
-      });
-
-      const presencePayload = {
-        userId,
-        displayName,
-        avatarUrl: currentPlayer.avatar_url,
-        role: isDM ? 'dm' : 'player',
-        characterId: currentPlayer.character_id,
-        connected: true,
-      };
-      socket
-        .to(session.id)
-        .emit(
-          wasPresentInRoom ? 'session:player-presence' : 'session:player-joined',
-          presencePayload
+          [session.id]
         );
+        const bans = banRows.map((r) => ({
+          userId: r.user_id as string,
+          displayName: r.display_name as string,
+          avatarUrl: r.avatar_url as string | null,
+          bannedBy: r.banned_by_name as string | null,
+          bannedByUserId: r.banned_by as string,
+          bannedAt: r.banned_at as string,
+          reason: r.reason as string | null,
+        }));
 
-      // Re-emit the currently playing track so a late joiner hears what
-      // the DM is already playing. Only fires when a track is set —
-      // otherwise the client already defaults to silent, so re-sending
-      // "null, stop" to a fresh tab would just churn the audio element.
-      if (room.music.track) {
-        socket.emit('session:music-changed', {
-          track: room.music.track,
-          fileIndex: room.music.fileIndex,
+        socket.emit('session:state-sync', {
+          generation: room.generation,
+          nextEventId: room.nextEventId,
+          sessionId: session.id,
+          roomCode: session.room_code,
+          userId,
+          isDM,
+          players,
+          // Only surface the Discord webhook to the DM — it lives on
+          // `sessions` alongside invite_code with the same privacy bar.
+          settings: {
+            ...DEFAULT_SESSION_SETTINGS,
+            ...settings,
+            ...(isDM ? { discordWebhookUrl: session.discord_webhook_url } : {}),
+          },
+          currentMapId: isDM ? room.currentMapId : room.playerMapId,
+          gameMode: room.gameMode,
+          visibility: (session.visibility as 'public' | 'private') ?? 'public',
+          hasPassword: session.password_hash !== null,
+          inviteCode: isDM ? session.invite_code : null,
+          ownerUserId: session.dm_user_id,
+          bans,
         });
-        // Only re-emit the last action when it represents a paused
-        // state — 'resume', 'next', 'prev' are one-shot transitions that
-        // shouldn't be replayed, but a stored 'pause' means the DM
-        // stopped the music and we should restore that on the new tab.
-        if (room.music.action === 'pause') {
-          socket.emit('session:music-action-broadcast', { action: room.music.action });
+
+        const presencePayload = {
+          userId,
+          displayName,
+          avatarUrl: currentPlayer.avatar_url,
+          role: isDM ? 'dm' : 'player',
+          characterId: currentPlayer.character_id,
+          connected: true,
+        };
+        socket
+          .to(session.id)
+          .emit(
+            wasPresentInRoom ? 'session:player-presence' : 'session:player-joined',
+            presencePayload
+          );
+
+        // Re-emit the currently playing track so a late joiner hears what
+        // the DM is already playing. Only fires when a track is set —
+        // otherwise the client already defaults to silent, so re-sending
+        // "null, stop" to a fresh tab would just churn the audio element.
+        if (room.music.track) {
+          socket.emit('session:music-changed', {
+            track: room.music.track,
+            fileIndex: room.music.fileIndex,
+          });
+          // Only re-emit the last action when it represents a paused
+          // state — 'resume', 'next', 'prev' are one-shot transitions that
+          // shouldn't be replayed, but a stored 'pause' means the DM
+          // stopped the music and we should restore that on the new tab.
+          if (room.music.action === 'pause') {
+            socket.emit('session:music-action-broadcast', { action: room.music.action });
+          }
         }
-      }
 
-      // Auto-load map on join.
-      //   Players → always the ribbon (player_map_id). No more hydrating
-      //               onto a DM's prep/preview map.
-      //   DM     → their last preview map if they had one in-memory,
-      //               else the ribbon/current DM pointer. DM preview is
-      //               per-DM, never persisted to sessions.current_map_id.
-      let hydrationMapId = isDM
-        ? (room.dmViewingMap.get(userId) ?? room.playerMapId ?? room.currentMapId)
-        : room.playerMapId;
+        // Auto-load map on join.
+        //   Players → always the ribbon (player_map_id). No more hydrating
+        //               onto a DM's prep/preview map.
+        //   DM     → their last preview map if they had one in-memory,
+        //               else the ribbon/current DM pointer. DM preview is
+        //               per-DM, never persisted to sessions.current_map_id.
+        let hydrationMapId = isDM
+          ? (room.dmViewingMap.get(userId) ?? room.playerMapId ?? room.currentMapId)
+          : room.playerMapId;
 
-      // Legacy / freshly-created rooms can have maps but no current pointer
-      // after the preview/ribbon split. Keep this fallback DM-only: it gives
-      // the DM something useful to look at without exposing prep maps to
-      // players or silently moving the player ribbon.
-      if (!hydrationMapId && isDM) {
-        const { rows: fallbackRows } = await pool.query(
-          `SELECT id FROM maps
+        // Legacy / freshly-created rooms can have maps but no current pointer
+        // after the preview/ribbon split. Keep this fallback DM-only: it gives
+        // the DM something useful to look at without exposing prep maps to
+        // players or silently moving the player ribbon.
+        if (!hydrationMapId && isDM) {
+          const { rows: fallbackRows } = await pool.query(
+            `SELECT id FROM maps
          WHERE session_id = $1
          ORDER BY created_at DESC
          LIMIT 1`,
-          [session.id]
-        );
-        hydrationMapId = (fallbackRows[0]?.id as string | undefined) ?? null;
-        if (hydrationMapId) {
-          room.currentMapId = hydrationMapId;
-          room.dmViewingMap.set(userId, hydrationMapId);
-        }
-      }
-
-      if (hydrationMapId) {
-        const { rows: mapRows } = await pool.query('SELECT * FROM maps WHERE id = $1', [
-          hydrationMapId,
-        ]);
-        const mapRow = mapRows[0] as Record<string, unknown> | undefined;
-        if (mapRow) {
-          // Cache the grid size for this map so synchronous server code
-          // (OA reach, ping scoping) reads the correct pitch even before
-          // the client sends a map:load round-trip.
-          room.mapGridSizes.set(hydrationMapId, Number(mapRow.grid_size) || 70);
-          const { rows: tokenRows } = await pool.query('SELECT * FROM tokens WHERE map_id = $1', [
-            hydrationMapId,
-          ]);
-          const tokens = tokenRows.map(rowToToken);
-
-          if (room.tokens.size === 0) {
-            for (const t of tokens) room.tokens.set(t.id, t);
-          }
-
-          const { loadDrawingsForMapAsync, filterDrawingsForPlayer } =
-            await import('./drawingEvents.js');
-          const allDrawings = await loadDrawingsForMapAsync(hydrationMapId);
-          if (room.drawings.size === 0) {
-            for (const d of allDrawings) room.drawings.set(d.id, d);
-          }
-          const visibleDrawings = filterDrawingsForPlayer(allDrawings, {
-            userId,
-            displayName,
-            socketId: socket.id,
-            role: isDM ? 'dm' : 'player',
-            characterId: currentPlayer.character_id,
-          });
-
-          // Zones are DM planning data \u2014 only load them for DM rejoins
-          // so player reconnects don't receive zone coordinates/names.
-          const { loadZonesForMap } = await import('./mapEvents.js');
-          const zones = isDM ? await loadZonesForMap(hydrationMapId) : [];
-          socket.emit('map:loaded', {
-            map: {
-              id: mapRow.id as string,
-              name: mapRow.name as string,
-              imageUrl: mapRow.image_url as string | null,
-              width: mapRow.width as number,
-              height: mapRow.height as number,
-              gridSize: mapRow.grid_size as number,
-              gridType: mapRow.grid_type as string,
-              gridOffsetX: mapRow.grid_offset_x as number,
-              gridOffsetY: mapRow.grid_offset_y as number,
-              walls: safeParseJSON<unknown[]>(mapRow.walls, [], 'maps.walls'),
-              fogState: safeParseJSON<unknown[]>(mapRow.fog_state, [], 'maps.fog_state'),
-              ambientLight: (mapRow.ambient_light as string) ?? 'bright',
-              ambientOpacity: (mapRow.ambient_opacity as number | null) ?? undefined,
-              zones,
-            },
-            // Filter hidden tokens for players — DMs see everything.
-            tokens: isDM ? tokens : tokens.filter((t) => tokenVisibleToPlayer(t, userId)),
-            drawings: visibleDrawings,
-          });
-        }
-      }
-
-      // Rehydrate combat state
-      {
-        let combatState = room.combatState;
-        if (!combatState) {
-          const { rows: combatRows } = await pool.query(
-            'SELECT round_number, current_turn_index, combatants, started_at FROM combat_state WHERE session_id = $1',
             [session.id]
           );
-          const row = combatRows[0];
-          if (row) {
-            const combatants = safeParseJSON<Combatant[] | null>(
-              row.combatants,
-              null,
-              'combat_state.combatants'
+          hydrationMapId = (fallbackRows[0]?.id as string | undefined) ?? null;
+          if (hydrationMapId) {
+            room.currentMapId = hydrationMapId;
+            room.dmViewingMap.set(userId, hydrationMapId);
+          }
+        }
+
+        if (hydrationMapId) {
+          const { rows: mapRows } = await pool.query('SELECT * FROM maps WHERE id = $1', [
+            hydrationMapId,
+          ]);
+          const mapRow = mapRows[0] as Record<string, unknown> | undefined;
+          if (mapRow) {
+            // Cache the grid size for this map so synchronous server code
+            // (OA reach, ping scoping) reads the correct pitch even before
+            // the client sends a map:load round-trip.
+            room.mapGridSizes.set(hydrationMapId, Number(mapRow.grid_size) || 70);
+            const { rows: tokenRows } = await pool.query('SELECT * FROM tokens WHERE map_id = $1', [
+              hydrationMapId,
+            ]);
+            const tokens = tokenRows.map(rowToToken);
+
+            if (room.tokens.size === 0) {
+              for (const t of tokens) room.tokens.set(t.id, t);
+            }
+
+            const { loadDrawingsForMapAsync, filterDrawingsForPlayer } =
+              await import('./drawingEvents.js');
+            const allDrawings = await loadDrawingsForMapAsync(hydrationMapId);
+            if (room.drawings.size === 0) {
+              for (const d of allDrawings) room.drawings.set(d.id, d);
+            }
+            const visibleDrawings = filterDrawingsForPlayer(allDrawings, {
+              userId,
+              displayName,
+              socketId: socket.id,
+              role: isDM ? 'dm' : 'player',
+              characterId: currentPlayer.character_id,
+            });
+
+            // Zones are DM planning data \u2014 only load them for DM rejoins
+            // so player reconnects don't receive zone coordinates/names.
+            const { loadZonesForMap } = await import('./mapEvents.js');
+            const zones = isDM ? await loadZonesForMap(hydrationMapId) : [];
+            socket.emit('map:loaded', {
+              map: {
+                id: mapRow.id as string,
+                name: mapRow.name as string,
+                imageUrl: mapRow.image_url as string | null,
+                width: mapRow.width as number,
+                height: mapRow.height as number,
+                gridSize: mapRow.grid_size as number,
+                gridType: mapRow.grid_type as string,
+                gridOffsetX: mapRow.grid_offset_x as number,
+                gridOffsetY: mapRow.grid_offset_y as number,
+                walls: safeParseJSON<unknown[]>(mapRow.walls, [], 'maps.walls'),
+                fogState: safeParseJSON<unknown[]>(mapRow.fog_state, [], 'maps.fog_state'),
+                ambientLight: (mapRow.ambient_light as string) ?? 'bright',
+                ambientOpacity: (mapRow.ambient_opacity as number | null) ?? undefined,
+                zones,
+              },
+              // Filter hidden tokens for players — DMs see everything.
+              tokens: isDM ? tokens : tokens.filter((t) => tokenVisibleToPlayer(t, userId)),
+              drawings: visibleDrawings,
+            });
+          }
+        }
+
+        // Rehydrate combat state
+        {
+          let combatState = room.combatState;
+          if (!combatState) {
+            const { rows: combatRows } = await pool.query(
+              'SELECT round_number, current_turn_index, combatants, started_at FROM combat_state WHERE session_id = $1',
+              [session.id]
             );
-            if (combatants) {
-              combatState = {
-                sessionId: session.id,
-                active: true,
-                roundNumber: row.round_number,
-                currentTurnIndex: row.current_turn_index,
-                combatants,
-                startedAt: row.started_at,
-              };
-              room.combatState = combatState;
-              room.gameMode = 'combat';
+            const row = combatRows[0];
+            if (row) {
+              const combatants = safeParseJSON<Combatant[] | null>(
+                row.combatants,
+                null,
+                'combat_state.combatants'
+              );
+              if (combatants) {
+                combatState = {
+                  sessionId: session.id,
+                  active: true,
+                  roundNumber: row.round_number,
+                  currentTurnIndex: row.current_turn_index,
+                  combatants,
+                  startedAt: row.started_at,
+                };
+                room.combatState = combatState;
+                room.gameMode = 'combat';
+              }
             }
           }
-        }
 
-        if (combatState && combatState.active) {
-          const cur = combatState.combatants[combatState.currentTurnIndex];
-          let economy = cur ? room.actionEconomies.get(cur.tokenId) : undefined;
-          if (!economy && cur) {
-            economy = {
-              action: false,
-              bonusAction: false,
-              movementRemaining: cur.speed,
-              movementMax: cur.speed,
-              reaction: false,
-            };
-            room.actionEconomies.set(cur.tokenId, economy);
+          if (combatState && combatState.active) {
+            const cur = combatState.combatants[combatState.currentTurnIndex];
+            let economy = cur ? room.actionEconomies.get(cur.tokenId) : undefined;
+            if (!economy && cur) {
+              economy = {
+                action: false,
+                bonusAction: false,
+                movementRemaining: cur.speed,
+                movementMax: cur.speed,
+                reaction: false,
+              };
+              room.actionEconomies.set(cur.tokenId, economy);
+            }
+
+            // Players get the combatant list filtered to visible tokens,
+            // so a late rejoin / reconnect mid-combat doesn't leak hidden
+            // enemies that haven't been revealed yet. DMs see everything.
+            // `currentTurnIndex` is left intact because it's also filtered
+            // on the client (the out-of-view index just renders nothing).
+            const combatantsForRecipient = isDM
+              ? combatState.combatants
+              : combatState.combatants.filter((c) => {
+                  const tok = room.tokens.get(c.tokenId);
+                  return tok ? tokenVisibleToPlayer(tok, userId) : false;
+                });
+
+            socket.emit('combat:state-sync', {
+              combatants: combatantsForRecipient,
+              roundNumber: combatState.roundNumber,
+              currentTurnIndex: combatState.currentTurnIndex,
+              // Position-independent pointer — the filtered list above makes
+              // the raw index wrong for players whenever hidden combatants
+              // precede it. Clients resolve the tokenId locally.
+              currentTokenId: cur?.tokenId ?? null,
+              actionEconomy: economy ?? {
+                action: false,
+                bonusAction: false,
+                movementRemaining: 30,
+                movementMax: 30,
+                reaction: false,
+              },
+            });
           }
-
-          // Players get the combatant list filtered to visible tokens,
-          // so a late rejoin / reconnect mid-combat doesn't leak hidden
-          // enemies that haven't been revealed yet. DMs see everything.
-          // `currentTurnIndex` is left intact because it's also filtered
-          // on the client (the out-of-view index just renders nothing).
-          const combatantsForRecipient = isDM
-            ? combatState.combatants
-            : combatState.combatants.filter((c) => {
-                const tok = room.tokens.get(c.tokenId);
-                return tok ? tokenVisibleToPlayer(tok, userId) : false;
-              });
-
-          socket.emit('combat:state-sync', {
-            combatants: combatantsForRecipient,
-            roundNumber: combatState.roundNumber,
-            currentTurnIndex: combatState.currentTurnIndex,
-            // Position-independent pointer — the filtered list above makes
-            // the raw index wrong for players whenever hidden combatants
-            // precede it. Clients resolve the tokenId locally.
-            currentTokenId: cur?.tokenId ?? null,
-            actionEconomy: economy ?? {
-              action: false,
-              bonusAction: false,
-              movementRemaining: 30,
-              movementMax: 30,
-              reaction: false,
-            },
-          });
         }
-      }
 
-      // Auto-load characters. The joiner needs their OWN character (to
-      // populate myCharacter) AND every other linked character in the
-      // session (so the DM can open any player's sheet, and players can
-      // see tooltips / portraits on each other's tokens).
-      //
-      // We send all of them via character:synced — the client's
-      // applyRemoteSync adds to allCharacters and mirrors into
-      // myCharacter when the id matches the joiner's own. Previously
-      // only the joiner's own character was pushed, which is why a DM
-      // who joined after a player imported from D&D Beyond still saw
-      // stale / missing data for that player.
-      const { rows: sessionCharRows } = await pool.query(
-        `SELECT c.* FROM characters c
+        // Auto-load characters. The joiner needs their OWN character (to
+        // populate myCharacter) AND every other linked character in the
+        // session (so the DM can open any player's sheet, and players can
+        // see tooltips / portraits on each other's tokens).
+        //
+        // We send all of them via character:synced — the client's
+        // applyRemoteSync adds to allCharacters and mirrors into
+        // myCharacter when the id matches the joiner's own. Previously
+        // only the joiner's own character was pushed, which is why a DM
+        // who joined after a player imported from D&D Beyond still saw
+        // stale / missing data for that player.
+        const { rows: sessionCharRows } = await pool.query(
+          `SELECT c.* FROM characters c
        JOIN session_players sp ON sp.character_id = c.id
        WHERE sp.session_id = $1`,
-        [session.id]
-      );
-      for (const charRow of sessionCharRows) {
-        socket.emit('character:synced', {
-          character: dbRowToCharacter(charRow as Record<string, unknown>),
-        });
-      }
+          [session.id]
+        );
+        for (const charRow of sessionCharRows) {
+          socket.emit('character:synced', {
+            character: dbRowToCharacter(charRow as Record<string, unknown>),
+          });
+        }
 
-      // Send chat history — filter per-user so whispers stay private and
-      // DM-only hidden rolls don't leak to players. Without this filter
-      // every session member who joined after a whisper was sent would
-      // receive the full private message history on reconnect.
-      const { rows: chatHistory } = await pool.query(
-        `
+        // Send chat history — filter per-user so whispers stay private and
+        // DM-only hidden rolls don't leak to players. Without this filter
+        // every session member who joined after a whisper was sent would
+        // receive the full private message history on reconnect.
+        const { rows: chatHistory } = await pool.query(
+          `
       SELECT * FROM chat_messages WHERE session_id = $1 ORDER BY created_at DESC LIMIT 100
     `,
-        [session.id]
-      );
+          [session.id]
+        );
 
-      socket.emit(
-        'chat:history',
-        chatHistory
-          .reverse()
-          .filter((m) =>
-            shouldDeliverChatRow(
-              {
-                type: m.type as string,
-                user_id: m.user_id as string,
-                whisper_to: m.whisper_to as string | null,
-                hidden: m.hidden as number | boolean | null,
-              },
-              { userId, isDM }
+        socket.emit(
+          'chat:history',
+          chatHistory
+            .reverse()
+            .filter((m) =>
+              shouldDeliverChatRow(
+                {
+                  type: m.type as string,
+                  user_id: m.user_id as string,
+                  whisper_to: m.whisper_to as string | null,
+                  hidden: m.hidden as number | boolean | null,
+                },
+                { userId, isDM }
+              )
             )
-          )
-          .map((m) => ({
-            id: m.id,
-            sessionId: m.session_id,
-            userId: m.user_id,
-            displayName: m.display_name,
-            type: m.type,
-            content: m.content,
-            characterName: m.character_name,
-            whisperTo: m.whisper_to,
-            rollData: safeParseJSON<unknown | null>(m.roll_data, null, 'chat_messages.roll_data'),
-            // Rehydrate every structured breakdown so refreshing
-            // mid-combat doesn't fall back to the plain-text summary
-            // for prior cards (attack / spell / save / action).
-            attackResult: safeParseJSON<unknown | null>(
-              m.attack_result,
-              null,
-              'chat_messages.attack_result'
-            ),
-            spellResult: safeParseJSON<unknown | null>(
-              m.spell_result,
-              null,
-              'chat_messages.spell_result'
-            ),
-            saveResult: safeParseJSON<unknown | null>(
-              m.save_result,
-              null,
-              'chat_messages.save_result'
-            ),
-            actionResult: safeParseJSON<unknown | null>(
-              m.action_result,
-              null,
-              'chat_messages.action_result'
-            ),
-            hidden: (m.hidden as number) === 1,
-            createdAt: m.created_at,
-          }))
-      );
-    })
+            .map((m) => ({
+              id: m.id,
+              sessionId: m.session_id,
+              userId: m.user_id,
+              displayName: m.display_name,
+              type: m.type,
+              content: m.content,
+              characterName: m.character_name,
+              whisperTo: m.whisper_to,
+              rollData: safeParseJSON<unknown | null>(m.roll_data, null, 'chat_messages.roll_data'),
+              // Rehydrate every structured breakdown so refreshing
+              // mid-combat doesn't fall back to the plain-text summary
+              // for prior cards (attack / spell / save / action).
+              attackResult: safeParseJSON<unknown | null>(
+                m.attack_result,
+                null,
+                'chat_messages.attack_result'
+              ),
+              spellResult: safeParseJSON<unknown | null>(
+                m.spell_result,
+                null,
+                'chat_messages.spell_result'
+              ),
+              saveResult: safeParseJSON<unknown | null>(
+                m.save_result,
+                null,
+                'chat_messages.save_result'
+              ),
+              actionResult: safeParseJSON<unknown | null>(
+                m.action_result,
+                null,
+                'chat_messages.action_result'
+              ),
+              hidden: (m.hidden as number) === 1,
+              createdAt: m.created_at,
+            }))
+        );
+      },
+      { join: true }
+    )
   );
 
   // Lightweight keep-alive. The client fires this on its periodic tick
@@ -506,13 +512,20 @@ export function registerSessionEvents(io: Server, socket: Socket): void {
       // fell out of the room after a transport blip still receives
       // `io.to(sessionId)` broadcasts — without the full join hydration.
       socket.join(status.sessionId);
-      socket.emit('session:heartbeat-ack', { ok: true, nextEventId: status.nextEventId });
+      socket.emit('session:heartbeat-ack', {
+        ok: true,
+        nextEventId: status.nextEventId,
+        generation: status.generation,
+      });
     })
   );
 
-  socket.on('session:leave', () => {
-    handleDisconnect(io, socket);
-  });
+  socket.on(
+    'session:leave',
+    safeHandler(socket, async () => {
+      handleDisconnect(io, socket);
+    })
+  );
 
   socket.on(
     'session:kick',
@@ -520,11 +533,14 @@ export function registerSessionEvents(io: Server, socket: Socket): void {
       const parsed = sessionKickSchema.safeParse(data);
       if (!parsed.success) return;
       const ctx = getPlayerBySocketId(socket.id);
-      if (!ctx || ctx.player.role !== 'dm') return;
+      const callerId = socket.data.userId as string | undefined;
+      if (!ctx || !callerId || ctx.player.userId !== callerId) return;
+      const { assertSessionDM } = await import('../utils/authorization.js');
+      await assertSessionDM(ctx.room.sessionId, callerId);
       const { targetUserId } = parsed.data;
 
       // Prevent self-kick: DMs should not be able to accidentally remove themselves.
-      if (targetUserId === ctx.player.userId) return;
+      if (targetUserId === callerId) return;
 
       // Co-DM hierarchy:
       //   \u2022 Owner cannot be kicked by anyone (use transfer-ownership instead).
@@ -543,32 +559,27 @@ export function registerSessionEvents(io: Server, socket: Socket): void {
         if (targetRow.role === 'dm') return; // Peer co-DM untouchable.
       }
 
-      // Remove from the DB so the kick is persistent across reconnects.
+      // The adapter includes remote secondary tabs even without local presence.
+      const targetSockets = (await io.in(ctx.room.sessionId).fetchSockets()).filter(
+        (s) => s.data.userId === targetUserId
+      );
       await pool.query('DELETE FROM session_players WHERE session_id = $1 AND user_id = $2', [
         ctx.room.sessionId,
         targetUserId,
       ]);
 
-      // Collect ALL socket IDs for the target BEFORE removing from room
-      // state. Multi-tab users have secondary sockets in userSockets
-      // that must also leave the Socket.IO room, otherwise they keep
-      // passively receiving broadcasts even after the kick.
-      const allTargetSockets: string[] = [];
-      const userSocks = ctx.room.userSockets.get(targetUserId);
-      if (userSocks) for (const sid of userSocks) allTargetSockets.push(sid);
-      const primaryPlayer = ctx.room.players.get(targetUserId);
-      if (primaryPlayer && !allTargetSockets.includes(primaryPlayer.socketId)) {
-        allTargetSockets.push(primaryPlayer.socketId);
-      }
-
-      // Emit + evict on every socket, then clean room state.
-      for (const sid of allTargetSockets) {
-        io.to(sid).emit('session:kicked', { userId: targetUserId });
-        const sock = io.sockets.sockets.get(sid);
-        if (sock) sock.leave(ctx.room.sessionId);
-      }
-      removePlayerFromRoom(ctx.room.sessionId, targetUserId);
-      socket.to(ctx.room.sessionId).emit('session:player-removed', { userId: targetUserId });
+      const revoke = async () => {
+        for (const targetSocket of targetSockets) {
+          io.to(targetSocket.id).emit('session:kicked', { userId: targetUserId });
+          await targetSocket.leave(ctx.room.sessionId);
+        }
+        removePlayerFromRoom(ctx.room.sessionId, targetUserId);
+        io.to(ctx.room.sessionId)
+          .except(targetSockets.map((s) => s.id))
+          .emit('session:player-removed', { userId: targetUserId });
+      };
+      const { deferUntilCommit } = await import('../db/transactionContext.js');
+      if (!deferUntilCommit(revoke)) await revoke();
     })
   );
 
@@ -764,9 +775,12 @@ export function registerSessionEvents(io: Server, socket: Socket): void {
     })
   );
 
-  socket.on('disconnect', () => {
-    handleDisconnect(io, socket);
-  });
+  socket.on(
+    'disconnect',
+    safeHandler(socket, async () => {
+      handleDisconnect(io, socket);
+    })
+  );
 }
 
 function handleDisconnect(_io: Server, socket: Socket): void {

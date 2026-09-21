@@ -7,6 +7,7 @@ import {
 import * as ConditionService from '../ConditionService.js';
 import * as CombatService from '../CombatService.js';
 import pool from '../../db/connection.js';
+import { characterFeatures } from '../../utils/featureRuntime.js';
 import type { Token } from '@dnd-vtt/shared';
 import type { PlayerContext } from '../../utils/roomState.js';
 import { tokenConditionChanges } from '../../utils/conditionSources.js';
@@ -32,7 +33,7 @@ function resolveCallerToken(ctx: PlayerContext): Token | null {
 function resolveTargetByName(ctx: PlayerContext, name: string): Token | null {
   const needle = name.toLowerCase();
   const matches = Array.from(ctx.room.tokens.values()).filter(
-    (t) => t.name.toLowerCase() === needle,
+    (t) => t.name.toLowerCase() === needle
   );
   if (matches.length === 0) return null;
   matches.sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
@@ -72,8 +73,9 @@ async function handlePotion(c: ChatCommandContext): Promise<boolean> {
   const parts = c.rest.split(/\s+/).filter(Boolean);
   if (parts.length === 0) {
     whisperToCaller(
-      c.io, c.ctx,
-      '!potion: usage `!potion <target> [dice]` — default 2d4+2 (potion of healing).',
+      c.io,
+      c.ctx,
+      '!potion: usage `!potion <target> [dice]` — default 2d4+2 (potion of healing).'
     );
     return true;
   }
@@ -89,11 +91,18 @@ async function handlePotion(c: ChatCommandContext): Promise<boolean> {
   const targetName = parts.join(' ');
   const target = targetName ? resolveTargetByName(c.ctx, targetName) : resolveCallerToken(c.ctx);
   if (!target?.characterId) {
-    whisperToCaller(c.io, c.ctx, `!potion: no target with a character sheet named "${targetName}".`);
+    whisperToCaller(
+      c.io,
+      c.ctx,
+      `!potion: no target with a character sheet named "${targetName}".`
+    );
     return true;
   }
 
-  const { rows } = await pool.query('SELECT hit_points, max_hit_points, temp_hit_points, name FROM characters WHERE id = $1', [target.characterId]);
+  const { rows } = await pool.query(
+    'SELECT hit_points, max_hit_points, temp_hit_points, name FROM characters WHERE id = $1',
+    [target.characterId]
+  );
   const row = rows[0] as Record<string, unknown> | undefined;
   if (!row) {
     whisperToCaller(c.io, c.ctx, '!potion: character not found.');
@@ -109,7 +118,8 @@ async function handlePotion(c: ChatCommandContext): Promise<boolean> {
   }
   const { total: heal, rolls } = rollDice(notation);
   const newHp = Math.min(maxHp, curHp + heal);
-  await pool.query('UPDATE characters SET hit_points = $1 WHERE id = $2', [newHp, target.characterId])
+  await pool
+    .query('UPDATE characters SET hit_points = $1 WHERE id = $2', [newHp, target.characterId])
     .catch((e) => console.warn('[!potion] hp write failed:', e));
   c.io.to(c.ctx.room.sessionId).emit('character:updated', {
     characterId: target.characterId,
@@ -123,8 +133,9 @@ async function handlePotion(c: ChatCommandContext): Promise<boolean> {
     type: 'heal',
   });
   broadcastSystem(
-    c.io, c.ctx,
-    `🧪 ${target.name} drinks a potion (${notation}) — heals ${notation}(${rolls.join('+')}) = **${heal}** → ${newHp}/${maxHp} HP.`,
+    c.io,
+    c.ctx,
+    `🧪 ${target.name} drinks a potion (${notation}) — heals ${notation}(${rolls.join('+')}) = **${heal}** → ${newHp}/${maxHp} HP.`
   );
   return true;
 }
@@ -143,7 +154,6 @@ async function handlePotion(c: ChatCommandContext): Promise<boolean> {
  * a dedicated flag — for now, the DM runs !lucky reset after any
  * long rest.
  */
-const luckPoints = new Map<string, number>();
 const LUCKY_MAX = 3;
 
 async function handleLucky(c: ChatCommandContext): Promise<boolean> {
@@ -157,19 +167,29 @@ async function handleLucky(c: ChatCommandContext): Promise<boolean> {
   // Optional feat check — don't hard-block so Halfling racial Lucky
   // also works (Halfling Lucky auto-rerolls 1s; the feat is
   // different, but either way the rerolling intent is the same).
-  let available = luckPoints.get(caller.characterId);
-  if (available === undefined) {
-    available = LUCKY_MAX;
-    luckPoints.set(caller.characterId, available);
-  }
+  const features = characterFeatures(caller.characterId);
+  const available = features.luckPoints;
 
   if (arg === 'reset') {
     if (c.ctx.player.role !== 'dm') {
       whisperToCaller(c.io, c.ctx, '!lucky reset: DM only (fires on long rest).');
       return true;
     }
-    luckPoints.set(caller.characterId, LUCKY_MAX);
-    broadcastSystem(c.io, c.ctx, `🍀 ${caller.name} — Lucky points refreshed (${LUCKY_MAX}/${LUCKY_MAX}).`);
+    features.luckPoints = LUCKY_MAX;
+    broadcastSystem(
+      c.io,
+      c.ctx,
+      `🍀 ${caller.name} — Lucky points refreshed (${LUCKY_MAX}/${LUCKY_MAX}).`
+    );
+    return true;
+  }
+
+  if (available === undefined) {
+    whisperToCaller(
+      c.io,
+      c.ctx,
+      '!lucky: points not recorded. Ask the DM to run !lucky reset after a long rest.'
+    );
     return true;
   }
 
@@ -183,16 +203,21 @@ async function handleLucky(c: ChatCommandContext): Promise<boolean> {
       whisperToCaller(c.io, c.ctx, '!lucky: no points remaining. Long rest to refresh.');
       return true;
     }
-    luckPoints.set(caller.characterId, available - 1);
+    features.luckPoints = available - 1;
     const d20 = Math.floor(Math.random() * 20) + 1;
     broadcastSystem(
-      c.io, c.ctx,
-      `🍀 ${caller.name} spends Lucky — extra d20 = **${d20}**. Use either this or the original. (${available - 1}/${LUCKY_MAX} left)`,
+      c.io,
+      c.ctx,
+      `🍀 ${caller.name} spends Lucky — extra d20 = **${d20}**. Use either this or the original. (${available - 1}/${LUCKY_MAX} left)`
     );
     return true;
   }
 
-  whisperToCaller(c.io, c.ctx, '!lucky: usage `!lucky use` | `!lucky status` | `!lucky reset` (DM)');
+  whisperToCaller(
+    c.io,
+    c.ctx,
+    '!lucky: usage `!lucky use` | `!lucky status` | `!lucky reset` (DM)'
+  );
   return true;
 }
 
@@ -223,18 +248,20 @@ async function handleStabilize(c: ChatCommandContext): Promise<boolean> {
     whisperToCaller(c.io, c.ctx, '!stabilize: no owned PC token.');
     return true;
   }
-  const targetCombatant = c.ctx.room.combatState?.combatants.find((combatant) => combatant.tokenId === target.id);
+  const targetCombatant = c.ctx.room.combatState?.combatants.find(
+    (combatant) => combatant.tokenId === target.id
+  );
   const targetHpFromCombat = targetCombatant?.hp;
   if (targetHpFromCombat !== undefined && targetHpFromCombat > 0) {
     whisperToCaller(c.io, c.ctx, `!stabilize: ${target.name} is not at 0 HP.`);
     return true;
   }
   if (targetHpFromCombat === undefined) {
-    const targetRows = await pool.query(
-      'SELECT hit_points FROM characters WHERE id = $1',
-      [target.characterId],
-    );
-    const targetHp = Number((targetRows.rows[0] as Record<string, unknown> | undefined)?.hit_points) || 0;
+    const targetRows = await pool.query('SELECT hit_points FROM characters WHERE id = $1', [
+      target.characterId,
+    ]);
+    const targetHp =
+      Number((targetRows.rows[0] as Record<string, unknown> | undefined)?.hit_points) || 0;
     if (targetHp > 0) {
       whisperToCaller(c.io, c.ctx, `!stabilize: ${target.name} is not at 0 HP.`);
       return true;
@@ -242,18 +269,26 @@ async function handleStabilize(c: ChatCommandContext): Promise<boolean> {
   }
   const { rows } = await pool.query(
     'SELECT ability_scores, skills, proficiency_bonus FROM characters WHERE id = $1',
-    [caller.characterId],
+    [caller.characterId]
   );
   const row = rows[0] as Record<string, unknown> | undefined;
-  let wisMod = 0, prof = 2, hasProf = false;
+  let wisMod = 0,
+    prof = 2,
+    hasProf = false;
   try {
-    const scores = typeof row?.ability_scores === 'string' ? JSON.parse(row.ability_scores as string) : (row?.ability_scores ?? {});
+    const scores =
+      typeof row?.ability_scores === 'string'
+        ? JSON.parse(row.ability_scores as string)
+        : (row?.ability_scores ?? {});
     wisMod = Math.floor((((scores as Record<string, number>).wis ?? 10) - 10) / 2);
     prof = Number(row?.proficiency_bonus) || 2;
-    const sk = typeof row?.skills === 'string' ? JSON.parse(row.skills as string) : (row?.skills ?? {});
+    const sk =
+      typeof row?.skills === 'string' ? JSON.parse(row.skills as string) : (row?.skills ?? {});
     const medicineProf = (sk as Record<string, string>)?.medicine ?? 'none';
     hasProf = medicineProf === 'proficient' || medicineProf === 'expertise';
-  } catch { /* ignore */ }
+  } catch {
+    /* ignore */
+  }
   const bonus = wisMod + (hasProf ? prof : 0);
   const d20 = Math.floor(Math.random() * 20) + 1;
   const total = d20 + bonus;
@@ -262,7 +297,9 @@ async function handleStabilize(c: ChatCommandContext): Promise<boolean> {
   const sign = bonus >= 0 ? '+' : '';
   const lines: string[] = [];
   lines.push(`🩹 ${caller.name} tries to Stabilize ${target.name}`);
-  lines.push(`   Medicine (WIS${hasProf ? ' + prof' : ''}): d20=${d20}${sign}${bonus}=${total} vs DC ${dc} → ${success ? 'SUCCESS' : 'FAIL'}`);
+  lines.push(
+    `   Medicine (WIS${hasProf ? ' + prof' : ''}): d20=${d20}${sign}${bonus}=${total} vs DC ${dc} → ${success ? 'SUCCESS' : 'FAIL'}`
+  );
   if (success) {
     if (targetCombatant) {
       CombatService.markStable(c.ctx.room.sessionId, target.id);
@@ -279,10 +316,12 @@ async function handleStabilize(c: ChatCommandContext): Promise<boolean> {
       });
     }
     // Reset death saves on the target if present.
-    await pool.query(
-      'UPDATE characters SET hit_points = 0, death_saves = $1 WHERE id = $2',
-      [JSON.stringify({ successes: 0, failures: 0 }), target.characterId],
-    ).catch((e) => console.warn('[!stabilize] death-save reset failed:', e));
+    await pool
+      .query('UPDATE characters SET hit_points = 0, death_saves = $1 WHERE id = $2', [
+        JSON.stringify({ successes: 0, failures: 0 }),
+        target.characterId,
+      ])
+      .catch((e) => console.warn('[!stabilize] death-save reset failed:', e));
     c.io.to(c.ctx.room.sessionId).emit('map:token-updated', {
       tokenId: target.id,
       changes: tokenConditionChanges(c.ctx.room, target.id),
@@ -335,8 +374,9 @@ async function handleHex(c: ChatCommandContext): Promise<boolean> {
     changes: tokenConditionChanges(c.ctx.room, target.id),
   });
   broadcastSystem(
-    c.io, c.ctx,
-    `🕷 ${caller.name} hexes ${target.name} — caster's attacks against this target deal +1d6 necrotic.`,
+    c.io,
+    c.ctx,
+    `🕷 ${caller.name} hexes ${target.name} — caster's attacks against this target deal +1d6 necrotic.`
   );
   return true;
 }
@@ -399,8 +439,9 @@ async function handleMark(c: ChatCommandContext): Promise<boolean> {
     changes: tokenConditionChanges(c.ctx.room, target.id),
   });
   broadcastSystem(
-    c.io, c.ctx,
-    `🏹 ${caller.name} marks ${target.name} (Hunter's Mark) — +1d6 weapon damage from caster.`,
+    c.io,
+    c.ctx,
+    `🏹 ${caller.name} marks ${target.name} (Hunter's Mark) — +1d6 weapon damage from caster.`
   );
   return true;
 }
@@ -452,7 +493,7 @@ async function handleTurnUndead(c: ChatCommandContext): Promise<boolean> {
   }
   const { rows } = await pool.query(
     'SELECT spell_save_dc, class, name FROM characters WHERE id = $1',
-    [caller.characterId],
+    [caller.characterId]
   );
   const row = rows[0] as Record<string, unknown> | undefined;
   const dc = Number(row?.spell_save_dc) || 13;
@@ -463,7 +504,9 @@ async function handleTurnUndead(c: ChatCommandContext): Promise<boolean> {
   }
 
   const lines: string[] = [];
-  lines.push(`⚱ ${caller.name} presents their holy symbol and speaks — Turn Undead (DC ${dc} WIS save)`);
+  lines.push(
+    `⚱ ${caller.name} presents their holy symbol and speaks — Turn Undead (DC ${dc} WIS save)`
+  );
   for (const targetName of parts) {
     const target = resolveTargetByName(c.ctx, targetName);
     if (!target) {
@@ -478,7 +521,9 @@ async function handleTurnUndead(c: ChatCommandContext): Promise<boolean> {
     }
     const saveResult = await rollTargetSave(c, target, 'wis', dc, 'frightened');
     const saved = saveResult.saved;
-    lines.push(`   • ${saveResult.displayName} WIS save: ${formatSaveTotal(saveResult)} → ${saved ? 'SAVED' : 'FAILED'}${formatSaveNotes(saveResult.notes)}`);
+    lines.push(
+      `   • ${saveResult.displayName} WIS save: ${formatSaveTotal(saveResult)} → ${saved ? 'SAVED' : 'FAILED'}${formatSaveNotes(saveResult.notes)}`
+    );
     if (!saved) {
       const currentRound = c.ctx.room.combatState?.roundNumber ?? 0;
       ConditionService.applyConditionWithMeta(c.ctx.room.sessionId, target.id, {

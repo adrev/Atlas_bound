@@ -6,6 +6,7 @@ import {
 } from '../ChatCommands.js';
 import * as ConditionService from '../ConditionService.js';
 import pool from '../../db/connection.js';
+import { characterFeatures, sessionFeatures } from '../../utils/featureRuntime.js';
 import type { Token, ActionBreakdown } from '@dnd-vtt/shared';
 import type { PlayerContext } from '../../utils/roomState.js';
 import { tokenConditionChanges } from '../../utils/conditionSources.js';
@@ -28,7 +29,7 @@ function resolveCallerToken(ctx: PlayerContext): Token | null {
 function resolveTargetByName(ctx: PlayerContext, name: string): Token | null {
   const needle = name.toLowerCase();
   const matches = Array.from(ctx.room.tokens.values()).filter(
-    (t) => t.name.toLowerCase() === needle,
+    (t) => t.name.toLowerCase() === needle
   );
   if (matches.length === 0) return null;
   matches.sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
@@ -44,7 +45,7 @@ function actionSaveEffect(
   ability: SaveAbility,
   dc: number,
   successText: string,
-  failText: string,
+  failText: string
 ): string {
   return `${saveResult.saved ? 'SAVED' : 'FAILED'}: ${ability.toUpperCase()} ${formatSaveTotal(saveResult)} vs DC ${dc} — ${saveResult.saved ? successText : failText}${saveNotesLabel(saveResult)}`;
 }
@@ -59,8 +60,6 @@ function actionSaveEffect(
  *   !portent use <d20>      — spend the die matching the rolled value
  *   !portent list           — whisper remaining dice
  */
-const portentDice = new Map<string, number[]>();
-
 async function handlePortent(c: ChatCommandContext): Promise<boolean> {
   const parts = c.rest.split(/\s+/).filter(Boolean);
   const sub = parts[0]?.toLowerCase() || 'list';
@@ -69,7 +68,10 @@ async function handlePortent(c: ChatCommandContext): Promise<boolean> {
     whisperToCaller(c.io, c.ctx, '!portent: no owned PC token.');
     return true;
   }
-  const { rows } = await pool.query('SELECT class, level, name, features FROM characters WHERE id = $1', [caller.characterId]);
+  const { rows } = await pool.query(
+    'SELECT class, level, name, features FROM characters WHERE id = $1',
+    [caller.characterId]
+  );
   const row = rows[0] as Record<string, unknown> | undefined;
   const classLower = String(row?.class || '').toLowerCase();
   if (!classLower.includes('wizard')) {
@@ -81,23 +83,29 @@ async function handlePortent(c: ChatCommandContext): Promise<boolean> {
   try {
     const rawF = row?.features;
     const feats = typeof rawF === 'string' ? JSON.parse(rawF as string) : (rawF ?? []);
-    hasPortent = Array.isArray(feats) && feats.some(
-      (f: { name?: string }) => typeof f?.name === 'string' && /portent/i.test(f.name),
-    );
-  } catch { /* ignore */ }
+    hasPortent =
+      Array.isArray(feats) &&
+      feats.some((f: { name?: string }) => typeof f?.name === 'string' && /portent/i.test(f.name));
+  } catch {
+    /* ignore */
+  }
   if (!hasPortent) {
-    whisperToCaller(c.io, c.ctx, `!portent: ${caller.name} doesn't have Portent (School of Divination).`);
+    whisperToCaller(
+      c.io,
+      c.ctx,
+      `!portent: ${caller.name} doesn't have Portent (School of Divination).`
+    );
     return true;
   }
   const lvl = Number(row?.level) || 2;
   const slots = lvl >= 14 ? 3 : 2;
   const charName = (row?.name as string) || caller.name;
-  const stored = portentDice.get(caller.characterId) ?? [];
+  const stored = characterFeatures(caller.characterId).portentDice ?? [];
 
   if (sub === 'roll' || sub === 'refresh') {
     const dice: number[] = [];
     for (let i = 0; i < slots; i++) dice.push(Math.floor(Math.random() * 20) + 1);
-    portentDice.set(caller.characterId, dice);
+    characterFeatures(caller.characterId).portentDice = dice;
     const portentBreakdown: ActionBreakdown = {
       actor: { name: charName, tokenId: caller.id },
       action: {
@@ -114,17 +122,26 @@ async function handlePortent(c: ChatCommandContext): Promise<boolean> {
       ],
     };
     broadcastSystem(
-      c.io, c.ctx,
+      c.io,
+      c.ctx,
       `🔮 ${charName} awakens with Portent — dice: **${dice.join(', ')}**.`,
-      { actionResult: portentBreakdown },
+      { actionResult: portentBreakdown }
     );
     return true;
   }
   if (sub === 'list' || sub === 'status') {
     if (stored.length === 0) {
-      whisperToCaller(c.io, c.ctx, `🔮 ${charName} has no portent dice. Run !portent roll at dawn to refresh.`);
+      whisperToCaller(
+        c.io,
+        c.ctx,
+        `🔮 ${charName} has no portent dice. Run !portent roll at dawn to refresh.`
+      );
     } else {
-      whisperToCaller(c.io, c.ctx, `🔮 ${charName} portent dice remaining: **${stored.join(', ')}**.`);
+      whisperToCaller(
+        c.io,
+        c.ctx,
+        `🔮 ${charName} portent dice remaining: **${stored.join(', ')}**.`
+      );
     }
     return true;
   }
@@ -136,11 +153,15 @@ async function handlePortent(c: ChatCommandContext): Promise<boolean> {
     }
     const idx = stored.indexOf(wanted);
     if (idx < 0) {
-      whisperToCaller(c.io, c.ctx, `!portent: no stored die matching ${wanted}. Current: ${stored.join(', ')}.`);
+      whisperToCaller(
+        c.io,
+        c.ctx,
+        `!portent: no stored die matching ${wanted}. Current: ${stored.join(', ')}.`
+      );
       return true;
     }
     stored.splice(idx, 1);
-    portentDice.set(caller.characterId, stored);
+    characterFeatures(caller.characterId).portentDice = stored;
     const spendBreakdown: ActionBreakdown = {
       actor: { name: charName, tokenId: caller.id },
       action: {
@@ -157,9 +178,10 @@ async function handlePortent(c: ChatCommandContext): Promise<boolean> {
       ],
     };
     broadcastSystem(
-      c.io, c.ctx,
+      c.io,
+      c.ctx,
       `🔮 ${charName} spends a Portent die — the target's attack/check/save is replaced with a **${wanted}**. (${stored.length} left)`,
-      { actionResult: spendBreakdown },
+      { actionResult: spendBreakdown }
     );
     return true;
   }
@@ -177,15 +199,16 @@ async function handlePortent(c: ChatCommandContext): Promise<boolean> {
  *   !colossus — rolls 1d8 + announces the bonus damage. Caller is
  *               responsible for checking the target is wounded.
  */
-const colossusUsed = new Set<string>();
-
 async function handleColossus(c: ChatCommandContext): Promise<boolean> {
   const caller = resolveCallerToken(c.ctx);
   if (!caller?.characterId) {
     whisperToCaller(c.io, c.ctx, '!colossus: no owned PC token.');
     return true;
   }
-  const { rows } = await pool.query('SELECT class, level, name, features FROM characters WHERE id = $1', [caller.characterId]);
+  const { rows } = await pool.query(
+    'SELECT class, level, name, features FROM characters WHERE id = $1',
+    [caller.characterId]
+  );
   const row = rows[0] as Record<string, unknown> | undefined;
   const classLower = String(row?.class || '').toLowerCase();
   if (!classLower.includes('ranger')) {
@@ -196,21 +219,30 @@ async function handleColossus(c: ChatCommandContext): Promise<boolean> {
   try {
     const rawF = row?.features;
     const feats = typeof rawF === 'string' ? JSON.parse(rawF as string) : (rawF ?? []);
-    hasIt = Array.isArray(feats) && feats.some(
-      (f: { name?: string }) => typeof f?.name === 'string' && /colossus\s+slayer/i.test(f.name),
-    );
-  } catch { /* ignore */ }
+    hasIt =
+      Array.isArray(feats) &&
+      feats.some(
+        (f: { name?: string }) => typeof f?.name === 'string' && /colossus\s+slayer/i.test(f.name)
+      );
+  } catch {
+    /* ignore */
+  }
   if (!hasIt) {
-    whisperToCaller(c.io, c.ctx, `!colossus: ${caller.name} doesn't have Colossus Slayer (Hunter Ranger L3).`);
+    whisperToCaller(
+      c.io,
+      c.ctx,
+      `!colossus: ${caller.name} doesn't have Colossus Slayer (Hunter Ranger L3).`
+    );
     return true;
   }
   const combat = c.ctx.room.combatState;
-  const turnKey = `${combat?.roundNumber ?? 0}_${combat?.currentTurnIndex ?? 0}_${caller.characterId}`;
-  if (colossusUsed.has(turnKey)) {
+  const turnKey = `${combat?.startedAt ?? 'free-roam'}_${combat?.roundNumber ?? 0}_${combat?.currentTurnIndex ?? 0}`;
+  const colossusUsed = (sessionFeatures(c.ctx.room.sessionId).colossusUsed ??= {});
+  if (colossusUsed[caller.characterId] === turnKey) {
     whisperToCaller(c.io, c.ctx, `!colossus: already used this turn.`);
     return true;
   }
-  colossusUsed.add(turnKey);
+  colossusUsed[caller.characterId] = turnKey;
   const roll = Math.floor(Math.random() * 8) + 1;
   const charName = (row?.name as string) || caller.name;
   const colossusBreakdown: ActionBreakdown = {
@@ -229,9 +261,10 @@ async function handleColossus(c: ChatCommandContext): Promise<boolean> {
     ],
   };
   broadcastSystem(
-    c.io, c.ctx,
+    c.io,
+    c.ctx,
     `🏹 **Colossus Slayer** — ${charName} deals +1d8 = **${roll}** damage (target must already be below max HP).`,
-    { actionResult: colossusBreakdown },
+    { actionResult: colossusBreakdown }
   );
   return true;
 }
@@ -252,8 +285,9 @@ async function handleAssassinate(c: ChatCommandContext): Promise<boolean> {
   const parts = c.rest.split(/\s+/).filter(Boolean);
   if (parts.length < 2) {
     whisperToCaller(
-      c.io, c.ctx,
-      '!assassinate: usage `!assassinate <target> <attack-bonus> [surprised]`',
+      c.io,
+      c.ctx,
+      '!assassinate: usage `!assassinate <target> <attack-bonus> [surprised]`'
     );
     return true;
   }
@@ -277,7 +311,10 @@ async function handleAssassinate(c: ChatCommandContext): Promise<boolean> {
     whisperToCaller(c.io, c.ctx, '!assassinate: no owned PC token.');
     return true;
   }
-  const { rows } = await pool.query('SELECT class, level, name, features FROM characters WHERE id = $1', [caller.characterId]);
+  const { rows } = await pool.query(
+    'SELECT class, level, name, features FROM characters WHERE id = $1',
+    [caller.characterId]
+  );
   const row = rows[0] as Record<string, unknown> | undefined;
   const classLower = String(row?.class || '').toLowerCase();
   if (!classLower.includes('rogue')) {
@@ -289,12 +326,20 @@ async function handleAssassinate(c: ChatCommandContext): Promise<boolean> {
   try {
     const rawF = row?.features;
     const feats = typeof rawF === 'string' ? JSON.parse(rawF as string) : (rawF ?? []);
-    hasIt = Array.isArray(feats) && feats.some(
-      (f: { name?: string }) => typeof f?.name === 'string' && /assassinate/i.test(f.name),
-    );
-  } catch { /* ignore */ }
+    hasIt =
+      Array.isArray(feats) &&
+      feats.some(
+        (f: { name?: string }) => typeof f?.name === 'string' && /assassinate/i.test(f.name)
+      );
+  } catch {
+    /* ignore */
+  }
   if (!hasIt && !classLower.includes('assassin')) {
-    whisperToCaller(c.io, c.ctx, `!assassinate: ${caller.name} doesn't have Assassinate (Rogue Assassin L3).`);
+    whisperToCaller(
+      c.io,
+      c.ctx,
+      `!assassinate: ${caller.name} doesn't have Assassinate (Rogue Assassin L3).`
+    );
     return true;
   }
   const r1 = Math.floor(Math.random() * 20) + 1;
@@ -313,11 +358,13 @@ async function handleAssassinate(c: ChatCommandContext): Promise<boolean> {
       cost: 'Normal attack (advantage vs no-turn targets)',
     },
     effect: `Attack roll ${kept}${sign}${bonus} = **${total}** vs ${target.name}${isCrit ? ' 💥 **CRIT** (surprised auto-crit)' : ''}.`,
-    targets: [{
-      name: target.name,
-      tokenId: target.id,
-      effect: `d20 (adv) = [${r1}, ${r2}] → kept ${kept}${sign}${bonus} = ${total}${isCrit ? ' (crit)' : ''}`,
-    }],
+    targets: [
+      {
+        name: target.name,
+        tokenId: target.id,
+        effect: `d20 (adv) = [${r1}, ${r2}] → kept ${kept}${sign}${bonus} = ${total}${isCrit ? ' (crit)' : ''}`,
+      },
+    ],
     notes: [
       `Rogue Assassin L3`,
       `d20 rolls with advantage: ${r1}, ${r2}`,
@@ -327,9 +374,10 @@ async function handleAssassinate(c: ChatCommandContext): Promise<boolean> {
     ],
   };
   broadcastSystem(
-    c.io, c.ctx,
+    c.io,
+    c.ctx,
     `🗡 **${charName} Assassinates ${target.name}** — adv attack: [${r1},${r2}]${sign}${bonus} = **${total}**.${isCrit ? ' 💥 CRIT (surprised target = auto-crit on hit).' : ''}`,
-    { actionResult: assassinateBreakdown },
+    { actionResult: assassinateBreakdown }
   );
   return true;
 }
@@ -341,7 +389,10 @@ async function handleGuided(c: ChatCommandContext): Promise<boolean> {
     whisperToCaller(c.io, c.ctx, '!guided: no owned PC token.');
     return true;
   }
-  const { rows } = await pool.query('SELECT class, level, name, features FROM characters WHERE id = $1', [caller.characterId]);
+  const { rows } = await pool.query(
+    'SELECT class, level, name, features FROM characters WHERE id = $1',
+    [caller.characterId]
+  );
   const row = rows[0] as Record<string, unknown> | undefined;
   const classLower = String(row?.class || '').toLowerCase();
   if (!classLower.includes('cleric')) {
@@ -352,18 +403,27 @@ async function handleGuided(c: ChatCommandContext): Promise<boolean> {
   try {
     const rawF = row?.features;
     const feats = typeof rawF === 'string' ? JSON.parse(rawF as string) : (rawF ?? []);
-    hasIt = Array.isArray(feats) && feats.some(
-      (f: { name?: string }) => typeof f?.name === 'string' && /guided\s+strike/i.test(f.name),
-    );
-  } catch { /* ignore */ }
+    hasIt =
+      Array.isArray(feats) &&
+      feats.some(
+        (f: { name?: string }) => typeof f?.name === 'string' && /guided\s+strike/i.test(f.name)
+      );
+  } catch {
+    /* ignore */
+  }
   if (!hasIt && !classLower.includes('war')) {
-    whisperToCaller(c.io, c.ctx, `!guided: ${caller.name} doesn't have Guided Strike (War Cleric L2 Channel Divinity).`);
+    whisperToCaller(
+      c.io,
+      c.ctx,
+      `!guided: ${caller.name} doesn't have Guided Strike (War Cleric L2 Channel Divinity).`
+    );
     return true;
   }
   const charName = (row?.name as string) || caller.name;
   broadcastSystem(
-    c.io, c.ctx,
-    `⚔ **Guided Strike** — ${charName} uses Channel Divinity, adds **+10** to the attack roll just made (after seeing the roll). 1 CD charge spent.`,
+    c.io,
+    c.ctx,
+    `⚔ **Guided Strike** — ${charName} uses Channel Divinity, adds **+10** to the attack roll just made (after seeing the roll). 1 CD charge spent.`
   );
   return true;
 }
@@ -396,7 +456,10 @@ async function handleHexbladeCurse(c: ChatCommandContext): Promise<boolean> {
     whisperToCaller(c.io, c.ctx, '!hbc: no owned PC token.');
     return true;
   }
-  const { rows } = await pool.query('SELECT class, level, features, name FROM characters WHERE id = $1', [caller.characterId]);
+  const { rows } = await pool.query(
+    'SELECT class, level, features, name FROM characters WHERE id = $1',
+    [caller.characterId]
+  );
   const row = rows[0] as Record<string, unknown> | undefined;
   const classLower = String(row?.class || '').toLowerCase();
   if (!classLower.includes('warlock')) {
@@ -407,10 +470,14 @@ async function handleHexbladeCurse(c: ChatCommandContext): Promise<boolean> {
   try {
     const rawF = row?.features;
     const feats = typeof rawF === 'string' ? JSON.parse(rawF as string) : (rawF ?? []);
-    hasIt = Array.isArray(feats) && feats.some(
-      (f: { name?: string }) => typeof f?.name === 'string' && /hexblade'?s\s+curse/i.test(f.name),
-    );
-  } catch { /* ignore */ }
+    hasIt =
+      Array.isArray(feats) &&
+      feats.some(
+        (f: { name?: string }) => typeof f?.name === 'string' && /hexblade'?s\s+curse/i.test(f.name)
+      );
+  } catch {
+    /* ignore */
+  }
   if (!hasIt) {
     whisperToCaller(c.io, c.ctx, `!hbc: ${caller.name} doesn't have Hexblade's Curse.`);
     return true;
@@ -441,8 +508,9 @@ async function handleHexbladeCurse(c: ChatCommandContext): Promise<boolean> {
     changes: tokenConditionChanges(c.ctx.room, target.id),
   });
   broadcastSystem(
-    c.io, c.ctx,
-    `🗡 **${caller.name} curses ${target.name}** (Hexblade's Curse) — +prof bonus damage, crits on 19-20, caster regains HP = level+CHA if target dies. 1 min.`,
+    c.io,
+    c.ctx,
+    `🗡 **${caller.name} curses ${target.name}** (Hexblade's Curse) — +prof bonus damage, crits on 19-20, caster regains HP = level+CHA if target dies. 1 min.`
   );
   return true;
 }
@@ -485,10 +553,9 @@ async function handleWrath(c: ChatCommandContext): Promise<boolean> {
     whisperToCaller(c.io, c.ctx, '!wrath: no owned PC token.');
     return true;
   }
-  const { rows } = await pool.query(
-    'SELECT class, name, features FROM characters WHERE id = $1',
-    [caller.characterId],
-  );
+  const { rows } = await pool.query('SELECT class, name, features FROM characters WHERE id = $1', [
+    caller.characterId,
+  ]);
   const row = rows[0] as Record<string, unknown> | undefined;
   const classLower = String(row?.class || '').toLowerCase();
   if (!classLower.includes('cleric')) {
@@ -499,10 +566,15 @@ async function handleWrath(c: ChatCommandContext): Promise<boolean> {
   try {
     const rawF = row?.features;
     const feats = typeof rawF === 'string' ? JSON.parse(rawF as string) : (rawF ?? []);
-    hasIt = Array.isArray(feats) && feats.some(
-      (f: { name?: string }) => typeof f?.name === 'string' && /wrath\s+of\s+the\s+storm/i.test(f.name),
-    );
-  } catch { /* ignore */ }
+    hasIt =
+      Array.isArray(feats) &&
+      feats.some(
+        (f: { name?: string }) =>
+          typeof f?.name === 'string' && /wrath\s+of\s+the\s+storm/i.test(f.name)
+      );
+  } catch {
+    /* ignore */
+  }
   if (!hasIt && !classLower.includes('tempest')) {
     whisperToCaller(c.io, c.ctx, `!wrath: ${caller.name} isn't a Tempest Cleric.`);
     return true;
@@ -539,12 +611,20 @@ async function handleWrath(c: ChatCommandContext): Promise<boolean> {
       cost: 'Reaction',
     },
     effect: `${tName} DEX save ${formatSaveTotal(saveResult)} vs DC ${dc} → ${saveResult.saved ? `SAVED (half) → **${dmg}** ${dmgType} damage` : `FAILED → 2d8 = [${r1},${r2}] = **${dmg}** ${dmgType} damage`}.${saveNotesLabel(saveResult)}`,
-    targets: [{
-      name: tName,
-      tokenId: target.id,
-      effect: actionSaveEffect(saveResult, 'dex', dc, `${dmg} ${dmgType} damage (half)`, `${dmg} ${dmgType} damage`),
-      damage: { amount: dmg, damageType: dmgType },
-    }],
+    targets: [
+      {
+        name: tName,
+        tokenId: target.id,
+        effect: actionSaveEffect(
+          saveResult,
+          'dex',
+          dc,
+          `${dmg} ${dmgType} damage (half)`,
+          `${dmg} ${dmgType} damage`
+        ),
+        damage: { amount: dmg, damageType: dmgType },
+      },
+    ],
     notes: [
       `Tempest Cleric L1 (reaction)`,
       `DEX save: ${formatSaveTotal(saveResult)} vs DC ${dc}`,
@@ -554,9 +634,10 @@ async function handleWrath(c: ChatCommandContext): Promise<boolean> {
     ],
   };
   broadcastSystem(
-    c.io, c.ctx,
+    c.io,
+    c.ctx,
     `⚡ **Wrath of the Storm** — ${callerName} blasts ${tName} (reaction, 2d8 ${dmgType}):\n   ${tName} DEX save: ${formatSaveTotal(saveResult)} vs ${dc} → ${saveResult.saved ? `SAVED (half) — ${dmg} ${dmgType} dmg` : `FAILED — ${r1}+${r2} = ${dmg} ${dmgType} dmg`}${saveNotesLabel(saveResult)}`,
-    { actionResult: wrathBreakdown },
+    { actionResult: wrathBreakdown }
   );
   return true;
 }
@@ -579,7 +660,9 @@ async function handleBear(c: ChatCommandContext): Promise<boolean> {
     whisperToCaller(c.io, c.ctx, '!bear: no owned PC token.');
     return true;
   }
-  const { rows } = await pool.query('SELECT class, features, name FROM characters WHERE id = $1', [caller.characterId]);
+  const { rows } = await pool.query('SELECT class, features, name FROM characters WHERE id = $1', [
+    caller.characterId,
+  ]);
   const row = rows[0] as Record<string, unknown> | undefined;
   const classLower = String(row?.class || '').toLowerCase();
   if (!classLower.includes('barbarian')) {
@@ -590,12 +673,21 @@ async function handleBear(c: ChatCommandContext): Promise<boolean> {
   try {
     const rawF = row?.features;
     const feats = typeof rawF === 'string' ? JSON.parse(rawF as string) : (rawF ?? []);
-    hasIt = Array.isArray(feats) && feats.some(
-      (f: { name?: string }) => typeof f?.name === 'string' && /bear/i.test(f.name) && /(totem|spirit)/i.test(f.name),
-    );
-  } catch { /* ignore */ }
+    hasIt =
+      Array.isArray(feats) &&
+      feats.some(
+        (f: { name?: string }) =>
+          typeof f?.name === 'string' && /bear/i.test(f.name) && /(totem|spirit)/i.test(f.name)
+      );
+  } catch {
+    /* ignore */
+  }
   if (!hasIt) {
-    whisperToCaller(c.io, c.ctx, `!bear: ${caller.name} doesn't have Bear Totem (Path of the Totem Warrior L3).`);
+    whisperToCaller(
+      c.io,
+      c.ctx,
+      `!bear: ${caller.name} doesn't have Bear Totem (Path of the Totem Warrior L3).`
+    );
     return true;
   }
 
@@ -625,8 +717,9 @@ async function handleBear(c: ChatCommandContext): Promise<boolean> {
     changes: tokenConditionChanges(c.ctx.room, caller.id),
   });
   broadcastSystem(
-    c.io, c.ctx,
-    `🐻 **Bear Spirit** awakens — ${caller.name} has resistance to ALL damage except psychic while raging.`,
+    c.io,
+    c.ctx,
+    `🐻 **Bear Spirit** awakens — ${caller.name} has resistance to ALL damage except psychic while raging.`
   );
   return true;
 }
@@ -642,7 +735,9 @@ async function handleStillness(c: ChatCommandContext): Promise<boolean> {
     whisperToCaller(c.io, c.ctx, '!stillness: no owned PC token.');
     return true;
   }
-  const { rows } = await pool.query('SELECT class, level, name FROM characters WHERE id = $1', [caller.characterId]);
+  const { rows } = await pool.query('SELECT class, level, name FROM characters WHERE id = $1', [
+    caller.characterId,
+  ]);
   const row = rows[0] as Record<string, unknown> | undefined;
   const classLower = String(row?.class || '').toLowerCase();
   if (!classLower.includes('monk')) {
@@ -672,10 +767,11 @@ async function handleStillness(c: ChatCommandContext): Promise<boolean> {
   }
   const charName = (row?.name as string) || caller.name;
   broadcastSystem(
-    c.io, c.ctx,
+    c.io,
+    c.ctx,
     cleared.length > 0
       ? `🧘 **Stillness of Mind** — ${charName} clears: ${cleared.join(', ')} (action).`
-      : `🧘 Stillness of Mind — ${charName} isn't charmed or frightened; nothing to clear.`,
+      : `🧘 Stillness of Mind — ${charName} isn't charmed or frightened; nothing to clear.`
   );
   return true;
 }
@@ -693,7 +789,10 @@ async function handleFastHands(c: ChatCommandContext): Promise<boolean> {
     whisperToCaller(c.io, c.ctx, '!fasthands: no owned PC token.');
     return true;
   }
-  const { rows } = await pool.query('SELECT class, level, features, name FROM characters WHERE id = $1', [caller.characterId]);
+  const { rows } = await pool.query(
+    'SELECT class, level, features, name FROM characters WHERE id = $1',
+    [caller.characterId]
+  );
   const row = rows[0] as Record<string, unknown> | undefined;
   const classLower = String(row?.class || '').toLowerCase();
   if (!classLower.includes('rogue')) {
@@ -704,12 +803,20 @@ async function handleFastHands(c: ChatCommandContext): Promise<boolean> {
   try {
     const rawF = row?.features;
     const feats = typeof rawF === 'string' ? JSON.parse(rawF as string) : (rawF ?? []);
-    hasIt = Array.isArray(feats) && feats.some(
-      (f: { name?: string }) => typeof f?.name === 'string' && /fast\s+hands/i.test(f.name),
-    );
-  } catch { /* ignore */ }
+    hasIt =
+      Array.isArray(feats) &&
+      feats.some(
+        (f: { name?: string }) => typeof f?.name === 'string' && /fast\s+hands/i.test(f.name)
+      );
+  } catch {
+    /* ignore */
+  }
   if (!hasIt && !classLower.includes('thief')) {
-    whisperToCaller(c.io, c.ctx, `!fasthands: ${caller.name} doesn't have Fast Hands (Thief Rogue L3).`);
+    whisperToCaller(
+      c.io,
+      c.ctx,
+      `!fasthands: ${caller.name} doesn't have Fast Hands (Thief Rogue L3).`
+    );
     return true;
   }
   const economy = c.ctx.room.actionEconomies.get(caller.id);
@@ -727,8 +834,9 @@ async function handleFastHands(c: ChatCommandContext): Promise<boolean> {
   }
   const charName = (row?.name as string) || caller.name;
   broadcastSystem(
-    c.io, c.ctx,
-    `🖐 **Fast Hands** — ${charName} uses bonus action to ${arg} (Sleight of Hand / Thieves' Tools / Use Object).`,
+    c.io,
+    c.ctx,
+    `🖐 **Fast Hands** — ${charName} uses bonus action to ${arg} (Sleight of Hand / Thieves' Tools / Use Object).`
   );
   return true;
 }
@@ -745,7 +853,10 @@ async function handleSacredWeapon(c: ChatCommandContext): Promise<boolean> {
     whisperToCaller(c.io, c.ctx, '!sacredweapon: no owned PC token.');
     return true;
   }
-  const { rows } = await pool.query('SELECT class, ability_scores, name, features FROM characters WHERE id = $1', [caller.characterId]);
+  const { rows } = await pool.query(
+    'SELECT class, ability_scores, name, features FROM characters WHERE id = $1',
+    [caller.characterId]
+  );
   const row = rows[0] as Record<string, unknown> | undefined;
   const classLower = String(row?.class || '').toLowerCase();
   if (!classLower.includes('paladin')) {
@@ -756,20 +867,32 @@ async function handleSacredWeapon(c: ChatCommandContext): Promise<boolean> {
   try {
     const rawF = row?.features;
     const feats = typeof rawF === 'string' ? JSON.parse(rawF as string) : (rawF ?? []);
-    hasIt = Array.isArray(feats) && feats.some(
-      (f: { name?: string }) => typeof f?.name === 'string' && /sacred\s+weapon/i.test(f.name),
-    );
-  } catch { /* ignore */ }
+    hasIt =
+      Array.isArray(feats) &&
+      feats.some(
+        (f: { name?: string }) => typeof f?.name === 'string' && /sacred\s+weapon/i.test(f.name)
+      );
+  } catch {
+    /* ignore */
+  }
   if (!hasIt && !classLower.includes('devotion')) {
-    whisperToCaller(c.io, c.ctx, `!sacredweapon: ${caller.name} doesn't have Sacred Weapon (Oath of Devotion).`);
+    whisperToCaller(
+      c.io,
+      c.ctx,
+      `!sacredweapon: ${caller.name} doesn't have Sacred Weapon (Oath of Devotion).`
+    );
     return true;
   }
-  const scores = typeof row?.ability_scores === 'string' ? JSON.parse(row.ability_scores as string) : (row?.ability_scores ?? {});
+  const scores =
+    typeof row?.ability_scores === 'string'
+      ? JSON.parse(row.ability_scores as string)
+      : (row?.ability_scores ?? {});
   const chaMod = Math.max(1, Math.floor((((scores as Record<string, number>).cha ?? 10) - 10) / 2));
   const charName = (row?.name as string) || caller.name;
   broadcastSystem(
-    c.io, c.ctx,
-    `✨ **Sacred Weapon** — ${charName}'s weapon glows (1 min, CD): **+${chaMod}** to attack rolls, weapon is MAGICAL, sheds bright 20 ft + dim 20 ft light.`,
+    c.io,
+    c.ctx,
+    `✨ **Sacred Weapon** — ${charName}'s weapon glows (1 min, CD): **+${chaMod}** to attack rolls, weapon is MAGICAL, sheds bright 20 ft + dim 20 ft light.`
   );
   return true;
 }
@@ -791,7 +914,9 @@ async function handleVowOfEnmity(c: ChatCommandContext): Promise<boolean> {
     whisperToCaller(c.io, c.ctx, '!vow: no owned PC token.');
     return true;
   }
-  const { rows } = await pool.query('SELECT class, name, features FROM characters WHERE id = $1', [caller.characterId]);
+  const { rows } = await pool.query('SELECT class, name, features FROM characters WHERE id = $1', [
+    caller.characterId,
+  ]);
   const row = rows[0] as Record<string, unknown> | undefined;
   const classLower = String(row?.class || '').toLowerCase();
   if (!classLower.includes('paladin')) {
@@ -802,12 +927,20 @@ async function handleVowOfEnmity(c: ChatCommandContext): Promise<boolean> {
   try {
     const rawF = row?.features;
     const feats = typeof rawF === 'string' ? JSON.parse(rawF as string) : (rawF ?? []);
-    hasIt = Array.isArray(feats) && feats.some(
-      (f: { name?: string }) => typeof f?.name === 'string' && /vow\s+of\s+enmity/i.test(f.name),
-    );
-  } catch { /* ignore */ }
+    hasIt =
+      Array.isArray(feats) &&
+      feats.some(
+        (f: { name?: string }) => typeof f?.name === 'string' && /vow\s+of\s+enmity/i.test(f.name)
+      );
+  } catch {
+    /* ignore */
+  }
   if (!hasIt && !classLower.includes('vengeance')) {
-    whisperToCaller(c.io, c.ctx, `!vow: ${caller.name} doesn't have Vow of Enmity (Oath of Vengeance).`);
+    whisperToCaller(
+      c.io,
+      c.ctx,
+      `!vow: ${caller.name} doesn't have Vow of Enmity (Oath of Vengeance).`
+    );
     return true;
   }
   const currentRound = c.ctx.room.combatState?.roundNumber ?? 0;
@@ -824,8 +957,9 @@ async function handleVowOfEnmity(c: ChatCommandContext): Promise<boolean> {
   });
   const charName = (row?.name as string) || caller.name;
   broadcastSystem(
-    c.io, c.ctx,
-    `🗡 **Vow of Enmity** — ${charName} vows to destroy ${target.name}. Advantage on attack rolls against them for 1 minute (CD).`,
+    c.io,
+    c.ctx,
+    `🗡 **Vow of Enmity** — ${charName} vows to destroy ${target.name}. Advantage on attack rolls against them for 1 minute (CD).`
   );
   return true;
 }
@@ -850,7 +984,9 @@ async function handleDiscipleOfLife(c: ChatCommandContext): Promise<boolean> {
     whisperToCaller(c.io, c.ctx, '!discipleoflife: no owned PC token.');
     return true;
   }
-  const { rows } = await pool.query('SELECT class, name, features FROM characters WHERE id = $1', [caller.characterId]);
+  const { rows } = await pool.query('SELECT class, name, features FROM characters WHERE id = $1', [
+    caller.characterId,
+  ]);
   const row = rows[0] as Record<string, unknown> | undefined;
   const classLower = String(row?.class || '').toLowerCase();
   if (!classLower.includes('cleric')) {
@@ -861,19 +997,29 @@ async function handleDiscipleOfLife(c: ChatCommandContext): Promise<boolean> {
   try {
     const rawF = row?.features;
     const feats = typeof rawF === 'string' ? JSON.parse(rawF as string) : (rawF ?? []);
-    hasIt = Array.isArray(feats) && feats.some(
-      (f: { name?: string }) => typeof f?.name === 'string' && /disciple\s+of\s+life/i.test(f.name),
-    );
-  } catch { /* ignore */ }
+    hasIt =
+      Array.isArray(feats) &&
+      feats.some(
+        (f: { name?: string }) =>
+          typeof f?.name === 'string' && /disciple\s+of\s+life/i.test(f.name)
+      );
+  } catch {
+    /* ignore */
+  }
   if (!hasIt && !classLower.includes('life')) {
-    whisperToCaller(c.io, c.ctx, `!discipleoflife: ${caller.name} doesn't have Disciple of Life (Life domain).`);
+    whisperToCaller(
+      c.io,
+      c.ctx,
+      `!discipleoflife: ${caller.name} doesn't have Disciple of Life (Life domain).`
+    );
     return true;
   }
   const bonus = 2 + lvl;
   const charName = (row?.name as string) || caller.name;
   broadcastSystem(
-    c.io, c.ctx,
-    `✨ **Disciple of Life** — ${charName}'s healing spell (level ${lvl}) adds **+${bonus}** HP to the base heal.`,
+    c.io,
+    c.ctx,
+    `✨ **Disciple of Life** — ${charName}'s healing spell (level ${lvl}) adds **+${bonus}** HP to the base heal.`
   );
   return true;
 }
@@ -893,7 +1039,7 @@ async function handleDarkBlessing(c: ChatCommandContext): Promise<boolean> {
   }
   const { rows } = await pool.query(
     'SELECT class, level, ability_scores, features, name, temp_hit_points FROM characters WHERE id = $1',
-    [caller.characterId],
+    [caller.characterId]
   );
   const row = rows[0] as Record<string, unknown> | undefined;
   const classLower = String(row?.class || '').toLowerCase();
@@ -905,21 +1051,30 @@ async function handleDarkBlessing(c: ChatCommandContext): Promise<boolean> {
   try {
     const rawF = row?.features;
     const feats = typeof rawF === 'string' ? JSON.parse(rawF as string) : (rawF ?? []);
-    hasIt = Array.isArray(feats) && feats.some(
-      (f: { name?: string }) => typeof f?.name === 'string' && /dark\s+one'?s\s+blessing/i.test(f.name),
-    );
-  } catch { /* ignore */ }
+    hasIt =
+      Array.isArray(feats) &&
+      feats.some(
+        (f: { name?: string }) =>
+          typeof f?.name === 'string' && /dark\s+one'?s\s+blessing/i.test(f.name)
+      );
+  } catch {
+    /* ignore */
+  }
   if (!hasIt && !classLower.includes('fiend')) {
     whisperToCaller(c.io, c.ctx, `!darkblessing: ${caller.name} isn't a Fiend Warlock.`);
     return true;
   }
   const lvl = Number(row?.level) || 1;
-  const scores = typeof row?.ability_scores === 'string' ? JSON.parse(row.ability_scores as string) : (row?.ability_scores ?? {});
+  const scores =
+    typeof row?.ability_scores === 'string'
+      ? JSON.parse(row.ability_scores as string)
+      : (row?.ability_scores ?? {});
   const chaMod = Math.floor((((scores as Record<string, number>).cha ?? 10) - 10) / 2);
   const thp = Math.max(1, chaMod + lvl);
   const currentThp = Number(row?.temp_hit_points) || 0;
   const newThp = Math.max(currentThp, thp); // RAW: keep higher
-  await pool.query('UPDATE characters SET temp_hit_points = $1 WHERE id = $2', [newThp, caller.characterId])
+  await pool
+    .query('UPDATE characters SET temp_hit_points = $1 WHERE id = $2', [newThp, caller.characterId])
     .catch((e) => console.warn('[!darkblessing] temp_hp write failed:', e));
   c.io.to(c.ctx.room.sessionId).emit('character:updated', {
     characterId: caller.characterId,
@@ -935,11 +1090,13 @@ async function handleDarkBlessing(c: ChatCommandContext): Promise<boolean> {
       cost: 'Triggered (on kill)',
     },
     effect: `Gains **${thp} temp HP** → ${newThp} total temp HP.${currentThp > 0 && currentThp >= thp ? ' (existing temp HP was higher — kept)' : ''}`,
-    targets: [{
-      name: charName,
-      tokenId: caller.id,
-      effect: `Temp HP ${currentThp} → ${newThp}`,
-    }],
+    targets: [
+      {
+        name: charName,
+        tokenId: caller.id,
+        effect: `Temp HP ${currentThp} → ${newThp}`,
+      },
+    ],
     notes: [
       `Fiend Warlock L1`,
       `Formula: CHA (${chaMod}) + Warlock level (${lvl}) = ${thp} (min 1)`,
@@ -947,9 +1104,10 @@ async function handleDarkBlessing(c: ChatCommandContext): Promise<boolean> {
     ],
   };
   broadcastSystem(
-    c.io, c.ctx,
+    c.io,
+    c.ctx,
     `🔥 **Dark One's Blessing** — ${charName} kills a hostile, gains **${thp} temp HP** (now ${newThp}).`,
-    { actionResult: dobBreakdown },
+    { actionResult: dobBreakdown }
   );
   return true;
 }
@@ -966,7 +1124,11 @@ async function handleDarkBlessing(c: ChatCommandContext): Promise<boolean> {
 async function handleFeyPresence(c: ChatCommandContext): Promise<boolean> {
   const parts = c.rest.split(/\s+/).filter(Boolean);
   if (parts.length < 2 || !['charm', 'fear'].includes(parts[0].toLowerCase())) {
-    whisperToCaller(c.io, c.ctx, '!feypresence: usage `!feypresence <charm|fear> <target1> [target2 …]`');
+    whisperToCaller(
+      c.io,
+      c.ctx,
+      '!feypresence: usage `!feypresence <charm|fear> <target1> [target2 …]`'
+    );
     return true;
   }
   const effect = parts[0].toLowerCase();
@@ -976,7 +1138,10 @@ async function handleFeyPresence(c: ChatCommandContext): Promise<boolean> {
     whisperToCaller(c.io, c.ctx, '!feypresence: no owned PC token.');
     return true;
   }
-  const { rows } = await pool.query('SELECT class, features, spell_save_dc, name FROM characters WHERE id = $1', [caller.characterId]);
+  const { rows } = await pool.query(
+    'SELECT class, features, spell_save_dc, name FROM characters WHERE id = $1',
+    [caller.characterId]
+  );
   const row = rows[0] as Record<string, unknown> | undefined;
   const classLower = String(row?.class || '').toLowerCase();
   if (!classLower.includes('warlock')) {
@@ -987,10 +1152,14 @@ async function handleFeyPresence(c: ChatCommandContext): Promise<boolean> {
   try {
     const rawF = row?.features;
     const feats = typeof rawF === 'string' ? JSON.parse(rawF as string) : (rawF ?? []);
-    hasIt = Array.isArray(feats) && feats.some(
-      (f: { name?: string }) => typeof f?.name === 'string' && /fey\s+presence/i.test(f.name),
-    );
-  } catch { /* ignore */ }
+    hasIt =
+      Array.isArray(feats) &&
+      feats.some(
+        (f: { name?: string }) => typeof f?.name === 'string' && /fey\s+presence/i.test(f.name)
+      );
+  } catch {
+    /* ignore */
+  }
   if (!hasIt && !classLower.includes('archfey')) {
     whisperToCaller(c.io, c.ctx, `!feypresence: ${caller.name} isn't an Archfey Warlock.`);
     return true;
@@ -1011,7 +1180,9 @@ async function handleFeyPresence(c: ChatCommandContext): Promise<boolean> {
     }
     const saveResult = await rollTargetSave(c, target, 'wis', dc, condName);
     const tName = saveResult.displayName;
-    lines.push(`  • ${tName}: ${formatSaveTotal(saveResult)} vs ${dc} → ${saveResult.saved ? 'SAVED' : `${condName.toUpperCase()} until end of ${callerName}'s next turn`}${saveNotesLabel(saveResult)}`);
+    lines.push(
+      `  • ${tName}: ${formatSaveTotal(saveResult)} vs ${dc} → ${saveResult.saved ? 'SAVED' : `${condName.toUpperCase()} until end of ${callerName}'s next turn`}${saveNotesLabel(saveResult)}`
+    );
     feyTargets.push({
       name: tName,
       tokenId: target.id,
@@ -1074,7 +1245,9 @@ async function handleWardingFlare(c: ChatCommandContext): Promise<boolean> {
     whisperToCaller(c.io, c.ctx, '!wardingflare: no owned PC token.');
     return true;
   }
-  const { rows } = await pool.query('SELECT class, features, name FROM characters WHERE id = $1', [caller.characterId]);
+  const { rows } = await pool.query('SELECT class, features, name FROM characters WHERE id = $1', [
+    caller.characterId,
+  ]);
   const row = rows[0] as Record<string, unknown> | undefined;
   const classLower = String(row?.class || '').toLowerCase();
   if (!classLower.includes('cleric')) {
@@ -1085,10 +1258,14 @@ async function handleWardingFlare(c: ChatCommandContext): Promise<boolean> {
   try {
     const rawF = row?.features;
     const feats = typeof rawF === 'string' ? JSON.parse(rawF as string) : (rawF ?? []);
-    hasIt = Array.isArray(feats) && feats.some(
-      (f: { name?: string }) => typeof f?.name === 'string' && /warding\s+flare/i.test(f.name),
-    );
-  } catch { /* ignore */ }
+    hasIt =
+      Array.isArray(feats) &&
+      feats.some(
+        (f: { name?: string }) => typeof f?.name === 'string' && /warding\s+flare/i.test(f.name)
+      );
+  } catch {
+    /* ignore */
+  }
   if (!hasIt && !classLower.includes('light')) {
     whisperToCaller(c.io, c.ctx, `!wardingflare: ${caller.name} isn't a Light Cleric.`);
     return true;
@@ -1109,8 +1286,9 @@ async function handleWardingFlare(c: ChatCommandContext): Promise<boolean> {
   }
   const callerName = (row?.name as string) || caller.name;
   broadcastSystem(
-    c.io, c.ctx,
-    `💥 **Warding Flare** — ${callerName} interposes radiance, imposing disadvantage on ${targetName}'s attack roll (reaction).`,
+    c.io,
+    c.ctx,
+    `💥 **Warding Flare** — ${callerName} interposes radiance, imposing disadvantage on ${targetName}'s attack roll (reaction).`
   );
   return true;
 }
@@ -1123,8 +1301,6 @@ async function handleWardingFlare(c: ChatCommandContext): Promise<boolean> {
  *
  *   !grimharvest <spell-level> [necro]
  */
-const grimHarvestUsed = new Set<string>();
-
 async function handleGrimHarvest(c: ChatCommandContext): Promise<boolean> {
   const parts = c.rest.split(/\s+/).filter(Boolean);
   const lvl = parseInt(parts[0], 10);
@@ -1138,7 +1314,10 @@ async function handleGrimHarvest(c: ChatCommandContext): Promise<boolean> {
     whisperToCaller(c.io, c.ctx, '!grimharvest: no owned PC token.');
     return true;
   }
-  const { rows } = await pool.query('SELECT class, features, hit_points, max_hit_points, name FROM characters WHERE id = $1', [caller.characterId]);
+  const { rows } = await pool.query(
+    'SELECT class, features, hit_points, max_hit_points, name FROM characters WHERE id = $1',
+    [caller.characterId]
+  );
   const row = rows[0] as Record<string, unknown> | undefined;
   const classLower = String(row?.class || '').toLowerCase();
   if (!classLower.includes('wizard')) {
@@ -1149,27 +1328,34 @@ async function handleGrimHarvest(c: ChatCommandContext): Promise<boolean> {
   try {
     const rawF = row?.features;
     const feats = typeof rawF === 'string' ? JSON.parse(rawF as string) : (rawF ?? []);
-    hasIt = Array.isArray(feats) && feats.some(
-      (f: { name?: string }) => typeof f?.name === 'string' && /grim\s+harvest/i.test(f.name),
-    );
-  } catch { /* ignore */ }
+    hasIt =
+      Array.isArray(feats) &&
+      feats.some(
+        (f: { name?: string }) => typeof f?.name === 'string' && /grim\s+harvest/i.test(f.name)
+      );
+  } catch {
+    /* ignore */
+  }
   if (!hasIt && !classLower.includes('necromancy')) {
     whisperToCaller(c.io, c.ctx, `!grimharvest: ${caller.name} isn't a Necromancy Wizard.`);
     return true;
   }
   const combat = c.ctx.room.combatState;
-  const turnKey = `${combat?.roundNumber ?? 0}_${combat?.currentTurnIndex ?? 0}_${caller.characterId}`;
-  if (grimHarvestUsed.has(turnKey)) {
+  const turnKey = `${combat?.startedAt ?? 'free-roam'}_${combat?.roundNumber ?? 0}_${combat?.currentTurnIndex ?? 0}`;
+  const grimHarvestUsed = (sessionFeatures(c.ctx.room.sessionId).grimHarvestUsed ??= {});
+  if (grimHarvestUsed[caller.characterId] === turnKey) {
     whisperToCaller(c.io, c.ctx, '!grimharvest: already used this turn.');
     return true;
   }
-  grimHarvestUsed.add(turnKey);
+  grimHarvestUsed[caller.characterId] = turnKey;
   const heal = lvl * (isNecromancy ? 3 : 2);
   const hp = Number(row?.hit_points) || 0;
   const maxHp = Number(row?.max_hit_points) || 0;
   const newHp = Math.min(maxHp, hp + heal);
-  await pool.query('UPDATE characters SET hit_points = $1 WHERE id = $2', [newHp, caller.characterId])
-    .catch((e) => console.warn('[!grimharvest] hp write failed:', e));
+  await pool.query('UPDATE characters SET hit_points = $1 WHERE id = $2', [
+    newHp,
+    caller.characterId,
+  ]);
   c.io.to(c.ctx.room.sessionId).emit('character:updated', {
     characterId: caller.characterId,
     changes: { hitPoints: newHp },
@@ -1191,12 +1377,14 @@ async function handleGrimHarvest(c: ChatCommandContext): Promise<boolean> {
       cost: '1/turn',
     },
     effect: `Regain **${heal} HP** (${isNecromancy ? '3×' : '2×'} spell level ${lvl}) → ${newHp}/${maxHp}.`,
-    targets: [{
-      name: callerName,
-      tokenId: caller.id,
-      effect: `HP ${hp} → ${newHp} (+${heal})`,
-      healing: { amount: heal, hpBefore: hp, hpAfter: newHp },
-    }],
+    targets: [
+      {
+        name: callerName,
+        tokenId: caller.id,
+        effect: `HP ${hp} → ${newHp} (+${heal})`,
+        healing: { amount: heal, hpBefore: hp, hpAfter: newHp },
+      },
+    ],
     notes: [
       `Necromancy Wizard L2`,
       `Heal formula: ${isNecromancy ? '3×' : '2×'} spell level (${lvl})`,
@@ -1205,9 +1393,10 @@ async function handleGrimHarvest(c: ChatCommandContext): Promise<boolean> {
     ],
   };
   broadcastSystem(
-    c.io, c.ctx,
+    c.io,
+    c.ctx,
     `💀 **Grim Harvest** — ${callerName} drains life from the kill, regains **${heal} HP** (${isNecromancy ? '3×' : '2×'} spell level ${lvl}) → ${newHp}/${maxHp}.`,
-    { actionResult: ghBreakdown },
+    { actionResult: ghBreakdown }
   );
   return true;
 }

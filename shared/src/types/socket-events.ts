@@ -47,6 +47,8 @@ export interface ClientSessionEvents {
 export interface ServerSessionEvents {
   'session:state-sync': {
     sessionId: string;
+    /** UUID of the durable room state lineage, preserved across cold hydration. */
+    generation: string;
     roomCode: string;
     userId: string;
     isDM: boolean;
