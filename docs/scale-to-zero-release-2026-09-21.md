@@ -113,13 +113,28 @@ authentication cookies were removed using SQL-only cleanup; no existing campaign
 was edited. The temporary SQL proxy was stopped. No runtime errors were observed.
 Cloud SQL remained `RUNNABLE`, `ALWAYS`, `db-f1-micro`.
 
-The second natural idle-zero check is still pending at this checkpoint. Monitoring
-uses only the control plane so health checks do not keep the application warm.
+The second natural idle-zero check passed: both active and idle instance counts
+were explicitly zero at `2026-09-21T12:39:00Z` and again at 12:40 UTC. No further
+application requests were sent after the cold-rejoin check. The full observed
+cycle was natural zero, authenticated cold wake with intact game state, then
+natural zero again. Each shutdown occurred about 16-17 minutes after the last
+request, including metric sampling. Monitoring used only the control plane so
+health checks did not keep the application warm.
 
-The newer main branch has a separate, undeployed integration candidate. Its
+Open WebSockets are active requests, not idle users: the service remains active
+while players are connected. Cloud SQL remains running and separately billable.
+The first visit after a genuinely quiet period has the measured cold-start delay;
+subsequent requests do not need to wait for another instance startup.
+
+The newer main branch has a separate, undeployed integration candidate in
+[PR #210](https://github.com/adrev/Atlas_bound/pull/210). Its
 canonical feature-resource migration needs a reviewed quiescent cutover and must
 not be deployed over active legacy writers. See its integration report and the
-candidate-deployment contract before planning a subsequent release.
+candidate-deployment contract before planning a subsequent release. Its local
+2,106-test suite and GitHub CI passed; this does not authorize that data cutover.
+The production-based release history is preserved in
+[PR #209](https://github.com/adrev/Atlas_bound/pull/209), which should not be merged
+directly over newer main. Both PRs remain draft pending integration/release gates.
 
 Rollback baseline: `atlas-bound-00064-kzr` (revision minimum 1). Route traffic back
 only if no active game can be split across versions. Keep the additive schema and
