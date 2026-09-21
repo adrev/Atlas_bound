@@ -43,6 +43,15 @@ if [ -z "$IMAGE" ]; then
   docker push "$IMAGE"
 fi
 
+# Pin tags before deployment so later tag movement cannot change this candidate.
+if [[ ! "$IMAGE" =~ @sha256:[a-f0-9]{64}$ ]]; then
+  IMAGE=$(gcloud artifacts docker images describe "$IMAGE" --project "$PROJECT_ID" \
+    --format='value(image_summary.fully_qualified_digest)')
+fi
+[[ "$IMAGE" =~ @sha256:[a-f0-9]{64}$ ]] || { echo "Cannot resolve immutable candidate image" >&2; exit 1; }
+REVISION_SUFFIX="candidate-$(date +%s)-$(node -e 'process.stdout.write(require("node:crypto").randomBytes(3).toString("hex"))')"
+EXPECTED_REVISION="$SERVICE_NAME-$REVISION_SUFFIX"
+
 # Abort if another operator changed configuration or traffic during the build.
 describe_service > "$TEMP_DIR/predeploy.json"
 node scripts/deploy-config.mjs unchanged "$BEFORE" "$TEMP_DIR/predeploy.json" -
@@ -56,7 +65,10 @@ gcloud run deploy "$SERVICE_NAME" \
   --min-instances 0 \
   --cpu-throttling \
   --no-traffic \
-  --flags-file "$TEMP_DIR/flags.json"
+  --revision-suffix "$REVISION_SUFFIX" \
+  --flags-file "$TEMP_DIR/flags.json" \
+  --format=json > "$TEMP_DIR/deployment.json"
 describe_service > "$TEMP_DIR/after.json"
-node scripts/deploy-config.mjs deployed "$BEFORE" "$TEMP_DIR/after.json" "$ENV_UPDATES"
+node scripts/deploy-config.mjs deployed "$BEFORE" "$TEMP_DIR/after.json" "$ENV_UPDATES" \
+  "$TEMP_DIR/deployment.json" "$IMAGE" "$EXPECTED_REVISION"
 echo "Candidate deployed with configuration verified and existing traffic retained. Promotion is a separate reviewed action."
