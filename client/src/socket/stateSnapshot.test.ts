@@ -7,12 +7,13 @@ import { useCombatStore } from '../stores/useCombatStore';
 import { useCharacterStore } from '../stores/useCharacterStore';
 import { recordEventId, resetEventCursor } from './eventCursor';
 
+beforeEach(() => useSessionStore.setState({ generation: 'generation-1' }));
+
 /**
  * Regression: the 15s /state reconciler must NOT wipe real local state when
  * the server returns its "no room on this instance" fallback (empty snapshot,
- * nextEventId 0) — which happens on a Cloud Run session-affinity miss or an
- * instance that just restarted. nextEventId is monotonic, so a session that
- * ever had activity reports > 0; only the fallback (or a pristine room) is 0.
+ * nextEventId 0, no generation). A matching generation after full join is
+ * authoritative even at cursor zero; missing authority requires a rejoin.
  */
 
 function tok(id: string): Token {
@@ -45,7 +46,7 @@ function mockState(body: unknown, etag?: string) {
       status: 200,
       ok: true,
       headers: { get: (h: string) => (h.toLowerCase() === 'etag' ? (etag ?? null) : null) },
-      json: async () => body,
+      json: async () => ({ generation: 'generation-1', ...(body as object) }),
     }))
   );
 }
@@ -61,7 +62,14 @@ describe('pullStateSnapshot — no-room fallback guard', () => {
 
   it('does NOT wipe local tokens on an empty no-room snapshot (nextEventId 0)', async () => {
     useMapStore.setState({ tokens: { t1: tok('t1') }, currentMap: { id: 'map-1' } } as never);
-    mockState({ tokens: [], combat: null, characters: {}, nextEventId: 0, roundNumber: 0 });
+    mockState({
+      generation: null,
+      tokens: [],
+      combat: null,
+      characters: {},
+      nextEventId: 0,
+      roundNumber: 0,
+    });
     const res = await pullStateSnapshot();
     expect(res.applied).toBe(false);
     expect(Object.keys(useMapStore.getState().tokens)).toEqual(['t1']);
@@ -619,6 +627,7 @@ describe('pullStateSnapshot — token diff self-heals aura/faction/visionOverrid
 
 describe('state snapshot ETag policy', () => {
   const emptySnapshot = {
+    generation: 'generation-1',
     mapId: 'map-1',
     tokens: [],
     combat: null,

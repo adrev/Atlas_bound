@@ -22,10 +22,45 @@ import { dispatchReplayEvent } from './replayHandlers';
  */
 
 let lastEventId = 0;
+let syncGeneration = 0;
+let hasSnapshotBaseline = false;
+let rejoinHandler: (() => void) | null = null;
+
+/** Local request lifetime; also changes on same-room reconnects and re-entry. */
+export function getSyncGeneration(): number {
+  return syncGeneration;
+}
+
+export function setRejoinHandler(handler: () => void): () => void {
+  rejoinHandler = handler;
+  return () => {
+    if (rejoinHandler === handler) rejoinHandler = null;
+  };
+}
+
+export function invalidateSessionSync(): void {
+  resetEventCursor();
+  useSessionStore.setState({ generation: null });
+}
+
+/** Only a full socket join may adopt a different server generation. */
+export function requestFullRejoin(socket?: Socket): void {
+  invalidateSessionSync();
+  if (rejoinHandler) rejoinHandler();
+  else if (socket && useSessionStore.getState().roomCode) {
+    socket.emit('session:join', { roomCode: useSessionStore.getState().roomCode });
+  }
+}
 
 /** Update the cursor when a live event arrives. */
 export function recordEventId(id: number): void {
-  if (id > lastEventId) lastEventId = id;
+  if (Number.isSafeInteger(id) && id > lastEventId) lastEventId = id;
+}
+
+/** Zero is a valid baseline after hydration, not permission to replay old history. */
+export function recordSnapshotCursor(id: number): void {
+  recordEventId(id);
+  hasSnapshotBaseline = true;
 }
 
 export function getLastEventId(): number {
@@ -35,7 +70,20 @@ export function getLastEventId(): number {
 /** Reset when the user leaves the session (new room, new cursor). */
 export function resetEventCursor(): void {
   lastEventId = 0;
+  hasSnapshotBaseline = false;
+  syncGeneration += 1;
 }
+
+// Observe transitions synchronously, including A -> null -> A while awaiting HTTP.
+useSessionStore.subscribe((state, previous) => {
+  if (
+    state.sessionId !== previous.sessionId ||
+    state.roomCode !== previous.roomCode ||
+    state.userId !== previous.userId ||
+    state.generation !== previous.generation
+  )
+    resetEventCursor();
+});
 
 /**
  * Ask the server for any events since our last-seen id and replay
@@ -43,50 +91,35 @@ export function resetEventCursor(): void {
  * events replayed (for logging / observability).
  */
 export async function pullEventCursor(socket: Socket): Promise<number> {
-  const sessionId = useSessionStore.getState().sessionId;
-  if (!sessionId) return 0;
-
-  // Cursor 0 means we have no authoritative baseline in the event
-  // stream yet — either a brand-new join or a just-performed 410 reset
-  // (see below). A `?since=0` request would make the server hand back
-  // its entire retained backlog, and replaying that historical log is
-  // unsafe: it applies old events out of context. The canonical failure
-  // is an aged `combat:ended` whose matching `combat:started` has
-  // already fallen out of the buffer (and which the replay dispatcher
-  // can't re-establish anyway) — replaying it endCombat()s a fight
-  // that's currently active and pops a bogus end-of-battle recap.
-  //
-  // Backlog replay is only meaningful as a *delta* from a known-good
-  // baseline. At cursor 0 there is no baseline, so we defer entirely to
-  // authoritative hydration: session:join re-sync + the /state snapshot
-  // (pullStateSnapshot) rebuild the stores directly and advance this
-  // cursor via `nextEventId`. Once the cursor is nonzero, normal delta
-  // replay resumes below. This is the invariant: cursor 0 never requests
-  // or replays historical room backlog.
-  if (lastEventId === 0) return 0;
+  const { sessionId, generation } = useSessionStore.getState();
+  if (!sessionId || !generation || !hasSnapshotBaseline) return 0;
+  const lifetime = getSyncGeneration();
+  const since = lastEventId;
+  const isCurrent = () => lifetime === getSyncGeneration();
 
   try {
-    const resp = await fetch(`/api/sessions/${sessionId}/events?since=${lastEventId}`, {
-      credentials: 'include',
-    });
+    const resp = await fetch(
+      `/api/sessions/${sessionId}/events?since=${since}&generation=${encodeURIComponent(generation)}`,
+      { credentials: 'include' }
+    );
+    if (!isCurrent()) return 0;
     if (resp.status === 410) {
-      // Our cursor is older than the replay buffer — server can't
-      // guarantee a complete delta. Force a fresh session:join so
-      // the client rebuilds state from the authoritative hydration.
-      lastEventId = 0;
-      // The caller (keep-alive loop) re-emits session:join on the
-      // next tick anyway, but nudge it now.
-      socket.emit('session:join', {
-        roomCode: useSessionStore.getState().roomCode,
-      });
+      // Covers expired history, a cold room, generation mismatch and ahead cursors.
+      requestFullRejoin(socket);
       return 0;
     }
     if (!resp.ok) return 0;
 
     const body = (await resp.json()) as {
+      generation?: string;
       events: Array<{ id: number; kind: string; payload: Record<string, unknown> }>;
       latestEventId: number;
     };
+    if (!isCurrent()) return 0;
+    if (body.generation !== generation || body.latestEventId < since) {
+      requestFullRejoin(socket);
+      return 0;
+    }
 
     if (!body.events || body.events.length === 0) {
       // Still advance our cursor to match the server's idea of
@@ -98,20 +131,25 @@ export async function pullEventCursor(socket: Socket): Promise<number> {
       return 0;
     }
 
-    for (const e of body.events) {
+    let replayed = 0;
+    for (const e of [...body.events].sort((a, b) => a.id - b.id)) {
+      if (!isCurrent()) return replayed;
+      if (e.id <= lastEventId) continue;
       // Replay through our own dispatcher — mirrors what the live
       // socket listener would do for each event kind but avoids
       // reaching into socket.io-client's internal Emitter callbacks.
       // Handlers are idempotent so re-applying an event we may have
       // already processed is a no-op.
       dispatchReplayEvent(e.kind, e.payload);
-      if (e.id > lastEventId) lastEventId = e.id;
+      replayed += 1;
+      if (!isCurrent()) return replayed;
+      recordEventId(e.id);
     }
 
     if (typeof body.latestEventId === 'number') {
       lastEventId = Math.max(lastEventId, body.latestEventId);
     }
-    return body.events.length;
+    return replayed;
   } catch {
     // Network blip — the next keep-alive tick will retry.
     return 0;

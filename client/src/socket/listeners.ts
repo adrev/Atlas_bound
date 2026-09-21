@@ -10,6 +10,7 @@ import { useDrawStore } from '../stores/useDrawStore';
 import { useSceneStore } from '../stores/useSceneStore';
 import { pushHandout } from '../stores/handoutQueue';
 import { triggerSnapshot } from './stateSnapshot';
+import { recordEventId, resetEventCursor } from './eventCursor';
 import { pushOpportunityAttack } from '../components/combat/OpportunityAttackModal';
 import { pushCounterspellOpportunity } from '../components/combat/CounterspellModal';
 import { pushShieldOpportunity } from '../components/combat/ShieldModal';
@@ -17,13 +18,19 @@ import { pushShieldOpportunity } from '../components/combat/ShieldModal';
 // rehydrating the canvas — the thumbnail is for UI lists.
 import { PREBUILT_IMAGE_BY_NAME as PREBUILT_IMAGE_MAP } from '../data/prebuiltMaps';
 
-export function registerListeners(socket: Socket): () => void {
+export function registerListeners(socket: Socket, roomCode?: string): () => void {
   const sessionStore = useSessionStore.getState;
 
   // --- Session ---
   socket.on('session:state-sync', (data) => {
+    if (roomCode && data.roomCode?.toUpperCase() !== roomCode.toUpperCase()) return;
+    if (!data.generation) return;
+    // Full hydration replaces the baseline even when the server generation
+    // survived a transport reconnect. Older HTTP bodies must not follow it.
+    resetEventCursor();
     useSessionStore.getState().setSession({
       sessionId: data.sessionId,
+      generation: data.generation,
       roomCode: data.roomCode,
       userId: data.userId,
       isDM: data.isDM,
@@ -37,6 +44,10 @@ export function registerListeners(socket: Socket): () => void {
       ownerUserId: data.ownerUserId,
       bans: data.bans,
     });
+    // Reject REST snapshots older than this full join, but wait for a fresh
+    // snapshot before enabling replay of the durable event log.
+    if (typeof data.nextEventId === 'number') recordEventId(data.nextEventId);
+    triggerSnapshot('session:state-sync');
   });
 
   socket.on('session:player-joined', (player) => {

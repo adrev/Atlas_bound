@@ -22,23 +22,24 @@
  *   CHRONICLE_WORKER_TOKEN         shared secret, must match Cloud Run
  *   OLLAMA_URL                     default http://127.0.0.1:11434
  *   CHRONICLER_OLLAMA_MODEL        default gemma4:26b
- *   POLL_INTERVAL_MS               default 5000
+ *   POLL_INTERVAL_MS               initial idle delay, default 30000
+ *   MAX_IDLE_POLL_MS               idle backoff ceiling, default 1800000
  *
  * Run via systemd (see dgx-worker/atlas-chronicle.service) or just
  * `node worker.mjs` for ad-hoc testing.
  */
 
+import { pathToFileURL } from 'node:url';
+import { setTimeout as sleep } from 'node:timers/promises';
+
 const ATLAS_BASE_URL = process.env.ATLAS_BASE_URL || 'https://kbrt.ai';
 const TOKEN = process.env.CHRONICLE_WORKER_TOKEN;
 const OLLAMA_URL = process.env.OLLAMA_URL || 'http://127.0.0.1:11434';
 const MODEL = process.env.CHRONICLER_OLLAMA_MODEL || 'gemma4:26b';
-const POLL_INTERVAL_MS = Number(process.env.POLL_INTERVAL_MS || 5000);
+const positiveMs = (value, fallback) => Number.isFinite(Number(value)) && Number(value) > 0 ? Number(value) : fallback;
+const MAX_IDLE_POLL_MS = positiveMs(process.env.MAX_IDLE_POLL_MS, 30 * 60_000);
+const POLL_INTERVAL_MS = Math.min(positiveMs(process.env.POLL_INTERVAL_MS, 30_000), MAX_IDLE_POLL_MS);
 const MAX_TRANSCRIPT_CHARS = 12_000;
-
-if (!TOKEN) {
-  console.error('FATAL: CHRONICLE_WORKER_TOKEN env var is required');
-  process.exit(1);
-}
 
 // ── System prompt + JSON schema (mirrors server/services/Chronicler) ──
 
@@ -91,6 +92,8 @@ Write the chronicle.`;
 // ── Ollama client ───────────────────────────────────────────────
 
 async function callOllama(job) {
+  const timeout = Math.min(10 * 60_000, Date.parse(job.leaseUntil) - Date.now() - 60_000);
+  if (!(timeout > 0)) throw new Error('Insufficient lease time for inference');
   const userPrompt = buildUserPrompt(job);
   const body = {
     model: MODEL,
@@ -111,6 +114,7 @@ async function callOllama(job) {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
+    signal: AbortSignal.timeout(Math.floor(timeout)),
   });
   if (!res.ok) {
     const txt = await res.text();
@@ -141,73 +145,108 @@ function parseChroniclerJson(text) {
   if (!recapShort) throw new Error('Model omitted recapShort');
   if (!whereLeftOff) throw new Error('Model omitted whereLeftOff');
   return {
-    recapShort,
-    recapFull: recapFull || recapShort,
-    keyEntities,
-    whereLeftOff,
+    recapShort: recapShort.slice(0, 2000),
+    recapFull: (recapFull || recapShort).slice(0, 8000),
+    keyEntities: keyEntities.map((name) => name.slice(0, 80)),
+    whereLeftOff: whereLeftOff.slice(0, 500),
   };
 }
 
 // ── Cloud Run client ────────────────────────────────────────────
 
-async function claimJob() {
+export async function claimJob() {
   const res = await fetch(`${ATLAS_BASE_URL}/api/internal/chronicle/jobs/claim`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${TOKEN}` },
+    signal: AbortSignal.timeout(15_000),
   });
   if (res.status === 204) return null;        // no work
   if (!res.ok) {
-    console.warn(`claim failed: HTTP ${res.status}`);
-    return null;
+    throw new Error(`claim failed: HTTP ${res.status}`);
   }
   const data = await res.json();
-  return data.job ?? null;
+  const job = data.job;
+  if (!job || typeof job.id !== 'string' || typeof job.transcript !== 'string'
+      || typeof job.attemptId !== 'string'
+      || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(job.attemptId)
+      || !(Date.parse(job.leaseUntil) > Date.now())) {
+    throw new Error('Invalid claim acknowledgement: attemptId and live lease required');
+  }
+  return job;
 }
 
-async function postResult(jobId, payload) {
-  const res = await fetch(`${ATLAS_BASE_URL}/api/internal/chronicle/jobs/${jobId}/result`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${TOKEN}`,
-    },
-    body: JSON.stringify(payload),
-  });
-  if (!res.ok) {
-    const txt = await res.text();
-    console.warn(`postResult failed: HTTP ${res.status}: ${txt.slice(0, 300)}`);
+export async function postResult(job, payload, { fetchImpl = fetch, wait = sleep, now = Date.now } = {}) {
+  const body = JSON.stringify({ ...payload, attemptId: job.attemptId });
+  const expectedStatus = 'error' in payload ? 'failed' : 'draft';
+  let lastError;
+  for (let attempt = 0; attempt < 8; attempt++) {
+    const remaining = Date.parse(job.leaseUntil) - now();
+    if (!(remaining > 0)) throw new Error('Result delivery lease expired; job will be reclaimed');
+    try {
+      const res = await fetchImpl(`${ATLAS_BASE_URL}/api/internal/chronicle/jobs/${encodeURIComponent(job.id)}/result`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${TOKEN}` },
+        body,
+        signal: AbortSignal.timeout(Math.max(1, Math.floor(Math.min(15_000, remaining)))),
+      });
+      if (res.status >= 400 && res.status < 500 && ![408, 429].includes(res.status)) {
+        const error = new Error(`Result rejected: HTTP ${res.status}`);
+        error.permanent = true;
+        throw error;
+      }
+      if (!res.ok) throw new Error(`Result delivery failed: HTTP ${res.status}`);
+      const ack = await res.json();
+      if (ack.ok !== true || ack.entryId !== job.id || ack.attemptId !== job.attemptId || ack.status !== expectedStatus) {
+        throw new Error('Invalid result acknowledgement');
+      }
+      return ack;
+    } catch (err) {
+      if (err.permanent) throw err;
+      lastError = err;
+    }
+    if (attempt < 7) await wait(Math.max(0, Math.min(2_000 * 2 ** attempt, 30_000, Date.parse(job.leaseUntil) - now())));
   }
-  return res.ok;
+  throw lastError;
 }
 
 // ── Main loop ───────────────────────────────────────────────────
 
-async function processOne() {
-  const job = await claimJob();
+export async function processOne({ claim = claimJob, generate = callOllama, deliver = postResult, log = console } = {}) {
+  const job = await claim();
   if (!job) return false;
 
-  console.log(`[${new Date().toISOString()}] claimed job ${job.id} — "${job.campaignName}" #${job.sequenceNumber} (${job.transcript.length} chars)`);
+  log.log(`[${new Date().toISOString()}] claimed job ${job.id} (${job.transcript.length} chars)`);
   const t0 = Date.now();
+  let payload;
   try {
-    const raw = await callOllama(job);
+    const raw = await generate(job);
     const parsed = parseChroniclerJson(raw);
-    const tookMs = Date.now() - t0;
-    await postResult(job.id, { ...parsed, modelUsed: MODEL });
-    console.log(`  → ok in ${tookMs}ms (recap ${parsed.recapShort.length} chars, ${parsed.keyEntities.length} entities)`);
+    payload = { ...parsed, modelUsed: MODEL.slice(0, 80) };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    console.error(`  → FAILED: ${message}`);
-    await postResult(job.id, { error: 'Ollama call failed', hint: message.slice(0, 800) });
+    log.error(`Inference failed: ${message}`);
+    payload = { error: 'Ollama call failed', hint: message.slice(0, 800) };
   }
+  // Delivery errors must never turn a successfully generated result into a failure report.
+  await deliver(job, payload);
+  log.log(`Result acknowledged as ${'error' in payload ? 'failed' : 'draft'} in ${Date.now() - t0}ms`);
   return true;
 }
 
+export function idleDelay(emptyPolls, base = POLL_INTERVAL_MS, max = MAX_IDLE_POLL_MS) {
+  return Math.min(max, base * 2 ** Math.min(Math.max(0, emptyPolls - 1), 30));
+}
+
 async function loop() {
-  console.log(`Atlas Chronicle worker online — model=${MODEL}, poll every ${POLL_INTERVAL_MS}ms, base=${ATLAS_BASE_URL}`);
+  if (!TOKEN) throw new Error('CHRONICLE_WORKER_TOKEN env var is required');
+  console.log(`Atlas Chronicle worker online: model=${MODEL}, idle polling ${POLL_INTERVAL_MS}-${MAX_IDLE_POLL_MS}ms`);
   // Graceful shutdown — finish any in-flight job before exit.
   let stopping = false;
-  process.on('SIGINT', () => { console.log('SIGINT — finishing current job and exiting'); stopping = true; });
-  process.on('SIGTERM', () => { console.log('SIGTERM — finishing current job and exiting'); stopping = true; });
+  let emptyPolls = 0;
+  const idleAbort = new AbortController();
+  const stop = () => { stopping = true; idleAbort.abort(); };
+  process.on('SIGINT', stop);
+  process.on('SIGTERM', stop);
 
   while (!stopping) {
     let processed = false;
@@ -216,14 +255,17 @@ async function loop() {
       console.error('Loop error:', err);
     }
     if (stopping) break;
-    // If we just processed a job, immediately check for another —
-    // batches finish faster. Otherwise sleep the poll interval.
-    if (!processed) await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
+    emptyPolls = processed ? 0 : emptyPolls + 1;
+    if (!processed) await sleep(idleDelay(emptyPolls), undefined, { signal: idleAbort.signal }).catch((err) => {
+      if (err.name !== 'AbortError') throw err;
+    });
   }
   console.log('Worker exiting cleanly.');
 }
 
-loop().catch((err) => {
-  console.error('Worker crashed:', err);
-  process.exit(1);
-});
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  loop().catch((err) => {
+    console.error('Worker crashed:', err);
+    process.exitCode = 1;
+  });
+}

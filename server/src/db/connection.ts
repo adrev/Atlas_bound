@@ -1,4 +1,5 @@
 import { Pool } from 'pg';
+import { transactionAwarePool } from './transactionContext.js';
 
 // Cloud Run connects to Cloud SQL via Unix socket:
 //   /cloudsql/PROJECT:REGION:INSTANCE
@@ -20,12 +21,12 @@ const pool = CLOUD_SQL_SOCKET
       password: process.env.PGPASSWORD,
       database: 'atlas_bound',
       host: CLOUD_SQL_SOCKET,
-      max: 20,
+      max: 18,
       idleTimeoutMillis: 30000,
     })
   : new Pool({
       connectionString: process.env.DATABASE_URL,
-      max: 20,
+      max: 18,
       idleTimeoutMillis: 30000,
     });
 
@@ -38,4 +39,9 @@ const connInfo = CLOUD_SQL_SOCKET
   : `${pool.options.host ?? 'localhost'}:${pool.options.port ?? 5432}`;
 console.log(`[DB] PostgreSQL pool created → ${connInfo}`);
 
-export default pool;
+export const rawPool = pool;
+// Reserve two of the existing twenty connections for LISTEN/NOTIFY. RPCs must
+// remain deliverable even when all gameplay transaction connections are busy.
+export const transportPool = new Pool({ ...pool.options, max: 2 });
+transportPool.on('error', (err) => console.error('[DB] Transport pool error:', err));
+export default transactionAwarePool(pool);

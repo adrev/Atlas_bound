@@ -14,7 +14,7 @@ COPY server/package*.json ./server/
 COPY client/package*.json ./client/
 
 # Install all dependencies (including devDependencies for build)
-RUN npm install
+RUN npm ci
 
 # Copy source code
 COPY . .
@@ -44,6 +44,8 @@ COPY client/package*.json ./client/
 # ERR_MODULE_NOT_FOUND: multer. `npm ci` installs the full lockfile tree
 # (both root and nested); the final stage copies both node_modules dirs.
 RUN npm ci --omit=dev
+# npm may hoist every dependency; retain an empty optional workspace directory.
+RUN mkdir -p /app/server/node_modules
 
 # ── Production stage ───────────────────────────────────────
 FROM node:24-alpine

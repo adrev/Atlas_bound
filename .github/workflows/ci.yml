@@ -23,6 +23,22 @@ on:
 jobs:
   quality:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: atlas-ci-only
+          POSTGRES_DB: atlas_scale_zero
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      ATLAS_RUNTIME_TEST_DATABASE_URL: postgresql://postgres:atlas-ci-only@127.0.0.1:5432/atlas_scale_zero
     steps:
       - uses: actions/checkout@v4
 
@@ -49,6 +65,9 @@ jobs:
 
       - name: Test
         run: npm test
+
+      - name: Chronicle worker protocol tests
+        run: node --test dgx-worker/worker.test.mjs
 
       - name: Security audit
         run: npm audit --audit-level=moderate

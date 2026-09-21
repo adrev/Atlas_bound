@@ -5,6 +5,7 @@ import {
   type ChatCommandContext,
 } from '../ChatCommands.js';
 import pool from '../../db/connection.js';
+import { characterFeatures } from '../../utils/featureRuntime.js';
 import type { Token, ActionBreakdown } from '@dnd-vtt/shared';
 import type { PlayerContext } from '../../utils/roomState.js';
 import { emitToTokenStatViewers } from '../../utils/combatBroadcast.js';
@@ -341,7 +342,6 @@ async function handleHitDice(c: ChatCommandContext): Promise<boolean> {
 }
 
 // ────── !indomitable — Fighter reroll failed save ───────
-const indomitableUsed = new Map<string, number>();
 
 async function handleIndomitable(c: ChatCommandContext): Promise<boolean> {
   const caller = resolveCallerToken(c.ctx);
@@ -364,12 +364,26 @@ async function handleIndomitable(c: ChatCommandContext): Promise<boolean> {
     return true;
   }
   const maxUses = lvl >= 17 ? 3 : lvl >= 13 ? 2 : 1;
-  const used = indomitableUsed.get(caller.characterId) ?? 0;
+  const features = characterFeatures(caller.characterId);
+  if (c.rest.trim().toLowerCase() === 'reset') {
+    features.indomitableUsed = 0;
+    broadcastSystem(c.io, c.ctx, `🛡 ${caller.name}'s Indomitable refreshed after a long rest.`);
+    return true;
+  }
+  const used = features.indomitableUsed;
+  if (used === undefined) {
+    whisperToCaller(
+      c.io,
+      c.ctx,
+      '!indomitable: uses not recorded. Run !indomitable reset after a long rest.'
+    );
+    return true;
+  }
   if (used >= maxUses) {
     whisperToCaller(c.io, c.ctx, `!indomitable: ${maxUses} uses spent. Long rest to refresh.`);
     return true;
   }
-  indomitableUsed.set(caller.characterId, used + 1);
+  features.indomitableUsed = used + 1;
   const d20 = Math.floor(Math.random() * 20) + 1;
   const charName = (row?.name as string) || caller.name;
   const indomBreakdown: ActionBreakdown = {

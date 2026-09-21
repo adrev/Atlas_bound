@@ -25,6 +25,7 @@ import {
 } from '../utils/sessionPassword.js';
 import { getIO } from '../socket/ioInstance.js';
 import { getRoom, removePlayerFromRoom, resolveViewingMapId } from '../utils/roomState.js';
+import { runtimeHttp } from '../utils/runtimeHttp.js';
 import { safeParseJSON } from '../utils/safeJson.js';
 import { stateSnapshotEtag } from '../utils/stateEtag.js';
 import { tokenVisibleToPlayer } from '../utils/tokenVisibility.js';
@@ -378,36 +379,19 @@ router.delete('/:id', async (req: Request, res: Response) => {
   const sessionId = String(req.params.id);
   await assertSessionOwner(sessionId, userId);
 
-  // Broadcast BEFORE the row is gone so the event can carry context.
   const io = getIO();
-  if (io) io.to(sessionId).emit('session:deleted', { sessionId });
+  const sockets = io ? await io.in(sessionId).fetchSockets() : [];
+  await pool.query('DELETE FROM sessions WHERE id = $1', [sessionId]);
 
-  // Evict EVERY socket for EVERY user — not just primary socketIds.
-  // Without this, secondary tabs stay subscribed and stale room state
-  // lets getPlayerBySocketId resolve against a deleted session.
-  const room = getRoom(sessionId);
-  if (room && io) {
-    for (const [_userId, sockets] of room.userSockets) {
-      for (const sid of sockets) {
-        const sock = io.sockets.sockets.get(sid);
-        if (sock) sock.leave(sessionId);
-      }
-    }
-    // Also catch any primary socketIds not in userSockets (shouldn't
-    // happen, but defense-in-depth).
-    for (const player of room.players.values()) {
-      const sock = io.sockets.sockets.get(player.socketId);
-      if (sock) sock.leave(sessionId);
-    }
+  // Direct addressing preserves terminal delivery after room eviction.
+  for (const targetSocket of sockets) {
+    io!.to(targetSocket.id).emit('session:deleted', { sessionId });
+    await targetSocket.leave(sessionId);
   }
-  // Wipe the room from in-memory state entirely so no socket handler
-  // can resolve against it after the DB row is gone.
-  if (room) {
+  if (getRoom(sessionId)) {
     const { deleteRoom } = await import('../utils/roomState.js');
     deleteRoom(sessionId);
   }
-
-  await pool.query('DELETE FROM sessions WHERE id = $1', [sessionId]);
   res.json({ success: true });
 });
 
@@ -432,33 +416,25 @@ router.delete('/:id/leave', async (req: Request, res: Response) => {
     return;
   }
 
+  const sessionId = String(req.params.id);
+  const io = getIO();
+  const sockets = io
+    ? (await io.in(sessionId).fetchSockets()).filter((s) => s.data.userId === userId)
+    : [];
   await pool.query('DELETE FROM session_players WHERE session_id = $1 AND user_id = $2', [
-    req.params.id,
+    sessionId,
     userId,
   ]);
 
-  // Evict all live sockets for this user from the Socket.IO room +
-  // room state. Without this, the user's connected tabs keep receiving
-  // broadcasts and can perform socket actions until they refresh —
-  // the DB membership is gone but the in-memory state is stale.
-  const sessionId = String(req.params.id);
-  const room = getRoom(sessionId);
-  if (room) {
-    const io = getIO();
-    if (io) {
-      const allSockets: string[] = [];
-      const userSocks = room.userSockets.get(userId);
-      if (userSocks) for (const sid of userSocks) allSockets.push(sid);
-      const primary = room.players.get(userId);
-      if (primary && !allSockets.includes(primary.socketId)) allSockets.push(primary.socketId);
-      for (const sid of allSockets) {
-        io.to(sid).emit('session:kicked', { userId });
-        const sock = io.sockets.sockets.get(sid);
-        if (sock) sock.leave(sessionId);
-      }
-      io.to(sessionId).emit('session:player-removed', { userId });
-    }
-    removePlayerFromRoom(sessionId, userId);
+  for (const targetSocket of sockets) {
+    io!.to(targetSocket.id).emit('session:kicked', { userId });
+    await targetSocket.leave(sessionId);
+  }
+  removePlayerFromRoom(sessionId, userId);
+  if (io) {
+    io.to(sessionId)
+      .except(sockets.map((s) => s.id))
+      .emit('session:player-removed', { userId });
   }
 
   res.json({ success: true });
@@ -789,6 +765,10 @@ router.post('/:id/bans', async (req: Request, res: Response) => {
     }
   }
 
+  const io = getIO();
+  const targetSockets = io
+    ? (await io.in(sessionId).fetchSockets()).filter((s) => s.data.userId === targetUserId)
+    : [];
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
@@ -810,10 +790,18 @@ router.post('/:id/bans', async (req: Request, res: Response) => {
     client.release();
   }
 
-  // Notify the banned user (so their client shows a modal + disconnects)
-  // and broadcast the updated ban list to everyone else.
-  const io = getIO();
+  // Revoke transport access before optional follow-up reads or broadcasts.
+  for (const targetSocket of targetSockets) {
+    io!.to(targetSocket.id).emit('session:player-banned', {
+      userId: targetUserId,
+      reason: reason ?? null,
+    });
+    await targetSocket.leave(sessionId);
+  }
+  removePlayerFromRoom(sessionId, targetUserId);
   if (io) {
+    const emitter = io.to(sessionId).except(targetSockets.map((s) => s.id));
+    emitter.emit('session:player-removed', { userId: targetUserId });
     const { rows: banRows } = await pool.query(
       `
       SELECT b.user_id, b.banned_by, b.banned_at, b.reason,
@@ -836,46 +824,7 @@ router.post('/:id/bans', async (req: Request, res: Response) => {
       bannedAt: r.banned_at,
       reason: r.reason,
     }));
-    // Send the fatal `player-banned` event to the target first so their
-    // client has the reason and can redirect. Then broadcast the
-    // updated ban list to everyone EXCEPT the banned user \u2014 otherwise
-    // they'd briefly see themselves listed as banned before the 1.5s
-    // redirect fires.
-    const { getRoom, removePlayerFromRoom } = await import('../utils/roomState.js');
-    const room = getRoom(sessionId);
-
-    // Collect ALL socket IDs for the banned user BEFORE removing them
-    // from room state. Multi-tab users have entries in room.userSockets
-    // — if we only evict the primary socketId, secondary tabs keep
-    // receiving broadcasts silently.
-    const allTargetSockets: string[] = [];
-    if (room) {
-      const userSocks = room.userSockets.get(targetUserId);
-      if (userSocks) for (const sid of userSocks) allTargetSockets.push(sid);
-      const primary = room.players.get(targetUserId);
-      if (primary && !allTargetSockets.includes(primary.socketId)) {
-        allTargetSockets.push(primary.socketId);
-      }
-    }
-
-    // Emit the ban event to every socket the target has open.
-    for (const sid of allTargetSockets) {
-      io.to(sid).emit('session:player-banned', { userId: targetUserId, reason: reason ?? null });
-    }
-
-    // Everyone else gets the updated ban list.
-    let emitter = io.to(sessionId);
-    for (const sid of allTargetSockets) emitter = emitter.except(sid);
     emitter.emit('session:bans-updated', { bans });
-    emitter.emit('session:player-removed', { userId: targetUserId });
-
-    // Force every socket out of the Socket.IO room AND remove from
-    // room state so they can't passively read broadcasts.
-    for (const sid of allTargetSockets) {
-      const sock = io.sockets.sockets.get(sid);
-      if (sock) sock.leave(sessionId);
-    }
-    if (room) removePlayerFromRoom(sessionId, targetUserId);
   }
 
   res.status(204).send();
@@ -1092,154 +1041,168 @@ router.post('/:id/transfer-ownership', async (req: Request, res: Response) => {
 //   - Characters: the caller's own + NPCs the caller has a token for
 //     (so the panel can read HP / conditions), but filtered further
 //     by the session's showPlayersToPlayers / showCreatureStats.
-router.get('/:id/state', async (req: Request, res: Response) => {
-  const userId = getAuthUserId(req);
-  const sessionId = String(req.params.id);
-  await assertSessionMember(sessionId, userId);
+router.get(
+  '/:id/state',
+  runtimeHttp(async (req: Request, res: Response) => {
+    const userId = getAuthUserId(req);
+    const sessionId = String(req.params.id);
+    await assertSessionMember(sessionId, userId);
 
-  const room = getRoom(sessionId);
-  if (!room) {
+    const room = getRoom(sessionId);
+    if (!room) {
+      res.json({
+        mapId: null,
+        tokens: [],
+        combat: null,
+        characters: {},
+        nextEventId: 0,
+        roundNumber: 0,
+        serverTime: Date.now(),
+      });
+      return;
+    }
+
+    const player = room.players.get(userId);
+    const isDM = player
+      ? player.role === 'dm'
+      : (
+          await pool.query(
+            'SELECT role FROM session_players WHERE session_id = $1 AND user_id = $2',
+            [sessionId, userId]
+          )
+        ).rows[0]?.role === 'dm';
+
+    // Tokens on the map this user is currently viewing — DM preview or
+    // player ribbon — plus filtered for visibility + invisibility.
+    const viewingMapId = isDM
+      ? (room.dmViewingMap.get(userId) ?? room.playerMapId ?? room.currentMapId)
+      : room.playerMapId;
+
+    // Conditional GET: if nothing relevant has changed since this client last
+    // pulled, return 304 and skip the token filtering + combat assembly + the
+    // character SQL below. The ETag is keyed on the caller's filtered-view
+    // inputs (see stateSnapshotEtag); a coarse time bucket bounds staleness
+    // for the legacy unwrapped-broadcast paths.
+    const etag = stateSnapshotEtag({
+      sessionId: `${sessionId}:${room.generation}`,
+      userId,
+      isDM,
+      viewingMapId,
+      showCreatureStatsToPlayers: room.showCreatureStatsToPlayers,
+      showPlayersToPlayers: room.showPlayersToPlayers,
+      nextEventId: room.nextEventId,
+      now: Date.now(),
+    });
+    res.setHeader('ETag', etag);
+    if (req.headers['if-none-match'] === etag) {
+      res.status(304).end();
+      return;
+    }
+
+    let allTokens: Token[] = [];
+    if (viewingMapId) {
+      const { rows: tokenRows } = await pool.query('SELECT * FROM tokens WHERE map_id = $1', [
+        viewingMapId,
+      ]);
+      allTokens = tokenRows
+        .map((row) => rowToToken(row as Record<string, unknown>))
+        .map((token) => withConditionSources(room, token));
+    }
+    const visibleTokens = isDM
+      ? allTokens
+      : allTokens.filter((t) => tokenVisibleToPlayer(t, userId));
+
+    // Combat — filter combatants with the same hidden-token rule so the
+    // initiative tracker snapshot doesn't leak NPC names a player can't
+    // see yet on the map.
+    let combat: unknown = null;
+    if (room.combatState?.active) {
+      const recipient = player ?? { userId, role: isDM ? ('dm' as const) : ('player' as const) };
+      const filtered = combatantsVisibleTo(room, room.combatState.combatants, recipient);
+      combat = {
+        active: true,
+        roundNumber: room.combatState.roundNumber,
+        currentTurnIndex: room.combatState.currentTurnIndex,
+        // Position-independent pointer (the filtered list makes the raw
+        // index wrong for players when hidden combatants precede it).
+        currentTokenId:
+          room.combatState.combatants[room.combatState.currentTurnIndex]?.tokenId ?? null,
+        combatants: filtered,
+        startedAt: room.combatState.startedAt,
+      };
+    }
+
+    // Characters — return every character referenced by a visible token
+    // plus the caller's own character, filtered by the session privacy
+    // toggles. The DM gets everything. A player gets:
+    //   - their own characters (always)
+    //   - NPCs linked to visible tokens IF showCreatureStatsToPlayers
+    //   - other PCs linked to visible tokens IF showPlayersToPlayers
+    const { rows: sessionRows } = await pool.query('SELECT settings FROM sessions WHERE id = $1', [
+      sessionId,
+    ]);
+    const settings = sessionRows[0]
+      ? safeParseJSON<Record<string, unknown>>(sessionRows[0].settings, {}, 'sessions.settings')
+      : {};
+    const showCreatureStats = settings.showCreatureStatsToPlayers === true;
+    const showPlayersToPlayers = settings.showPlayersToPlayers === true;
+
+    const charIds = new Set<string>();
+    for (const t of visibleTokens) {
+      if (t.characterId) charIds.add(t.characterId);
+    }
+    // Full-sheet live updates are scoped to DMs, the owner, and players
+    // when party sharing is enabled. Include every session-linked PC for
+    // the same allowed audiences so a missed socket frame self-heals even
+    // when that character has no token on the caller's current map.
+    if (isDM || showPlayersToPlayers) {
+      const { rows: linkedCharRows } = await pool.query(
+        `SELECT character_id
+           FROM session_players
+          WHERE session_id = $1 AND character_id IS NOT NULL`,
+        [sessionId]
+      );
+      for (const row of linkedCharRows) charIds.add(row.character_id as string);
+    }
+    // Always include the caller's own character row(s) even when their
+    // token isn't on this map (late-join / Hero tab access).
+    const { rows: myCharRows } = await pool.query('SELECT id FROM characters WHERE user_id = $1', [
+      userId,
+    ]);
+    for (const r of myCharRows) charIds.add(r.id as string);
+
+    const characters: Record<string, unknown> = {};
+    if (charIds.size > 0) {
+      const idList = Array.from(charIds);
+      const { rows: charRows } = await pool.query(
+        `SELECT * FROM characters WHERE id = ANY($1::text[])`,
+        [idList]
+      );
+      for (const row of charRows) {
+        const ownUserId = row.user_id as string;
+        const isOwnChar = ownUserId === userId;
+        const isNPCChar = ownUserId === 'npc';
+        const isOtherPC = !isNPCChar && !isOwnChar;
+        if (!isDM && !isOwnChar) {
+          if (isNPCChar && !showCreatureStats) continue;
+          if (isOtherPC && !showPlayersToPlayers) continue;
+        }
+        characters[row.id as string] = dbRowToCharacter(row);
+      }
+    }
+
     res.json({
-      mapId: null,
-      tokens: [],
-      combat: null,
-      characters: {},
-      nextEventId: 0,
-      roundNumber: 0,
+      mapId: viewingMapId ?? null,
+      generation: room.generation,
+      tokens: visibleTokens,
+      combat,
+      characters,
+      nextEventId: room.nextEventId,
+      roundNumber: room.combatState?.roundNumber ?? 0,
       serverTime: Date.now(),
     });
-    return;
-  }
-
-  const player = room.players.get(userId);
-  const isDM = player?.role === 'dm';
-
-  // Tokens on the map this user is currently viewing — DM preview or
-  // player ribbon — plus filtered for visibility + invisibility.
-  const viewingMapId = isDM
-    ? (room.dmViewingMap.get(userId) ?? room.playerMapId ?? room.currentMapId)
-    : room.playerMapId;
-
-  // Conditional GET: if nothing relevant has changed since this client last
-  // pulled, return 304 and skip the token filtering + combat assembly + the
-  // character SQL below. The ETag is keyed on the caller's filtered-view
-  // inputs (see stateSnapshotEtag); a coarse time bucket bounds staleness
-  // for the legacy unwrapped-broadcast paths.
-  const etag = stateSnapshotEtag({
-    sessionId,
-    userId,
-    isDM,
-    viewingMapId,
-    showCreatureStatsToPlayers: room.showCreatureStatsToPlayers,
-    showPlayersToPlayers: room.showPlayersToPlayers,
-    nextEventId: room.nextEventId,
-    now: Date.now(),
-  });
-  res.setHeader('ETag', etag);
-  if (req.headers['if-none-match'] === etag) {
-    res.status(304).end();
-    return;
-  }
-
-  let allTokens: Token[] = [];
-  if (viewingMapId) {
-    const { rows: tokenRows } = await pool.query('SELECT * FROM tokens WHERE map_id = $1', [
-      viewingMapId,
-    ]);
-    allTokens = tokenRows
-      .map((row) => rowToToken(row as Record<string, unknown>))
-      .map((token) => withConditionSources(room, token));
-  }
-  const visibleTokens = isDM ? allTokens : allTokens.filter((t) => tokenVisibleToPlayer(t, userId));
-
-  // Combat — filter combatants with the same hidden-token rule so the
-  // initiative tracker snapshot doesn't leak NPC names a player can't
-  // see yet on the map.
-  let combat: unknown = null;
-  if (room.combatState?.active) {
-    const filtered = player ? combatantsVisibleTo(room, room.combatState.combatants, player) : [];
-    combat = {
-      active: true,
-      roundNumber: room.combatState.roundNumber,
-      currentTurnIndex: room.combatState.currentTurnIndex,
-      // Position-independent pointer (the filtered list makes the raw
-      // index wrong for players when hidden combatants precede it).
-      currentTokenId:
-        room.combatState.combatants[room.combatState.currentTurnIndex]?.tokenId ?? null,
-      combatants: filtered,
-      startedAt: room.combatState.startedAt,
-    };
-  }
-
-  // Characters — return every character referenced by a visible token
-  // plus the caller's own character, filtered by the session privacy
-  // toggles. The DM gets everything. A player gets:
-  //   - their own characters (always)
-  //   - NPCs linked to visible tokens IF showCreatureStatsToPlayers
-  //   - other PCs linked to visible tokens IF showPlayersToPlayers
-  const { rows: sessionRows } = await pool.query('SELECT settings FROM sessions WHERE id = $1', [
-    sessionId,
-  ]);
-  const settings = sessionRows[0]
-    ? safeParseJSON<Record<string, unknown>>(sessionRows[0].settings, {}, 'sessions.settings')
-    : {};
-  const showCreatureStats = settings.showCreatureStatsToPlayers === true;
-  const showPlayersToPlayers = settings.showPlayersToPlayers === true;
-
-  const charIds = new Set<string>();
-  for (const t of visibleTokens) {
-    if (t.characterId) charIds.add(t.characterId);
-  }
-  // Full-sheet live updates are scoped to DMs, the owner, and players
-  // when party sharing is enabled. Include every session-linked PC for
-  // the same allowed audiences so a missed socket frame self-heals even
-  // when that character has no token on the caller's current map.
-  if (isDM || showPlayersToPlayers) {
-    const { rows: linkedCharRows } = await pool.query(
-      `SELECT character_id
-         FROM session_players
-        WHERE session_id = $1 AND character_id IS NOT NULL`,
-      [sessionId]
-    );
-    for (const row of linkedCharRows) charIds.add(row.character_id as string);
-  }
-  // Always include the caller's own character row(s) even when their
-  // token isn't on this map (late-join / Hero tab access).
-  const { rows: myCharRows } = await pool.query('SELECT id FROM characters WHERE user_id = $1', [
-    userId,
-  ]);
-  for (const r of myCharRows) charIds.add(r.id as string);
-
-  const characters: Record<string, unknown> = {};
-  if (charIds.size > 0) {
-    const idList = Array.from(charIds);
-    const { rows: charRows } = await pool.query(
-      `SELECT * FROM characters WHERE id = ANY($1::text[])`,
-      [idList]
-    );
-    for (const row of charRows) {
-      const ownUserId = row.user_id as string;
-      const isOwnChar = ownUserId === userId;
-      const isNPCChar = ownUserId === 'npc';
-      const isOtherPC = !isNPCChar && !isOwnChar;
-      if (!isDM && !isOwnChar) {
-        if (isNPCChar && !showCreatureStats) continue;
-        if (isOtherPC && !showPlayersToPlayers) continue;
-      }
-      characters[row.id as string] = dbRowToCharacter(row);
-    }
-  }
-
-  res.json({
-    mapId: viewingMapId ?? null,
-    tokens: visibleTokens,
-    combat,
-    characters,
-    nextEventId: room.nextEventId,
-    roundNumber: room.combatState?.roundNumber ?? 0,
-    serverTime: Date.now(),
-  });
-});
+  })
+);
 
 // ─── Event cursor replay ─────────────────────────────────────────
 //
@@ -1255,78 +1218,84 @@ router.get('/:id/state', async (req: Request, res: Response) => {
 // Events older than the in-memory window (~500 entries, roughly 15
 // min of play) return a 410 with `{ fullResync: true }` — the client
 // reacts by re-firing session:join to pull the current snapshot.
-router.get('/:id/events', async (req: Request, res: Response) => {
-  const userId = getAuthUserId(req);
-  const sessionId = String(req.params.id);
-  const since = Number.parseInt(String(req.query.since ?? '0'), 10);
-  if (!Number.isFinite(since) || since < 0) {
-    res.status(400).json({ error: 'invalid since' });
-    return;
-  }
-
-  await assertSessionMember(sessionId, userId);
-  const room = getRoom(sessionId);
-  if (!room) {
-    res.json({ events: [], latestEventId: 0 });
-    return;
-  }
-
-  // A zero cursor means the caller has no authoritative baseline in the
-  // event stream yet — a fresh join, or a client that just reset after a
-  // 410. Serving the retained backlog here would make it replay historical
-  // events out of context: e.g. an old `combat:ended` whose matching
-  // `combat:started` has already aged out of the log, transiently wiping an
-  // active fight and opening a bogus recap. The client (re)hydrates
-  // authoritatively via session:join + /state instead; we only return the
-  // current cursor position so it can resume nonzero delta replay from a
-  // known-good baseline. This also fast-forwards older clients that still
-  // ask `?since=0` on the keep-alive tick, since their empty-delta branch
-  // advances the cursor to `latestEventId` without applying anything.
-  if (since === 0) {
-    res.json({ events: [], latestEventId: room.nextEventId });
-    return;
-  }
-
-  // If the caller's cursor is older than the oldest entry we still
-  // have, we can't guarantee a complete replay. Signal a full resync
-  // so the client re-emits session:join and rebuilds its state from
-  // the authoritative map:loaded + combat:state-sync hydration.
-  const oldest = room.eventLog.length > 0 ? room.eventLog[0].id : 0;
-  if (since > 0 && since < oldest - 1) {
-    res.status(410).json({
-      fullResync: true,
-      latestEventId: room.nextEventId,
-      message: 'event cursor fell out of the replay buffer — trigger a full rejoin',
-    });
-    return;
-  }
-
-  // Filter per-recipient. DM sees everything; players drop events
-  // that reference a currently-hidden token so replay doesn't leak
-  // visibility the DM has since hidden.
-  const player = room.players.get(userId);
-  const isDM = player?.role === 'dm';
-  const viewingMapId = isDM ? resolveViewingMapId(room, userId, 'dm') : room.playerMapId;
-  const delta = [];
-  for (const e of room.eventLog) {
-    if (e.id <= since) continue;
-    if (e.mapId && e.mapId !== viewingMapId) continue;
-    if (!isDM && e.tokenId) {
-      const tok = room.tokens.get(e.tokenId);
-      if (tok && !tokenVisibleToPlayer(tok, userId)) continue;
+router.get(
+  '/:id/events',
+  runtimeHttp(async (req: Request, res: Response) => {
+    const userId = getAuthUserId(req);
+    const sessionId = String(req.params.id);
+    const since = Number.parseInt(String(req.query.since ?? '0'), 10);
+    if (!Number.isFinite(since) || since < 0) {
+      res.status(400).json({ error: 'invalid since' });
+      return;
     }
-    const recipient = player ?? { userId, role: 'player' as const };
-    delta.push({
-      id: e.id,
-      kind: e.kind,
-      payload: eventPayloadForPlayer(room, e, recipient),
-      ts: e.ts,
-      mapId: e.mapId ?? null,
-      tokenId: e.tokenId ?? null,
-    });
-  }
 
-  res.json({ events: delta, latestEventId: room.nextEventId });
-});
+    await assertSessionMember(sessionId, userId);
+    const room = getRoom(sessionId);
+    if (!room) {
+      res.json({ events: [], latestEventId: 0 });
+      return;
+    }
+
+    // If the caller's cursor is older than the oldest entry we still
+    // have, we can't guarantee a complete replay. Signal a full resync
+    // so the client re-emits session:join and rebuilds its state from
+    // the authoritative map:loaded + combat:state-sync hydration.
+    const oldest = room.eventLog.length > 0 ? room.eventLog[0].id : 0;
+    if (
+      (req.query.generation && req.query.generation !== room.generation) ||
+      since > room.nextEventId ||
+      (since > 0 && since < oldest - 1)
+    ) {
+      res.status(410).json({
+        fullResync: true,
+        generation: room.generation,
+        latestEventId: room.nextEventId,
+        message: 'event cursor fell out of the replay buffer — trigger a full rejoin',
+      });
+      return;
+    }
+
+    // Legacy clients have no snapshot baseline at zero. Generation-aware
+    // clients only poll after hydration, so their zero cursor is a valid delta.
+    if (since === 0 && !req.query.generation) {
+      res.json({ events: [], latestEventId: room.nextEventId, generation: room.generation });
+      return;
+    }
+
+    // Filter per-recipient. DM sees everything; players drop events
+    // that reference a currently-hidden token so replay doesn't leak
+    // visibility the DM has since hidden.
+    const player = room.players.get(userId);
+    const isDM = player
+      ? player.role === 'dm'
+      : (
+          await pool.query(
+            'SELECT role FROM session_players WHERE session_id = $1 AND user_id = $2',
+            [sessionId, userId]
+          )
+        ).rows[0]?.role === 'dm';
+    const viewingMapId = isDM ? resolveViewingMapId(room, userId, 'dm') : room.playerMapId;
+    const delta = [];
+    for (const e of room.eventLog) {
+      if (e.id <= since) continue;
+      if (e.mapId && e.mapId !== viewingMapId) continue;
+      if (!isDM && e.tokenId) {
+        const tok = room.tokens.get(e.tokenId);
+        if (tok && !tokenVisibleToPlayer(tok, userId)) continue;
+      }
+      const recipient = player ?? { userId, role: isDM ? ('dm' as const) : ('player' as const) };
+      delta.push({
+        id: e.id,
+        kind: e.kind,
+        payload: eventPayloadForPlayer(room, e, recipient),
+        ts: e.ts,
+        mapId: e.mapId ?? null,
+        tokenId: e.tokenId ?? null,
+      });
+    }
+
+    res.json({ events: delta, latestEventId: room.nextEventId, generation: room.generation });
+  })
+);
 
 export default router;

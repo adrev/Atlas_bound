@@ -1,4 +1,5 @@
 import pool from '../db/connection.js';
+import { deferUntilCommit } from '../db/transactionContext.js';
 
 /**
  * Discord webhook integration for session events.
@@ -23,23 +24,20 @@ const MAX_EMBED_CHARS = 2000;
 export interface SessionEventEmbed {
   title: string;
   description?: string;
-  color?: number;     // decimal RGB
+  color?: number; // decimal RGB
   footer?: string;
 }
 
 /**
  * Send an embed to the session's configured webhook. No-op if none set.
  */
-export async function notifySession(
-  sessionId: string,
-  embed: SessionEventEmbed,
-): Promise<void> {
+export async function notifySession(sessionId: string, embed: SessionEventEmbed): Promise<void> {
+  if (deferUntilCommit(() => notifySession(sessionId, embed))) return;
   let url: string | null = null;
   try {
-    const { rows } = await pool.query(
-      'SELECT discord_webhook_url FROM sessions WHERE id = $1',
-      [sessionId],
-    );
+    const { rows } = await pool.query('SELECT discord_webhook_url FROM sessions WHERE id = $1', [
+      sessionId,
+    ]);
     url = (rows[0]?.discord_webhook_url as string | null) ?? null;
   } catch {
     return;
@@ -47,13 +45,15 @@ export async function notifySession(
   if (!url) return;
 
   const body = JSON.stringify({
-    embeds: [{
-      title: truncate(embed.title, 256),
-      description: embed.description ? truncate(embed.description, MAX_EMBED_CHARS) : undefined,
-      color: embed.color ?? 0xd4a257, // default gold
-      footer: embed.footer ? { text: truncate(embed.footer, 128) } : undefined,
-      timestamp: new Date().toISOString(),
-    }],
+    embeds: [
+      {
+        title: truncate(embed.title, 256),
+        description: embed.description ? truncate(embed.description, MAX_EMBED_CHARS) : undefined,
+        color: embed.color ?? 0xd4a257, // default gold
+        footer: embed.footer ? { text: truncate(embed.footer, 128) } : undefined,
+        timestamp: new Date().toISOString(),
+      },
+    ],
   });
 
   const controller = new AbortController();

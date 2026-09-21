@@ -7,6 +7,7 @@ import { registerCharacterEvents } from './characterEvents.js';
 import { registerChatEvents } from './chatEvents.js';
 import { registerDrawingEvents } from './drawingEvents.js';
 import { lucia } from '../auth/lucia.js';
+import { installCommittedSocket } from './committedDelivery.js';
 
 // Use untyped Server/Socket to avoid Socket.io strict callback typing issues
 // The payloads are validated at runtime via zod schemas instead
@@ -26,6 +27,7 @@ export function registerSocketHandler(io: Server): void {
   });
 
   io.on('connection', (socket: Socket) => {
+    installCommittedSocket(socket);
     console.log(`Socket connected: ${socket.id}`);
 
     registerSessionEvents(io, socket);

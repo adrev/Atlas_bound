@@ -98,11 +98,11 @@ function rowToTiding(r: TidingRow) {
     : [];
   return {
     id: asStr(r.id),
-    kind: asStr(r.kind) as typeof VALID_KINDS[number],
+    kind: asStr(r.kind) as (typeof VALID_KINDS)[number],
     title: asStr(r.title),
     body: asStr(r.body),
     expandedBody: asNullableStr(r.expanded_body),
-    audience: asStr(r.audience) as typeof VALID_AUDIENCES[number],
+    audience: asStr(r.audience) as (typeof VALID_AUDIENCES)[number],
     versionTag: asNullableStr(r.version_tag),
     publishedAt: asStr(r.published_at),
     expiresAt: asNullableStr(r.expires_at),
@@ -130,12 +130,10 @@ async function loadLinkedFeedback(ids: string[]): Promise<LinkedFeedbackSummary[
     `SELECT id, category, content, discord_thread_url
        FROM feedback
       WHERE id = ANY($1::text[])`,
-    [ids],
+    [ids]
   );
   // Build a map so we can return rows in the original requested order.
-  const byId = new Map<string, FeedbackRow>(
-    (rows as FeedbackRow[]).map((r) => [asStr(r.id), r]),
-  );
+  const byId = new Map<string, FeedbackRow>((rows as FeedbackRow[]).map((r) => [asStr(r.id), r]));
   const summaries: LinkedFeedbackSummary[] = [];
   for (const id of ids) {
     const r = byId.get(id);
@@ -174,27 +172,26 @@ function shouldAnnounceTiding(opts: {
 }
 
 /**
- * Fire-and-forget the Releases webhook for a tiding. Updates the
+ * Await the bounded Releases webhook for a tiding. Updates the
  * tiding row with the announcement timestamp + thread URL once
  * Discord responds, so the next save doesn't double-announce. Errors
- * are swallowed; the admin's save already returned 2xx by the time
- * this runs.
+ * are logged; the primary tiding is already durable.
  */
-function announceTidingInBackground(tidingId: string): void {
-  void (async () => {
+async function announceTiding(tidingId: string): Promise<void> {
+  await (async () => {
     try {
       const { rows } = await pool.query(
         `SELECT id, kind, title, body, version_tag, published_at,
                 linked_feedback_ids, discord_announced_at
            FROM tidings WHERE id = $1`,
-        [tidingId],
+        [tidingId]
       );
       const r = rows[0] as TidingRow | undefined;
       if (!r) return;
       if (r.discord_announced_at) return; // raced
 
       const linkedFeedback = await loadLinkedFeedback(
-        Array.isArray(r.linked_feedback_ids) ? (r.linked_feedback_ids as string[]) : [],
+        Array.isArray(r.linked_feedback_ids) ? (r.linked_feedback_ids as string[]) : []
       );
       const result = await sendReleaseWebhook({
         tidingId: asStr(r.id),
@@ -211,7 +208,7 @@ function announceTidingInBackground(tidingId: string): void {
               SET discord_announced_at = NOW()::text,
                   discord_thread_url = $2
             WHERE id = $1`,
-          [tidingId, result.threadUrl],
+          [tidingId, result.threadUrl]
         );
       }
     } catch (err) {
@@ -243,7 +240,7 @@ router.get('/tidings', requireAuth, async (req: Request, res: Response) => {
   // A user who has both DM and player rows qualifies for everything.
   const { rows: roleRows } = await pool.query(
     `SELECT DISTINCT role FROM session_players WHERE user_id = $1`,
-    [userId],
+    [userId]
   );
   const isDm = (roleRows as RoleRow[]).some((r) => r.role === 'dm');
   const isPlayer = (roleRows as RoleRow[]).some((r) => r.role === 'player');
@@ -260,7 +257,7 @@ router.get('/tidings', requireAuth, async (req: Request, res: Response) => {
         AND (t.expires_at IS NULL OR t.expires_at::timestamp > NOW())
       ORDER BY t.pinned DESC, t.published_at DESC
       LIMIT 50`,
-    [audiences],
+    [audiences]
   );
 
   // Unread count: how many of those returned rows were published after
@@ -268,7 +265,7 @@ router.get('/tidings', requireAuth, async (req: Request, res: Response) => {
   // so the COUNT query doesn't have to repeat the audience join.
   const { rows: lastReadRows } = await pool.query(
     `SELECT last_read_tidings_at FROM auth_users WHERE id = $1`,
-    [userId],
+    [userId]
   );
   const lastReadRow = lastReadRows[0] as { last_read_tidings_at?: string | null } | undefined;
   const lastReadAt: string | null = lastReadRow?.last_read_tidings_at ?? null;
@@ -291,10 +288,9 @@ router.get('/tidings', requireAuth, async (req: Request, res: Response) => {
  */
 router.post('/tidings/mark-read', requireAuth, async (req: Request, res: Response) => {
   const userId = getAuthUserId(req);
-  await pool.query(
-    `UPDATE auth_users SET last_read_tidings_at = NOW()::text WHERE id = $1`,
-    [userId],
-  );
+  await pool.query(`UPDATE auth_users SET last_read_tidings_at = NOW()::text WHERE id = $1`, [
+    userId,
+  ]);
   res.json({ ok: true });
 });
 
@@ -306,7 +302,7 @@ router.get('/admin/tidings', requireAuth, requireAdmin, async (_req: Request, re
        FROM tidings t
        LEFT JOIN auth_users u ON u.id = t.created_by
       ORDER BY t.pinned DESC, t.published_at DESC
-      LIMIT 200`,
+      LIMIT 200`
   );
   res.json({ tidings: (rows as TidingRow[]).map(rowToTiding) });
 });
@@ -330,11 +326,19 @@ router.post('/admin/tidings', requireAuth, requireAdmin, async (req: Request, re
        published_at, expires_at, pinned, linked_feedback_ids, created_by
      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
     [
-      id, data.kind, data.title, data.body, data.expandedBody ?? null,
-      data.audience, data.versionTag ?? null,
-      publishedAt, data.expiresAt ?? null,
-      data.pinned ? 1 : 0, linkedIds, userId,
-    ],
+      id,
+      data.kind,
+      data.title,
+      data.body,
+      data.expandedBody ?? null,
+      data.audience,
+      data.versionTag ?? null,
+      publishedAt,
+      data.expiresAt ?? null,
+      data.pinned ? 1 : 0,
+      linkedIds,
+      userId,
+    ]
   );
 
   // Echo the freshly-inserted row back so the admin UI doesn't have to
@@ -343,7 +347,7 @@ router.post('/admin/tidings', requireAuth, requireAdmin, async (req: Request, re
     `SELECT t.*, u.display_name AS author_display_name
        FROM tidings t LEFT JOIN auth_users u ON u.id = t.created_by
        WHERE t.id = $1`,
-    [id],
+    [id]
   );
 
   // Fire the Releases webhook in the background for patch-kind
@@ -357,69 +361,110 @@ router.post('/admin/tidings', requireAuth, requireAdmin, async (req: Request, re
       alreadyAnnouncedAt: null,
     })
   ) {
-    announceTidingInBackground(id);
+    await announceTiding(id);
   }
 
   res.status(201).json({ tiding: rowToTiding(rows[0] as TidingRow) });
 });
 
-router.patch('/admin/tidings/:id', requireAuth, requireAdmin, async (req: Request, res: Response) => {
-  const id = String(req.params.id);
-  const parsed = tidingUpdateSchema.safeParse(req.body);
-  if (!parsed.success) {
-    res.status(400).json({ error: 'Invalid update payload', details: parsed.error.issues });
-    return;
-  }
+router.patch(
+  '/admin/tidings/:id',
+  requireAuth,
+  requireAdmin,
+  async (req: Request, res: Response) => {
+    const id = String(req.params.id);
+    const parsed = tidingUpdateSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: 'Invalid update payload', details: parsed.error.issues });
+      return;
+    }
 
-  // Build a dynamic UPDATE — only set the fields the caller actually
-  // sent so we don't accidentally null-out untouched columns.
-  const updates: string[] = [];
-  const params: unknown[] = [];
-  let p = 1;
-  const d = parsed.data;
-  if (d.kind !== undefined)              { updates.push(`kind = $${p++}`); params.push(d.kind); }
-  if (d.title !== undefined)             { updates.push(`title = $${p++}`); params.push(d.title); }
-  if (d.body !== undefined)              { updates.push(`body = $${p++}`); params.push(d.body); }
-  if (d.expandedBody !== undefined)      { updates.push(`expanded_body = $${p++}`); params.push(d.expandedBody ?? null); }
-  if (d.audience !== undefined)          { updates.push(`audience = $${p++}`); params.push(d.audience); }
-  if (d.versionTag !== undefined)        { updates.push(`version_tag = $${p++}`); params.push(d.versionTag ?? null); }
-  if (d.publishedAt !== undefined)       { updates.push(`published_at = $${p++}`); params.push(d.publishedAt); }
-  if (d.expiresAt !== undefined)         { updates.push(`expires_at = $${p++}`); params.push(d.expiresAt ?? null); }
-  if (d.pinned !== undefined)            { updates.push(`pinned = $${p++}`); params.push(d.pinned ? 1 : 0); }
-  if (d.linkedFeedbackIds !== undefined) { updates.push(`linked_feedback_ids = $${p++}`); params.push(d.linkedFeedbackIds); }
+    // Build a dynamic UPDATE — only set the fields the caller actually
+    // sent so we don't accidentally null-out untouched columns.
+    const updates: string[] = [];
+    const params: unknown[] = [];
+    let p = 1;
+    const d = parsed.data;
+    if (d.kind !== undefined) {
+      updates.push(`kind = $${p++}`);
+      params.push(d.kind);
+    }
+    if (d.title !== undefined) {
+      updates.push(`title = $${p++}`);
+      params.push(d.title);
+    }
+    if (d.body !== undefined) {
+      updates.push(`body = $${p++}`);
+      params.push(d.body);
+    }
+    if (d.expandedBody !== undefined) {
+      updates.push(`expanded_body = $${p++}`);
+      params.push(d.expandedBody ?? null);
+    }
+    if (d.audience !== undefined) {
+      updates.push(`audience = $${p++}`);
+      params.push(d.audience);
+    }
+    if (d.versionTag !== undefined) {
+      updates.push(`version_tag = $${p++}`);
+      params.push(d.versionTag ?? null);
+    }
+    if (d.publishedAt !== undefined) {
+      updates.push(`published_at = $${p++}`);
+      params.push(d.publishedAt);
+    }
+    if (d.expiresAt !== undefined) {
+      updates.push(`expires_at = $${p++}`);
+      params.push(d.expiresAt ?? null);
+    }
+    if (d.pinned !== undefined) {
+      updates.push(`pinned = $${p++}`);
+      params.push(d.pinned ? 1 : 0);
+    }
+    if (d.linkedFeedbackIds !== undefined) {
+      updates.push(`linked_feedback_ids = $${p++}`);
+      params.push(d.linkedFeedbackIds);
+    }
 
-  if (updates.length === 0) { res.json({ ok: true }); return; }
+    if (updates.length === 0) {
+      res.json({ ok: true });
+      return;
+    }
 
-  updates.push(`updated_at = NOW()::text`);
-  params.push(id);
-  await pool.query(`UPDATE tidings SET ${updates.join(', ')} WHERE id = $${p}`, params);
+    updates.push(`updated_at = NOW()::text`);
+    params.push(id);
+    await pool.query(`UPDATE tidings SET ${updates.join(', ')} WHERE id = $${p}`, params);
 
-  const { rows } = await pool.query(
-    `SELECT t.*, u.display_name AS author_display_name
+    const { rows } = await pool.query(
+      `SELECT t.*, u.display_name AS author_display_name
        FROM tidings t LEFT JOIN auth_users u ON u.id = t.created_by
        WHERE t.id = $1`,
-    [id],
-  );
-  if (!rows[0]) { res.status(404).json({ error: 'Tiding not found' }); return; }
+      [id]
+    );
+    if (!rows[0]) {
+      res.status(404).json({ error: 'Tiding not found' });
+      return;
+    }
 
-  // PATCH can also be the trigger for a release announcement — e.g.
-  // an admin authors the row as kind='announcement' first, fixes
-  // typos, then flips to 'patch' to publish. Re-uses the same
-  // shouldAnnounceTiding gate so re-saves never double-fire.
-  const updatedRow = rows[0] as TidingRow;
-  if (
-    shouldAnnounceTiding({
-      kind: asStr(updatedRow.kind),
-      publishedAt: asStr(updatedRow.published_at),
-      skipDiscord: d.skipDiscord,
-      alreadyAnnouncedAt: asNullableStr(updatedRow.discord_announced_at),
-    })
-  ) {
-    announceTidingInBackground(id);
+    // PATCH can also be the trigger for a release announcement — e.g.
+    // an admin authors the row as kind='announcement' first, fixes
+    // typos, then flips to 'patch' to publish. Re-uses the same
+    // shouldAnnounceTiding gate so re-saves never double-fire.
+    const updatedRow = rows[0] as TidingRow;
+    if (
+      shouldAnnounceTiding({
+        kind: asStr(updatedRow.kind),
+        publishedAt: asStr(updatedRow.published_at),
+        skipDiscord: d.skipDiscord,
+        alreadyAnnouncedAt: asNullableStr(updatedRow.discord_announced_at),
+      })
+    ) {
+      await announceTiding(id);
+    }
+
+    res.json({ tiding: rowToTiding(updatedRow) });
   }
-
-  res.json({ tiding: rowToTiding(updatedRow) });
-});
+);
 
 /**
  * GET /api/admin/tidings/recent-feedback — feeds the feedback picker
@@ -431,35 +476,45 @@ router.patch('/admin/tidings/:id', requireAuth, requireAdmin, async (req: Reques
  * shape is intentionally narrower than GET /api/admin/feedback so
  * the picker can stay light without re-fetching everything.
  */
-router.get('/admin/tidings/recent-feedback', requireAuth, requireAdmin, async (_req: Request, res: Response) => {
-  const { rows } = await pool.query(
-    `SELECT f.id, f.category, f.content, f.anonymous, f.status,
+router.get(
+  '/admin/tidings/recent-feedback',
+  requireAuth,
+  requireAdmin,
+  async (_req: Request, res: Response) => {
+    const { rows } = await pool.query(
+      `SELECT f.id, f.category, f.content, f.anonymous, f.status,
             f.discord_thread_url, f.created_at,
             u.display_name AS user_display_name
        FROM feedback f
        LEFT JOIN auth_users u ON u.id = f.user_id
       ORDER BY f.created_at DESC
-      LIMIT 100`,
-  );
+      LIMIT 100`
+    );
 
-  res.json({
-    feedback: (rows as FeedbackRow[]).map((r) => ({
-      id: asStr(r.id),
-      category: asStr(r.category),
-      content: asStr(r.content),
-      anonymous: r.anonymous === 1,
-      status: asStr(r.status),
-      discordThreadUrl: asNullableStr(r.discord_thread_url),
-      userDisplayName: r.anonymous === 1 ? null : asNullableStr(r.user_display_name),
-      createdAt: asStr(r.created_at),
-    })),
-  });
-});
+    res.json({
+      feedback: (rows as FeedbackRow[]).map((r) => ({
+        id: asStr(r.id),
+        category: asStr(r.category),
+        content: asStr(r.content),
+        anonymous: r.anonymous === 1,
+        status: asStr(r.status),
+        discordThreadUrl: asNullableStr(r.discord_thread_url),
+        userDisplayName: r.anonymous === 1 ? null : asNullableStr(r.user_display_name),
+        createdAt: asStr(r.created_at),
+      })),
+    });
+  }
+);
 
-router.delete('/admin/tidings/:id', requireAuth, requireAdmin, async (req: Request, res: Response) => {
-  const id = String(req.params.id);
-  await pool.query('DELETE FROM tidings WHERE id = $1', [id]);
-  res.json({ ok: true });
-});
+router.delete(
+  '/admin/tidings/:id',
+  requireAuth,
+  requireAdmin,
+  async (req: Request, res: Response) => {
+    const id = String(req.params.id);
+    await pool.query('DELETE FROM tidings WHERE id = $1', [id]);
+    res.json({ ok: true });
+  }
+);
 
 export default router;

@@ -1,4 +1,5 @@
 import { v4 as uuidv4 } from 'uuid';
+import pool from '../../db/connection.js';
 import type { Server, Socket } from 'socket.io';
 import {
   getPlayerBySocketId,
@@ -114,28 +115,22 @@ export function registerCombatReactions(io: Server, socket: Socket): void {
         ])
           ? 1
           : 0;
-        void ctx; // silences "ctx not used in the fallthrough" when we
-        // persist inline; we already resolved it earlier in this handler.
-        void import('../../db/connection.js').then(({ default: dbPool }) => {
-          dbPool
-            .query(
-              `INSERT INTO chat_messages (id, session_id, user_id, display_name, type, content, character_name, attack_result, hidden, created_at)
+        await pool.query(
+          `INSERT INTO chat_messages (id, session_id, user_id, display_name, type, content, character_name, attack_result, hidden, created_at)
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
-              [
-                msgId,
-                ctx.room.sessionId,
-                'system',
-                'System',
-                'system',
-                result.messages.join('\n'),
-                null,
-                attackResultJson,
-                hidden,
-                createdAt,
-              ]
-            )
-            .catch((e) => console.warn('[OA] persist failed:', e));
-        });
+          [
+            msgId,
+            ctx.room.sessionId,
+            'system',
+            'System',
+            'system',
+            result.messages.join('\n'),
+            null,
+            attackResultJson,
+            hidden,
+            createdAt,
+          ]
+        );
         emitMultiTokenScopedChat(
           io,
           ctx.room,
@@ -172,22 +167,16 @@ export function registerCombatReactions(io: Server, socket: Socket): void {
         // Scope the sheet sync to the same token whose HP changed — DM
         // tabs + the owner wherever they are + stat-sharing-permitted
         // viewers only (a missing tokenId fails closed to DM-only).
-        emitToTokenStatViewers(
-          io,
-          ctx.room,
-          result.hpChange?.tokenId ?? '',
-          'character:updated',
-          {
-            characterId: result.characterHpUpdated.characterId,
-            changes: {
-              hitPoints: result.characterHpUpdated.hp,
-              tempHitPoints: result.characterHpUpdated.tempHp,
-              ...(result.characterHpUpdated.version !== undefined
-                ? { version: result.characterHpUpdated.version }
-                : {}),
-            },
-          }
-        );
+        emitToTokenStatViewers(io, ctx.room, result.hpChange?.tokenId ?? '', 'character:updated', {
+          characterId: result.characterHpUpdated.characterId,
+          changes: {
+            hitPoints: result.characterHpUpdated.hp,
+            tempHitPoints: result.characterHpUpdated.tempHp,
+            ...(result.characterHpUpdated.version !== undefined
+              ? { version: result.characterHpUpdated.version }
+              : {}),
+          },
+        });
       }
       if (result.deathSaveFailure) {
         emitToTokenStatViewers(
@@ -222,17 +211,11 @@ export function registerCombatReactions(io: Server, socket: Socket): void {
       // combat:action-used with the real economy from room state.
       const attackerEconomy = ctx.room.actionEconomies.get(parsed.data.attackerTokenId);
       if (attackerEconomy) {
-        emitToTokenStatViewers(
-          io,
-          ctx.room,
-          parsed.data.attackerTokenId,
-          'combat:action-used',
-          {
-            tokenId: parsed.data.attackerTokenId,
-            actionType: 'reaction',
-            economy: attackerEconomy,
-          }
-        );
+        emitToTokenStatViewers(io, ctx.room, parsed.data.attackerTokenId, 'combat:action-used', {
+          tokenId: parsed.data.attackerTokenId,
+          actionType: 'reaction',
+          economy: attackerEconomy,
+        });
       }
     })
   );

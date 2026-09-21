@@ -254,7 +254,7 @@ function effectiveAcSpeed(charRow: Record<string, unknown>): { ac: number; speed
  * so Dash extras and condition multipliers survive a mid-turn
  * transform or revert. Returns true when anything changed.
  */
-function applyEffectiveFormStats(
+export function applyEffectiveFormStats(
   room: RoomState,
   combatant: Combatant,
   effective: { ac: number; speed: number }

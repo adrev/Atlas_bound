@@ -1,6 +1,11 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { Socket } from 'socket.io-client';
-import { pullEventCursor, recordEventId, resetEventCursor, getLastEventId } from './eventCursor';
+import {
+  pullEventCursor,
+  recordSnapshotCursor,
+  resetEventCursor,
+  getLastEventId,
+} from './eventCursor';
 import { useSessionStore } from '../stores/useSessionStore';
 import { useCombatStore } from '../stores/useCombatStore';
 
@@ -22,9 +27,9 @@ import { useCombatStore } from '../stores/useCombatStore';
  * active fight and popped a bogus end-of-battle recap until the next
  * /state poll healed it.
  *
- * Fix: cursor 0 never requests or replays historical backlog. Authoritative
- * hydration must advance the cursor (via `nextEventId`) before delta replay
- * resumes; legitimate nonzero delta replay is unaffected.
+ * Fix: a reset cursor never requests or replays backlog until authoritative
+ * hydration establishes the cursor (via `nextEventId`) and generation.
+ * A hydrated zero cursor is valid; normal delta replay is unaffected.
  */
 
 function fakeSocket(): Socket {
@@ -40,7 +45,7 @@ function jsonResp(body: EventBody | { fullResync: true; latestEventId: number },
   return {
     status,
     ok: status >= 200 && status < 300,
-    json: async () => body,
+    json: async () => ({ generation: 'generation-1', ...body }),
   };
 }
 
@@ -54,7 +59,11 @@ function stubFetch(responses: ReturnType<typeof jsonResp>[]) {
 
 beforeEach(() => {
   resetEventCursor();
-  useSessionStore.setState({ sessionId: 's1', roomCode: 'ROOM' } as never);
+  useSessionStore.setState({
+    sessionId: 's1',
+    roomCode: 'ROOM',
+    generation: 'generation-1',
+  } as never);
   // Start every case with an active fight so an errant `combat:ended`
   // replay is observable.
   useCombatStore.setState({ active: true } as never);
@@ -82,7 +91,7 @@ describe('pullEventCursor — initial cursor zero', () => {
 
 describe('pullEventCursor — 410 / reset', () => {
   it('resets the cursor to 0 and forces a session:join on 410, without wiping combat', async () => {
-    recordEventId(3); // we had a real cursor before it aged out
+    recordSnapshotCursor(3); // we had a real cursor before it aged out
     const socket = fakeSocket();
     const fetchFn = stubFetch([jsonResp({ fullResync: true, latestEventId: 999 }, 410)]);
 
@@ -98,7 +107,7 @@ describe('pullEventCursor — 410 / reset', () => {
   it('the tick right after a 410 reset does not replay the backlog', async () => {
     // First: trigger the 410 → cursor resets to 0.
     const socket = fakeSocket();
-    recordEventId(3);
+    recordSnapshotCursor(3);
     stubFetch([jsonResp({ fullResync: true, latestEventId: 999 }, 410)]);
     await pullEventCursor(socket);
     expect(getLastEventId()).toBe(0);
@@ -125,8 +134,8 @@ describe('pullEventCursor — hydration resume', () => {
 
     // Authoritative hydration establishes nextEventId. This mirrors what
     // pullStateSnapshot does after a session:join re-sync:
-    // `recordEventId(snap.nextEventId)`.
-    recordEventId(10);
+    // `recordSnapshotCursor(snap.nextEventId)`.
+    recordSnapshotCursor(10);
 
     // Now a genuine delta replays from the hydrated baseline.
     const fetchFn = stubFetch([
@@ -144,7 +153,7 @@ describe('pullEventCursor — hydration resume', () => {
 
 describe('pullEventCursor — normal nonzero delta replay', () => {
   it('replays a nonzero delta and advances the cursor', async () => {
-    recordEventId(5);
+    recordSnapshotCursor(5);
     const fetchFn = stubFetch([
       jsonResp({ events: [{ id: 6, kind: 'combat:ended', payload: {} }], latestEventId: 6 }),
     ]);
@@ -159,7 +168,7 @@ describe('pullEventCursor — normal nonzero delta replay', () => {
   });
 
   it('advances the cursor to latestEventId on an empty nonzero delta without replaying', async () => {
-    recordEventId(4);
+    recordSnapshotCursor(4);
     const fetchFn = stubFetch([jsonResp({ events: [], latestEventId: 9 })]);
 
     const n = await pullEventCursor(fakeSocket());

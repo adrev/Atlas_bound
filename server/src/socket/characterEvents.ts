@@ -274,7 +274,7 @@ export function registerCharacterEvents(io: Server, socket: Socket): void {
       }
       acceptedChanges.version = Number(updatedRows[0].version);
 
-      fanoutCharacterUpdateAcrossRooms(
+      await fanoutCharacterUpdateAcrossRooms(
         io,
         characterId,
         charUserId,
