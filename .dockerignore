@@ -21,8 +21,10 @@ dist/
 # Data (SQLite DB — created at runtime, synced to Turso)
 server/data
 
-# User-uploaded content is included in the build
-# (prebuilt token/map images are in client/public/)
+# Runtime uploads live in GCS. They are not copied into the final image;
+# exclude old local copies from both Docker and Cloud Build source archives.
+server/uploads
+# Prebuilt assets in client/public remain included.
 
 # Editor config
 .vscode
