@@ -28,6 +28,10 @@ before this implementation and is retained as historical evidence.
   notification outbox. Shutdown drains admitted gameplay work for up to 9 seconds.
 - Deployment explicitly sets service/revision minimums to zero and retains
   request-based CPU allocation. No Cloud SQL shutdown or sizing change.
+- The deployment script now preserves existing environment values, Secret Manager
+  references and resource settings instead of rebuilding an allowlist from `.env`.
+  It pins the image digest, creates a no-traffic candidate, verifies its exact
+  revision and configuration, and leaves promotion as a separate reviewed action.
 
 ## Compatibility
 
@@ -44,7 +48,9 @@ this release. Never run old and new revisions concurrently against an active gam
 
 ## Local Verification
 
-- Full suite with explicit loopback PostgreSQL: 121 files, 1,444 tests passed.
+- Deployed runtime suite with explicit loopback PostgreSQL: 121 files, 1,444 tests
+  passed. After the deployment-script follow-up, the production branch passed
+  123 files / 1,461 tests, including 18 deployment regression tests; no skips.
 - Production build and zero-warning ESLint passed; dependency audit reported
   zero vulnerabilities. Worker protocol tests passed 8/8.
 - Real PostgreSQL tests cover fresh Node process restoration, concurrent writers,
@@ -88,7 +94,32 @@ timeout, SQL connection, service identity, affinity, boost and ingress. Both
 minimums are effectively zero and request-based CPU throttling is explicit.
 Cloud Run omits the revision min annotation for its default zero value.
 
-Natural idle-zero and measured cold recovery are still pending at this checkpoint.
+Cloud Monitoring reported both active and idle instance counts as zero from
+`2026-09-21T12:20:00Z`, after the last warm request at 12:03:34 UTC. The same zero
+values were still present at 12:22 UTC, immediately before the wake test. These
+are explicit zero samples, not an inference from missing metrics.
+
+The first authenticated request at `2026-09-21T12:22:23.251853Z` caused a new
+AUTOSCALING instance start, confirmed by the system log at 12:22:23.267542 UTC.
+Startup passed its first TCP probe at 12:22:26.583782 UTC. Client-observed timings
+were **4.571 seconds cold** and **0.736 seconds for the next warm request**. These
+are one observed pair, including network latency, not a latency guarantee.
+
+Strict cold REST and DM/player WebSocket rejoin assertions passed for unchanged
+generation/cursor, token position/version, condition-source metadata, combat,
+spent action/bonus/reaction/movement budgets, music and chat. All test sockets
+closed by approximately 12:22:31 UTC. The exact isolated private fixture and its
+authentication cookies were removed using SQL-only cleanup; no existing campaign
+was edited. The temporary SQL proxy was stopped. No runtime errors were observed.
+Cloud SQL remained `RUNNABLE`, `ALWAYS`, `db-f1-micro`.
+
+The second natural idle-zero check is still pending at this checkpoint. Monitoring
+uses only the control plane so health checks do not keep the application warm.
+
+The newer main branch has a separate, undeployed integration candidate. Its
+canonical feature-resource migration needs a reviewed quiescent cutover and must
+not be deployed over active legacy writers. See its integration report and the
+candidate-deployment contract before planning a subsequent release.
 
 Rollback baseline: `atlas-bound-00064-kzr` (revision minimum 1). Route traffic back
 only if no active game can be split across versions. Keep the additive schema and
