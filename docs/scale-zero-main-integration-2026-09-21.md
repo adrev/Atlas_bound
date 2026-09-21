@@ -1,7 +1,8 @@
 # Scale-zero forward port to main
 
 This worktree is an integration candidate, not a production release. No cloud
-resources were changed, no image was deployed, and no PR was created or merged.
+resources were changed, no image was deployed, and no PR was merged. Publishing
+the requested draft PR does not authorize deployment or the data cutover.
 
 ## Inputs
 
@@ -45,10 +46,17 @@ by normal authoritative hydration; it cannot undo the committed character row.
 Using local Node 24.19.0 and the loopback-only PostgreSQL QA container with
 per-suite disposable schemas:
 
-- Full combined suite: 167 files, 2,104 tests passed, zero skipped.
+- Full combined suite: 167 files, 2,106 tests passed, zero skipped.
 - Production build passed for shared, client, and server.
 - ESLint passed with zero warnings.
+- Chronicle worker protocol: 8/8 tests passed separately.
 - No cloud, OAuth, external storage, or production smoke testing was performed.
+
+One full run during concurrent build activity had a transient socket hangup in
+the existing Chronicle token-gate test. The complete final rerun passed without
+source changes to that test. Independent read-only review found no remaining
+blocker in the requested runtime and deploy-verification areas; that reviewer
+did not independently rerun tests.
 
 The added integration regressions execute real XP, Wild Shape, Lucky, Ki, SP,
 racial, and superiority commands concurrently across sessions and cold processes.
@@ -61,10 +69,12 @@ concurrent adoption, canonical zero/inactive/counter precedence, late first
 writers, rollback, strict superiority schema, trusted Moon/CR/movement eligibility,
 and unknown Wild Shape history remaining exhausted until an actual normal rest.
 
-Deploy-only commits `bb85337` and `3d1e7e1` contain no runtime changes and can be
-cherry-picked in that order independently. Their 16 tests include isolated mock
+Deploy-only commits `bb85337`, `3d1e7e1`, and `932e5e2` contain no runtime changes
+and can be cherry-picked in that order independently. Their 18 tests include isolated mock
 CLI execution with actual JSON map/list flags, env/reference preservation,
-unchanged traffic, and concurrent candidate image/revision rejection. Installed
+unchanged traffic, and pre/postdeploy candidate image/revision rejection. Tags
+are pinned to immutable digests, and both the deploy response and final service
+read must match the explicit expected revision and image. Installed
 gcloud help confirmed flags-file JSON syntax; no real service was deployed.
 
 ## Future main rollout gate
