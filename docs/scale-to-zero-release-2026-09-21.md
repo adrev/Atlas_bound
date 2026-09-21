@@ -70,9 +70,25 @@ hoisted dependencies, and excludes redundant `server/uploads` copies from contex
 Pre-release SQL backup operation `0a3a5509-8d1f-493e-9e70-d42000000032`
 completed successfully at `2026-09-21T11:33:31.730Z`.
 
-Candidate deployment, traffic promotion, measured cold-start latency and explicit
-idle-zero observations are recorded below only after they have actually happened.
-Until then, production remains on `atlas-bound-00064-kzr`.
+At approximately `2026-09-21T12:03Z`, traffic moved 100% to
+`atlas-bound-sz-f37c6cb`; the temporary `scalezero-qa` tag was removed. Image:
+`us-central1-docker.pkg.dev/atlas-bound-personal/cloud-run-source-deploy/atlas-bound@sha256:ce504ad62f273a01186da26d6c6967b7105ac4e43fc3ebcfa0a6142091ebac9a`.
+
+The corrected candidate passed authenticated live DM/player QA against a separate
+private fixture: token movement, music pause, chat, spent action/bonus/reaction/
+movement budgets, combat, condition sources, REST checkpoints and warm rejoin.
+Root HTML, referenced asset bundles and dice WASM returned 200. Anonymous session
+requests returned 401. Google/Discord redirects retained production callback URLs;
+this does not claim a new real-provider login was completed.
+
+After promotion, `https://dnd.kbrt.ai/readyz` returned 200 at
+`2026-09-21T12:03:34.109Z` (1.106 seconds, warm). Configuration comparison confirmed
+unchanged environment hash, CPU/memory, service/revision maxima, concurrency,
+timeout, SQL connection, service identity, affinity, boost and ingress. Both
+minimums are effectively zero and request-based CPU throttling is explicit.
+Cloud Run omits the revision min annotation for its default zero value.
+
+Natural idle-zero and measured cold recovery are still pending at this checkpoint.
 
 Rollback baseline: `atlas-bound-00064-kzr` (revision minimum 1). Route traffic back
 only if no active game can be split across versions. Keep the additive schema and
