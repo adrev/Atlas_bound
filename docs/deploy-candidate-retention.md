@@ -19,7 +19,11 @@ flags file, not shell arguments. Neither script nor verifier prints values.
 Local `.env` content is never an implicit rotation instruction.
 
 `--image IMAGE` uses an already-built image; otherwise the script builds and
-pushes locally. Before build, immediately before deploy, and after deploy, it
+pushes locally. Tags are resolved through Artifact Registry to an immutable
+digest before deploying. An explicit unique revision suffix binds this run to
+one candidate; both the deployment response and final service read must match
+that exact revision and digest, including when another no-traffic candidate
+has identical configuration. Before build, immediately before deploy, and after deploy, it
 reads service configuration. A changed baseline aborts before deploy. Unexpected
 post-deploy environment/reference/resource/traffic differences fail verification
 without promotion. Fingerprints and changed sections, not secrets, are logged.

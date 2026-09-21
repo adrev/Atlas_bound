@@ -1,18 +1,20 @@
 name: CI Quality Gates
 
 # Runs on every push to main and on PRs. Acts as a quality gate
-# (lint, types, tests, audit). Production deploys are done manually
-# via `./deploy.sh` from a developer machine — the automated deploy
-# was removed because it required WIF secrets that aren't configured,
-# and it also skipped the env-var injection that the manual deploy
-# does correctly.
+# (lint, types, tests, audit). Candidate deploys are manual via
+# `./deploy.sh`: existing configuration and Secret Manager references
+# are preserved, images are pinned, and no traffic is promoted.
+# Environment/secret changes require explicit reviewed updates, not
+# replacement from local .env files. Promotion is a separate decision.
+# Main's legacy resource adoption additionally requires a reviewed
+# quiescent cutover; no-traffic alone does not isolate the database.
 #
 # To re-enable automated deploys later:
 #   1. Configure Workload Identity Federation on GCP.
 #   2. Add WIF_PROVIDER + WIF_SERVICE_ACCOUNT as repo secrets.
-#   3. Add secrets for DISCORD_CLIENT_ID, DISCORD_CLIENT_SECRET,
-#      GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, PGPASSWORD,
-#      ADMIN_USER_IDS and pass them via --set-env-vars.
+#   3. Retain the same candidate identity/configuration/traffic checks.
+#   4. Use reviewed Secret Manager references for intentional secret
+#      updates, and retain manual promotion and data-migration gates.
 
 on:
   push:

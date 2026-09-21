@@ -97,11 +97,13 @@ describe('deploy.sh mock CLI end-to-end', () => {
         const calls = await f.calls();
         expect(calls.map((call) => call.operation)).toEqual([
           'describe',
+          'resolve-image',
           'describe',
           'deploy',
           'describe',
         ]);
-        const deploy = calls[2];
+        const deploy = calls[3];
+        expect(deploy.args[deploy.args.indexOf('--image') + 1]).toMatch(/@sha256:[a-f0-9]{64}$/);
         expect(deploy.args).toContain('--no-traffic');
         if (update)
           expect(deploy.flags).toEqual({
@@ -138,9 +140,32 @@ describe('deploy.sh mock CLI end-to-end', () => {
           env: { ...f.env, MOCK_CONCURRENT: '1' },
         })
       ).rejects.toThrow('Candidate image/revision changed');
-      expect((await f.calls()).map((call) => call.operation)).toEqual(['describe', 'describe']);
+      expect((await f.calls()).map((call) => call.operation)).toEqual([
+        'describe',
+        'resolve-image',
+        'describe',
+      ]);
     } finally {
       await rm(f.dir, { recursive: true, force: true });
     }
   });
+
+  it.each(['image', 'revision'])(
+    'fails final verification if a same-config candidate replaces the expected %s',
+    async (kind) => {
+      const f = await fixture();
+      try {
+        await expect(
+          exec('/bin/bash', [join(root, 'deploy.sh'), '--image', 'test-image'], {
+            cwd: root,
+            env: { ...f.env, MOCK_POST_CONCURRENT: kind },
+          })
+        ).rejects.toThrow('Candidate identity verification failed');
+        expect((await f.calls()).filter((call) => call.operation === 'deploy')).toHaveLength(1);
+        expect((await f.calls()).every((call) => call.operation !== 'update-traffic')).toBe(true);
+      } finally {
+        await rm(f.dir, { recursive: true, force: true });
+      }
+    }
+  );
 });

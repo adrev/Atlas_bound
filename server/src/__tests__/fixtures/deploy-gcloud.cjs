@@ -17,7 +17,18 @@ if (args.slice(0, 3).join(' ') === 'run services describe') {
     service.spec.template.spec.containers[0].image = 'concurrent-image';
     service.spec.template.metadata.name = 'concurrent-revision';
   }
+  if (process.env.MOCK_POST_CONCURRENT && state.describes === 3) {
+    if (process.env.MOCK_POST_CONCURRENT === 'image')
+      service.spec.template.spec.containers[0].image = `other-image@sha256:${'b'.repeat(64)}`;
+    else {
+      service.spec.template.metadata.name = 'other-candidate';
+      service.status.latestCreatedRevisionName = 'other-candidate';
+    }
+  }
   process.stdout.write(JSON.stringify(service));
+} else if (args.slice(0, 4).join(' ') === 'artifacts docker images describe') {
+  log({ operation: 'resolve-image' });
+  process.stdout.write(`${args[4]}@sha256:${'a'.repeat(64)}`);
 } else if (args.slice(0, 2).join(' ') === 'run deploy') {
   const flags = read(args[args.indexOf('--flags-file') + 1]);
   if (!args.includes('--no-traffic')) throw new Error('Test refuses traffic promotion');
@@ -38,9 +49,11 @@ if (args.slice(0, 3).join(' ') === 'run services describe') {
   state.after.metadata.annotations['run.googleapis.com/minScale'] = '0';
   state.after.spec.template.metadata.annotations['autoscaling.knative.dev/minScale'] = '0';
   state.after.spec.template.metadata.annotations['run.googleapis.com/cpu-throttling'] = 'true';
-  state.after.spec.template.metadata.name = 'candidate-revision';
-  state.after.status.latestCreatedRevisionName = 'candidate-revision';
+  const revision = `${args[2]}-${args[args.indexOf('--revision-suffix') + 1]}`;
+  state.after.spec.template.metadata.name = revision;
+  state.after.status.latestCreatedRevisionName = revision;
   write(process.env.MOCK_STATE, state);
+  process.stdout.write(JSON.stringify(state.after));
 } else {
   throw new Error(`Unexpected mock CLI operation: ${args.slice(0, 3).join(' ')}`);
 }

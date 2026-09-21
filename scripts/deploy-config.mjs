@@ -127,6 +127,19 @@ export function configuration(service) {
   };
 }
 
+export function verifyCandidate(service, image, revision) {
+  if (!/^[^\s]+@sha256:[a-f0-9]{64}$/.test(image ?? '') || !revision)
+    throw new Error('An immutable image and exact candidate revision are required.');
+  if (
+    service.spec?.template?.spec?.containers?.[0]?.image !== image ||
+    service.spec?.template?.metadata?.name !== revision ||
+    service.status?.latestCreatedRevisionName !== revision
+  )
+    throw new Error(
+      'Candidate identity verification failed; image/revision was replaced or does not match this deployment. No promotion.'
+    );
+}
+
 export function verify(before, after, updates = {}, deployed = false) {
   if (!deployed) {
     const identity = (service) => ({
@@ -161,7 +174,8 @@ export function verify(before, after, updates = {}, deployed = false) {
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   try {
-    const [mode, beforePath, inputPath, outputOrUpdates] = process.argv.slice(2);
+    const [mode, beforePath, inputPath, outputOrUpdates, deployedPath, image, revision] =
+      process.argv.slice(2);
     const before = read(beforePath);
     if (mode === 'plan') {
       const updates = inputPath === '-' ? {} : read(inputPath);
@@ -172,9 +186,13 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
       );
     } else if (mode === 'unchanged' || mode === 'deployed') {
       const updates = outputOrUpdates === '-' ? {} : read(outputOrUpdates);
-      console.log(
-        `Configuration verified: ${verify(before, read(inputPath), updates, mode === 'deployed')}`
-      );
+      const after = read(inputPath);
+      if (mode === 'deployed') {
+        // Verify both the deploy response and the fresh final service read.
+        verifyCandidate(read(deployedPath), image, revision);
+        verifyCandidate(after, image, revision);
+      }
+      console.log(`Configuration verified: ${verify(before, after, updates, mode === 'deployed')}`);
     } else throw new Error('Invalid configuration verification mode.');
   } catch (error) {
     console.error(error.message);
