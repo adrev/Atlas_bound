@@ -128,6 +128,17 @@ export function configuration(service) {
 }
 
 export function verify(before, after, updates = {}, deployed = false) {
+  if (!deployed) {
+    const identity = (service) => ({
+      images: service.spec?.template?.spec?.containers?.map((container) => container.image),
+      template: service.spec?.template?.metadata?.name ?? null,
+      latestCreated: service.status?.latestCreatedRevisionName ?? null,
+    });
+    if (stable(identity(before)) !== stable(identity(after)))
+      throw new Error(
+        'Candidate image/revision changed during build; refusing concurrent deployment.'
+      );
+  }
   const expected = configuration(before);
   if (deployed) {
     expected.spec.containers[0].env = environmentPlan(before, updates).env;
